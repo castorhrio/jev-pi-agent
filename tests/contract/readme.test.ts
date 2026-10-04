@@ -32,8 +32,16 @@ import { join } from 'node:path';
 const README = 'README.md';
 const readme = existsSync(README) ? readFileSync(README, 'utf8') : '';
 
-/** Top-level directories a repo-relative path in this README can start with. */
-const TOP_LEVEL = ['apps/', 'packages/', 'tests/', 'scripts/'];
+/**
+ * Top-level directories a repo-relative path in this README can start with.
+ * `docs/` is here because the README links the screenshots in it, and a broken
+ * image link is exactly the kind of lie this file exists to catch.
+ */
+const TOP_LEVEL = ['apps/', 'packages/', 'tests/', 'scripts/', 'docs/'];
+
+/** Extensions worth resolving on disk. Images count: a screenshot that 404s is
+ *  a broken promise in the first thing a reader sees. */
+const CITED_EXT = /\.(ts|tsx|md|json|css|png|jpe?g|gif|svg|webp)$/;
 
 /** Every file under tests/, by basename, so a shorthand citation resolves. */
 function testFilesByBasename(): Set<string> {
@@ -52,7 +60,7 @@ function testFilesByBasename(): Set<string> {
 type Citation = { text: string; kind: 'path' | 'test' };
 
 /**
- * Classifies a backticked token.
+ * Classifies a cited path.
  *
  * The first version of this gate treated every `foo.test.ts` as repo-relative
  * and reported **14 false positives on the first run** — the evidence table
@@ -60,14 +68,28 @@ type Citation = { text: string; kind: 'path' | 'test' };
  * `src/renderer/…` is relative to `apps/desktop/`. A gate that cries wolf gets
  * switched off, so the classification is explicit and anything ambiguous is
  * ignored rather than guessed at.
+ *
+ * Two citation forms count, because a modern README uses both: a backticked
+ * path, and the target of a markdown link or image. URLs and anchors are not
+ * repo-relative and are skipped.
  */
 function classify(markdown: string): Citation[] {
   const out: Citation[] = [];
+  const seen = new Set<string>();
 
-  for (const match of markdown.matchAll(/`([^`\n]+)`/g)) {
-    const text = match[1]!.trim();
-    if (text.includes('*')) continue;
-    if (!/^[\w./-]+\.(ts|tsx|md|json|css)$/.test(text)) continue;
+  const candidates = [
+    ...[...markdown.matchAll(/`([^`\n]+)`/g)].map((m) => m[1]!),
+    ...[...markdown.matchAll(/\]\(([^)\s]+)\)/g)].map((m) => m[1]!),
+  ];
+
+  for (const raw of candidates) {
+    const text = raw.trim().split('#')[0]!.trim();
+    if (seen.has(text)) continue;
+    if (!text || text.includes('*')) continue;
+    if (/^[a-z][a-z0-9+.-]*:/i.test(text)) continue; // http:, mailto:, …
+    if (!/^[\w./-]+$/.test(text)) continue;
+    if (!CITED_EXT.test(text)) continue;
+    seen.add(text);
     if (TOP_LEVEL.some((prefix) => text.startsWith(prefix))) {
       out.push({ text, kind: 'path' });
     } else if (/\.e?2?e?\.?test\.tsx?$/.test(text) || /^[\w.-]+\.test\.tsx?$/.test(text)) {

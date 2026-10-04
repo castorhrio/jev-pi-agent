@@ -1,216 +1,200 @@
 # UCAD
 
-**Unified Coding Agent Desktop** — a local-first desktop workbench for running multiple coding agents against one workspace, with a verifiable context-injection layer and an explainable decision trail.
-
-**统一编码代理桌面** —— 本地优先的多 Agent 编码工作台：多个编码 Agent 在同一个工作区上运行，上下文注入可核对、决策链路可解释。
+**Run several coding agents on one workspace — and be able to prove what each of them actually received.**
 
 [English](#english) · [中文](#中文)
+
+![The context panel: the exact bytes injected into the last turn, with a content hash](docs/screenshots/context.png)
 
 ---
 
 ## English
 
-### What it is
+When you run more than one coding agent, two questions stay open:
 
-UCAD is a control plane, not an editor and not an agent framework. It owns three things
-that other tools leave implicit:
+- **What context did the agent actually get?** The prompt you wrote, the files
+  that were summarised, the rules that were prepended — after three hops through
+  a broker, a budget ledger and a token estimator, the answer is usually "roughly
+  that".
+- **Why did it take that route?** Which engine decided, on what signal, with how
+  much confidence, and did anything fall back?
 
-- **Verifiable injection.** The exact bytes an agent receives are produced by a pure
-  function and carry a content hash. What the agent got can be checked, reproduced and
-  audited — `@ucad/context` renders it, `@ucad/bench` measures it.
-- **Explainable routing.** Every routing decision produces a rationale, a confidence and
-  the id of the engine that made it, and a fallback is recorded as a fallback
-  (`@ucad/decision`).
-- **Honest capability reporting.** A probe that fails says it failed, an integration that
-  is not wired says it is not wired. Silent degradation is treated as a defect.
+UCAD is a control plane for that. It does not try to be an editor, a terminal
+agent, or a model provider. It makes the two answers checkable.
 
-### Requirements
+### What it does
+
+- **Verifiable injection.** The context pack is produced by a pure function and
+  carries a content hash. You can read the rendered text and compare the hash —
+  change one byte and it stops matching.
+- **Explainable routing.** Every decision records its rationale, its confidence
+  and the engine that produced it. A fallback is recorded as a fallback.
+- **Honest estimates.** Token counts say whether they came from the vendor's
+  tokenizer or from a heuristic, and say so on screen.
+- **A permission gate that cannot be bypassed.** An agent asking to run
+  something gets a decision recorded, with the reason, before it happens.
+- **Handoffs between agents.** A readable record of what was decided, changed,
+  run and left open — the next agent reads it instead of re-asking you.
+- **Any OpenAI-compatible provider.** One protocol, many vendors; credentials
+  are stored one-way in the OS keychain and never leave the main process.
+- **MCP servers.** Configure a server, see its health honestly, remove it.
+- **Bilingual.** The interface is Chinese and English, switchable at runtime.
+
+### Screenshots
 
 | | |
 |---|---|
-| Node.js | `>= 20.11.0` |
-| Platform | Windows / macOS / Linux (Electron 33) |
-| Credentials | none to build or test; a provider key only to call a real model |
+| ![Chat](docs/screenshots/chat.png) | ![Decision](docs/screenshots/decision.png) |
+| The conversation surface, with the session list and workspace tree. | The decision plane: engines, what they may decide, and the audit trail. |
+| ![Handoff](docs/screenshots/handoff.png) | |
+| A handoff record: what was decided, changed, run, and left open. | |
 
 ### Quick start
 
+Requires Node.js 20.11 or newer.
+
 ```bash
+git clone https://github.com/castorhrio/jev-pi-agent.git
+cd jev-pi-agent
 npm install
-npm run dev        # build everything, then launch Electron
+npm run dev
 ```
 
-To work on the interface without Electron or real credentials:
+`npm run dev` builds everything and launches the desktop app. No API key is
+needed until you actually call a model.
+
+To work on the interface without Electron or credentials:
 
 ```bash
-npm run dev:web    # opens in a browser against an in-memory fixture
+npm run dev:web
 ```
 
-`?scenario=` selects a fixture state: `default`, `empty`, `loading`, `error`, `partial`,
-`permission`.
+This serves the renderer in a browser against an in-memory fixture.
+Append `?scenario=empty`, `?scenario=loading`, `?scenario=error`,
+`?scenario=partial` or `?scenario=permission` to see the other states.
 
-### Commands
+### Building an installer
 
-| Command | What it does |
-|---|---|
-| `npm run dev` | Build all artifacts and launch Electron |
-| `npm run dev:web` | Renderer only, in a browser, no Electron required |
-| `npm run typecheck` | Typecheck packages, main process and renderer |
-| `npm run lint` | ESLint |
-| `npm run knip` | Unused files, exports and dependencies |
-| `npm test` | Unit, contract and integration tests (builds packages first) |
-| `npm run test:e2e` | Interface E2E: the real app in a DOM |
-| `npm run build` | Build every artifact |
-| `npm run package` | Unpackaged build, for a local smoke test |
-| `npm run dist` | Windows NSIS installer |
-
-`npm test` runs `build:packages` first on purpose. The unit suite resolves `@ucad/*`
-through the workspace symlinks, so it runs against `packages/*/dist` rather than `src`;
-without the rebuild, a green run can mean the old code passed.
-
-### Layout
-
-```
-apps/desktop/      Electron shell: main process, typed preload, React renderer
-packages/          20 workspace packages, each with a single responsibility
-tests/contract/    Contract, integration and gate tests
-tests/e2e/         Interface tests driving the real App
-scripts/           Layout probe and page scripts
+```bash
+npm run dist     # Windows NSIS installer
+npm run package  # unpacked build, no installer
 ```
 
-### Quality gates
+**On Windows the installer step needs symlink privilege.** `electron-builder`
+extracts a cache archive that contains symbolic links, so Developer Mode must be
+on, or the command must run elevated. The unpacked build is unaffected.
 
-The suite is the definition of done, and each gate is expected to be able to fail.
-Coverage includes contract conformance, adapter loading, the injected-bytes hash, the
-handoff chain, the permission loop, the compatibility and version pinning of shipped
-agents, the secret vault (writes that cannot be reported must not be reported as saved),
-layout geometry measured in a real Chromium window at seven widths, accessibility scans
-over every surface, colour contrast, focus indicators, hard-coded UI copy, menu commands
-reaching a renderer handler, and the build graph matching the dependency manifests.
+### Current limitations
 
-`tests/contract/layout.test.ts` measures the real thing rather than a DOM approximation:
-it drives a Chromium window, walks every surface at several widths and asserts that
-nothing overflows, collapses, overlaps or falls outside its scroll container.
+Stated plainly, because a tool that hides its edges is harder to trust than one
+that does not.
 
-### Honest limitations
-
-- **The installer is unsigned.** Windows SmartScreen will warn on first run.
-- **Auto-update is inert until a feed is configured.** The app says so rather than failing
-  quietly; set `UCAD_UPDATE_FEED` to an `https://` URL to enable it.
-- **One provider protocol ships.** `@ucad/adapter-universal` speaks the OpenAI-compatible
-  protocol; native vendor adapters are not implemented.
-- **`node-pty` is optional.** Without it the terminal panel reports that it is unavailable
-  instead of pretending to work.
-- **Building the Windows installer needs symlink privilege.** `electron-builder` extracts
-  a cache archive containing symbolic links, so Developer Mode must be on, or the command
-  must run elevated. The unpacked build is unaffected.
+- **One provider protocol ships.** The bundled adapter speaks the
+  OpenAI-compatible protocol. Native vendor adapters are not implemented.
+- **The installer is unsigned.** Windows SmartScreen warns on first run.
+- **Auto-update is inert until a feed is configured.** Set `UCAD_UPDATE_FEED` to
+  an `https://` URL and the app will check it. With no feed it says so rather
+  than failing quietly.
+- **The interactive terminal needs `node-pty`.** It is an optional dependency;
+  without it the terminal panel reports that it is unavailable instead of
+  pretending to work. The command channel still runs.
 
 ### Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md). The short version: `npm run typecheck && npm run
-lint && npm run knip && npm test && npm run test:e2e` must be green before a change is
-considered done.
+See [CONTRIBUTING.md](CONTRIBUTING.md) — how to run the gates, what the
+repository expects of a change, and how to add a workspace package.
 
 ### License
 
-[MIT](LICENSE) — see the `LICENSE` file.
+[MIT](LICENSE)
 
 ---
 
 ## 中文
 
-### 它是什么
+同时跑多个编码 Agent 时，有两个问题始终没有答案：
 
-UCAD 是**控制面**，不是编辑器，也不是 Agent 框架。它把三件别处默认隐式的事情变成显式的：
+- **Agent 到底拿到了什么上下文？** 你写的提示词、被摘要的文件、被前置的规则——
+  经过 broker、预算账本、token 估算器三层之后，答案通常只是"大概那些"。
+- **它为什么走了这条路由？** 哪个引擎、依据什么信号、置信度多少、有没有发生回落？
 
-- **注入可验证。** Agent 实际收到的字节由纯函数产出，并带内容哈希——
-  「Agent 到底拿到了什么」可以被核对、复现和审计
-  （`packages/context` 负责渲染，`packages/bench` 负责度量）。
-- **决策可解释。** 每次路由产出 `rationale`、`confidence` 与产出它的引擎 id，
-  回落会**作为回落被记录**（`packages/decision`）。
-- **能力探测不谎报。** 探测失败就说失败，没接线就说没接线。
-  **静默降级在本项目里算缺陷，不算简化。**
+UCAD 就是为这两个问题做的控制面。它不试图当编辑器、当终端 Agent、当模型厂商，
+它让这两个答案**可核对**。
 
-### 环境要求
+### 它能做什么
+
+- **注入可验证。** Context Pack 由纯函数产出并带内容哈希，
+  你可以读渲染后的原文、比对哈希——改动一个字节就对不上了。
+- **决策可解释。** 每次决策都记录 `rationale`、`confidence` 和产出它的引擎；
+  回落会**作为回落被记录**。
+- **估算说实话。** token 数会标明来自厂商 tokenizer 还是启发式估算，并在界面上写明。
+- **绕不过的权限门。** Agent 要执行操作前，先得到一个被记录的决定和它的理由。
+- **Agent 之间的交接。** 一份可读的记录：决定了什么、改了什么、跑过什么、还剩什么——
+  下一个 Agent 读它，而不是再问你一遍。
+- **任意 OpenAI 兼容厂商。** 一个协议覆盖多家；凭据单向存进系统钥匙串，
+  永不离开主进程。
+- **MCP 服务器。** 添加、看健康状态、移除。
+- **中英双语。** 界面中英可切换。
+
+### 截图
 
 | | |
 |---|---|
-| Node.js | `>= 20.11.0` |
-| 平台 | Windows / macOS / Linux（Electron 33） |
-| 凭据 | 构建与测试都不需要；只有真正调用模型时才需要厂商密钥 |
+| ![对话](docs/screenshots/chat.png) | ![决策](docs/screenshots/decision.png) |
+| 对话界面，左侧会话列表与工作区文件树。 | 决策平面：可用引擎、各自的决策类型、审计记录。 |
+| ![交接](docs/screenshots/handoff.png) | |
+| 交接记录：决定了什么、改了什么、跑过什么、还剩什么。 | |
 
 ### 快速开始
 
+需要 Node.js 20.11 或更高版本。
+
 ```bash
+git clone https://github.com/castorhrio/jev-pi-agent.git
+cd jev-pi-agent
 npm install
-npm run dev        # 构建全部产物并启动 Electron
+npm run dev
 ```
 
-只做界面开发、不需要 Electron 与真实凭据：
+`npm run dev` 会构建全部产物并启动桌面应用。**不配任何 API key 也能跑起来**，
+直到你真的去调用模型。
+
+只做界面开发、不需要 Electron 和凭据：
 
 ```bash
-npm run dev:web    # 在浏览器里打开，走内存 fixture
+npm run dev:web
 ```
 
-`?scenario=` 选择 fixture 状态：`default`、`empty`、`loading`、`error`、`partial`、
-`permission`。
+在浏览器里跑渲染层，数据来自内存 fixture。
+追加 `?scenario=empty`、`?scenario=loading`、`?scenario=error`、
+`?scenario=partial` 或 `?scenario=permission` 可以看其他状态。
 
-### 命令
+### 构建安装包
 
-| 命令 | 作用 |
-|---|---|
-| `npm run dev` | 构建全部产物并启动 Electron |
-| `npm run dev:web` | 只跑 renderer，浏览器打开，不需要 Electron |
-| `npm run typecheck` | 类型检查（packages + 主进程 + 渲染层） |
-| `npm run lint` | ESLint |
-| `npm run knip` | 未引用的文件、导出与依赖 |
-| `npm test` | 单元 / 契约 / 集成测试（会先构建 packages） |
-| `npm run test:e2e` | 界面 E2E：在 DOM 里跑真实 App |
-| `npm run build` | 构建全部产物 |
-| `npm run package` | 免安装目录，用于本地冒烟 |
-| `npm run dist` | Windows NSIS 安装包 |
-
-`npm test` 会先跑 `build:packages`，这是**故意的**：单测通过 workspace 符号链接解析
-`@ucad/*`，跑的是 `packages/*/dist` 而不是 `src`——不重编译的话，一次「绿」可能只是
-旧代码通过了。
-
-### 目录结构
-
-```
-apps/desktop/      Electron 外壳：主进程、类型化 preload、React 渲染层
-packages/          20 个 workspace 包，各自单一职责
-tests/contract/    契约、集成与门禁测试
-tests/e2e/         驱动真实 App 的界面测试
-scripts/           布局探针与页面脚本
+```bash
+npm run dist     # Windows NSIS 安装包
+npm run package  # 免安装目录，不出安装包
 ```
 
-### 质量门禁
+**Windows 上出安装包需要符号链接权限。** `electron-builder` 要解包一个内含符号链接的
+缓存包，因此需要开启开发者模式或以管理员身份运行；免安装目录不受影响。
 
-测试套件就是完成的定义，而且**每道门禁都应当能变红**。覆盖范围包括契约一致性、适配器加载、
-注入字节哈希、交接链、权限循环、已发布 Agent 的兼容性与版本锁定、凭据保险库
-（写不下去的写入不得报告为已保存）、在真实 Chromium 窗口里按七档宽度测量的布局几何、
-全表面无障碍扫描、颜色对比度、焦点指示器、界面硬编码文案、菜单命令是否有渲染层处理，
-以及构建图与依赖清单是否一致。
+### 当前局限
 
-`tests/contract/layout.test.ts` 测的是真东西而不是 DOM 近似：它驱动一个 Chromium 窗口，
-逐个走完每个表面，断言没有溢出、塌陷、重叠或跑出可滚动容器。
+直说，因为**藏边界的工具比不藏的更不值得信任**。
 
-### 如实说明的局限
-
-- **安装包未签名**，Windows 首次运行会有 SmartScreen 提示。
-- **自动更新在配置更新源之前是空的。** 应用会直说而不是静默失败；
-  把 `UCAD_UPDATE_FEED` 指向一个 `https://` 地址即可启用。
-- **只随包发布一种厂商协议。** `packages/adapter-universal` 走 OpenAI 兼容协议；
-  厂商原生适配器未实现。
-- **`node-pty` 是可选依赖。** 缺失时终端面板会如实说不可用，而不是假装能跑。
-- **构建 Windows 安装包需要符号链接权限。** `electron-builder` 要解包一个内含符号链接的
-  缓存包，因此需要开启 Windows 开发者模式或以管理员身份运行；免安装目录不受影响。
+- **只随包发布一种厂商协议。** 内置适配器走 OpenAI 兼容协议，厂商原生适配器未实现。
+- **安装包未签名。** Windows 首次运行会有 SmartScreen 提示。
+- **自动更新在配置更新源之前是空的。** 把 `UCAD_UPDATE_FEED` 指向一个 `https://`
+  地址即可启用；没有配置时应用会直说，而不是静默失败。
+- **交互式终端依赖 `node-pty`。** 它是可选依赖；缺失时终端面板会如实说不可用，
+  而不是假装能跑。命令通道仍然可用。
 
 ### 参与贡献
 
-见 [CONTRIBUTING.md](CONTRIBUTING.md)。简单说：改动被认为完成之前，
-`npm run typecheck && npm run lint && npm run knip && npm test && npm run test:e2e`
-必须全绿。
+见 [CONTRIBUTING.md](CONTRIBUTING.md) —— 怎么跑门禁、这个仓库对一次改动有什么要求、
+以及怎么新增一个 workspace 包。
 
 ### 许可
 
-[MIT](LICENSE) —— 见根目录的 `LICENSE` 文件。
+[MIT](LICENSE)

@@ -5,15 +5,48 @@
 The test suite is the definition of done, not a formality. A change is finished when the
 gates are green, not when the code compiles.
 
-## The short path
+## The gate suite
+
+The suite is the definition of done, not a formality. Each gate is expected to
+be able to fail, and a gate that has never gone red is indistinguishable from a
+test that does nothing.
+
+**Unit, contract and integration** — `tests/contract`, run by `npm test`:
+
+| Area | What it pins down |
+|---|---|
+| Contracts | Adapter, decision, injection, tool, MCP, host-entry and intelligence conformance |
+| Injection | The rendered pack is deterministic and hash-stable |
+| Handoff | Append-only chain, one-claim-per-handoff, schema-checked bodies |
+| Permissions | Deterministic risk, scoped rules, audit trail written on every outcome |
+| Credentials | A write that cannot be persisted must not report itself as saved; an unreadable vault is never overwritten |
+| Build graph | Every `@ucad/*` dependency is a project reference, and the solution lists each package once |
+| Copy and a11y | No hard-coded UI strings, locale parity, contrast, focus indicators |
+| Menu | Every command Main registers has a renderer handler |
+| Versions | Shipped manifests pin exact versions; the installed engine matches what is declared |
+
+**Interface** — `tests/e2e`, run by `npm run test:e2e`: the real `App` in a DOM
+against the real fixture bridge, covering the conversation, navigation, the
+permission dialog, handoff history, provider selection and every surface's crash
+boundary.
+
+**Layout** — `tests/contract/layout.test.ts` measures geometry in a real
+Chromium window rather than a DOM approximation. It walks every surface at seven
+widths plus the tightest window, and asserts that nothing overflows, collapses,
+overlaps, falls outside its scroll container, or gets cut off. It also runs axe
+at two layouts and writes screenshots to `.run-logs/layout/`.
 
 ```bash
-npm install
 npm run typecheck && npm run lint && npm run knip && npm test && npm run test:e2e
 ```
 
-`npm test` builds the packages first on purpose — the unit suite resolves `@ucad/*` to
-`packages/*/dist`, not `src`. Running vitest directly bypasses that.
+`npm test` builds the packages first on purpose — the unit suite resolves
+`@ucad/*` to `packages/*/dist`, not `src`. Running vitest directly bypasses that,
+which is the same trap that once let a red-proof run come back green.
+
+CI runs exactly this sequence, plus a clean rebuild at the end: an incremental
+build cannot catch a wrong build order, because a stale `dist` satisfies any
+import.
 
 ## House rules
 
