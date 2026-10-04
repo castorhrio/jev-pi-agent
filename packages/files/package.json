@@ -1,0 +1,26 @@
+{
+  "name": "@ucad/files",
+  "version": "0.1.0",
+  "private": true,
+  "description": "FileService: Renderer read/write channel with optimistic concurrency and watch.",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -b",
+    "clean": "tsc -b --clean"
+  },
+  "dependencies": {
+    "@ucad/contracts": "0.1.0",
+    "@ucad/observability": "0.1.0",
+    "@ucad/permissions": "0.1.0"
+  }
+}

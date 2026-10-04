@@ -1,0 +1,67 @@
+# Contributing
+
+## Before you start
+
+The test suite is the definition of done, not a formality. A change is finished when the
+gates are green, not when the code compiles.
+
+## The short path
+
+```bash
+npm install
+npm run typecheck && npm run lint && npm run knip && npm test && npm run test:e2e
+```
+
+`npm test` builds the packages first on purpose — the unit suite resolves `@ucad/*` to
+`packages/*/dist`, not `src`. Running vitest directly bypasses that.
+
+## House rules
+
+These are the ones this codebase actually enforces, rather than preferences.
+
+**A failure must not look like a fact.** A read that fails and a read that returns nothing
+are different states and must render differently. This has been the single most repeated
+defect in this repository, across the session list, the permission rules, the diagnostics
+page and the credential store. When you add a read, carry the reason alongside the value.
+
+**A gate that cannot fail is not a gate.** If a test's subject no longer exists, delete the
+test rather than leaving it to skip forever. It looks like coverage and protects nothing.
+
+**Prove a gate can go red.** A test you have never seen fail is indistinguishable from a
+test that does nothing. Break the thing on purpose, watch it fail, put it back.
+
+**Prefer a mechanism to a reminder.** A rule in a document is skipped. A check in the suite
+is not. If a mistake has been made twice, the answer is a gate, not a better note.
+
+**Do not state a number that can rot.** Prose counts go stale silently; link to the gate
+instead.
+
+**Do not widen the scope.** Unrelated cleanup in a change is how a review turns into an
+archaeology dig. File it separately.
+
+## Working on the interface
+
+```bash
+npm run dev:web
+```
+
+Runs the renderer in a browser against an in-memory fixture — no Electron, no credentials.
+`?scenario=default|empty|loading|error|partial|permission` selects the state. The E2E suite
+drives the same fixture, so what you see there is what the tests see.
+
+For layout work, `tests/contract/layout.test.ts` measures a real Chromium window and writes
+screenshots to `.run-logs/layout/`. Geometry is judged automatically; whether it *looks*
+right is still a human call.
+
+## Adding a workspace package
+
+`tsconfig.build.json` lists the package, **and** the package's own `tsconfig.json` must
+declare a `references` entry for every `@ucad/*` dependency in its `package.json`. The
+build graph is checked by `tests/contract/build-graph.test.ts`. Without the reference,
+`tsc --build` may compile a package before its dependency exists — which fails only on a
+clean build, never on an incremental one.
+
+## Commit messages
+
+Explain what was wrong and why the fix is that shape. A diff already shows what changed; the
+message should carry the reasoning that is not in the diff.

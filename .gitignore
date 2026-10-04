@@ -1,0 +1,15 @@
+node_modules/
+dist/
+out/
+release/
+*.tsbuildinfo
+.ucad-data/
+.DS_Store
+Thumbs.db
+*.log
+.env
+.env.*
+coverage/
+.vitest/
+
+.run-logs/

@@ -1,0 +1,36 @@
+{
+  "files": [],
+  /*
+   * Solution build. Order here does not decide what gets built first — each
+   * package declares its own `references`, so `tsc --build` walks the real
+   * dependency graph. That distinction is not cosmetic: `packages/bench` used
+   * to be listed twice and `packages/providers` was listed *after*
+   * `packages/adapter-universal`, which imports it, so `npm run clean &&
+   * npm run build:packages` failed with
+   * "Cannot find module '@ucad/providers'". Incremental builds never noticed,
+   * because a stale `dist` was sitting there to satisfy the import.
+   */
+  "references": [
+    { "path": "packages/contracts" },
+    { "path": "packages/observability" },
+    { "path": "packages/storage" },
+    { "path": "packages/permissions" },
+    { "path": "packages/secrets" },
+    { "path": "packages/session" },
+    { "path": "packages/decision" },
+    { "path": "packages/code-intelligence" },
+    { "path": "packages/context" },
+    { "path": "packages/bench" },
+    { "path": "packages/files" },
+    { "path": "packages/git" },
+    { "path": "packages/terminal" },
+    { "path": "packages/usage" },
+    { "path": "packages/mcp" },
+    { "path": "packages/skills" },
+    { "path": "packages/agent-host" },
+    { "path": "packages/agent-core" },
+    { "path": "packages/adapter-mock" },
+    { "path": "packages/providers" },
+    { "path": "packages/adapter-universal" }
+  ]
+}

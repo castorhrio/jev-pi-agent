@@ -1,0 +1,26 @@
+{
+  "name": "@ucad/storage",
+  "version": "0.1.0",
+  "private": true,
+  "description": "SQLite persistence, schema_version migrations, SessionSequencer, MessageProjector, at-rest key handling.",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -b",
+    "clean": "tsc -b --clean"
+  },
+  "dependencies": {
+    "@ucad/contracts": "0.1.0",
+    "@ucad/observability": "0.1.0",
+    "node-sqlite3-wasm": "0.8.60"
+  }
+}

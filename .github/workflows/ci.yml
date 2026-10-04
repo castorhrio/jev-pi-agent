@@ -1,0 +1,62 @@
+name: CI
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+
+# A second push to the same branch makes the first run irrelevant.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gates:
+    # `npm test` and the E2E suite drive a real Electron/Chromium window, which
+    # needs a display. xvfb supplies one; the layout gate is the reason this job
+    # is not a plain `node` run.
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Unused files, exports and dependencies
+        run: npm run knip
+
+      - name: Unit, contract and integration tests
+        run: xvfb-run --auto-servernum npm test
+
+      - name: Interface E2E
+        run: xvfb-run --auto-servernum npm run test:e2e
+
+      - name: Build
+        run: npm run build
+
+      - name: Clean build
+        # The incremental build above cannot catch a wrong build order: a stale
+        # `dist` satisfies any import. This is the check that does.
+        run: |
+          npm run clean
+          npm run build:packages
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: layout-screenshots
+          path: .run-logs/layout/
+          if-no-files-found: ignore

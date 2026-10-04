@@ -1,0 +1,25 @@
+{
+  "name": "@ucad/skills",
+  "version": "0.1.0",
+  "private": true,
+  "description": "File-backed agent skills: discovery, per-agent binding and objective matching, injected through the Context Pack like any other instruction.",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -b",
+    "clean": "tsc -b --clean"
+  },
+  "dependencies": {
+    "@ucad/contracts": "0.1.0",
+    "@ucad/observability": "0.1.0"
+  }
+}

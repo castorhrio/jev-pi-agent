@@ -1,0 +1,17 @@
+{
+  "$schema": "https://unpkg.com/knip@6/schema.json",
+  "ignoreDependencies": [
+    "@ucad/adapter-mock",
+    "@ucad/adapter-universal"
+  ],
+  "workspaces": {
+    ".": {
+      "entry": ["scripts/**/*.{mjs,cjs}", "tests/**/*.{ts,tsx}"],
+      "project": ["scripts/**/*.{mjs,cjs}", "tests/**/*.{ts,tsx}"]
+    },
+    "apps/desktop": {
+      "entry": ["src/main/bootstrap.ts", "src/preload/preload.ts"],
+      "project": ["src/**/*.{ts,tsx}"]
+    }
+  }
+}

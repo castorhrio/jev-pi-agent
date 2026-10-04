@@ -1,0 +1,39 @@
+{
+  "name": "@ucad/desktop",
+  "version": "0.1.0",
+  "private": true,
+  "description": "UCAD Electron desktop shell: main assembly, typed preload, React renderer.",
+  "main": "dist/main/bootstrap.js",
+  "scripts": {
+    "build:main": "tsc -b tsconfig.main.json",
+    "build:preload": "vite build --config vite.preload.config.ts",
+    "build:renderer": "vite build",
+    "dev:renderer": "vite",
+    "build": "npm run build:main && npm run build:preload && npm run build:renderer"
+  },
+  "dependencies": {
+    "@ucad/observability": "0.1.0",
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/xterm": "^6.0.0",
+    "@ucad/storage": "0.1.0",
+    "@ucad/session": "0.1.0",
+    "@ucad/decision": "0.1.0",
+    "@ucad/code-intelligence": "0.1.0",
+    "@ucad/context": "0.1.0",
+    "@ucad/permissions": "0.1.0",
+    "@ucad/secrets": "0.1.0",
+    "@ucad/files": "0.1.0",
+    "@ucad/git": "0.1.0",
+    "@ucad/terminal": "0.1.0",
+    "@ucad/usage": "0.1.0",
+    "@ucad/mcp": "0.1.0",
+    "@ucad/agent-core": "0.1.0",
+    "@ucad/agent-host": "0.1.0",
+    "@ucad/adapter-mock": "0.1.0",
+    "@ucad/adapter-universal": "0.1.0",
+    "@ucad/providers": "0.1.0",
+    "@ucad/skills": "0.1.0",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {}
+}
