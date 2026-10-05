@@ -101,7 +101,8 @@ export class DecisionFacade {
     workspaceId: string;
     trusted: boolean;
     agents: AgentCatalogEntry[];
-    git: { dirty: boolean; changedFiles: number; branch?: string };
+    /** omitted when `git status` did not answer — never zeros in its place */
+    git?: { dirty: boolean; changedFiles: number; branch?: string };
     packId?: string;
     /** omitted => no pack was ever built for this session */
     itemCount?: number;

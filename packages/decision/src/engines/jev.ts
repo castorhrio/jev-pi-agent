@@ -396,7 +396,13 @@ export class JevDecisionEngine implements DecisionEngine {
 
     const family = taskFamily(objective);
     const specific = specificity(objective);
-    const wide = breadth(facts.git.changedFiles);
+    // Absent git facts contribute no breadth: "git status did not answer" is
+    // not "0 changed files", and a route that amplified focus on the strength
+    // of a failed status call would be explaining a number nobody measured.
+    const wide = facts.git ? breadth(facts.git.changedFiles) : 0;
+    const gitObserved = facts.git
+      ? `${facts.git.changedFiles} changed file(s) -> breadth ${wide.toFixed(2)}`
+      : 'git facts unavailable, breadth contributes nothing';
     const unstable = instability(facts);
     const vague = VAGUE_PATTERNS.some((p) => p.test(objective));
 
@@ -428,7 +434,7 @@ export class JevDecisionEngine implements DecisionEngine {
               ? `objective family '${family.family}' [${family.hits.join(', ')}] vs agent '${agent.id}' affinity ${affinity.toFixed(2)}`
               : 'objective names no task family, so no agent is preferred on focus',
           },
-          { name: 'breadth', value: wide, weight: 0, observed: `${facts.git.changedFiles} changed file(s) -> breadth ${wide.toFixed(2)}` },
+          { name: 'breadth', value: wide, weight: 0, observed: gitObserved },
           { name: 'specificity', value: specific, weight: 0.9 * (specific - 0.5), observed: `objective length ${objective.trim().length} -> specificity ${specific.toFixed(2)}` },
           { name: 'instability', value: unstable, weight: -0.8 * unstable, observed: `${facts.signals.consecutiveFailures} consecutive failure(s), turnIndex ${facts.signals.turnIndex} -> instability ${unstable.toFixed(2)}` },
           { name: 'default', value: defaultPrior, weight: 0.6 * defaultPrior, observed: agent.isDefaultRuntime ? 'agent is the registered default runtime' : 'agent is not the default runtime' },
@@ -487,7 +493,8 @@ export class JevDecisionEngine implements DecisionEngine {
       { ref: 'request.objective', weight: round2(0.7 * specific + 0.3) },
       { ref: 'facts.availableAgents', weight: round2(best.probability) },
     ];
-    if (facts.git.changedFiles > 0) evidence.push({ ref: 'facts.git.changedFiles', weight: round2(wide) });
+    if (facts.git && facts.git.changedFiles > 0)
+      evidence.push({ ref: 'facts.git.changedFiles', weight: round2(wide) });
     if (facts.signals.consecutiveFailures > 0) evidence.push({ ref: 'facts.signals.consecutiveFailures', weight: round2(unstable) });
 
     return {
@@ -529,7 +536,12 @@ export class JevDecisionEngine implements DecisionEngine {
     const { facts } = request;
     const denials = clamp01(facts.signals.permissionDenials / 3);
     const failures = clamp01(facts.signals.consecutiveFailures / 4);
-    const wide = breadth(facts.git.changedFiles);
+    // Absent git facts score no breadth and say so — "status did not answer"
+    // is a missing signal, not evidence of a clean tree.
+    const wide = facts.git ? breadth(facts.git.changedFiles) : 0;
+    const breadthSignal = facts.git
+      ? `${facts.git.changedFiles} changed file(s) (${wide.toFixed(2)})`
+      : 'unavailable (git status did not answer; contributes 0)';
 
     const categories: PermissionCategory[] = [];
     const categoryHits: string[] = [];
@@ -567,7 +579,7 @@ export class JevDecisionEngine implements DecisionEngine {
       `trust=${facts.workspace.trusted ? 'trusted' : 'untrusted'} (${untrusted.toFixed(2)})`,
       `denials=${facts.signals.permissionDenials} (${denials.toFixed(2)})`,
       `failures=${facts.signals.consecutiveFailures} (${failures.toFixed(2)})`,
-      `breadth=${facts.git.changedFiles} changed file(s) (${wide.toFixed(2)})`,
+      `breadth=${breadthSignal}`,
       `blast_radius=[${categoryHits.join(' ') || 'no permission vocabulary'}] (${blast.toFixed(2)})`,
       `margin over '${runnerUp?.level ?? 'none'}' (${margin.toFixed(2)})`,
     ];

@@ -454,7 +454,9 @@ export class UcadApp {
 
     const [git, context] = await Promise.all([
       // `git status` spawns a process; bound it so a hung repo cannot stall the
-      // turn boundary. A timeout is a missing fact, not a clean tree.
+      // turn boundary. A timeout is a missing fact, not a clean tree: the catch
+      // resolves to `undefined` and `DecisionFacts.git` stays unset, which the
+      // engines are required to read as "no signal", never as zeros.
       this.git
         .status(input.workspaceId, root ?? process.cwd(), AbortSignal.timeout(2_000))
         .then((s) => ({
@@ -467,7 +469,7 @@ export class UcadApp {
             workspaceId: input.workspaceId,
             reason: describeError(err),
           });
-          return { dirty: false, changedFiles: 0, branch: '' };
+          return undefined;
         }),
       this.latestContextFacts(input.sessionId),
     ]);
@@ -476,11 +478,7 @@ export class UcadApp {
       workspaceId: input.workspaceId,
       trusted: input.trusted,
       agents: this.catalogEntries(),
-      git: {
-        dirty: git.dirty,
-        changedFiles: git.changedFiles,
-        ...(git.branch.length > 0 ? { branch: git.branch } : {}),
-      },
+      ...(git !== undefined ? { git } : {}),
       ...context,
       turnIndex: this.sessionStore.listTurns(input.sessionId).length,
     });

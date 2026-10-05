@@ -367,3 +367,37 @@ describe('D-2: the engine chain must fall back, and must leave a trace', () => {
     expect(DECISION_HARD_TIMEOUT_MS).toBeLessThanOrEqual(2000);
   });
 });
+
+describe('absent git facts are a missing signal, not a clean tree', () => {
+  /**
+   * The assembler used to fill `{ dirty: false, changedFiles: 0 }` when
+   * `git status` failed, and both engines scored that fiction: a risk decision
+   * built on "clean tree" from a hung repo understates blast radius, and a
+   * rationale naming zero changes names a fact the user can disprove.
+   */
+  it('buildDecisionFacts leaves git unset when it was not measured', async () => {
+    const { buildDecisionFacts } = await import('@ucad/decision');
+    const built = buildDecisionFacts({
+      workspace: { id: 'ws_1', trusted: true, languageHints: [] },
+      availableAgents: [],
+    });
+    expect(built.git).toBeUndefined();
+  });
+
+  it('the rule engine reports the absence instead of "no changed files"', async () => {
+    const rule = new RuleDecisionEngine();
+    const result = await rule.decide(request('risk', { git: undefined }));
+    expect(result.rationale).toContain('git facts unavailable');
+    expect(result.rationale).not.toContain('no changed files');
+    expect(result.rationale).not.toContain('worktree is dirty');
+  });
+
+  it('the jev engine scores no breadth and says so', async () => {
+    const { JevDecisionEngine } = await import('@ucad/decision');
+    const jev = new JevDecisionEngine({ minConfidence: 0 });
+    const result = await jev.decide(request('risk', { git: undefined }));
+    expect(result.rationale).toContain('unavailable');
+    // And it did not manufacture a measured value.
+    expect(result.rationale).not.toContain('0 changed file(s)');
+  });
+});

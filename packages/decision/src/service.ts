@@ -144,11 +144,20 @@ export function buildDecisionFacts(input: DecisionFactsInput): DecisionFacts {
       providerId: model.providerId,
       ...(typeof model.contextWindowTokens === 'number' ? { contextWindowTokens: model.contextWindowTokens } : {}),
     })),
-    git: {
-      dirty: input.git?.dirty === true,
-      changedFiles: nonNegativeInt(input.git?.changedFiles, 0),
-      ...(typeof input.git?.branch === 'string' && input.git.branch.length > 0 ? { branch: input.git.branch } : {}),
-    },
+    // Git facts stay absent when they were not measured. Filling in
+    // `{ dirty: false, changedFiles: 0 }` here manufactured a clean tree out of
+    // a failed `git status`, and the engines would have scored it as one.
+    ...(input.git !== undefined
+      ? {
+          git: {
+            dirty: input.git.dirty === true,
+            changedFiles: nonNegativeInt(input.git.changedFiles, 0),
+            ...(typeof input.git.branch === 'string' && input.git.branch.length > 0
+              ? { branch: input.git.branch }
+              : {}),
+          },
+        }
+      : {}),
     context: {
       ...(typeof input.context?.packId === 'string' && input.context.packId.length > 0
         ? { packId: input.context.packId }

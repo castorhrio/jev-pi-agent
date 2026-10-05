@@ -67,7 +67,14 @@ export interface DecisionFacts {
     providerId: string;
     contextWindowTokens?: number;
   }>;
-  git: { dirty: boolean; changedFiles: number; branch?: string };
+  /**
+   * Git facts, when they could be measured. Absent means "git status did not
+   * answer" — a hung repo, a non-workspace — and engines must treat it as a
+   * missing signal, never as zeros: a risk decision asked to believe
+   * "clean tree, 0 changes" on the strength of a failed `git status` is a
+   * confident answer from a lie.
+   */
+  git?: { dirty: boolean; changedFiles: number; branch?: string };
   context: {
     packId?: string;
     itemCount: number;

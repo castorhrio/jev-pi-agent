@@ -293,14 +293,23 @@ export class RuleDecisionEngine implements DecisionEngine {
       confidence += 0.1;
     }
 
-    const changedFiles = facts.git.changedFiles;
-    const broad = changedFiles >= this.thresholds.broadDiffFiles;
-    if (broad) signals.push(`diff is broad: ${changedFiles} changed files (>= ${this.thresholds.broadDiffFiles})`);
-    else if (changedFiles > 0) signals.push(`diff is narrow: ${changedFiles} changed file(s)`);
-    else signals.push('no changed files in the worktree');
-    if (facts.git.dirty && changedFiles > 0) signals.push('worktree is dirty (uncommitted work in progress)');
-    if (broad) confidence += 0.1;
-    evidence.push({ ref: 'facts.git.changedFiles', weight: broad ? 0.7 : 0.3 });
+    // Git facts are optional on purpose: absent means `git status` did not
+    // answer, and a risk decision that reads that as "clean tree, 0 changes"
+    // is a confident answer from a lie. Absent facts contribute nothing and
+    // say so.
+    if (facts.git === undefined) {
+      signals.push('git facts unavailable (git status did not answer)');
+      evidence.push({ ref: 'facts.git', weight: 0 });
+    } else {
+      const changedFiles = facts.git.changedFiles;
+      const broad = changedFiles >= this.thresholds.broadDiffFiles;
+      if (broad) signals.push(`diff is broad: ${changedFiles} changed files (>= ${this.thresholds.broadDiffFiles})`);
+      else if (changedFiles > 0) signals.push(`diff is narrow: ${changedFiles} changed file(s)`);
+      else signals.push('no changed files in the worktree');
+      if (facts.git.dirty && changedFiles > 0) signals.push('worktree is dirty (uncommitted work in progress)');
+      if (broad) confidence += 0.1;
+      evidence.push({ ref: 'facts.git.changedFiles', weight: broad ? 0.7 : 0.3 });
+    }
 
     const languageHints = facts.workspace.languageHints.filter((h) => h.trim().length > 0);
     if (languageHints.length > 0) {
@@ -338,11 +347,17 @@ export class RuleDecisionEngine implements DecisionEngine {
 
     const failing = facts.signals.consecutiveFailures;
     let modelId: string | undefined;
+    // Breadth gates model pinning; with git facts unavailable there is nothing
+    // measured to pin against, so the pin is skipped and the reason says why.
+    const gitMeasured = facts.git !== undefined;
+    const broad = gitMeasured && facts.git!.changedFiles >= this.thresholds.broadDiffFiles;
     if (failing > 0) {
       signals.push(`${failing} consecutive failure(s): no model pinning, staying on the stable runtime`);
       confidence -= 0.2;
     } else if (!chosen.capabilities.modelSelection) {
       signals.push(`agent '${chosen.id}' has modelSelection=false, so no model is pinned`);
+    } else if (!gitMeasured) {
+      signals.push('git facts unavailable, so there is no measured diff to justify pinning a model');
     } else if (!broad) {
       signals.push('diff is not broad enough to justify pinning a model');
     } else if (facts.availableModels.length === 0) {
@@ -422,16 +437,27 @@ export class RuleDecisionEngine implements DecisionEngine {
       score += 1;
     }
 
-    const changedFiles = facts.git.changedFiles;
-    if (changedFiles >= this.thresholds.highDiffFiles) {
-      signals.push(`${changedFiles} changed files (>= ${this.thresholds.highDiffFiles})`);
-      score += 2;
-    } else if (changedFiles >= this.thresholds.mediumDiffFiles) {
-      signals.push(`${changedFiles} changed files (>= ${this.thresholds.mediumDiffFiles})`);
-      score += 1;
+    let changedFiles = 0;
+    let gitMeasured = false;
+    if (facts.git === undefined) {
+      // Absent git facts score nothing: "status did not answer" is not
+      // evidence of a clean tree, and a risk score built on that lie would
+      // understate blast radius.
+      signals.push('git facts unavailable (git status did not answer)');
+      evidence.push({ ref: 'facts.git', weight: 0 });
+    } else {
+      gitMeasured = true;
+      changedFiles = facts.git.changedFiles;
+      if (changedFiles >= this.thresholds.highDiffFiles) {
+        signals.push(`${changedFiles} changed files (>= ${this.thresholds.highDiffFiles})`);
+        score += 2;
+      } else if (changedFiles >= this.thresholds.mediumDiffFiles) {
+        signals.push(`${changedFiles} changed files (>= ${this.thresholds.mediumDiffFiles})`);
+        score += 1;
+      }
+      if (facts.git.dirty) signals.push('worktree is dirty');
+      evidence.push({ ref: 'facts.git.changedFiles', weight: changedFiles > 0 ? 0.5 : 0.1 });
     }
-    if (facts.git.dirty) signals.push('worktree is dirty');
-    evidence.push({ ref: 'facts.git.changedFiles', weight: changedFiles > 0 ? 0.5 : 0.1 });
 
     const categories: PermissionCategory[] = [];
     for (const { category, keywords } of CATEGORY_KEYWORDS) {
@@ -444,7 +470,10 @@ export class RuleDecisionEngine implements DecisionEngine {
 
     const risk = score >= 3 ? 'high' : score >= 1 ? 'medium' : 'low';
     const confidence = clamp01(
-      0.55 + (facts.workspace.trusted ? 0 : 0.1) + (denials > 0 ? 0.05 : 0) + (changedFiles > 0 ? 0.05 : 0),
+      0.55 +
+        (facts.workspace.trusted ? 0 : 0.1) +
+        (denials > 0 ? 0.05 : 0) +
+        (gitMeasured && changedFiles > 0 ? 0.05 : 0),
     );
     const rationale =
       `risk=${risk} (score ${score}: ${signals.join('; ')}). ` +
