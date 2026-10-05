@@ -182,14 +182,26 @@ async function createWindow(): Promise<BrowserWindow> {
     if (/^https?:\/\//i.test(url)) void shell.openExternal(url);
     return { action: 'deny' };
   });
+
+  const devUrl = 'http://localhost:5273';
+  const devServer = isDev && process.env.UCAD_DEV_SERVER === '1';
+  // Navigation stays on the app's own page. Allowing any file:// URL let a
+  // stray link (a path rendered in chat, a workspace HTML file) point the
+  // window at an arbitrary local page — one that loads with UCAD's preload and
+  // receives the whole bridge: files.write, terminal, secrets.set. The window
+  // shows exactly one document; everything else is refused. The own URL is
+  // read at event time from the webContents itself, so the check matches
+  // whatever this window actually loaded (file in production, dev server in
+  // dev) rather than a string this file guesses at; before the first load
+  // completes it is empty and everything is refused — fail closed.
   win.webContents.on('will-navigate', (event, url) => {
-    if (!url.startsWith('file://') && !url.startsWith('http://localhost:5273')) {
+    const own = devServer ? devUrl : win.webContents.getURL();
+    if (!own || !url.startsWith(own)) {
       event.preventDefault();
     }
   });
 
-  const devUrl = 'http://localhost:5273';
-  if (isDev && process.env.UCAD_DEV_SERVER === '1') {
+  if (devServer) {
     await win.loadURL(devUrl);
   } else {
     await win.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'));

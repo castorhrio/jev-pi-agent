@@ -220,9 +220,28 @@ export class UpdateService {
       return this.set({ state: 'error', message: '下载地址必须使用 https' });
     }
 
+    // The feed never names the file. An earlier build joined the feed's
+    // `version` and the URL's extension into the staged path; a version like
+    // `1.0.0/../../..` compares as 1.0.0 (the parser stops at the first
+    // non-digit) while path normalization turns the dots into an arbitrary
+    // write target. Staging is single-slot — one pending update at a time — so
+    // the name is a constant and no feed-controlled string ever becomes a path
+    // component. The version stays a display fact, and still has to be sane
+    // for the comparison above to have meant anything.
+    if (!isSafeVersion(info.version)) {
+      return this.set({ state: 'error', message: '更新源返回的版本号无效' });
+    }
+
     this.set({ state: 'downloading', progress: 0, message: undefined });
 
-    const target = path.join(this.opts.downloadDir, `UCAD-${info.version}${path.extname(url.pathname) || '.exe'}`);
+    // Containment by construction, then verified anyway so the guarantee is
+    // visible at the write site: the staging root is resolved on its own, the
+    // file name is a constant, and the result must still sit under the root.
+    const stageRoot = path.resolve(this.opts.downloadDir);
+    const target = `${stageRoot}${path.sep}${STAGED_INSTALLER_NAME}`;
+    if (path.basename(target) !== STAGED_INSTALLER_NAME || !target.startsWith(stageRoot + path.sep)) {
+      return this.set({ state: 'error', message: '下载路径无效' });
+    }
     try {
       fs.mkdirSync(this.opts.downloadDir, { recursive: true });
       await downloadTo(url, target, (received, total) => {
@@ -256,8 +275,17 @@ export class UpdateService {
       return;
     }
     this.opts.logger.info('installing update', { target });
-    app.quit();
-    void shell.openPath(target);
+    // Launching must happen before quit, and a failed launch must be visible:
+    // after quit() the process is going away, so an unchecked openPath would
+    // end the app with the user never seeing an installer.
+    void shell.openPath(target).then((opened) => {
+      if (opened) {
+        this.opts.logger.error('update installer failed to launch', { target, reason: opened });
+        this.set({ state: 'error', message: opened });
+      } else {
+        app.quit();
+      }
+    });
   }
 
   /** Used by the Settings screen when the user would rather do it themselves. */
@@ -277,10 +305,14 @@ async function downloadTo(
     const request = client.get(url, { timeout: DOWNLOAD_TIMEOUT_MS }, (response) => {
       if (response.statusCode && response.statusCode >= 300 && response.headers.location) {
         response.resume();
-        void downloadTo(new URL(response.headers.location, url), target, onProgress).then(
-          resolve,
-          reject,
-        );
+        const next = new URL(response.headers.location, url);
+        // Same rule as the feed itself: the bytes being downloaded are the RCE
+        // surface, so no hop may downgrade to cleartext.
+        if (next.protocol !== 'https:') {
+          reject(new Error('下载重定向必须使用 https'));
+          return;
+        }
+        void downloadTo(next, target, onProgress).then(resolve, reject);
         return;
       }
       if (response.statusCode !== 200) {
@@ -317,3 +349,18 @@ function compareVersions(a: string, b: string): number {
   }
   return 0;
 }
+
+/**
+ * A version the feed may compare and display. The comparison above stops at
+ * the first non-digit, so `1.0.0/../../..` parses as 1.0.0; such a string says
+ * the feed is broken or hostile, and it is refused before anything downloads.
+ */
+export function isSafeVersion(version: string): boolean {
+  return /^[0-9A-Za-z.-]+$/.test(version) && !version.includes('..');
+}
+
+/**
+ * Single-slot staging: one pending update at a time, under a constant name no
+ * feed-controlled string can influence. A re-download replaces its own file.
+ */
+const STAGED_INSTALLER_NAME = 'UCAD-setup.exe';

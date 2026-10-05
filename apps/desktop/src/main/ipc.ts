@@ -14,6 +14,7 @@ import * as path from 'node:path';
 import { z } from 'zod';
 import { IPC_CHANNELS, appError, toAppError } from '@ucad/contracts';
 import type { UcadApp } from './app-container';
+import { requestHighRiskPermission } from './local-permission';
 import type { UpdateService } from './update-service';
 import { registerStorageIpc } from './ipc-storage';
 import { registerMcpIpc } from './ipc-mcp';
@@ -575,7 +576,7 @@ export function registerIpc(
       const list = z.array(z.string()).min(1).parse(paths);
       if (!session) throw new Error('没有活动会话');
       // discard destroys work, so it goes through the Permission Engine
-      const allowed = await requestHighRiskPermission(ucad, session.id, list);
+      const allowed = await requestHighRiskPermission(ucad, session.id, `discard: ${list.join(', ')}`, list);
       if (!allowed) throw new Error(appError('PERMISSION_DENIED', '已拒绝丢弃修改', 'ipc').message);
       ucad.git.discard(activeRoot(ucad), list);
     }),
@@ -587,7 +588,7 @@ export function registerIpc(
       const session = ucad.sessionStore.listSessions()[0];
       const msg = z.string().min(1).parse(message);
       if (!session) throw new Error('没有活动会话');
-      const allowed = await requestHighRiskPermission(ucad, session.id, [`commit:${msg}`]);
+      const allowed = await requestHighRiskPermission(ucad, session.id, `commit: ${msg}`, [`commit:${msg}`]);
       if (!allowed) throw new Error(appError('PERMISSION_DENIED', '已拒绝提交', 'ipc').message);
       return ucad.git.commit(activeRoot(ucad), msg);
     }),
@@ -628,11 +629,16 @@ export function registerIpc(
   );
 
   // ------------------------------------------------------------------- §11.2
-  // The interactive User Terminal. Deliberately separate from the channels
-  // above: those are the UCAD-managed agent shell, permission-gated per command
-  // (NFR-02), while this is the user's own shell and is not gated. The UI shows
-  // the three layers apart because conflating them is exactly the confusion
-  // §11.2 warns about.
+  // Both terminal transports above AND below are the user's own shell, and
+  // neither is permission-gated: the pipe channel and the PTY are what the
+  // terminal panel drives, and the panel says so in as many words ("这是你的
+  // 控制台，不是 Agent 的命令工具"). The agent's command path is a different
+  // plane entirely — the tool contract (`command.*` cards), which evaluates the
+  // PermissionEngine before anything spawns (NFR-02). An earlier version of
+  // this comment claimed the pipe channel was the gated agent shell, which was
+  // the one story that would make a renderer-driven ungated shell sound
+  // reviewed. The UI keeps the layers apart because conflating them is exactly
+  // the confusion §11.2 warns about.
   handle(IPC_CHANNELS.terminal.ptyStatus, ok(async () => ucad.ptyStatus()));
 
   handle(
@@ -1101,26 +1107,6 @@ async function safeListModels(
   } catch {
     return [];
   }
-}
-
-async function requestHighRiskPermission(
-  ucad: UcadApp,
-  sessionId: string,
-  resources: string[],
-): Promise<boolean> {
-  const session = ucad.sessionStore.getSession(sessionId);
-  if (!session) return false;
-  const request = {
-    id: `req_${Date.now()}`,
-    sessionId,
-    turnId: session.id,
-    agentId: session.agentId,
-    category: 'GIT_WRITE' as const,
-    risk: 'high' as const,
-    resource: resources.join(', '),
-    reason: '该操作会不可逆地修改工作区',
-  };
-  return ucad.runtime.requestPermission(request);
 }
 
 function renderMarkdownExport(ucad: UcadApp, sessionId: string): string {
