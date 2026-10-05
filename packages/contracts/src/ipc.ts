@@ -541,10 +541,6 @@ export interface UcadApi {
       opts: { expectedRevision?: string },
     ): Promise<FileWriteResult>;
     list(dir: string): Promise<FileEntry[]>;
-    watch(
-      path: string,
-      cb: (e: FileChangeNotice) => void,
-    ): Unsubscribe;
   };
 
   git: {
@@ -832,7 +828,6 @@ export const IPC_PUSH = {
   /** §11.2 — the PTY's output and its exit status, distinct from the pipe. */
   ptyData: 'push:ptyData',
   ptyExit: 'push:ptyExit',
-  fileChange: 'push:fileChange',
   appNotice: 'push:appNotice',
   updateStatus: 'push:updateStatus',
 } as const;

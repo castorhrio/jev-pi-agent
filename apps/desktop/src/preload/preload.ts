@@ -85,7 +85,6 @@ const api: UcadApi = {
     read: (p, opts) => invoke(IPC_CHANNELS.files.read, p, opts),
     write: (p, content, opts) => invoke(IPC_CHANNELS.files.write, p, content, opts),
     list: (dir) => invoke(IPC_CHANNELS.files.list, dir),
-    watch: (p, cb) => subscribe(`${IPC_PUSH.fileChange}:${p}`, cb),
   },
 
   git: {

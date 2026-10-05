@@ -321,6 +321,13 @@ export function registerIpc(
         })
         .parse(input);
 
+      // No adapter consumes attachments yet — they were forwarded into the
+      // host payload and dropped there, a silent no-op wearing a wire type.
+      // Until one ships, accepting them would be the product pretending.
+      if (parsed.attachments && parsed.attachments.length > 0) {
+        throw new Error('附件暂未实现：当前没有任何 Agent 会读取它们，已拒绝而不是静默丢弃');
+      }
+
       // `agentId` is not part of the wire DTO: the session already knows which
       // Agent it belongs to, and an explicit `override.agentId` (D-4) wins.
       const session = ucad.sessionStore.getSession(parsed.sessionId);

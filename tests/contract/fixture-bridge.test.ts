@@ -38,7 +38,6 @@ const CHANNEL_TO_METHOD: Record<string, string> = {
  */
 const SUBSCRIPTIONS: Record<string, string[]> = {
   sessions: ['onEvent'],
-  files: ['watch'],
   terminal: ['onData', 'onPtyData', 'onPtyExit'],
   intelligence: ['onEvent'],
   decision: ['onEvent'],

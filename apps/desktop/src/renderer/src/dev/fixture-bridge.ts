@@ -1086,7 +1086,6 @@ export function createFixtureApi(scenario: Scenario): FixtureHandle {
       read: () => delay({ content: 'export const hello = 1;\n', truncated: false, revision: 'r1' }),
       write: () => delay({ revision: 'r2' }),
       list: () => delay(files),
-      watch: () => () => undefined,
     },
 
     git: {
