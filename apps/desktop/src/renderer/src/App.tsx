@@ -560,12 +560,18 @@ function Shell(): JSX.Element {
 
         {toast && <span className="toast">{toast}</span>}
 
+        {/*
+          This pill opens the file surface — it is labeled with that surface's
+          name, not "search": there is no search box behind it, and a control
+          that names a behavior it does not have is the kind of quiet lie this
+          product exists to stop. Ctrl+K lands in the same place.
+        */}
         <button
           className="search-fake"
           onClick={() => setSurface('explorer')}
-          title={`${t('help.sc.search')}  (Ctrl+K)`}
+          title={`${t('tab.explorer')} (Ctrl+K)`}
         >
-          <span className="faint">{t('help.sc.search')}</span>
+          <span className="faint">{t('tab.explorer')}</span>
           <span className="spacer" />
           <kbd>⌘K</kbd>
         </button>

@@ -702,7 +702,7 @@ const zhCN: Dictionary = {
   'help.sc.openProject': '打开项目',
   'help.sc.settings': '设置',
   'help.sc.update': '检查更新',
-  'help.sc.search': '聚焦搜索',
+  'help.sc.composer': '聚焦输入框',
   'help.whatIsContext': '上下文是什么',
   'help.whatIsContextBody':
     '每次发送任务时，UCAD 会先在 Token 预算内检索出相关的文件、符号、Git 变更和项目概览，打包成一个 Context Pack，再确定性地渲染进 Agent 的输入。你可以在"上下文"页看到它实际收到了什么，并用 renderedHash 校验内容没有被改写。',
@@ -1416,7 +1416,7 @@ const enUS: Dictionary = {
   'help.sc.openProject': 'Open project',
   'help.sc.settings': 'Settings',
   'help.sc.update': 'Check for updates',
-  'help.sc.search': 'Focus search',
+  'help.sc.composer': 'Focus composer',
   'help.whatIsContext': 'What is Context?',
   'help.whatIsContextBody':
     'When you send a task, UCAD first retrieves the relevant files, symbols, git changes and project overview within a token budget, packs them into a Context Pack, and renders that into the agent’s input deterministically. The Context tab shows exactly what the agent received, and renderedHash lets you verify it was not altered.',

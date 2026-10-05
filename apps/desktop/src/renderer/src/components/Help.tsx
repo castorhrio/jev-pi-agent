@@ -30,7 +30,7 @@ export function HelpPanel({
       { keys: 'Ctrl / ⌘ + N', label: t('session.new') },
       { keys: 'Ctrl / ⌘ + Enter', label: t('composer.send') },
       { keys: 'Esc', label: t('help.sc.stop') },
-      { keys: 'Ctrl / ⌘ + L', label: t('help.sc.search') },
+      { keys: 'Ctrl / ⌘ + L', label: t('help.sc.composer') },
       { keys: 'Ctrl / ⌘ + K', label: t('tab.explorer') },
       { keys: 'Ctrl / ⌘ + U', label: t('menu.help.checkUpdate') },
       { keys: 'F1', label: t('menu.help.quickStart') },
