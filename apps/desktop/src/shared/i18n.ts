@@ -259,6 +259,7 @@ const zhCN: Dictionary = {
   'terminal.new': '新建控制台',
   'terminal.kill': '结束',
   'terminal.empty': '还没有控制台。点击"新建控制台"，在当前项目目录里启动一个 shell。',
+  'terminal.noConsoles': 'node-pty 不可用，没有可创建或列出的终端。',
   'terminal.emptyCommand':
     '这里还没有命令输出。在下面的输入框里输入一条命令，它会在当前项目目录里运行。',
   'terminal.output': '输出',
@@ -970,6 +971,7 @@ const enUS: Dictionary = {
   'terminal.new': 'New console',
   'terminal.kill': 'Kill',
   'terminal.empty': 'No console yet. Click "New console" to start a shell in the project folder.',
+  'terminal.noConsoles': 'node-pty is unavailable, so there is nothing to create or list.',
   'terminal.emptyCommand':
     'No command output yet. Type a command below and it runs in the project folder.',
   'terminal.output': 'Output',

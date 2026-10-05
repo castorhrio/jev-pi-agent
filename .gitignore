@@ -13,3 +13,4 @@ coverage/
 .vitest/
 
 .run-logs/
+.shots/

@@ -252,7 +252,10 @@ export function TerminalPanel({ data }: { data: AppData }): JSX.Element {
           </div>
 
           {ids.length === 0 ? (
-            <div className="faint">{ptyReady ? t('terminal.empty') : t('terminal.noOutput')}</div>
+            // Each empty state names its own situation: without node-pty there
+            // is nothing to create or list, and the per-console "no output
+            // yet" line would be claiming a console that does not exist.
+            <div className="faint">{ptyReady ? t('terminal.empty') : t('terminal.noConsoles')}</div>
           ) : (
             ids.map((id) => {
               const session = sessions.get(id);
@@ -303,7 +306,14 @@ export function TerminalPanel({ data }: { data: AppData }): JSX.Element {
             </div>
 
             {active === null ? (
-              <div className="empty">{t('terminal.empty')}</div>
+              // The body matches the state: a list worth picking from says
+              // "select one"; an empty list says how to fill it; no node-pty
+              // says why there is nothing. "还没有控制台，点击新建控制台" here
+              // used to sit under a hidden button and contradict the card
+              // beside it.
+              <div className="empty">
+                {ptyReady ? (ids.length > 0 ? t('terminal.noSelection') : t('terminal.empty')) : t('terminal.noConsoles')}
+              </div>
             ) : (
               <>
                 {active.exit && (
