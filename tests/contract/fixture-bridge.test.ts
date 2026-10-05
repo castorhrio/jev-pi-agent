@@ -235,6 +235,18 @@ describe('browser fixture bridge', () => {
     ]);
   });
 
+  it('reports the schema version the migrations actually produce', async () => {
+    // The fixture cannot import @ucad/storage (it would drag the database into
+    // the renderer bundle), so the number is a literal — and a literal drifts:
+    // it still said 3 after migration 4 shipped. This parity check is what
+    // keeps the literal from rotting; bump the fixture whenever a migration
+    // lands and this goes red.
+    const { TARGET_SCHEMA_VERSION } = await import('@ucad/storage');
+    const api = await loadApi('default');
+    const diagnostics = (await api.diagnostics.info()) as { schemaVersion: number };
+    expect(diagnostics.schemaVersion).toBe(TARGET_SCHEMA_VERSION);
+  });
+
   it('implements every method the Renderer can call', async () => {
     const api = await loadApi('default');
 

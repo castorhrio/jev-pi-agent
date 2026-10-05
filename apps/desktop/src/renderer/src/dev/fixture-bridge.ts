@@ -221,7 +221,7 @@ const settings: SettingsSnapshot = {
 
 const diagnostics: DiagnosticsInfo = {
   version: '0.1.0',
-  schemaVersion: 3,
+  schemaVersion: 4,
   dbPath: 'C:/Users/dev/AppData/UCAD/ucad.db',
   logDir: 'C:/Users/dev/AppData/UCAD/logs',
   userDataDir: 'C:/Users/dev/AppData/UCAD',

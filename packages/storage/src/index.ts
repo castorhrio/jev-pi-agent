@@ -18,6 +18,8 @@ export type { RunResult, SqlDriver } from './driver';
 
 export { Database } from './database';
 export type { DatabaseOptions, DatabaseProtection, MigrationResult } from './database';
+export { TARGET_SCHEMA_VERSION, MIGRATIONS } from './migrations';
+export type { Migration } from './migrations';
 
 export { SessionSequencer } from './sequencer';
 export { MessageProjector } from './message-projector';
