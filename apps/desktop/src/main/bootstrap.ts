@@ -446,8 +446,25 @@ app.on('activate', () => {
   }
 });
 
-app.on('before-quit', async () => {
+/*
+ * Electron never awaits an async `before-quit` listener, so the teardown used
+ * to race process exit: `ucad.dispose()` kills the ConPTY helpers (the one
+ * thing that makes quitting work at all, per its own comment), waits out the
+ * agent hosts and closes the database — any of which could still be running
+ * when the loop tore down. The standard shape instead: prevent this quit, run
+ * the teardown to completion, then quit again with the guard down so the
+ * second attempt sails through.
+ */
+let teardownDone = false;
+app.on('before-quit', (event) => {
   appState.isQuitting = true;
-  await ucad?.dispose();
-  ucad?.secrets.flush();
+  if (teardownDone) return;
+  event.preventDefault();
+  void ucad
+    ?.dispose()
+    .catch(() => undefined)
+    .finally(() => {
+      teardownDone = true;
+      app.quit();
+    });
 });

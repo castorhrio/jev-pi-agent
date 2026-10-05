@@ -941,7 +941,22 @@ export function registerIpc(
 
   handle(
     IPC_CHANNELS.settings.patch,
-    ok(async (patch: unknown) => ucad.sessionStore.patchSettings(patch as never)),
+    ok(async (patch: unknown) => {
+      const parsed = z.record(z.string(), z.unknown()).parse(patch);
+      /*
+       * `settings.mcp.servers` is the health overlay the MCP surface writes
+       * through its own `persist()` — Main-side, after `mcp:upsert` has run the
+       * strict schema. Letting the renderer patch it here would be a second
+       * write path into MCP display data that skips that schema: a crafted
+       * patch could fake toolCount / lastError for real servers. §7.2 says
+       * every input is validated before it reaches a service, so this channel
+       * declines to carry it at all.
+       */
+      if ('mcp' in parsed) {
+        throw new Error('MCP 服务器设置归 MCP 界面所有：请走 mcp.upsert / setEnabled / setExposure');
+      }
+      return ucad.sessionStore.patchSettings(parsed as never);
+    }),
   );
 
   // -------------------------------------------------------------- diagnostics
