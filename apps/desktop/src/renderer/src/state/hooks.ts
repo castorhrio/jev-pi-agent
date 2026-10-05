@@ -15,7 +15,6 @@ import type {
   CodeIntelligenceManifest,
   IntelligenceStatus,
   ToolDescriptorDto,
-  McpServerDto,
   DiagnosticsInfo,
 } from '@ucad/contracts';
 import { getApi } from '../api';
@@ -48,7 +47,6 @@ export interface AppData {
   providers: CodeIntelligenceManifest[];
   providerStatus: IntelligenceStatus | null;
   tools: ToolDescriptorDto[];
-  mcpServers: McpServerDto[];
   usage: UsageSummaryDto | null;
   diagnostics: DiagnosticsInfo | null;
   /** re-queries every persisted entity; call after a mutation */
@@ -97,7 +95,6 @@ const EMPTY: AppData = {
   providers: [],
   providerStatus: null,
   tools: [],
-  mcpServers: [],
   usage: null,
   diagnostics: null,
   refresh: async () => undefined,
@@ -177,7 +174,6 @@ export function useAppData(activeSessionId: string | null): AppData {
         providers,
         providerStatus,
         tools,
-        mcpServers: settings?.mcp?.servers ?? [],
         usage,
         diagnostics,
         refresh: async () => undefined,
