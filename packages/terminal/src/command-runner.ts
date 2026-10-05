@@ -27,6 +27,7 @@ import type { ChildProcess } from 'node:child_process';
 import * as path from 'node:path';
 import { ulid } from '@ucad/observability';
 import type { Logger } from '@ucad/observability';
+import { containCwdToRoot } from './contain-cwd';
 import type {
   CommandCompletedPayload,
   CommandOutputPayload,
@@ -324,14 +325,9 @@ export class CommandRunner {
    * addressing or full-screen programs (see the file header).
    */
   async create(input: CreateConsoleInput): Promise<{ terminalId: string }> {
-    if (typeof input.cwd !== 'string' || input.cwd.length === 0) {
-      throw fail('UNKNOWN', '终端工作目录无效');
-    }
-    const root = this.resolveCwd(input.workspaceRoot);
-    const cwd = this.resolveCwd(path.resolve(root, input.cwd));
-    if (!isInside(root, cwd)) {
-      throw fail('PERMISSION_DENIED', '该目录不在当前工作区内', { path: cwd });
-    }
+    // Real-path containment: a junction inside the workspace must not walk the
+    // shell out of it (see contain-cwd.ts).
+    const cwd = containCwdToRoot(input.workspaceRoot, input.cwd);
 
     const terminalId = ulid('term_');
     const shell = this.shell ?? defaultShell();
@@ -434,11 +430,6 @@ function defaultShell(): string {
     return process.env.ComSpec ?? 'cmd.exe';
   }
   return process.env.SHELL ?? '/bin/sh';
-}
-
-function isInside(root: string, target: string): boolean {
-  const relative = path.relative(root, target);
-  return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
 }
 
 type QueueItem<T> = { kind: 'item'; value: T };

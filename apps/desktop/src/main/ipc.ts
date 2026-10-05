@@ -11,7 +11,7 @@
 
 import { BrowserWindow, dialog, ipcMain } from 'electron';
 import * as path from 'node:path';
-import { z } from 'zod';
+import { ZodError, z } from 'zod';
 import { IPC_CHANNELS, appError, toAppError } from '@ucad/contracts';
 import type { UcadApp } from './app-container';
 import { requestHighRiskPermission } from './local-permission';
@@ -41,6 +41,15 @@ const secretRefSchema = z.object({
 });
 
 function toUserError(error: unknown): Error {
+  // A ZodError's .message is a multi-line JSON dump of every issue — valid in
+  // a log, hostile in a toast, and it echoes the raw input. One line naming
+  // the first failing field is what §7.2 means by user-safe; the full issues
+  // stay in the log above.
+  if (error instanceof ZodError) {
+    const first = error.issues[0];
+    const where = first && first.path.length > 0 ? ` (${first.path.join('.')})` : '';
+    return new Error(`输入无效${where}${first ? `: ${first.message}` : ''}`);
+  }
   const appError = toAppError(error, 'ipc');
   return new Error(appError.message);
 }

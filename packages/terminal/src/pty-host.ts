@@ -32,10 +32,10 @@
  * not the agent acting on their behalf.
  */
 
-import * as path from 'node:path';
 import { ulid } from '@ucad/observability';
 import type { Logger } from '@ucad/observability';
 import { fail } from './errors';
+import { containCwdToRoot } from './contain-cwd';
 import { runTaskkill } from './process-tree';
 
 /** NFR-06: one pushed chunk never exceeds this; larger output is cut. */
@@ -243,11 +243,10 @@ export class PtyHost {
       throw fail('ADAPTER_NOT_AVAILABLE', status.reason ?? 'node-pty 不可用');
     }
 
-    const root = this.resolveCwd(input.workspaceRoot);
-    const cwd = this.resolveCwd(path.resolve(root, input.cwd));
-    if (!isInside(root, cwd)) {
-      throw fail('PERMISSION_DENIED', '该目录不在当前工作区内', { path: cwd });
-    }
+    // Real-path containment: a junction planted inside the workspace must not
+    // walk the shell out of it (see contain-cwd.ts). `containCwdToRoot`
+    // revalidates both path shapes, so this replaces the lexical check.
+    const cwd = containCwdToRoot(input.workspaceRoot, input.cwd);
 
     const cols = clamp(input.cols, MIN_COLS, MAX_COLS, 80);
     const rows = clamp(input.rows, MIN_ROWS, MAX_ROWS, 24);
@@ -453,13 +452,6 @@ export class PtyHost {
     return found;
   }
 
-  private resolveCwd(workspaceRoot: unknown): string {
-    if (typeof workspaceRoot !== 'string' || workspaceRoot.trim().length === 0) {
-      throw fail('UNKNOWN', '工作区路径无效');
-    }
-    return path.resolve(workspaceRoot);
-  }
-
   private shellCommand(): { file: string; args: string[] } {
     if (this.shell !== undefined && this.shell.length > 0) {
       return { file: this.shell, args: IS_WINDOWS ? ['/Q'] : [] };
@@ -505,9 +497,4 @@ function clamp(value: unknown, min: number, max: number, fallback: number): numb
     return fallback;
   }
   return Math.min(max, Math.max(min, Math.floor(numeric)));
-}
-
-function isInside(root: string, target: string): boolean {
-  const relative = path.relative(root, target);
-  return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
 }
