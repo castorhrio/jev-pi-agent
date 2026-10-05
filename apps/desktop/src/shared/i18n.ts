@@ -347,6 +347,7 @@ const zhCN: Dictionary = {
   'intel.unknownShape': '返回结构与已知形态不同，原样显示而不是猜测含义。',
 
   'composer.placeholder': '描述任务，例如：分析登录失败的原因并运行相关测试',
+  'composer.task': '任务描述',
   'composer.send': '发送',
   'composer.stop': '停止',
   // RESEARCH §1: switching vendors costs one click. `auto` is deliberately the
@@ -1058,6 +1059,7 @@ const enUS: Dictionary = {
 
   'composer.placeholder':
     'Describe your task, e.g. "find why login fails and run the related tests"',
+  'composer.task': 'Task description',
   'composer.send': 'Send',
   'composer.stop': 'Stop',
   'composer.provider': 'Provider',

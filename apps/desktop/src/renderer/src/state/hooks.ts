@@ -19,7 +19,7 @@ import type {
   DiagnosticsInfo,
 } from '@ucad/contracts';
 import { getApi } from '../api';
-import { emptySessionView, reduceEvent, type SessionViewState } from './session-reducer';
+import { emptySessionView, mergeDeltaText, reduceEvent, type SessionViewState } from './session-reducer';
 
 /**
  * The reads in `refresh` that are guarded individually, named after the field
@@ -269,7 +269,21 @@ export function useSessionEvents(sessionId: string | null): SessionEvents {
   const [gaps, setGaps] = useState<Array<{ afterSeq: number; count: number }>>([]);
   const [replaying, setReplaying] = useState(false);
   const unsubscribeRef = useRef<(() => void) | null>(null);
-  const pending = useRef<{ messageId: string; text: string } | null>(null);
+  /**
+   * The highest seq folded from the LIVE stream, kept outside React state so
+   * gap detection can run synchronously in the event callback.
+   *
+   * It used to run inside a `setState` updater. An updater must be pure, but
+   * this one called `setGaps` as a side effect — and React double-invokes
+   * updaters in development, so every real gap was reported twice. Worse, the
+   * natural "fix" of reading `state.lastSeq` in the callback would trail a
+   * batch of queued updates, so the ref is the authority and the updaters stay
+   * pure.
+   */
+  const liveSeqRef = useRef(0);
+  /** The session the current view belongs to, so a switch resets the fold. */
+  const viewSessionRef = useRef<string | null>(null);
+  const pending = useRef<{ messageId: string; text: string; turnId: string; ts: string } | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
@@ -277,10 +291,24 @@ export function useSessionEvents(sessionId: string | null): SessionEvents {
       setState(emptySessionView(''));
       setError(null);
       setReplaying(false);
+      setGaps([]);
+      liveSeqRef.current = 0;
+      viewSessionRef.current = null;
       return;
     }
     const api = getApi();
     let cancelled = false;
+
+    // The replay folds its snapshot into the live view instead of replacing
+    // it, so a session switch must start from a clean view — folding session
+    // B's events into session A's view would merge two conversations. The seq
+    // guard cannot tell those apart: both streams just count from one.
+    if (viewSessionRef.current !== sessionId) {
+      viewSessionRef.current = sessionId;
+      liveSeqRef.current = 0;
+      setGaps([]);
+      setState(emptySessionView(sessionId));
+    }
 
     const flushPending = () => {
       if (timer.current) {
@@ -290,57 +318,59 @@ export function useSessionEvents(sessionId: string | null): SessionEvents {
       const buf = pending.current;
       pending.current = null;
       if (!buf) return;
-      setState((prev) =>
-        reduceEvent(prev, {
-          eventId: 'pending',
-          seq: prev.lastSeq + 1,
-          sessionId: prev.sessionId,
-          turnId: prev.sessionId,
-          ts: new Date().toISOString(),
-          type: 'text.delta',
-          source: { kind: 'ucad' },
-          payload: { text: buf.text, messageId: buf.messageId },
-        } as unknown as TurnEvent),
-      );
+      setState((prev) => ({
+        ...prev,
+        // The buffer's deltas each advanced seq accounting when they arrived;
+        // the commit merges their text and must not advance it again. A commit
+        // that minted `lastSeq + 1` collided with the seq of the next real
+        // event, which the reducer then dropped as already-folded — the
+        // observable form was a turn whose `turn.completed` vanished, leaving
+        // the composer stuck on Stop forever.
+        messages: mergeDeltaText(prev, buf),
+      }));
     };
 
     const start = async () => {
-      // `since(0)` is the authoritative full backfill, so `latestSeq` is only
-      // needed to detect a stream that moved while we were replaying.
-      const latest = await api.events.latestSeq(sessionId);
-      const backfill = await api.events.since({ sessionId, afterSeq: 0 });
-
-      if (cancelled) return;
-
-      let acc = emptySessionView(sessionId);
-      for (const event of backfill) {
-        acc = reduceEvent(acc, event);
-      }
-      setState(acc);
-      setError(null);
-
-      // If the store's head moved past what we replayed, events landed in the
-      // window between the two reads. Say so (NFR-03 / V-3) rather than
-      // presenting a silently truncated history as complete.
-      if (latest > acc.lastSeq) {
-        setGaps([{ afterSeq: acc.lastSeq, count: latest - acc.lastSeq }]);
-      } else {
-        setGaps([]);
-      }
-
-      unsubscribeRef.current?.();
-      unsubscribeRef.current = api.sessions.onEvent((event: TurnEvent) => {
+      /*
+       * Subscribe BEFORE reading the store.
+       *
+       * The replay used to run first and the subscription was attached last,
+       * which left a window: an event emitted while `latestSeq`/`since` were in
+       * flight was in neither the snapshot nor the stream, and the turn it
+       * belonged to never reached the transcript. Sending during that window is
+       * not exotic — it is what happens when a send lands while the session
+       * view is still attaching. Subscribing first closes it: everything after
+       * the subscribe is delivered live, everything before is in the snapshot,
+       * and an event in both is deduplicated by the reducer's seq guard.
+       *
+       * The reducer fold is idempotent, so overlap replays as a no-op. What
+       * must NOT happen during replay is gap *detection*: a live event that the
+       * snapshot also contains can arrive before the snapshot is folded, and
+       * the ref has not seen the intervening seqs yet. `settled` gates it.
+       */
+      let settled = false;
+      const handleEvent = (event: TurnEvent) => {
         if (event.sessionId !== sessionId) return;
 
-        const streaming = event.type === 'text.delta';
-        if (streaming) {
+        const folded = liveSeqRef.current;
+        if (settled && event.seq > folded + 1 && folded > 0) {
+          setGaps((g) => [...g, { afterSeq: folded, count: event.seq - folded - 1 }]);
+        }
+        liveSeqRef.current = Math.max(folded, event.seq);
+
+        if (event.type === 'text.delta') {
           const payload = event.payload as { text: string; messageId: string };
           // Coalesce only into the same message; a new messageId commits now.
           if (pending.current?.messageId === payload.messageId) {
             pending.current.text += payload.text;
           } else {
             flushPending();
-            pending.current = { messageId: payload.messageId, text: payload.text };
+            pending.current = {
+              messageId: payload.messageId,
+              text: payload.text,
+              turnId: event.turnId,
+              ts: event.ts,
+            };
           }
           // lastSeq still advances per delta so gap detection stays honest.
           setState((prev) => (event.seq > prev.lastSeq ? { ...prev, lastSeq: event.seq } : prev));
@@ -350,14 +380,48 @@ export function useSessionEvents(sessionId: string | null): SessionEvents {
           return;
         }
 
+        // Flush before folding so the durable event is reduced against a
+        // transcript that already contains the buffered text, and so its own
+        // seq guard sees the true head of the stream.
         flushPending();
-        setState((prev) => {
-          if (event.seq > prev.lastSeq + 1 && prev.lastSeq > 0) {
-            setGaps((g) => [...g, { afterSeq: prev.lastSeq, count: 1 }]);
-          }
-          return reduceEvent(prev, event);
-        });
+        setState((prev) => reduceEvent(prev, event));
+      };
+      unsubscribeRef.current?.();
+      unsubscribeRef.current = api.sessions.onEvent(handleEvent);
+
+      // `since(0)` is the authoritative full backfill, so `latestSeq` is only
+      // needed to detect a stream that moved before we attached.
+      const latest = await api.events.latestSeq(sessionId);
+      const backfill = await api.events.since({ sessionId, afterSeq: 0 });
+
+      if (cancelled) return;
+
+      // Fold the snapshot INTO the current view rather than replacing it:
+      // events that arrived live while the reads were in flight are already in
+      // `prev`, and replacing it here would silently discard them. Overlap is
+      // dropped by the seq guard.
+      setState((prev) => {
+        let next = prev;
+        for (const event of backfill) next = reduceEvent(next, event);
+        return next;
       });
+      setError(null);
+
+      // If the store's head still moves past what we replayed, events landed
+      // in the window between the snapshot and the subscribe (a backend that
+      // snapshots before we attached). Say so (NFR-03 / V-3) rather than
+      // presenting a silently truncated history as complete. The ref skips to
+      // the store's head so a live event continuing from there is not counted
+      // against the same hole twice.
+      let acc = liveSeqRef.current;
+      for (const event of backfill) acc = Math.max(acc, event.seq);
+      liveSeqRef.current = Math.max(liveSeqRef.current, acc, latest);
+      if (latest > liveSeqRef.current) {
+        setGaps([{ afterSeq: liveSeqRef.current, count: latest - liveSeqRef.current }]);
+      } else {
+        setGaps([]);
+      }
+      settled = true;
 
       // Events that landed between the backfill and the subscription are a
       // real gap. Reporting it beats silently showing a truncated history.

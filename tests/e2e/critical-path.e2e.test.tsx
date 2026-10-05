@@ -61,6 +61,82 @@ describe('critical path', () => {
   });
 });
 
+describe('a sent turn completes — the live event path', () => {
+  /**
+   * The one path every earlier test skipped: a turn sent *now*, streamed live,
+   * and completed live.
+   *
+   * Every replayed fixture (seed events, the permission scenario) arrives
+   * through `events.since`, so the coalescing buffer in `useSessionEvents` was
+   * never under test. Its flush used to mint a synthetic seq (`lastSeq + 1`)
+   * that collided with the next real event's seq — the reducer dropped that
+   * event as already folded. With the fixture completing a turn in one burst,
+   * the dropped event was `turn.completed`: the transcript showed the full
+   * reply while the composer sat on Stop forever, and the user could not send
+   * anything again. The same collision would silently eat a live
+   * `permission.requested` or `tool.started` after a streaming burst.
+   */
+  it('streams the reply and returns the composer to Send', async () => {
+    const user = userEvent.setup();
+    mount();
+    await settle();
+
+    const composer = screen.getByRole('textbox', {
+      name: '任务描述',
+    }) as HTMLTextAreaElement;
+    await user.type(composer, '列出 README 的要点');
+
+    // The composer's own send button, scoped so the rail's other buttons
+    // cannot satisfy the lookup.
+    const composerForm = composer.closest('.composer') ?? composer.parentElement!;
+    const sendButton = within(composerForm as HTMLElement).getByRole('button', {
+      name: '发送',
+    });
+    await user.click(sendButton);
+
+    // The fixture echoes a fixed reply in chunks and completes the turn.
+    // The reply arriving proves the live stream folded; the next assertions
+    // prove the fold *finished*.
+    await waitFor(() =>
+      expect(screen.getAllByText(/fixture 回显的内容/).length).toBeGreaterThan(0),
+    );
+
+    // `turn.completed` must survive the coalescing buffer: the composer
+    // returns to Send (it flips to Stop the moment the turn starts). Before
+    // the fix this assertion timed out — status stayed RUNNING forever.
+    await waitFor(() =>
+      expect(
+        within(composerForm as HTMLElement).getByRole('button', { name: '发送' }),
+      ).toBeInTheDocument(),
+      { timeout: 5000 },
+    );
+  });
+
+  it('reports no gap the fixture did not fabricate', async () => {
+    const user = userEvent.setup();
+    mount();
+    await settle();
+
+    const composer = screen.getByRole('textbox', { name: '任务描述' });
+    await user.type(composer, '再发一轮');
+    await user.click(
+      within((composer.closest('.composer') ?? composer.parentElement!) as HTMLElement).getByRole(
+        'button',
+        { name: '发送' },
+      ),
+    );
+
+    await waitFor(() =>
+      expect(screen.getAllByText(/fixture 回显的内容/).length).toBeGreaterThan(0),
+    );
+
+    // The fixture must continue the session's real seq. It used to restart
+    // live turns at 101, which rendered the honesty banner on every turn —
+    // the renderer faithfully reporting a hole only the harness had made.
+    await waitFor(() => expect(screen.queryByText(/事件流有/)).toBeNull());
+  });
+});
+
 describe('failures are reported, not disguised as state', () => {
   it('says the session list could not be read instead of "no sessions"', async () => {
     mount('partial');

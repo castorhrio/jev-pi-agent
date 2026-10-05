@@ -196,19 +196,26 @@ export const Composer = forwardRef<
           </div>
         )}
 
-        <div className="composer-box" ref={boxRef}>
-          <textarea
-            ref={setRef}
-            value={props.value}
-            onChange={onChange}
-            onKeyDown={onKeyDown}
-            placeholder={
-              props.hasWorkspace ? t('composer.placeholder') : t('welcome.step1')
-            }
-            disabled={!props.hasWorkspace}
-            rows={2}
-            spellCheck={false}
-          />
+          <div className="composer-box" ref={boxRef}>
+            <textarea
+              ref={setRef}
+              value={props.value}
+              onChange={onChange}
+              onKeyDown={onKeyDown}
+              /*
+               * A placeholder is not an accessible name: browsers fall back to
+               * it when computing one, but the fallback is unreliable and
+               * disappears the moment text is typed. The label must not
+               * depend on it.
+               */
+              aria-label={t('composer.task')}
+              placeholder={
+                props.hasWorkspace ? t('composer.placeholder') : t('welcome.step1')
+              }
+              disabled={!props.hasWorkspace}
+              rows={2}
+              spellCheck={false}
+            />
 
           <div className="composer-bar">
             <select

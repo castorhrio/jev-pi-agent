@@ -106,6 +106,42 @@ export interface SessionViewState {
   unmodelledEventCount: number;
 }
 
+/**
+ * Merge one streaming delta into the transcript without touching `lastSeq`.
+ *
+ * `useSessionEvents` coalesces deltas in a buffer and folds them here when the
+ * buffer commits. The deltas' seqs were already accounted for when they
+ * arrived, so the commit must not advance seq accounting — a commit that
+ * invented a seq would collide with the next real event and get that event
+ * dropped by the `seq <= lastSeq` guard above.
+ *
+ * Shared with `reduceEvent`'s `text.delta` case so the merge rules — append to
+ * the streaming tail, otherwise open a new assistant message, cap the
+ * transcript — cannot drift between the direct path and the buffered one.
+ */
+export function mergeDeltaText(
+  state: SessionViewState,
+  delta: { messageId: string; text: string; turnId: string; ts: string },
+): ChatMessageView[] {
+  const last = state.messages[state.messages.length - 1];
+  if (last && last.id === delta.messageId && last.role === 'assistant') {
+    // Appending to the streaming tail. This replaces exactly one slot, so
+    // the caller (see `useSessionEvents`) is responsible for not re-copying
+    // the whole array once per delta — at 40 deltas/second that copy is the
+    // difference between a smooth transcript and a quadratic renderer.
+    const merged: ChatMessageView = { ...last, text: last.text + delta.text };
+    return [...state.messages.slice(0, -1), merged].slice(-MAX_MESSAGES);
+  }
+  const created: ChatMessageView = {
+    id: delta.messageId,
+    role: 'assistant',
+    text: delta.text,
+    ts: delta.ts,
+    turnId: delta.turnId,
+  };
+  return [...state.messages, created].slice(-MAX_MESSAGES);
+}
+
 export function emptySessionView(sessionId: string): SessionViewState {
   return {
     sessionId,
@@ -186,24 +222,12 @@ export function reduceEvent(state: SessionViewState, event: TurnEvent): SessionV
 
     case 'text.delta': {
       const payload = event.payload as { text: string; messageId: string };
-      const last = next.messages[next.messages.length - 1];
-      if (last && last.id === payload.messageId && last.role === 'assistant') {
-        // Appending to the streaming tail. This replaces exactly one slot, so
-        // the caller (see `useSessionEvents`) is responsible for not re-copying
-        // the whole array once per delta — at 40 deltas/second that copy is the
-        // difference between a smooth transcript and a quadratic renderer.
-        const merged: ChatMessageView = { ...last, text: last.text + payload.text };
-        next.messages = [...next.messages.slice(0, -1), merged].slice(-MAX_MESSAGES);
-      } else {
-        const created: ChatMessageView = {
-          id: payload.messageId,
-          role: 'assistant',
-          text: payload.text,
-          ts: event.ts,
-          turnId: event.turnId,
-        };
-        next.messages = [...next.messages, created].slice(-MAX_MESSAGES);
-      }
+      next.messages = mergeDeltaText(next, {
+        messageId: payload.messageId,
+        text: payload.text,
+        turnId: event.turnId,
+        ts: event.ts,
+      });
       return next;
     }
 

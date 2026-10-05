@@ -796,6 +796,27 @@ export function createFixtureApi(scenario: Scenario): FixtureHandle {
   const withPermission = scenario === 'permission';
   /** What `events.since` replays for this scenario. */
   const backfill = withPermission ? [...seedEvents, ...permissionEvents] : seedEvents;
+  /**
+   * The persisted event log, per session.
+   *
+   * The real store persists every event the moment it is emitted, and the
+   * renderer's recovery flow (NFR-03) relies on that: a session view that
+   * attaches *after* events flew by replays them with `since(0)`. A fixture
+   * that emitted live events into the void and kept `since` pinned to the seed
+   * therefore modeled a store that forgets — a turn sent before the renderer
+   * finished subscribing vanished without a trace in `dev:web` and in any test
+   * that hit the same window. Events are recorded here as they are emitted, so
+   * a replay sees exactly what a real store would have kept.
+   */
+  const eventLog = new Map<string, TurnEvent[]>([['sess-1', [...backfill]]]);
+  /** The next seq each session's stream will use. Gapless, per session. */
+  const nextSeq = new Map<string, number>([['sess-1', (backfill[backfill.length - 1]?.seq ?? 0) + 1]]);
+
+  const record = (event: TurnEvent) => {
+    const log = eventLog.get(event.sessionId);
+    if (log) log.push(event);
+    else eventLog.set(event.sessionId, [event]);
+  };
 
   const listeners = new Set<(e: TurnEvent) => void>();
   const menuListeners = new Set<(m: { command: string; payload?: unknown }) => void>();
@@ -894,6 +915,7 @@ export function createFixtureApi(scenario: Scenario): FixtureHandle {
   };
 
   const emit = (event: TurnEvent) => {
+    record(event);
     for (const listener of listeners) listener(event);
   };
 
@@ -983,9 +1005,9 @@ export function createFixtureApi(scenario: Scenario): FixtureHandle {
       },
       send: (input) => {
         const turnId = `turn-${Date.now()}`;
-        let seq = 100;
         const push = (type: string, payload: unknown, source: unknown) => {
-          seq += 1;
+          const seq = nextSeq.get(input.sessionId) ?? 1;
+          nextSeq.set(input.sessionId, seq + 1);
           emit({
             eventId: `e${seq}`,
             seq,
@@ -1021,9 +1043,17 @@ export function createFixtureApi(scenario: Scenario): FixtureHandle {
     },
 
     events: {
-      since: () => (failCore ? boom('events.since')() : delay(empty ? [] : backfill)),
-      latestSeq: () =>
-        failCore ? boom('events.latestSeq')() : delay(withPermission ? 5 : 4),
+      since: (input: { sessionId: string; afterSeq: number }) =>
+        failCore
+          ? boom('events.since')()
+          : delay(
+              empty ? [] : (eventLog.get(input.sessionId) ?? []).filter((e) => e.seq > input.afterSeq),
+            ),
+      latestSeq: (sessionId: string) => {
+        if (failCore) return boom('events.latestSeq')();
+        const log = eventLog.get(sessionId) ?? [];
+        return delay(log.length > 0 ? (log[log.length - 1]!.seq ?? 0) : 0);
+      },
     },
 
     agents: { list: () => delay(agents) },
