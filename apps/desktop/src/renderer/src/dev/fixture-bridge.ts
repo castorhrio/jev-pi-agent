@@ -95,6 +95,14 @@ const ISO = '2026-10-03T12:00:00.000Z';
 /** Monotonic id source for on-the-fly fixture results (decision previews). */
 let previewCounter = 0;
 
+/** A finished update check: no feed configured locally, version known. */
+const updateStatus = {
+  state: 'up-to-date' as const,
+  currentVersion: '0.1.0',
+  checkedAt: ISO,
+  feedConfigured: false,
+};
+
 const workspace: WorkspaceDto = {
   id: 'ws-1',
   path: 'C:/work/jev-pi-agent',
@@ -1612,10 +1620,17 @@ export function createFixtureApi(scenario: Scenario): FixtureHandle {
         liveSettings = { ...liveSettings, locale: next };
         return delay(next);
       },
-      updateStatus: () => delay({ state: 'idle' } as never),
-      checkUpdate: () => delay({ state: 'idle' } as never),
-      downloadUpdate: () => delay({ state: 'idle' } as never),
-      installUpdate: () => delay({ state: 'idle' } as never),
+      /*
+       * `idle` is the pre-check state and renders as *nothing* on the settings
+       * card, so a completed check that answered `idle` was a button with no
+       * visible outcome. A finished check answers `up-to-date` (with the
+       * current version), which the card renders as 已是最新版本.
+       */
+      updateStatus: () => delay(updateStatus),
+      checkUpdate: () => delay(updateStatus),
+      downloadUpdate: () => delay(updateStatus),
+      // The contract has this one answer boolean, not a status.
+      installUpdate: () => delay(true),
       onUpdateStatus: () => () => undefined,
     },
   };
