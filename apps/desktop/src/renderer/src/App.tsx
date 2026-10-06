@@ -178,6 +178,8 @@ function Shell(): JSX.Element {
   const [providerId, setProviderId] = useState<string>('');
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
   const composerRef = useRef<HTMLTextAreaElement>(null);
+  /** Ctrl+L pressed while the composer is not mounted (a non-chat surface). */
+  const pendingComposerFocus = useRef(false);
 
   const data = useAppData(sessionId);
 
@@ -499,7 +501,16 @@ function Shell(): JSX.Element {
       }
       if ((event.ctrlKey || event.metaKey) && event.key === 'l') {
         event.preventDefault();
-        composerRef.current?.focus();
+        if (composerRef.current) {
+          composerRef.current.focus();
+        } else {
+          // The composer only exists on the chat surface. The help page offers
+          // Ctrl+L without a surface qualifier, so from another surface the key
+          // returns to the conversation and focuses there — it must not be a
+          // silent no-op on ten of the eleven surfaces.
+          pendingComposerFocus.current = true;
+          setSurface('chat');
+        }
       }
       if ((event.ctrlKey || event.metaKey) && event.key === 'k') {
         event.preventDefault();
@@ -509,6 +520,15 @@ function Shell(): JSX.Element {
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [view.status, stop]);
+
+  // The deferred half of Ctrl+L: the composer mounts one render after the
+  // surface switches to chat, so the focus call waits for that mount.
+  useEffect(() => {
+    if (!pendingComposerFocus.current) return;
+    if (!composerRef.current) return;
+    pendingComposerFocus.current = false;
+    composerRef.current.focus();
+  }, [surface]);
 
   const running = view.status === 'RUNNING';
   const interrupted = view.status === 'INTERRUPTED';

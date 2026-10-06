@@ -215,7 +215,10 @@ const settings: SettingsSnapshot = {
     maxItemsPerPack: 24,
   },
   intelligence: { defaultProviderId: 'basic', allowAdvanced: false },
-  storage: { retentionDays: 30, encryptionEnabled: true },
+  // DEFAULT_RETENTION_DAYS is 90 (packages/session/src/defaults.ts); a fixture
+  // default of 30 made the storage page contradict its own "产品默认保留 90 天"
+  // copy on first paint.
+  storage: { retentionDays: 90, encryptionEnabled: true },
   mcp: { servers: [] },
 };
 
@@ -408,7 +411,7 @@ const storageUsage: StorageUsageDto = {
   events: 42,
   messages: 18,
   blobFiles: 3,
-  retentionDays: 30,
+  retentionDays: 90,
   expiredSessions: 0,
   encryptionEnabled: true,
 };

@@ -199,7 +199,7 @@ export function installApplicationMenu(deps: MenuDeps): void {
         {
           label: t('menu.help.about'),
           click: () => {
-            void shell.openExternal('https://github.com/ucad');
+            void shell.openExternal('https://github.com/castorhrio/jev-pi-agent');
           },
         },
         { type: 'separator' },
