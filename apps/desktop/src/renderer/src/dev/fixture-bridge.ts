@@ -422,41 +422,60 @@ const storageUsage: StorageUsageDto = {
  * feeds the happy path's *shape* is not testing the shape; returning a real
  * record is what makes the surface's own code actually run under test.
  */
-const contextPack = {
-  packId: 'pack-1',
+const contextPack: ContextPack = {
+  id: 'pack-1',
   revision: 1,
+  workspaceId: 'ws-1',
+  sessionId: 'sess-1',
+  turnId: 'turn-1',
+  strategy: 'hybrid',
+  strategyReason: 'no open files and no explicit file path in the objective',
   objective: '修复注入哈希不一致',
   items: [
     {
-      itemId: 'i1',
-      kind: 'file_slice',
-      ref: 'packages/context/src/broker.ts',
-      reason: 'renderContextPack lives here',
-      tokens: 1_820,
-      stale: false,
+      id: 'i1',
+      kind: 'file',
+      source: { providerId: 'filesystem', reference: 'packages/context/src/broker.ts' },
+      reason: 'renderContextPack 的实现所在',
+      freshness: { stale: false },
+      estimatedTokens: 1_820,
+      budgetShare: 0.74,
+      truncated: false,
+      payload: null,
     },
     {
-      itemId: 'i2',
-      kind: 'git_change',
-      ref: 'apps/desktop/src/renderer/src/App.tsx',
+      id: 'i2',
+      kind: 'git_diff',
+      source: { providerId: 'git', reference: 'apps/desktop/src/renderer/src/App.tsx' },
       reason: 'the surface that crashed on an empty plan',
-      tokens: 640,
-      stale: false,
+      freshness: { stale: false },
+      estimatedTokens: 640,
+      budgetShare: 0.26,
+      truncated: false,
+      payload: null,
     },
   ],
-  omitted: [
-    { itemId: 'i9', reason: 'budget', kind: 'file_slice' },
-  ],
-} as unknown as ContextPack;
+  omitted: [{ itemId: 'i9', why: 'budget' }],
+  budget: {
+    packId: 'pack-1',
+    revision: 1,
+    limitTokens: 8_000,
+    usedTokens: 2_460,
+    remainingTokens: 5_540,
+    estimateSource: 'heuristic_chars_div_4',
+    truncated: false,
+  },
+  createdAt: ISO,
+};
 
-const contextInjection = {
+const contextInjection: ContextInjectionPlan = {
   turnId: 'turn-1',
   packId: 'pack-1',
   packRevision: 1,
   profile: {
     agentId: 'universal',
     mode: 'prompt_prefix',
-    rendezvous: 'mcp_tool',
+    rendezvous: 'system_prompt',
     includeItemIds: true,
     includeFreshness: true,
     maxIndexEntries: 12,
@@ -466,12 +485,13 @@ const contextInjection = {
     '## Context\n\n- packages/context/src/broker.ts — renderContextPack lives here\n- apps/desktop/src/renderer/src/App.tsx — the surface that crashed\n',
   renderedHash: 'a3f19c7be2d8405f6c1a9e7d3b85f04c2a1d6e9b7f35c80d2a4e6b19f0c37',
   index: [
-    { itemId: 'i1', kind: 'file_slice', ref: 'packages/context/src/broker.ts', stale: false, tokens: 1_820 },
-    { itemId: 'i2', kind: 'git_change', ref: 'apps/desktop/src/renderer/src/App.tsx', stale: false, tokens: 640 },
+    { itemId: 'i1', kind: 'file', ref: 'packages/context/src/broker.ts', stale: false, tokens: 1_820 },
+    { itemId: 'i2', kind: 'git_diff', ref: 'apps/desktop/src/renderer/src/App.tsx', stale: false, tokens: 640 },
   ],
+  omitted: [{ itemId: 'i9', why: 'budget' }],
   estimateSource: 'heuristic_chars_div_4',
   estTokens: 2_460,
-} as unknown as ContextInjectionPlan;
+};
 
 const seedHandoff: ContextHandoff = {  schemaVersion: 2,
   objective: '修复注入哈希不一致',
@@ -492,6 +512,25 @@ const seedHandoff: ContextHandoff = {  schemaVersion: 2,
   producedBy: { sessionId: 'sess-1', turnId: 'turn-1', agentId: 'universal', at: ISO },
 };
 
+/**
+ * The E-4 payload for `pack-1`, shared by the seeded turn and the live-send
+ * simulation so the two paths cannot drift apart — a `context.pack.built` that
+ * disagreed between replay and live would make the preview column show data
+ * that depends on which path produced the turn.
+ */
+const packBuiltPayload = {
+  packId: 'pack-1',
+  revision: 1,
+  strategy: 'hybrid',
+  strategyReason: 'no open files and no explicit file path in the objective',
+  itemCount: 2,
+  omittedCount: 1,
+  estimatedTokens: 2_460,
+  estimateSource: 'heuristic_chars_div_4',
+  renderedHash: 'a3f19c7be2d8405f6c1a9e7d3b85f04c2a1d6e9b7f35c80d2a4e6b19f0c37',
+  injectionMode: 'prompt_prefix',
+};
+
 const seedEvents: TurnEvent[] = [
   {
     eventId: 'e1',
@@ -503,15 +542,21 @@ const seedEvents: TurnEvent[] = [
     source: { kind: 'ucad' },
     payload: { objective: '修复注入哈希不一致' },
   } as unknown as TurnEvent,
+  // A completed turn in production always carries E-4's own event and a usage
+  // record. Omitting them made the preview column's context tab — the surface
+  // this product exists to supervise — permanently show its empty state under
+  // the fixture, because the sidebar reads `view.context`, which only a
+  // `context.pack.built` event can populate (the main context page reads the
+  // pack back by turn id and so masked the gap).
   {
     eventId: 'e2',
     seq: 2,
     sessionId: 'sess-1',
     turnId: 'turn-1',
     ts: ISO,
-    type: 'text.delta',
-    source: { kind: 'agent', agentId: 'universal' },
-    payload: { messageId: 'm1', text: '已定位到 `renderContextPack` 的 profile 依赖了可变对象。' },
+    type: 'context.pack.built',
+    source: { kind: 'context' },
+    payload: packBuiltPayload,
   } as unknown as TurnEvent,
   {
     eventId: 'e3',
@@ -521,11 +566,43 @@ const seedEvents: TurnEvent[] = [
     ts: ISO,
     type: 'text.delta',
     source: { kind: 'agent', agentId: 'universal' },
-    payload: { messageId: 'm1', text: '改为纯函数后，同输入的 `renderedHash` 已稳定。' },
+    payload: { messageId: 'm1', text: '已定位到 `renderContextPack` 的 profile 依赖了可变对象。' },
   } as unknown as TurnEvent,
   {
     eventId: 'e4',
     seq: 4,
+    sessionId: 'sess-1',
+    turnId: 'turn-1',
+    ts: ISO,
+    type: 'text.delta',
+    source: { kind: 'agent', agentId: 'universal' },
+    payload: { messageId: 'm1', text: '改为纯函数后，同输入的 `renderedHash` 已稳定。' },
+  } as unknown as TurnEvent,
+  {
+    eventId: 'e5',
+    seq: 5,
+    sessionId: 'sess-1',
+    turnId: 'turn-1',
+    ts: ISO,
+    type: 'usage',
+    source: { kind: 'agent', agentId: 'universal' },
+    payload: {
+      record: {
+        sessionId: 'sess-1',
+        turnId: 'turn-1',
+        agentId: 'universal',
+        inputTokens: 2_460,
+        outputTokens: 96,
+        durationMs: 640,
+        // The fixture estimates, like a heuristic estimator would; the honest
+        // source label is what keeps the UI's "估算值" caveat exercised.
+        source: 'computed',
+      },
+    },
+  } as unknown as TurnEvent,
+  {
+    eventId: 'e6',
+    seq: 6,
     sessionId: 'sess-1',
     turnId: 'turn-1',
     ts: ISO,
@@ -546,7 +623,7 @@ const seedEvents: TurnEvent[] = [
 const permissionEvents: TurnEvent[] = [
   {
     eventId: 'p1',
-    seq: 5,
+    seq: 7,
     sessionId: 'sess-1',
     turnId: 'turn-2',
     ts: ISO,
@@ -1020,6 +1097,9 @@ export function createFixtureApi(scenario: Scenario): FixtureHandle {
           } as unknown as TurnEvent);
         };
         push('turn.started', { objective: input.objective }, { kind: 'ucad' });
+        // Production order (E-4): the pack is built before the agent speaks, so
+        // the preview column populates the same way it does over a real host.
+        push('context.pack.built', packBuiltPayload, { kind: 'context' });
         const text = '这是 fixture 回显的内容，用于验证流式渲染与状态。';
         // Chunked so the renderer's 60 ms coalescing path is actually exercised.
         for (const chunk of text.match(/.{1,6}/gu) ?? []) {
@@ -1029,6 +1109,17 @@ export function createFixtureApi(scenario: Scenario): FixtureHandle {
             { kind: 'agent', agentId: input.override?.agentId ?? 'universal' },
           );
         }
+        push('usage', {
+          record: {
+            sessionId: input.sessionId,
+            turnId,
+            agentId: input.override?.agentId ?? 'universal',
+            inputTokens: 2_460,
+            outputTokens: 96,
+            durationMs: 640,
+            source: 'computed',
+          },
+        }, { kind: 'agent', agentId: input.override?.agentId ?? 'universal' });
         push('turn.completed', { status: 'completed' }, { kind: 'ucad' });
         return delay({ turnId });
       },
@@ -1129,7 +1220,10 @@ export function createFixtureApi(scenario: Scenario): FixtureHandle {
       preview: () => delay(contextPack),
       getPack: () => delay(contextPack),
       extend: () => delay({} as never),
-      getInjection: () => delay(contextInjection),
+      // The real Main keys injections by turn (§4.6), so the record a caller
+      // reads back names the turn it asked about — not whichever turn the
+      // fixture was seeded with.
+      getInjection: (turnId: string) => delay({ ...contextInjection, turnId }),
     },
 
     decision: {

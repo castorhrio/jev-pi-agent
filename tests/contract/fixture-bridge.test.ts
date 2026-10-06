@@ -346,7 +346,11 @@ describe('browser fixture bridge', () => {
     const events = await api.events.since({ sessionId: 'sess-1', afterSeq: 0 });
     const requested = events.find((e) => e.type === 'permission.requested');
     expect(requested).toBeDefined();
-    expect(await api.events.latestSeq('sess-1')).toBe(5);
+    // Derived from the log rather than hand-copied: the request is the newest
+    // event and `latestSeq` agrees with the log it is read from. A magic 5 here
+    // rotted the moment a seeded event was added.
+    expect(requested?.seq).toBe(Math.max(...events.map((e) => e.seq)));
+    expect(await api.events.latestSeq('sess-1')).toBe(requested?.seq);
   });
 
   it('produces a readable markdown handoff, not an empty blob', async () => {
