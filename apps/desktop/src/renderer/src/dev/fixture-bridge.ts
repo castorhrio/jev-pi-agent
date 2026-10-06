@@ -403,18 +403,37 @@ const permissionRules: PermissionRule[] = [
   },
 ];
 
-const storageUsage: StorageUsageDto = {
-  dbBytes: 4_194_304,
-  blobBytes: 131_072,
-  sessions: 2,
-  turns: 5,
-  events: 42,
-  messages: 18,
-  blobFiles: 3,
-  retentionDays: 90,
-  expiredSessions: 0,
-  encryptionEnabled: true,
-};
+/**
+ * Record counts are derived from the event log at read time rather than
+ * hand-copied. A static `events: 42` sitting next to a log that holds seven
+ * events is the same fixture-lies-about-itself rot this bridge keeps getting
+ * caught for, and the log is the fact stream (§8.1) — its counts are what a
+ * real store would report.
+ */
+function storageUsageFor(log: Map<string, TurnEvent[]>, retentionDays: number | null): StorageUsageDto {
+  const events = [...log.values()].flat();
+  const turns = new Set(events.map((e) => `${e.sessionId}#${e.turnId}`)).size;
+  // The messages projection (§8.3): a turn's deltas collapse into one assistant
+  // message, and every turn.started carries one user message.
+  const deltaMessages = new Set(
+    events
+      .filter((e) => e.type === 'text.delta')
+      .map((e) => `${e.sessionId}#${e.turnId}#${(e.payload as { messageId?: string }).messageId}`),
+  ).size;
+  const userMessages = events.filter((e) => e.type === 'turn.started').length;
+  return {
+    dbBytes: 4_194_304,
+    blobBytes: 131_072,
+    sessions: log.size,
+    turns,
+    events: events.length,
+    messages: deltaMessages + userMessages,
+    blobFiles: 3,
+    retentionDays,
+    expiredSessions: 0,
+    encryptionEnabled: true,
+  };
+}
 
 /**
  * A realistic pack and injection plan.
@@ -1299,13 +1318,16 @@ export function createFixtureApi(scenario: Scenario): FixtureHandle {
     },
 
     storage: {
-      usage: () => delay(storageUsage),
+      // A session row exists from creation, with or without events, so the
+      // session count follows the session table while the fact-derived counts
+      // follow the log.
+      usage: () => delay({ ...storageUsageFor(eventLog, state.retentionDays), sessions: state.sessions.length }),
       setRetention: (days: number | null) => {
         state.retentionDays = days;
         liveSettings = { ...liveSettings, storage: { ...liveSettings.storage, retentionDays: days } };
         return delay(liveSettings);
       },
-      previewPurge: () => delay(storageUsage),
+      previewPurge: () => delay(storageUsageFor(eventLog, state.retentionDays)),
       purge: () =>
         delay({
           scope: 'expired',
