@@ -135,6 +135,46 @@ describe('a sent turn completes — the live event path', () => {
     // the renderer faithfully reporting a hole only the harness had made.
     await waitFor(() => expect(screen.queryByText(/事件流有/)).toBeNull());
   });
+
+  it('fills the preview column from the replayed stream and keeps it filled after a live turn', async () => {
+    // The preview column is the product's reason to exist: what the agent
+    // actually received, next to what it says. It reads `view.context`, which
+    // only a folded `context.pack.built` can populate — the main context page
+    // reads back by turn id, so it stays fed even when this chain is broken.
+    // This is the assertion that watches the whole chain: event → reducer →
+    // pane, on both paths the events arrive by.
+    const user = userEvent.setup();
+    mount();
+    await settle();
+
+    const preview = document.querySelector('.preview') as HTMLElement;
+    // Replayed history carries an E-4 event, so the pack is visible before any
+    // turn is sent — not behind the waiting copy. The item names arrive one
+    // fetch later (the pack is read back by its id), so both get a wait.
+    await waitFor(() => expect(within(preview).getByText('hybrid')).toBeTruthy());
+    await waitFor(() =>
+      expect(within(preview).getAllByText(/broker\.ts/).length).toBeGreaterThan(0),
+    );
+
+    const composer = screen.getByRole('textbox', {
+      name: '任务描述',
+    }) as HTMLTextAreaElement;
+    await user.type(composer, '这轮实际收到了什么');
+    await user.click(
+      within((composer.closest('.composer') ?? composer.parentElement!) as HTMLElement).getByRole(
+        'button',
+        { name: '发送' },
+      ),
+    );
+
+    // A live turn builds its own pack; the column must not fall back to the
+    // waiting state once it has shown one.
+    await waitFor(() =>
+      expect(screen.getAllByText(/fixture 回显的内容/).length).toBeGreaterThan(0),
+    );
+    expect(within(preview).getByText('hybrid')).toBeTruthy();
+    expect(within(preview).queryByText(/发送一轮指令后/)).toBeNull();
+  });
 });
 
 describe('failures are reported, not disguised as state', () => {
