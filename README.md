@@ -51,7 +51,8 @@ agent, or a model provider. It makes the two answers checkable.
 
 ### Quick start
 
-Requires Node.js 20.11 or newer.
+Requires Node.js 22.12 or newer (the Electron 44 packaging toolchain and the
+test suite both declare it as their floor).
 
 ```bash
 git clone https://github.com/castorhrio/jev-pi-agent.git
@@ -147,7 +148,7 @@ UCAD 就是为这两个问题做的控制面。它不试图当编辑器、当终
 
 ### 快速开始
 
-需要 Node.js 20.11 或更高版本。
+需要 Node.js 22.12 或更高版本（Electron 44 打包工具链与测试套件都以它为下限）。
 
 ```bash
 git clone https://github.com/castorhrio/jev-pi-agent.git

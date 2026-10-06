@@ -23,7 +23,12 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          # The Electron 44 toolchain (electron, @electron/get, @electron/rebuild)
+          # and vitest 5 all declare `node >= 22.12`; Node 20 emitted a wall of
+          # EBADENGINE warnings and npm 10's stricter lock validation failed on
+          # peer entries that npm 11 never writes. 22 keeps the runner on the
+          # version the dev toolchain actually targets.
+          node-version: 22
           cache: npm
 
       - name: Install
