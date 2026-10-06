@@ -92,7 +92,7 @@ export const SCENARIOS: Scenario[] = [
 
 const ISO = '2026-10-03T12:00:00.000Z';
 
-/** Monotonic id source for on-the-fly fixture results (decision previews). */
+/** Monotonic id source for on-the-fly fixture results (previews, operations). */
 let previewCounter = 0;
 
 /** A finished update check: no feed configured locally, version known. */
@@ -102,6 +102,16 @@ const updateStatus = {
   checkedAt: ISO,
   feedConfigured: false,
 };
+
+/** The manager's operation handle, as index/refresh really answer. */
+function intelHandle(kind: 'index' | 'refresh') {
+  return {
+    operationId: `iop_${kind}_${++previewCounter}`,
+    providerId: 'basic',
+    kind,
+    startedAt: ISO,
+  };
+}
 
 const workspace: WorkspaceDto = {
   id: 'ws-1',
@@ -1255,8 +1265,15 @@ export function createFixtureApi(scenario: Scenario): FixtureHandle {
       // card reports the two outcomes on their own lines, so collapsing them
       // into one flag would leave the status cell untestable.
       status: () => (failSoft ? boom('intelligence.status')() : delay(intelligenceStatus)),
-      index: () => delay({ started: true } as never),
-      refresh: () => delay({ started: true } as never),
+      /*
+       * Real Main returns the manager's operation handle
+       * (`IntelligenceOperationHandle`); the panel prints `startedAt` from it
+       * and uses `operationId` for cancel. `{started: true}` was not that
+       * shape — the card rendered an undefined timestamp and cancel could
+       * never reference a real id.
+       */
+      index: () => delay(intelHandle('index')),
+      refresh: () => delay(intelHandle('refresh')),
       /*
        * Main resolves the handle with the manager's full outcome attached,
        * which is what the panel narrows at runtime. The fixture used to hand
