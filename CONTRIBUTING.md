@@ -86,6 +86,24 @@ For layout work, `tests/contract/layout.test.ts` measures a real Chromium window
 screenshots to `.run-logs/layout/`. Geometry is judged automatically; whether it *looks*
 right is still a human call.
 
+## Packaging on Windows
+
+`npm run package` and `npm run dist` can fail on Windows with a cryptic
+`ERROR: Cannot create symbolic link : 客户端没有所需的特权` while electron-builder unpacks
+its `winCodeSign` cache. The cache archive contains macOS symlinks (`libcrypto.dylib`,
+`libssl.dylib`), and creating symlinks on Windows needs a privilege a plain user token does
+not have. It is not a defect in the build config, and it hits `--dir` (unpacked) builds too.
+
+Two fixes, either is enough:
+
+- enable Windows **Developer Mode** (Settings → System → For developers), which grants the
+  symlink privilege without elevation; or
+- run the packaging command once from an elevated shell — the extracted cache persists in
+  `%LOCALAPPDATA%\electron-builder\Cache`, so later runs do not need the privilege again.
+
+Do not disable `signAndEditExecutable` to get past this: it also writes the asar integrity
+resource, and weakening the shipped artifact so a dev machine can build is the wrong trade.
+
 ## Adding a workspace package
 
 `tsconfig.build.json` lists the package, **and** the package's own `tsconfig.json` must
