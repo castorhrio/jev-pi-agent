@@ -59,6 +59,31 @@ describe('critical path', () => {
     await settle();
     expect(screen.queryByText(/UCAD bridge unavailable/i)).toBeNull();
   });
+
+  it('creates and selects a new session when + is clicked with one already open', async () => {
+    // The rail's "+" used to route through the same `ensureSession` the
+    // composer sends through, which returns the *current* session when one is
+    // selected — so the button labelled 新建会话 did nothing at all for
+    // anyone with an open session, silently, with no feedback. That is the
+    // "a button that does nothing" defect class the harness exists to catch.
+    const user = userEvent.setup();
+    const { api } = mount();
+    await settle();
+
+    const plus = screen.getByRole('button', { name: '新建会话' });
+    await user.click(plus);
+
+    // The write stuck: the fixture now holds a third session.
+    await waitFor(async () => {
+      const sessions = await api.sessions.list('ws-1');
+      expect(sessions).toHaveLength(3);
+    });
+    // The created session is the one now selected in the rail.
+    await waitFor(() => {
+      const row = screen.getByText('新建会话').closest('.row-item');
+      expect(row?.className).toContain('active');
+    });
+  });
 });
 
 describe('a sent turn completes — the live event path', () => {

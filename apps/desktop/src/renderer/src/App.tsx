@@ -276,9 +276,14 @@ function Shell(): JSX.Element {
     }
   }, [api, data, flash]);
 
-  const ensureSession = useCallback(async (): Promise<string | null> => {
+  /**
+   * Actually creates a session and selects it. This is what the menu's
+   * "new session" command and the rail's "+" promise: a session the user asked
+   * for must appear even when one is already open, which is why both call
+   * sites route here rather than through `ensureSession`.
+   */
+  const createSession = useCallback(async (): Promise<string | null> => {
     if (!data.workspace) return null;
-    if (sessionId) return sessionId;
     try {
       const created = await api.sessions.create({
         workspaceId: data.workspace.id,
@@ -296,7 +301,13 @@ function Shell(): JSX.Element {
       flash(t('session.createFailed', { reason: describe(error) }));
       return null;
     }
-  }, [api, data, sessionId, agentId, permissionMode, t, flash]);
+  }, [api, data, agentId, permissionMode, t, flash]);
+
+  const ensureSession = useCallback(async (): Promise<string | null> => {
+    if (!data.workspace) return null;
+    if (sessionId) return sessionId;
+    return createSession();
+  }, [data, sessionId, createSession]);
 
   const send = useCallback(
     async (text: string) => {
@@ -436,7 +447,7 @@ function Shell(): JSX.Element {
           void openProject();
           break;
         case 'new-session':
-          void ensureSession().then(() => data.refresh());
+          void createSession();
           setSurface('chat');
           break;
         case 'open-settings':
@@ -490,7 +501,7 @@ function Shell(): JSX.Element {
           break;
       }
     });
-  }, [api, openProject, ensureSession, data, stop, sessionId, setLocale, generateHandoff, t, flash]);
+  }, [api, openProject, createSession, data, stop, sessionId, setLocale, generateHandoff, t, flash]);
 
   // In-window keys a menu item cannot express.
   useEffect(() => {
@@ -610,7 +621,10 @@ function Shell(): JSX.Element {
           data={data}
           sessionId={sessionId}
           onSelectSession={setSessionId}
-          onNewSession={() => void ensureSession().then(() => data.refresh())}
+          onNewSession={() => {
+            void createSession();
+            setSurface('chat');
+          }}
           onResume={() => {
             // §5.3: a session can be left RUNNING by a crash. Resuming is a
             // real action, not a view toggle — it goes through Main so the
@@ -949,7 +963,10 @@ function Shell(): JSX.Element {
             <PanelBoundary label={t('tab.help')}>
               <HelpPanel
                 onOpenProject={() => void openProject()}
-                onNewSession={() => void ensureSession().then(() => data.refresh())}
+                onNewSession={() => {
+                  void createSession();
+                  setSurface('chat');
+                }}
                 onOpenSettings={() => setSurface('settings')}
                 hasWorkspace={Boolean(data.workspace)}
                 hasSession={Boolean(sessionId)}
