@@ -32,7 +32,13 @@ jobs:
           cache: npm
 
       - name: Install
-        run: npm ci
+        # The lock is written by npm 11 (the dev machines' bundled npm). npm 10
+        # materialises the optional @emnapi peer entries npm 11 prunes, so the
+        # two majors' `npm ci` cannot both validate one lock file — pin the
+        # runner to the writer's version instead of chasing a shared shape.
+        run: |
+          npm install -g npm@11.6.2
+          npm ci
 
       - name: Typecheck
         run: npm run typecheck

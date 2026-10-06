@@ -48,6 +48,12 @@ CI runs exactly this sequence, plus a clean rebuild at the end: an incremental
 build cannot catch a wrong build order, because a stale `dist` satisfies any
 import.
 
+**The lock file and npm majors move together.** `package-lock.json` is written
+by npm 11, and CI pins the same version before `npm ci`. npm 10 materialises
+optional peer entries (`@emnapi/*`) that npm 11 prunes, so one lock file cannot
+validate under both — if a machine with a different npm major refreshes the
+lock, bump the pinned version in `.github/workflows/ci.yml` in the same commit.
+
 ## House rules
 
 These are the ones this codebase actually enforces, rather than preferences.
