@@ -47,6 +47,7 @@
       "!**/node_modules/**/test/**"
     ],
     "asar": true,
+    "npmRebuild": false,
     "win": {
       "target": [
         {
@@ -73,7 +74,7 @@
     "@types/react-dom": "^18.3.5",
     "@vitejs/plugin-react": "^4.3.4",
     "axe-core": "^4.13.0",
-    "electron": "^33.2.1",
+    "electron": "^44.5.1",
     "electron-builder": "^26.15.3",
     "eslint": "^9.39.5",
     "eslint-plugin-react-hooks": "^5.2.0",
@@ -90,6 +91,6 @@
     "vitest": "^5.0.3"
   },
   "optionalDependencies": {
-    "node-pty": "^1.1.0"
+    "node-pty": "1.2.0-beta.15"
   }
 }

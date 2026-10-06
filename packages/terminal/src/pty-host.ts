@@ -206,6 +206,14 @@ interface RunningPty {
   cwd: string;
   cols: number;
   rows: number;
+  /**
+   * The shell's pid, or `null` while it is not known yet. node-pty 1.2 only
+   * fills the pid once the ConPTY output pipe has connected — the first data
+   * event — and reports `0` before that. Reporting a made-up 0 would send
+   * `taskkill` after a nonexistent process, so the pid is cached here on the
+   * first output and stays `null` until it is real.
+   */
+  pid: number | null;
   /** NFR-06 coalescing buffer. */
   pending: string;
   timer: ReturnType<typeof setTimeout> | null;
@@ -272,13 +280,20 @@ export class PtyHost {
       cwd,
       cols,
       rows,
+      pid: null,
       pending: '',
       timer: null,
       killed: false,
     };
     this.terminals.set(terminalId, entry);
 
-    pty.onData((data) => this.enqueue(entry, data));
+    pty.onData((data) => {
+      // The pid only becomes real on the first output (see RunningPty.pid).
+      if (entry.pid === null && pty.pid > 0) {
+        entry.pid = pty.pid;
+      }
+      this.enqueue(entry, data);
+    });
     pty.onExit((event) => {
       this.detach(entry);
       this.terminals.delete(terminalId);
@@ -364,9 +379,14 @@ export class PtyHost {
     return this.terminals.has(terminalId);
   }
 
-  /** `null` once the terminal is gone — the test asserts on this after a kill. */
+  /**
+   * The shell's pid, once the ConPTY pipe has connected (first output). `null`
+   * means the terminal is gone *or* the pid is not known yet — before the
+   * first output there is nothing real to report, and `0` would be a lie that
+   * sends `taskkill` after a nonexistent process.
+   */
   pidOf(terminalId: string): number | null {
-    return this.terminals.get(terminalId)?.pty.pid ?? null;
+    return this.terminals.get(terminalId)?.pid ?? null;
   }
 
   get count(): number {
@@ -381,7 +401,7 @@ export class PtyHost {
     // Flush what the shell already produced: killing first would throw away the
     // last lines of output, which reads as the terminal truncating itself.
     this.detach(entry);
-    const pid = entry.pty.pid;
+    const pid = entry.pid;
     try {
       entry.pty.kill();
     } catch (error) {
@@ -394,7 +414,7 @@ export class PtyHost {
     // A PTY is a shell: the interesting processes are its children, and
     // `pty.kill()` alone leaves a `npm`/`node` grandchild writing to the
     // workspace. `taskkill /T /F` walks the tree (process-tree.ts, §11.1).
-    if (IS_WINDOWS && pid > 0) {
+    if (IS_WINDOWS && pid !== null && pid > 0) {
       this.logger.info('killing pty process tree', { terminalId: entry.terminalId, pid, reason });
       await runTaskkill(pid);
     }

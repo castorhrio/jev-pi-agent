@@ -30,6 +30,12 @@ interface Harness {
   text: () => string;
   /** Resolves with everything received so far once `needle` shows up. */
   waitFor: (needle: string, timeoutMs?: number) => Promise<string>;
+  /**
+   * Waits until the shell's pid is known. node-pty 1.2 fills the pid only when
+   * the ConPTY pipe connects — the first data event — so a pid read right after
+   * `create()` is legitimately unknown (`null`), not a failure.
+   */
+  pidReady: (terminalId: string, timeoutMs?: number) => Promise<number>;
 }
 
 /**
@@ -61,6 +67,17 @@ function harness(): Harness {
           throw new Error(
             `timed out after ${timeoutMs}ms waiting for ${JSON.stringify(needle)}; got ${JSON.stringify(all.slice(-600))}`,
           );
+        }
+        await delay(25);
+      }
+    },
+    pidReady: async (terminalId, timeoutMs = 15_000) => {
+      const deadline = Date.now() + timeoutMs;
+      for (;;) {
+        const pid = host.pidOf(terminalId);
+        if (pid !== null) return pid;
+        if (Date.now() > deadline) {
+          throw new Error(`timed out after ${timeoutMs}ms waiting for the shell pid of ${terminalId}`);
         }
         await delay(25);
       }
@@ -141,8 +158,8 @@ describe.skipIf(!probePty().available)('PtyHost', () => {
       rows: 30,
     });
 
-    const pid = h.host.pidOf(terminalId);
-    expect(pid, 'a live PTY must report a pid').not.toBeNull();
+    const pid = await h.pidReady(terminalId);
+    expect(pid, 'a live PTY must report a pid').toBeGreaterThan(0);
     expect(h.host.isRunning(terminalId)).toBe(true);
     expect(h.host.count).toBe(1);
 
@@ -169,8 +186,8 @@ describe.skipIf(!probePty().available)('PtyHost', () => {
     expect(first.terminalId).not.toBe(second.terminalId);
     expect(h.host.count).toBe(2);
 
-    const firstPid = h.host.pidOf(first.terminalId) as number;
-    const secondPid = h.host.pidOf(second.terminalId) as number;
+    const firstPid = await h.pidReady(first.terminalId);
+    const secondPid = await h.pidReady(second.terminalId);
 
     h.host.write(second.terminalId, `echo SECOND${ENTER}`);
     await h.waitFor('SECOND');
