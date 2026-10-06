@@ -649,6 +649,35 @@ describe('navigation', () => {
   });
 });
 
+describe('decision preview', () => {
+  /**
+   * The preview is the one interactive control on the Decision surface, and
+   * its fixture used to resolve `{}` — the panel then read `outcome.kind` off
+   * `undefined` and crashed into "「决策」面板无法显示" on every click. The
+   * surface-mount test never clicked anything, so the dead interaction sailed
+   * through. This one exercises the click and asserts the rendered outcome.
+   */
+  it('renders a preview result instead of crashing the panel', async () => {
+    const user = userEvent.setup();
+    mount();
+    await settle();
+
+    await openSurface(user, /^决策/);
+    // The input's label is a placeholder, not text content — same pattern as
+    // the commit-message box above.
+    const objective = await screen.findByPlaceholderText('描述这次要判断的目标');
+    await user.type(objective, '把这个任务交给哪个 agent');
+
+    await user.click(screen.getByRole('button', { name: '运行决策预览' }));
+
+    // The route outcome renders as "> <agentId>"; the crash boundary does not.
+    await waitFor(() =>
+      expect(screen.getAllByText('> universal').length).toBeGreaterThan(0),
+    );
+    expect(screen.queryByText(/面板无法显示/)).toBeNull();
+  });
+});
+
 describe('handoff', () => {
   it('generates, renders and exports a readable record', async () => {
     const user = userEvent.setup();

@@ -53,6 +53,8 @@ import type {
   CodeIntelligenceManifest,
   IntelligenceStatus,
   DecisionEngineManifest,
+  DecisionOutcome,
+  DecisionResult,
   PermissionRule,
   TurnEvent,
   Unsubscribe,
@@ -89,6 +91,9 @@ export const SCENARIOS: Scenario[] = [
 // ---------------------------------------------------------------------------
 
 const ISO = '2026-10-03T12:00:00.000Z';
+
+/** Monotonic id source for decision previews; plain counter, like every other fixture id. */
+let previewCounter = 0;
 
 const workspace: WorkspaceDto = {
   id: 'ws-1',
@@ -1270,7 +1275,53 @@ export function createFixtureApi(scenario: Scenario): FixtureHandle {
         };
         return delay(undefined);
       },
-      preview: () => delay({} as never),
+      /*
+       * The preview panel renders whatever lands here by reading
+       * `outcome.kind`, so an empty object crashed the whole panel into its
+       * boundary ("Cannot read properties of undefined (reading 'kind')") —
+       * every manual visit to the preview ended in "面板无法显示". What the
+       * real chain returns is one outcome per requested kind with the
+       * mandatory rationale and confidence (NFR-16); the fixture mirrors that,
+       * scoped to the agents and pack items this workspace actually has.
+       */
+      preview: (input: { objective: string; kind: DecisionOutcome['kind'] }) => {
+        previewCounter += 1;
+        const outcome: DecisionOutcome = (() => {
+          switch (input.kind) {
+            case 'risk':
+              // The fixture workspace is trusted, so the rule baseline is low.
+              return { kind: 'risk', risk: 'low', categories: [] };
+            case 'continue_or_stop':
+              return {
+                kind: 'continue_or_stop',
+                action: 'continue',
+                reason: 'fixture：目标可执行，没有触发停止或询问的信号。',
+              };
+            case 'context_relevance':
+              return { kind: 'context_relevance', relevantItemIds: ['i1', 'i2'] };
+            case 'clarify':
+              return {
+                kind: 'clarify',
+                question: `fixture：目标「${input.objective}」缺少可执行的范围，需要先明确。`,
+              };
+            case 'option_select':
+              return { kind: 'option_select', optionId: 'option-1' };
+            default:
+              // route: the default runtime wins on weak signals (ADR-017),
+              // which for this fixture is `universal`.
+              return { kind: 'route', agentId: 'universal' };
+          }
+        })();
+        const result: DecisionResult = {
+          requestId: `dp_${previewCounter}`,
+          outcome,
+          confidence: 0.45,
+          rationale: `fixture 预览：${input.kind} → ${JSON.stringify(outcome)}。置信度与理由来自链上第一个引擎，正式回合以真实引擎为准。`,
+          producedBy: { engineId: 'rule', version: '1.0.0' },
+          latencyMs: 12,
+        };
+        return delay(result);
+      },
       onEvent: () => () => undefined,
     },
 

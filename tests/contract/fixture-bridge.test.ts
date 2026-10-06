@@ -429,4 +429,36 @@ describe('browser fixture bridge', () => {
       api.sessions.createHandoff('sess-1').then((h) => toMarkdown(h)),
     ).resolves.toContain('#');
   });
+
+  it('answers a decision preview with a result the panel can render, for every kind', async () => {
+    // The fixture's preview used to resolve `{}` — an object with no
+    // `outcome.kind` — so every preview click crashed the Decision panel into
+    // its boundary. The real chain guarantees one outcome per requested kind
+    // with a 0..1 confidence (NFR-16); the fixture is held to the same rule,
+    // because the panel renders `outcome.kind` without a guard.
+    const { createFixtureApi } = await import(
+      '../../apps/desktop/src/renderer/src/dev/fixture-bridge'
+    );
+    const { api } = createFixtureApi('default');
+    const kinds = [
+      'route',
+      'risk',
+      'continue_or_stop',
+      'context_relevance',
+      'clarify',
+      'option_select',
+    ] as const;
+    for (const kind of kinds) {
+      const result = await api.decision.preview({
+        sessionId: 'sess-1',
+        objective: 'guard the preview shape',
+        kind,
+      });
+      expect(result.outcome.kind).toBe(kind);
+      expect(result.confidence).toBeGreaterThanOrEqual(0);
+      expect(result.confidence).toBeLessThanOrEqual(1);
+      expect(result.rationale.length).toBeGreaterThan(0);
+      expect(result.producedBy.engineId).toBeTruthy();
+    }
+  });
 });
