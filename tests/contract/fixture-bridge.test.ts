@@ -492,18 +492,29 @@ describe('browser fixture bridge', () => {
       '../../apps/desktop/src/renderer/src/dev/fixture-bridge'
     );
     const { api } = createFixtureApi('default');
-    for (const kind of ['search', 'locate', 'overview', 'callers'] as const) {
-      // Main wraps the outcome as `{ operationId, result }`; the panel digs
-      // through both levels. The fixture must nest the same way or the panel
-      // falls back to its raw-JSON view.
+    // Supported kinds answer ok; the four graph queries answer `unsupported`,
+    // because the real basic provider declares no optional methods (C-4) and
+    // the manager turns that into the C-1 "absent, not empty" reason. Every
+    // result is honestly stale (NFR-11): no persistent index, no fresh claim.
+    for (const kind of ['search', 'locate', 'overview'] as const) {
       const envelope = (await api.intelligence.query({
         workspaceId: 'ws-1',
         kind,
         input: kind === 'locate' ? { symbol: 'renderContextPack' } : { query: 'renderContextPack' },
-      })) as { result?: { status?: string; result?: unknown; providerId?: string } };
+      })) as { result?: { status?: string; result?: unknown; providerId?: string; freshness?: { stale?: boolean } } };
       expect(envelope.result?.status).toBe('ok');
       expect(envelope.result?.providerId).toBe('basic');
       expect(envelope.result?.result).toBeDefined();
+      expect(envelope.result?.freshness?.stale).toBe(true);
+    }
+    for (const kind of ['callers', 'trace'] as const) {
+      const envelope = (await api.intelligence.query({
+        workspaceId: 'ws-1',
+        kind,
+        input: { target: 'renderContextPack' },
+      })) as { result?: { status?: string; reason?: string } };
+      expect(envelope.result?.status).toBe('unsupported');
+      expect(envelope.result?.reason).toContain('not the same as having no results');
     }
   });
 });

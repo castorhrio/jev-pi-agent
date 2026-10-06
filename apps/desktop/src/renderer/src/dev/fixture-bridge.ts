@@ -1253,13 +1253,37 @@ export function createFixtureApi(scenario: Scenario): FixtureHandle {
        * Main resolves the handle with the manager's full outcome attached,
        * which is what the panel narrows at runtime. The fixture used to hand
        * back `{}` — no crash (the panel guards), but a query that ends in a
-       * JSON blob instead of an answer. Answers per kind, from the `basic`
-       * provider this fixture advertises: item lists for search/locate, a
-       * summary for overview, relations for the rest.
+       * JSON blob instead of an answer.
+       *
+       * The answers mirror what the real `basic` provider actually does, not a
+       * nicer fiction: item lists for search/locate and a summary for
+       * overview, and **unsupported** for the four graph queries — the basic
+       * provider declares no optional methods (C-4), so the manager answers
+       * `unsupported` with the C-1 reason, and the panel's "未实现" badge is
+       * the state this surface is supposed to show. Freshness likewise follows
+       * NFR-11: no persistent index, so every result is honestly stale.
        */
       query: (input: { kind: string; input: unknown }) => {
         const q = (input.input ?? {}) as Record<string, unknown>;
         const needle = String(q.query ?? q.symbol ?? q.target ?? '') || 'renderContextPack';
+        // NFR-11: the basic provider has no index, so it never claims fresh.
+        const stale = { stale: true, stalenessReason: 'unknown_revision' as const };
+        const GRAPH_KINDS = ['callers', 'callees', 'trace', 'impact'];
+        if (GRAPH_KINDS.includes(input.kind)) {
+          return delay({
+            operationId: 'basic',
+            result: {
+              status: 'unsupported',
+              result: null,
+              freshness: { ...stale },
+              durationMs: 0,
+              providerId: 'basic',
+              reason:
+                `method '${input.kind}' is absent on provider 'basic' (optionalMethods: [none]); ` +
+                'the provider cannot answer, which is not the same as having no results',
+            },
+          });
+        }
         const locations = [
           {
             path: 'packages/context/src/broker.ts',
@@ -1285,19 +1309,9 @@ export function createFixtureApi(scenario: Scenario): FixtureHandle {
                   { name: 'context', path: 'packages/context/src', symbols: 12 },
                   { name: 'renderer', path: 'apps/desktop/src/renderer/src', symbols: 34 },
                 ],
-                freshness: { stale: false },
+                freshness: { ...stale },
               }
-            : input.kind === 'search' || input.kind === 'locate'
-              ? { items: locations, truncated: false, freshness: { stale: false } }
-              : {
-                  relations: locations.slice(0, 1).map((loc) => ({
-                    from: { path: 'apps/desktop/src/renderer/src/components/ContextDrawer.tsx', startLine: 193, endLine: 193 },
-                    to: loc,
-                    kind: 'calls',
-                  })),
-                  truncated: false,
-                  freshness: { stale: false },
-                };
+            : { items: locations, truncated: false, freshness: { ...stale } };
         return delay({
           /*
            * Main wraps the manager outcome as `{ operationId, result }` — the
@@ -1310,7 +1324,7 @@ export function createFixtureApi(scenario: Scenario): FixtureHandle {
           result: {
             status: 'ok',
             result,
-            freshness: { stale: false },
+            freshness: { ...stale },
             durationMs: 8,
             providerId: 'basic',
           },
