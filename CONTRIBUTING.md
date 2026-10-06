@@ -54,6 +54,13 @@ optional peer entries (`@emnapi/*`) that npm 11 prunes, so one lock file cannot
 validate under both — if a machine with a different npm major refreshes the
 lock, bump the pinned version in `.github/workflows/ci.yml` in the same commit.
 
+**Running the gates on Linux.** The layout gate launches a real Electron. On a
+rootless Linux box (CI runners, most containers) there is no setuid
+`chrome-sandbox` and Chromium aborts at startup rather than run without one —
+the probe then produces no result at all. CI sets `ELECTRON_DISABLE_SANDBOX=1`
+for the unit step for exactly this reason; a local Linux run needs the same
+env var in front of `npm test`. The gate measures geometry, not the sandbox.
+
 ## House rules
 
 These are the ones this codebase actually enforces, rather than preferences.

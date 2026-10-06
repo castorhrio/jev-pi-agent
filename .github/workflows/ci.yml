@@ -50,6 +50,13 @@ jobs:
         run: npm run knip
 
       - name: Unit, contract and integration tests
+        # The layout gate launches a real Electron. Linux runners have no
+        # setuid chrome-sandbox and Chromium aborts at startup rather than run
+        # unprivileged without one — the probe then produces no result at all.
+        # The probe measures geometry, not the sandbox, so the sandbox is
+        # disabled for the suite in this environment only.
+        env:
+          ELECTRON_DISABLE_SANDBOX: '1'
         run: xvfb-run --auto-servernum npm test
 
       - name: Interface E2E
