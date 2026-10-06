@@ -4,6 +4,7 @@
   "private": true,
   "description": "UCAD — Unified Coding Agent Desktop (Local-first multi-agent coding workbench)",
   "license": "MIT",
+  "author": "Xyris",
   "workspaces": [
     "packages/*",
     "apps/*"
