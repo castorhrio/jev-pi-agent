@@ -231,8 +231,15 @@ const diagnostics: DiagnosticsInfo = {
   platform: 'win32',
   encryptionEnabled: true,
   locale: 'zh-CN',
-  electron: '33.2.1',
-  node: '20.18.0',
+  /*
+   * The pair the shipped desktop build runs on (Electron 44.5.1 bundles Node
+   * 24.21.0). It is a literal, so it drifts on every Electron upgrade —
+   * tests/contract/fixture-bridge.test.ts pins it to the installed electron
+   * package and goes red there; re-measure Node with
+   * `ELECTRON_RUN_AS_NODE=1 electron -p process.versions.node`.
+   */
+  electron: '44.5.1',
+  node: '24.21.0',
   // NFR-15: the fixture reports the real WASM limitation rather than a nicer lie.
   journalMode: 'delete',
   /*
@@ -291,7 +298,11 @@ const tools: ToolDescriptorDto[] = [
     description: 'Read a file from the workspace',
     inputSchema: { type: 'object' },
     available: true,
-    permissionCategory: 'FILE_WRITE',
+    // Reading is not a gated category (§4.9 gates writes); the real ToolHost
+    // declares `null` for its read-only tools and so does the fixture — a
+    // FILE_WRITE badge on a read tool would be exactly the kind of lie this
+    // harness exists to avoid.
+    permissionCategory: null,
   },
   {
     name: 'write_file',

@@ -247,6 +247,39 @@ describe('browser fixture bridge', () => {
     expect(diagnostics.schemaVersion).toBe(TARGET_SCHEMA_VERSION);
   });
 
+  it('reports the Electron the repo actually installs', async () => {
+    // Same rot pattern as the schema version above: the literal still said
+    // 33.2.1 after the Electron 44 upgrade landed. The installed electron
+    // package is the source of truth, so the fixture has to agree with it.
+    const { createRequire } = await import('node:module');
+    const require = createRequire(import.meta.url);
+    const { version } = require('electron/package.json') as { version: string };
+    const api = await loadApi('default');
+    const diagnostics = (await api.diagnostics.info()) as { electron: string };
+    expect(diagnostics.electron).toBe(version);
+  });
+
+  it('reports the Node that the pinned Electron bundles', async () => {
+    // No package.json carries this number — it is a property of the Electron
+    // binary — so it is pinned here instead. Re-measure with
+    // `ELECTRON_RUN_AS_NODE=1 electron -p process.versions.node` whenever the
+    // Electron test above goes red.
+    const api = await loadApi('default');
+    const diagnostics = (await api.diagnostics.info()) as { node: string };
+    expect(diagnostics.node).toBe('24.21.0');
+  });
+
+  it('gates no read-only tool', async () => {
+    // The real tool contract asserts read-only tools declare no permission
+    // category; the fixture must tell the same story, or the Settings page
+    // badges `read_file` as FILE_WRITE and the harness teaches a lie.
+    const api = await loadApi('default');
+    const tools = (await api.tools.list()) as Array<{ name: string; permissionCategory: string | null }>;
+    const read = tools.find((tool) => tool.name === 'read_file');
+    expect(read).toBeDefined();
+    expect(read?.permissionCategory).toBeNull();
+  });
+
   it('implements every method the Renderer can call', async () => {
     const api = await loadApi('default');
 
