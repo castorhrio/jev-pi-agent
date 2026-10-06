@@ -501,6 +501,28 @@ describe('context', () => {
       screen.getAllByText(/packages\/context\/src\/broker\.ts/).length,
     ).toBeGreaterThan(0);
   });
+
+  it('renders an extend delta instead of crashing the panel', async () => {
+    // `context.extend` used to resolve `{}` from the fixture and the drawer
+    // read `addedItems.length` off it — the context surface, the product's
+    // core answer, died on every 补充上下文 click. Mounting the surface
+    // (the test above) never exercised the click; this one does.
+    const user = userEvent.setup();
+    mount();
+    await settle();
+    await openSurface(user, /^上下文/);
+
+    const request = await screen.findByPlaceholderText('例如：把 AuthService 的调用方也加进来');
+    await user.type(request, '把 broker.ts 的调用方也加进来');
+    await user.click(screen.getByRole('button', { name: '补充上下文' }));
+
+    // The delta renders its revision bump and the added item, and the crash
+    // boundary does not appear.
+    await waitFor(() =>
+      expect(screen.getAllByText(/→ 2/).length).toBeGreaterThan(0),
+    );
+    expect(screen.queryByText(/面板无法显示/)).toBeNull();
+  });
 });
 
 describe('layout structure', () => {

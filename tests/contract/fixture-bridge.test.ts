@@ -430,8 +430,7 @@ describe('browser fixture bridge', () => {
     ).resolves.toContain('#');
   });
 
-  it('answers a decision preview with a result the panel can render, for every kind', async () => {
-    // The fixture's preview used to resolve `{}` — an object with no
+  it('answers a decision preview with a result the panel can render, for every kind', async () => {    // The fixture's preview used to resolve `{}` — an object with no
     // `outcome.kind` — so every preview click crashed the Decision panel into
     // its boundary. The real chain guarantees one outcome per requested kind
     // with a 0..1 confidence (NFR-16); the fixture is held to the same rule,
@@ -459,6 +458,52 @@ describe('browser fixture bridge', () => {
       expect(result.confidence).toBeLessThanOrEqual(1);
       expect(result.rationale.length).toBeGreaterThan(0);
       expect(result.producedBy.engineId).toBeTruthy();
+    }
+  });
+
+  it('answers a context extend with a delta the drawer can render', async () => {
+    // Same defect class as the decision preview: `extend` used to resolve
+    // `{}`, and the drawer renders `addedItems.length` and
+    // `budget.remainingTokens` unguarded, so every extend click crashed the
+    // context panel — the product's core surface. A real extend answers with
+    // the next revision of the same pack; the fixture is held to that shape.
+    const { createFixtureApi } = await import(
+      '../../apps/desktop/src/renderer/src/dev/fixture-bridge'
+    );
+    const { api } = createFixtureApi('default');
+    const delta = await api.context.extend({
+      packId: 'pack-1',
+      request: '把 broker.ts 的调用方也加进来',
+    });
+    expect(delta.packId).toBe('pack-1');
+    expect(delta.revision).toBe(delta.baseRevision + 1);
+    expect(Array.isArray(delta.addedItems)).toBe(true);
+    expect(delta.addedItems.length).toBeGreaterThan(0);
+    expect(Array.isArray(delta.removedItemIds)).toBe(true);
+    expect(delta.budget.remainingTokens).toBe(delta.budget.limitTokens - delta.budget.usedTokens);
+  });
+
+  it('answers an intelligence query with an outcome, not an empty envelope', async () => {
+    // `query` also used to resolve `{}`. The panel guards the shape, so this
+    // never crashed — it rendered the raw blob instead of an answer, which is
+    // the quieter failure of the same class. The fixture must hand back the
+    // manager outcome Main attaches to the handle: status, result, provider.
+    const { createFixtureApi } = await import(
+      '../../apps/desktop/src/renderer/src/dev/fixture-bridge'
+    );
+    const { api } = createFixtureApi('default');
+    for (const kind of ['search', 'locate', 'overview', 'callers'] as const) {
+      // Main wraps the outcome as `{ operationId, result }`; the panel digs
+      // through both levels. The fixture must nest the same way or the panel
+      // falls back to its raw-JSON view.
+      const envelope = (await api.intelligence.query({
+        workspaceId: 'ws-1',
+        kind,
+        input: kind === 'locate' ? { symbol: 'renderContextPack' } : { query: 'renderContextPack' },
+      })) as { result?: { status?: string; result?: unknown; providerId?: string } };
+      expect(envelope.result?.status).toBe('ok');
+      expect(envelope.result?.providerId).toBe('basic');
+      expect(envelope.result?.result).toBeDefined();
     }
   });
 });

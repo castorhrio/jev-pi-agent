@@ -92,7 +92,7 @@ export const SCENARIOS: Scenario[] = [
 
 const ISO = '2026-10-03T12:00:00.000Z';
 
-/** Monotonic id source for decision previews; plain counter, like every other fixture id. */
+/** Monotonic id source for on-the-fly fixture results (decision previews). */
 let previewCounter = 0;
 
 const workspace: WorkspaceDto = {
@@ -1249,7 +1249,73 @@ export function createFixtureApi(scenario: Scenario): FixtureHandle {
       status: () => (failSoft ? boom('intelligence.status')() : delay(intelligenceStatus)),
       index: () => delay({ started: true } as never),
       refresh: () => delay({ started: true } as never),
-      query: () => delay({} as never),
+      /*
+       * Main resolves the handle with the manager's full outcome attached,
+       * which is what the panel narrows at runtime. The fixture used to hand
+       * back `{}` — no crash (the panel guards), but a query that ends in a
+       * JSON blob instead of an answer. Answers per kind, from the `basic`
+       * provider this fixture advertises: item lists for search/locate, a
+       * summary for overview, relations for the rest.
+       */
+      query: (input: { kind: string; input: unknown }) => {
+        const q = (input.input ?? {}) as Record<string, unknown>;
+        const needle = String(q.query ?? q.symbol ?? q.target ?? '') || 'renderContextPack';
+        const locations = [
+          {
+            path: 'packages/context/src/broker.ts',
+            startLine: 214,
+            endLine: 262,
+            symbol: 'renderContextPack',
+            kind: 'function',
+          },
+          {
+            path: 'apps/desktop/src/renderer/src/components/ContextDrawer.tsx',
+            startLine: 190,
+            endLine: 205,
+            symbol: 'runExtend',
+            kind: 'function',
+          },
+        ];
+        const result: unknown =
+          input.kind === 'overview'
+            ? {
+                summary: `fixture 视图：工作区围绕「${needle}」有 2 处直接调用，全部位于 context 与 renderer 两个模块。`,
+                entryPoints: locations.slice(0, 1),
+                modules: [
+                  { name: 'context', path: 'packages/context/src', symbols: 12 },
+                  { name: 'renderer', path: 'apps/desktop/src/renderer/src', symbols: 34 },
+                ],
+                freshness: { stale: false },
+              }
+            : input.kind === 'search' || input.kind === 'locate'
+              ? { items: locations, truncated: false, freshness: { stale: false } }
+              : {
+                  relations: locations.slice(0, 1).map((loc) => ({
+                    from: { path: 'apps/desktop/src/renderer/src/components/ContextDrawer.tsx', startLine: 193, endLine: 193 },
+                    to: loc,
+                    kind: 'calls',
+                  })),
+                  truncated: false,
+                  freshness: { stale: false },
+                };
+        return delay({
+          /*
+           * Main wraps the manager outcome as `{ operationId, result }` — the
+           * panel reaches through `result` for the outcome, then again for
+           * the provider payload. Nesting the outcome one level down is what
+           * makes the ok/cancelled/error branches render instead of the
+           * "unrecognised shape" raw view.
+           */
+          operationId: 'basic',
+          result: {
+            status: 'ok',
+            result,
+            freshness: { stale: false },
+            durationMs: 8,
+            providerId: 'basic',
+          },
+        });
+      },
       cancel: () => delay({ cancelled: true }),
       onEvent: () => () => undefined,
     },
@@ -1257,7 +1323,46 @@ export function createFixtureApi(scenario: Scenario): FixtureHandle {
     context: {
       preview: () => delay(contextPack),
       getPack: () => delay(contextPack),
-      extend: () => delay({} as never),
+      /*
+       * The drawer renders `addedItems.length` and `budget.remainingTokens`
+       * straight off the delta, so an empty object crashed the whole context
+       * panel into its boundary on every extend click. A real extend answers
+       * with the next revision of the same pack: one item the request pulled
+       * in, the budget it consumed, and what had to be dropped for it.
+       */
+      extend: (input: { request: string }) => {
+        const used = contextPack.budget.usedTokens + 980;
+        return delay({
+          packId: contextPack.id,
+          baseRevision: contextPack.revision,
+          revision: contextPack.revision + 1,
+          addedItems: [
+            {
+              id: 'i3',
+              kind: 'symbol' as const,
+              source: {
+                providerId: 'basic',
+                reference: 'packages/context/src/broker.ts',
+              },
+              reason: `补充检索：${input.request}`,
+              freshness: { stale: false },
+              estimatedTokens: 980,
+              budgetShare: 0.22,
+              truncated: false,
+              payload: null,
+            },
+          ],
+          removedItemIds: [],
+          budget: {
+            ...contextPack.budget,
+            revision: contextPack.revision + 1,
+            usedTokens: used,
+            remainingTokens: contextPack.budget.limitTokens - used,
+          },
+          dropped: [{ itemId: 'i10', why: 'budget' as const }],
+          createdAt: ISO,
+        });
+      },
       // The real Main keys injections by turn (§4.6), so the record a caller
       // reads back names the turn it asked about — not whichever turn the
       // fixture was seeded with.
