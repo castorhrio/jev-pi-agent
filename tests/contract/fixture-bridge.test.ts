@@ -353,6 +353,35 @@ describe('browser fixture bridge', () => {
     expect(await api.events.latestSeq('sess-1')).toBe(requested?.seq);
   });
 
+  it('emits the context-pack and usage events a real turn produces', async () => {
+    // The preview column's context tab reads `view.context`, which only a
+    // `context.pack.built` event can populate; the usage readout needs a
+    // `usage` record. Dropping either from the fixture again would break no API
+    // call — the main context page reads the pack back by turn id and masks
+    // the gap — so the guard sits here, on the event stream itself, and pins
+    // E-4's order too: the pack exists before the agent speaks, and the usage
+    // record lands before the turn is declared complete.
+    const { createFixtureApi } = await import(
+      '../../apps/desktop/src/renderer/src/dev/fixture-bridge'
+    );
+    const { api } = createFixtureApi('default');
+    // Filter to the live turn's own stream: the seeded history also carries an
+    // E-4 event, and assertions over the whole log would keep passing on the
+    // seed even if the live path stopped emitting.
+    const { turnId } = await api.sessions.send({
+      sessionId: 'sess-1',
+      objective: 'guard the stream shape',
+    });
+    const order = (await api.events.since({ sessionId: 'sess-1', afterSeq: 0 }))
+      .filter((e) => e.turnId === turnId)
+      .map((e) => e.type);
+    expect(order).toContain('context.pack.built');
+    expect(order).toContain('usage');
+    expect(order.indexOf('context.pack.built')).toBeGreaterThan(order.indexOf('turn.started'));
+    expect(order.indexOf('context.pack.built')).toBeLessThan(order.indexOf('text.delta'));
+    expect(order.indexOf('usage')).toBeLessThan(order.indexOf('turn.completed'));
+  });
+
   it('produces a readable markdown handoff, not an empty blob', async () => {
     const { createFixtureApi } = await import(
       '../../apps/desktop/src/renderer/src/dev/fixture-bridge'
