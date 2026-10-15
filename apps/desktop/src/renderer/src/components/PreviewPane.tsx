@@ -59,7 +59,7 @@ export function PreviewPane({
   }, [tab, diff, data.workspace]);
 
   const tabs: Array<{ id: PreviewTab; label: string; count?: number }> = [
-    { id: 'context', label: t('context.title') },
+    { id: 'context', label: t('preview.context') },
     {
       id: 'tools',
       label: t('preview.tools'),

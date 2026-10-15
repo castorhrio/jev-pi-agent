@@ -138,14 +138,25 @@ const zhCN: Dictionary = {
   'usage.in': '输入',
   'usage.out': '输出',
 
-  'rail.project': '项目',  'rail.trust': '信任',
+  'rail.project': '项目',
+  'rail.trust': '信任',
   'rail.provider': '供应商',
   'rail.threads': '会话',
   'rail.landmark': '会话与文件',
   'rail.files': '文件',
-  'preview.tools': '工具',
-  'preview.decisions': '决策',
-  'preview.plan': '变更',
+  /*
+   * Preview-column tabs, scoped to the last turn on purpose.
+   *
+   * They used to repeat the primary row's labels verbatim (上下文 / 决策 /
+   * 变更), so the window showed two identical tab strips for two different
+   * things — the decision *plane* and this turn's decision *records*. Naming
+   * the scope in the label is what makes the second column read as a readout
+   * of the turn rather than a second copy of the navigation.
+   */
+  'preview.context': '本轮上下文',
+  'preview.tools': '工具调用',
+  'preview.decisions': '本轮决策',
+  'preview.plan': '代码变更',
   'preview.commands': '命令',
   'preview.noTools': '本次运行还没有工具调用。',
   'composer.mention': '引用文件',
@@ -248,7 +259,7 @@ const zhCN: Dictionary = {
   'terminal.ptyNotice':
     '这是 §11.2 的用户交互终端：node-pty 提供真实 ConPTY 会话，支持回显、光标寻址，以及 vim、top 这类全屏程序。它不受权限引擎约束——那是给 Agent 的命令用的，那些命令仍以 command.* 卡片出现在对话记录里。',
   'terminal.ptyUnavailable':
-    '交互式终端不可用：{reason} 下面的命令控制台仍可用，但它以管道运行：没有回显，也无法运行全屏程序。',
+    '交互式终端不可用：{reason} 下面的命令通道仍可用，但它以管道运行：没有回显，也无法运行全屏程序。',
   'terminal.ptyLayers':
     '三种 shell 互不相干：这里是你自己的交互终端；Agent 的命令走 UCAD 托管的 shell，受权限引擎约束，以 command.* 卡片出现在对话里；厂商运行时内部还有它自己的 shell，UCAD 既不拦截，也不假装能拦截。',
   'terminal.distinct':
@@ -262,6 +273,10 @@ const zhCN: Dictionary = {
   'terminal.noConsoles': 'node-pty 不可用，没有可创建或列出的终端。',
   'terminal.emptyCommand':
     '这里还没有命令输出。在下面的输入框里输入一条命令，它会在当前项目目录里运行。',
+  'terminal.commandTitle': '命令通道',
+  'terminal.newPipe': '新建通道',
+  'terminal.emptyPipe':
+    '还没有命令通道。点击上方"新建通道"，命令会在当前项目目录里运行。',
   'terminal.output': '输出',
   'terminal.noOutput': '这个控制台还没有返回任何输出。',
   'terminal.noOutputHint':
@@ -845,9 +860,11 @@ const enUS: Dictionary = {
   'rail.threads': 'Threads',
   'rail.landmark': 'Sessions and files',
   'rail.files': 'Files',
-  'preview.tools': 'Tools',
-  'preview.decisions': 'Decisions',
-  'preview.plan': 'Changes',
+  // Preview-column tabs, scoped to the last turn. See the zh-CN note.
+  'preview.context': 'This turn',
+  'preview.tools': 'Tool calls',
+  'preview.decisions': 'Turn decisions',
+  'preview.plan': 'Diff',
   'preview.commands': 'Commands',
   'preview.noTools': 'No tool calls in this run yet.',
   'composer.mention': 'mention a file',
@@ -960,7 +977,7 @@ const enUS: Dictionary = {
   'terminal.ptyNotice':
     'This is the §11.2 user terminal: node-pty gives a real ConPTY session, with echo, cursor addressing and full-screen programs such as vim or top. It is not permission-gated — that applies to the agent’s commands, which still appear as command.* cards in the transcript.',
   'terminal.ptyUnavailable':
-    'The interactive terminal is unavailable: {reason} The command console below still works, but it runs over a pipe: no echo, and no full-screen programs.',
+    'The interactive terminal is unavailable: {reason} The command channel below still works, but it runs over a pipe: no echo, and no full-screen programs.',
   'terminal.ptyLayers':
     'Three different shells: this one is your own interactive terminal; the agent’s commands run through the UCAD-managed shell, gated by the permission engine, and appear as command.* cards in the transcript; the vendor runtime has its own shell inside it, which UCAD neither intercepts nor pretends to.',
   'terminal.distinct':
@@ -974,6 +991,10 @@ const enUS: Dictionary = {
   'terminal.noConsoles': 'node-pty is unavailable, so there is nothing to create or list.',
   'terminal.emptyCommand':
     'No command output yet. Type a command below and it runs in the project folder.',
+  'terminal.commandTitle': 'Command channel',
+  'terminal.newPipe': 'New channel',
+  'terminal.emptyPipe':
+    'No command channel yet. Use "New channel" above to run commands in the project folder.',
   'terminal.output': 'Output',
   'terminal.noOutput': 'This console has not returned any output yet.',
   'terminal.noOutputHint':

@@ -592,21 +592,13 @@ function Shell(): JSX.Element {
         {toast && <span className="toast">{toast}</span>}
 
         {/*
-          This pill opens the file surface — it is labeled with that surface's
-          name, not "search": there is no search box behind it, and a control
-          that names a behavior it does not have is the kind of quiet lie this
-          product exists to stop. Ctrl+K lands in the same place.
+          The topbar used to carry a box labelled with the Files surface and a
+          ⌘K hint. It was a second control for a destination the tab row
+          already owns, it read as a search field that did not exist, and the
+          shortcut badge was wrong on Windows — the one platform the installer
+          targets. The Files tab is the affordance; Ctrl+K still lands there
+          and the help page names it.
         */}
-        <button
-          className="search-fake"
-          onClick={() => setSurface('explorer')}
-          title={`${t('tab.explorer')} (Ctrl+K)`}
-        >
-          <span className="faint">{t('tab.explorer')}</span>
-          <span className="spacer" />
-          <kbd>⌘K</kbd>
-        </button>
-
         <LocaleSwitch locale={locale} onChange={setLocale} />
       </header>
 

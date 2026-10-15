@@ -58,26 +58,39 @@ export function StatusBar({ data, view, onOpenHelp }: StatusBarProps): JSX.Eleme
       </span>
 
       {branch && <span className="seg">{branch}</span>}
-      {branch && data.workspace && <span className="seg txt truncate">{data.workspace.name}</span>}
+      {branch && data.workspace && (
+        <span className="seg txt truncate project">{data.workspace.name}</span>
+      )}
 
       <span className="seg">seq {view.lastSeq}</span>
 
+      {/*
+        The meter states the one number this product exists to make visible —
+        how much the agent was given — and it used to also print the internal
+        estimator identifier ("heuristic_chars_div_4") next to it, which made
+        the bar read as a debug readout and duplicated the number in the usage
+        segment beside it. The identifier is still one hover away, where a
+        person checking the estimate can find it.
+      */}
       {ctx && (
-        <span className="meter" title={`${ctx.itemCount} items · ${ctx.strategy}`}>
+        <span
+          className="meter"
+          title={`${t('context.items')} ${ctx.itemCount} · ${ctx.strategy} · ${t(
+            'context.estimateSource',
+          )} ${ctx.estimateSource}`}
+        >
           <span className="faint">ctx</span>
           <span className="meter-track">
             <span className={`meter-fill ${level}`} style={{ width: `${ratio * 100}%` }} />
           </span>
-          <span>
-            {ctx.estimatedTokens} tok · {ctx.estimateSource}
-          </span>
+          <span>{ctx.estimatedTokens.toLocaleString()} tok</span>
         </span>
       )}
 
       {view.usage && (
-        <span className="seg">
-          {view.usage.inputTokens.toLocaleString()}↑ {view.usage.outputTokens.toLocaleString()}
-          ↓{view.usage.estimated ? ' ≈' : ''}
+        <span className="seg" title={t('usage.title')}>
+          {view.usage.inputTokens.toLocaleString()}↑ {view.usage.outputTokens.toLocaleString()}↓
+          {view.usage.estimated ? ' ≈' : ''}
         </span>
       )}
 
@@ -95,7 +108,7 @@ export function StatusBar({ data, view, onOpenHelp }: StatusBarProps): JSX.Eleme
       </button>
 
       {data.diagnostics ? (
-        <span className="seg">
+        <span className="seg build">
           v{data.diagnostics.version} · schema v{data.diagnostics.schemaVersion} ·{' '}
           {data.diagnostics.encryptionEnabled
             ? t('settings.encrypted')

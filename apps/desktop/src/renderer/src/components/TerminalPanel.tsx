@@ -218,19 +218,27 @@ export function TerminalPanel({ data }: { data: AppData }): JSX.Element {
         {t('terminal.distinct')}
       </div>
 
+      {/*
+        The absence of node-pty used to be reported four times on one screen: a
+        bare English reason in a red bar, then "node-pty 不可用…" in the console
+        list, then the same sentence again in the output card, under a third
+        message inside the command console. One statement, with Main's own
+        reason in it, is the whole disclosure — and the split below is skipped
+        entirely rather than drawn as two empty boxes.
+      */}
       {availability === null ? (
-        <div className="notice" style={{ marginBottom: 10 }}>
-          {t('terminal.noOutputHint')}
+        <div className="faint" style={{ marginBottom: 10 }}>
+          {t('common.loading')}
         </div>
       ) : ptyReady ? (
         <div className="notice info" style={{ marginBottom: 10 }}>
           {t('terminal.ptyNotice')}
         </div>
       ) : (
-        // Honesty: no PTY means no interactive terminal, and the user is told
-        // which of the two it is and why. The piped console below still works.
-        <div className="notice error" style={{ marginBottom: 10 }}>
-          {availability.reason ?? t('terminal.notRunning')}
+        <div className="notice warn" style={{ marginBottom: 10 }}>
+          {t('terminal.ptyUnavailable', {
+            reason: availability.reason ?? t('common.unknown'),
+          })}
         </div>
       )}
 
@@ -240,101 +248,103 @@ export function TerminalPanel({ data }: { data: AppData }): JSX.Element {
         </div>
       )}
 
-      <div className="split">
-        <div className="card split-list">
-          <div className="block-title">
-            <span>{t('terminal.consoles')}</span>
-            {ptyReady && (
+      {ptyReady && (
+        <div className="split">
+          <div className="card split-list">
+            <div className="block-title">
+              <span>{t('terminal.consoles')}</span>
               <button className="link" onClick={() => void create()} disabled={busy}>
                 + {t('terminal.new')}
               </button>
-            )}
-          </div>
-
-          {ids.length === 0 ? (
-            // Each empty state names its own situation: without node-pty there
-            // is nothing to create or list, and the per-console "no output
-            // yet" line would be claiming a console that does not exist.
-            <div className="faint">{ptyReady ? t('terminal.empty') : t('terminal.noConsoles')}</div>
-          ) : (
-            ids.map((id) => {
-              const session = sessions.get(id);
-              if (session === undefined) return null;
-              return (
-                <div
-                  key={id}
-                  className={`row-item ${id === selected ? 'active' : ''}`}
-                  onClick={() => setSelected(id)}
-                >
-                  <div className="t mono">
-                    {t('terminal.output')} {shortId(id)}
-                  </div>
-                  <div className="m">
-                    <span className={session.state === 'running' ? 'dot running' : 'dot err'} />
-                    <span>{session.state === 'running' ? t('terminal.running') : t('terminal.ended')}</span>
-                    <span className="spacer" />
-                    {session.state === 'running' && (
-                      <button
-                        className="danger"
-                        style={{ padding: '0 6px', fontSize: 10.5 }}
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          void kill(id);
-                        }}
-                      >
-                        {t('terminal.kill')}
-                      </button>
-                    )}
-                  </div>
-                </div>
-              );
-            })
-          )}
-
-          {!hasSession && (
-            <div className="faint" style={{ fontSize: 11, marginTop: 8, lineHeight: 1.6 }}>
-              {t('terminal.needsSession')}
-            </div>
-          )}
-        </div>
-
-        <div className="split-main">
-          <div className="card">
-            <div className="block-title">
-              <span>{active ? `${t('terminal.output')} · ${shortId(active.id)}` : t('terminal.noSelection')}</span>
-              {active && <span className="badge">{active.state === 'running' ? t('terminal.running') : t('terminal.ended')}</span>}
             </div>
 
-            {active === null ? (
-              // The body matches the state: a list worth picking from says
-              // "select one"; an empty list says how to fill it; no node-pty
-              // says why there is nothing. "还没有控制台，点击新建控制台" here
-              // used to sit under a hidden button and contradict the card
-              // beside it.
-              <div className="empty">
-                {ptyReady ? (ids.length > 0 ? t('terminal.noSelection') : t('terminal.empty')) : t('terminal.noConsoles')}
-              </div>
+            {ids.length === 0 ? (
+              <div className="faint">{t('terminal.empty')}</div>
             ) : (
-              <>
-                {active.exit && (
-                  <div className="notice" style={{ marginBottom: 10 }}>
-                    {active.exit}
+              ids.map((id) => {
+                const session = sessions.get(id);
+                if (session === undefined) return null;
+                return (
+                  <div
+                    key={id}
+                    className={`row-item ${id === selected ? 'active' : ''}`}
+                    onClick={() => setSelected(id)}
+                  >
+                    <div className="t mono">
+                      {t('terminal.output')} {shortId(id)}
+                    </div>
+                    <div className="m">
+                      <span className={session.state === 'running' ? 'dot running' : 'dot err'} />
+                      <span>{session.state === 'running' ? t('terminal.running') : t('terminal.ended')}</span>
+                      <span className="spacer" />
+                      {session.state === 'running' && (
+                        <button
+                          className="danger"
+                          style={{ padding: '0 6px', fontSize: 10.5 }}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            void kill(id);
+                          }}
+                        >
+                          {t('terminal.kill')}
+                        </button>
+                      )}
+                    </div>
                   </div>
-                )}
-                <PtyView session={active} api={api} />
-              </>
+                );
+              })
+            )}
+
+            {!hasSession && (
+              <div className="faint" style={{ fontSize: 11, marginTop: 8, lineHeight: 1.6 }}>
+                {t('terminal.needsSession')}
+              </div>
             )}
           </div>
 
-          {/*
-            The piped command console. Not the same thing as the terminal above:
-            no echo, no cursor addressing, no full-screen programs, no per-command
-            exit code. It stays because it is the one that works without the
-            optional native module.
-          */}
-          <CommandConsole api={api} />
+          <div className="split-main">
+            <div className="card">
+              <div className="block-title">
+                <span>{active ? `${t('terminal.output')} · ${shortId(active.id)}` : t('terminal.noSelection')}</span>
+                {active && <span className="badge">{active.state === 'running' ? t('terminal.running') : t('terminal.ended')}</span>}
+              </div>
+
+              {active === null ? (
+                // This branch is only reachable with a working PTY, so it says
+                // "select one" or "create one" — never why node-pty is absent;
+                // that disclosure belongs to the paragraph at the top of the
+                // surface and nowhere else.
+                <div className="empty">
+                  {ids.length > 0 ? t('terminal.noSelection') : t('terminal.empty')}
+                </div>
+              ) : (
+                <>
+                  {active.exit && (
+                    <div className="notice" style={{ marginBottom: 10 }}>
+                      {active.exit}
+                    </div>
+                  )}
+                  <PtyView session={active} api={api} />
+                </>
+              )}
+            </div>
+
+            {/*
+              The piped command console. Not the same thing as the terminal above:
+              no echo, no cursor addressing, no full-screen programs, no per-command
+              exit code. It stays because it is the one that works without the
+              optional native module.
+            */}
+            <CommandConsole api={api} />
+          </div>
         </div>
-      </div>
+      )}
+
+      {/*
+        Without a PTY the command channel is the only working surface, so it is
+        the *whole* surface rather than a footnote under two empty boxes.
+      */}
+      {availability !== null && !ptyReady && <CommandConsole api={api} />}
     </div>
   );
 }
@@ -564,12 +574,19 @@ function CommandConsole({ api }: { api: UcadApi }): JSX.Element {
 
   return (
     <div className="card" style={{ marginTop: 10 }}>
+      {/*
+        This header used to be `terminal.exitCodeNote` — a 50-character
+        explanation rendered in the 11px uppercase section-title slot, so the
+        card's heading was a paragraph and the surface had no scannable title
+        at all. The explanation is now the note under it, where prose belongs.
+      */}
       <div className="block-title">
-        <span>{t('terminal.exitCodeNote')}</span>
+        <span>{t('terminal.commandTitle')}</span>
         <button className="link" onClick={() => void create()} disabled={busy}>
-          + {t('terminal.new')}
+          + {t('terminal.newPipe')}
         </button>
       </div>
+      <div className="faint terminal-note">{t('terminal.exitCodeNote')}</div>
 
       {failure && (
         <div className="notice error" style={{ marginBottom: 10 }}>
@@ -608,9 +625,12 @@ function CommandConsole({ api }: { api: UcadApi }): JSX.Element {
          * two consoles looked like one repeated accident, and "click New
          * console" sat directly above an input box, telling the user to do the
          * one thing they could already do. This one points at the input that is
-         * actually right below it.
+         * actually right below it — and only once a session exists, because
+         * without one the input is disabled.
          */
-        <div className="empty">{t('terminal.emptyCommand')}</div>
+        <div className="empty">
+          {consoles.length > 0 ? t('terminal.emptyCommand') : t('terminal.emptyPipe')}
+        </div>
       )}
 
       <div className="console-in">

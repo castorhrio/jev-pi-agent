@@ -74,7 +74,21 @@
   --topbar-h: 40px;
   --statusbar-h: 26px;
   --rail-w: 248px;
-  --preview-w: 380px;
+  --preview-w: 336px;
+
+  /*
+   * The page column.
+   *
+   * Every panel used to stretch to whatever the main column happened to be —
+   * 1136px of content at a 1440px window — so a two-word row became a
+   * 1100px-wide line and the panels read as stretched rather than laid out.
+   * One declared measure, applied by `.pane > *` and `.pane-head`, is what
+   * makes every surface share a single column instead of each inventing one.
+   * 960px is ~110 characters at 13px, the top of the comfortable range for
+   * mixed CJK/Latin prose, and still fits the widest gated table.
+   */
+  --page-w: 960px;
+  --gutter: 28px;
 }
 
 * {
@@ -355,26 +369,6 @@ code,
   -webkit-app-region: no-drag;
 }
 
-.search-fake {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 260px;
-  padding: 4px 8px;
-  border: 1px solid var(--border);
-  border-radius: var(--r-sm);
-  background: var(--surface);
-  color: var(--text-3);
-  font-size: 12px;
-  -webkit-app-region: no-drag;
-  cursor: pointer;
-}
-
-.search-fake:hover {
-  border-color: var(--border-strong);
-  color: var(--text-2);
-}
-
 .toast {
   font-size: 11.5px;
   color: var(--text-2);
@@ -442,8 +436,25 @@ code,
   border-bottom: 1px solid var(--border-soft);
 }
 
+/*
+ * The session list is the rail's flexible region: it is the one that holds an
+ * unbounded number of items, so it takes the slack and scrolls inside itself.
+ *
+ * The file tree used to be a second `flex: 1` sibling, which split the rail
+ * into two equal halves regardless of content — four files sat behind a
+ * 190px void while the session list above them was equally empty (the dead
+ * zone in every round-40 screenshot). The tree now takes exactly the height
+ * its contents need, up to a ceiling so a huge project cannot push the
+ * project facts out of the rail.
+ */
 .rail-section.grow {
-  flex: 1;
+  flex: 1 1 auto;
+  min-height: 128px;
+}
+
+.rail-section.rail-files {
+  flex: 0 1 auto;
+  max-height: 42%;
 }
 
 /* Small-caps section headers: the TypeSafe pattern, and the reason a rail with
@@ -652,7 +663,21 @@ code,
   flex: 1;
   overflow-y: auto;
   min-height: 0;
-  padding: 20px 24px 28px;
+  padding: 22px var(--gutter) 36px;
+}
+
+/*
+ * The page column, applied to the pane's direct children.
+ *
+ * A child longer than the measure (a wide table, a diff) still scrolls the
+ * pane rather than the window, and `margin-inline: auto` keeps the column
+ * centred in whatever width the main column has left after the rail and the
+ * preview column. Children keep their own width when they are narrower —
+ * only the *maximum* is declared here.
+ */
+.pane > * {
+  max-width: var(--page-w);
+  margin-inline: auto;
 }
 
 .pane.flush {
@@ -689,12 +714,11 @@ code,
 
 .pane-head {
   margin-bottom: 18px;
-  max-width: 820px;
 }
 
 .pane-head h1 {
   margin: 0 0 4px;
-  font-size: 19px;
+  font-size: 18px;
   font-weight: 600;
   letter-spacing: -0.01em;
 }
@@ -1227,8 +1251,8 @@ code,
   border: 1px solid var(--border);
   border-radius: var(--r);
   background: var(--surface);
-  padding: 12px 14px;
-  margin-bottom: 12px;
+  padding: 14px 16px;
+  margin-bottom: 14px;
 }
 
 /*
@@ -1329,13 +1353,21 @@ table.grid tr:last-child td {
   color: var(--text-3);
 }
 
+/*
+ * "Nothing here yet", drawn as a place rather than as an apology.
+ *
+ * Centred mid-panel this floated in the middle of a full-width column with no
+ * edge to hold it (the explorer hint sat at the visual centre of a 1136px
+ * page). A left-aligned block on the page column reads as the first thing on
+ * the surface instead, and the dashed edge is what distinguishes "empty" from
+ * a card that failed to render.
+ */
 .empty {
-  padding: 40px 20px;
-  text-align: center;
-  color: var(--text-3);
+  padding: 16px 16px;
+  color: var(--text-2);
   font-size: 12.5px;
-  max-width: 420px;
-  margin: 0 auto;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--r);
   line-height: 1.7;
 }
 
@@ -1784,6 +1816,16 @@ table.grid tr:last-child td {
   user-select: none;
 }
 
+/* The sentence that used to be the card's title. Prose under a heading, not a
+   heading — 11px muted, capped to a readable measure so it cannot stretch into
+   one long line on a wide window. */
+.terminal-note {
+  max-width: 72ch;
+  margin-bottom: 10px;
+  font-size: 11px;
+  line-height: 1.6;
+}
+
 .console-in {
   display: flex;
   align-items: center;
@@ -2105,14 +2147,17 @@ table.grid tr:last-child td {
 @media (max-width: 860px) {
   :root {
     --rail-w: 196px;
+    --gutter: 18px;
   }
   .body,
   .body.no-preview {
     grid-template-columns: var(--rail-w) minmax(280px, 1fr);
   }
-  /* The topbar search affordance is a shortcut to the explorer; at this width
-     it is pure overhead, and it is what pushed the project chip off-screen. */
-  .search-fake {
+  /* The status bar carries five facts; at this width the two that name the
+     project are the ones a user can already see in the topbar chip, so the
+     bar drops them rather than wrapping into a second line. */
+  .statusbar .seg.project,
+  .statusbar .seg.build {
     display: none;
   }
 }

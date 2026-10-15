@@ -180,7 +180,7 @@ export function LeftRail({
         </div>
       </div>
 
-      <div className="rail-section grow">
+      <div className="rail-section rail-files">
         <div className="rail-head">
           <button
             className="rail-caret"
