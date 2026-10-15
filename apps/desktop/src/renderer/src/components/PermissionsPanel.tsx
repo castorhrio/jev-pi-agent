@@ -104,7 +104,7 @@ export function PermissionsPanel(): JSX.Element {
         )}
         {!error && loading && <div className="faint">{t('common.loading')}</div>}
         {!error && !loading && rules.length === 0 && (
-          <div className="empty" style={{ padding: '20px 8px' }}>
+          <div className="empty">
             {t('rules.empty')}
           </div>
         )}

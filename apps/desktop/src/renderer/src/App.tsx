@@ -606,15 +606,14 @@ function Shell(): JSX.Element {
 
         <div className="spacer" />
 
-        {toast && <span className="toast">{toast}</span>}
-
         {/*
-          The topbar used to carry a box labelled with the Files surface and a
-          ⌘K hint. It was a second control for a destination the tab row
-          already owns, it read as a search field that did not exist, and the
-          shortcut badge was wrong on Windows — the one platform the installer
-          targets. The Files tab is the affordance; Ctrl+K still lands there
-          and the help page names it.
+          The toast used to sit in the topbar, between the spacer and the
+          locale switch. A title bar is where a user looks to change the
+          language or drag the window, not where they look for the result of
+          the action they just took — and on a wide window it landed in the
+          empty middle of the bar, as far from the click as the layout allows.
+          It now rides above the status bar, in the corner the eye returns to,
+          and is a polite live region so a screen reader hears it at all.
         */}
         <LocaleSwitch locale={locale} onChange={setLocale} />
       </header>
@@ -1007,6 +1006,12 @@ function Shell(): JSX.Element {
       </div>
 
       <StatusBar data={data} view={view} onOpenHelp={() => setSurface('help')} />
+
+      {toast && (
+        <div className="toast" role="status">
+          {toast}
+        </div>
+      )}
 
       <PermissionDialog
         request={pending[0] ?? null}
