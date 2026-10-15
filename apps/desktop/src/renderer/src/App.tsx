@@ -966,13 +966,18 @@ function Shell(): JSX.Element {
           {surface === 'recent' && (
             <PanelBoundary label={t('tab.recent')}>
               <RecentProjects
-                onActivated={() => {
+                currentId={data.workspace?.id ?? null}
+                onActivated={(name) => {
                   // Switching project invalidates the session list, so the
                   // selection is cleared rather than left pointing at a chat that
                   // belongs to the previous folder.
                   setSessionId(null);
                   void data.refresh();
                   setSurface('chat');
+                  // Confirmed here, not in the panel: the panel is unmounted by
+                  // the `setSurface` above, so a notice it set for itself was
+                  // never rendered. This toast outlives the navigation.
+                  flash(t('recent.switched', { name }));
                 }}
                 onOpenFolder={() => void openProject()}
               />

@@ -17,17 +17,37 @@ import { useT } from '../i18n-context';
 import type { WorkspaceDto } from '@ucad/contracts';
 
 export function RecentProjects({
+  currentId,
   onActivated,
   onOpenFolder,
 }: {
-  onActivated: () => void;
+  /**
+   * The workspace that is open right now.
+   *
+   * Passed in rather than inferred from `index === 0`, which is what this
+   * component used to do. The list is ordered by recency so the two agree most
+   * of the time — but "most of the time" is how the row already marked
+   * `当前项目` came to also carry an enabled primary button reading `切换到这里`,
+   * i.e. an offer to switch to where the user already is.
+   */
+  currentId: string | null;
+  /**
+   * Called with the name of the project that is now open.
+   *
+   * The name is handed up rather than confirmed here because the confirmation
+   * cannot be shown here: a successful switch is followed immediately by
+   * `onActivated`, which moves the user to the conversation, which unmounts
+   * this panel. A notice rendered in this component's own state was therefore
+   * never on screen for a single frame — the user saw the page change with
+   * nothing saying why. The caller owns a toast that survives the navigation.
+   */
+  onActivated: (name: string) => void;
   onOpenFolder: () => void;
 }): JSX.Element {
   const t = useT();
   const [rows, setRows] = useState<WorkspaceDto[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
-  const [flash, setFlash] = useState<string | null>(null);
 
   const load = useCallback(() => {
     setError(null);
@@ -45,17 +65,14 @@ export function RecentProjects({
   const activate = (workspace: WorkspaceDto): void => {
     setBusyId(workspace.id);
     setError(null);
-    setFlash(null);
     void getApi()
       .workspace.activate(workspace.id)
-      .then((next) => {
-        setFlash(t('recent.switched', { name: next.name }));
-        onActivated();
-      })
+      .then((next) => onActivated(next.name))
       .catch((e: unknown) => {
         // A folder that moved or an unmounted drive lands here. The reason is
         // the whole point — the user needs to know whether to re-pick the folder
-        // or to fix the mount.
+        // or to fix the mount. A failure does *not* navigate, so this notice is
+        // shown where it is set.
         setError(t('recent.switchFailed', { reason: e instanceof Error ? e.message : String(e) }));
       })
       .finally(() => setBusyId(null));
@@ -68,7 +85,6 @@ export function RecentProjects({
         <p>{t('recent.subtitle')}</p>
       </div>
 
-      {flash && <div className="notice info">{flash}</div>}
       {error && <div className="notice error">{error}</div>}
 
       <div className="card">
@@ -79,30 +95,45 @@ export function RecentProjects({
         ) : (
           <table className="grid">
             <tbody>
-              {rows.map((workspace, index) => (
-                <tr key={workspace.id}>
-                  <td>
-                    <div className="truncate" title={workspace.path}>
-                      {workspace.name}
-                    </div>
-                    <div className="faint truncate" style={{ fontSize: 11 }}>
-                      {workspace.path}
-                    </div>
-                  </td>
-                  <td className="mono faint" style={{ fontSize: 11, whiteSpace: 'nowrap' }}>
-                    {index === 0 ? t('currentProject') : ''}
-                  </td>
-                  <td className="actions">
-                    <button
-                      className="primary"
-                      disabled={busyId !== null}
-                      onClick={() => activate(workspace)}
-                    >
-                      {busyId === workspace.id ? t('common.loading') : t('common.switchTo')}
-                    </button>
-                  </td>
-                </tr>
-              ))}
+              {rows.map((workspace) => {
+                const isCurrent = workspace.id === currentId;
+                return (
+                  <tr key={workspace.id}>
+                    <td>
+                      <div className="truncate" title={workspace.path}>
+                        {workspace.name}
+                      </div>
+                      <div className="faint truncate" style={{ fontSize: 11 }}>
+                        {workspace.path}
+                      </div>
+                    </td>
+                    <td className="mono faint" style={{ fontSize: 11, whiteSpace: 'nowrap' }}>
+                      {isCurrent ? t('currentProject') : ''}
+                    </td>
+                    <td className="actions">
+                      {/*
+                        The open project's action is disabled and says so.
+                        It used to stay enabled and read `切换到这里`, which
+                        re-activated the workspace already in use and navigated
+                        the user off this page with nothing to show for it — a
+                        primary button whose only observable effect was to take
+                        the page away.
+                      */}
+                      <button
+                        className={isCurrent ? '' : 'primary'}
+                        disabled={isCurrent || busyId !== null}
+                        onClick={() => activate(workspace)}
+                      >
+                        {isCurrent
+                          ? t('recent.currentAction')
+                          : busyId === workspace.id
+                            ? t('common.loading')
+                            : t('common.switchTo')}
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         )}

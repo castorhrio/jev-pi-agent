@@ -2230,8 +2230,26 @@ table.grid td.actions {
   gap: 8px;
 }
 
+/*
+ * The document has one left edge.
+ *
+ * `list-style: none` takes the markers away but leaves the user agent's
+ * `padding-left: 40px` behind, so a section that happened to be a list started
+ * its text 40px right of its own heading — and of every prose section above it.
+ * Measured on the generated handoff: 目标/当前状态 put their `<p>` at x=364
+ * while 相关文件/改动/未完成的工作 put their `<li>` at x=404. Six of eight
+ * sections were indented, for no reason a reader could infer, in the one
+ * artefact this product exists to hand to the next agent.
+ *
+ * Only the horizontal reset was missing. The vertical rhythm is carried by the
+ * user agent's `1em` on both `<p>` and `<ul>` — adjacent sibling margins
+ * collapse to a single 13px gap — so `margin` is deliberately left alone;
+ * zeroing it here would pull every list section 6px closer to its heading than
+ * the prose sections around it.
+ */
 .handoff-list {
   list-style: none;
+  padding: 0;
   display: flex;
   flex-direction: column;
   gap: 4px;
