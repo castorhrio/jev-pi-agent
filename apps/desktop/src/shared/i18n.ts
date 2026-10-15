@@ -245,6 +245,8 @@ const zhCN: Dictionary = {
   'empty.chatStep2': 'Context Broker 在 Token 预算内检索相关文件、符号与 Git 变更，打成一个 Context Pack。',
   'empty.chatStep3': '上下文被确定性渲染后注入 Agent 输入；右侧面板实时显示它拿到了什么。',
   'empty.explorer': '选择左侧的文件查看内容。',
+  'explorer.listFailed': '目录读取失败',
+  'explorer.readFailed': '文件读取失败',
   'empty.changes': '工作区没有未提交的变更。',
   'empty.context': '发送一轮指令后，这里会显示 Agent 实际收到的上下文包。',
   'empty.decision': '本会话还没有产生决策记录。',
@@ -972,6 +974,8 @@ const enUS: Dictionary = {
   'empty.chatStep3':
     'That pack is rendered deterministically into the agent’s input; the panel on the right shows what it received.',
   'empty.explorer': 'Select a file on the left to view it.',
+  'explorer.listFailed': 'Could not read the directory',
+  'explorer.readFailed': 'Could not read the file',
   'empty.changes': 'The worktree has no uncommitted changes.',
   'empty.context': 'After a turn, this shows the context the agent actually received.',
   'empty.decision': 'No decisions have been made in this session yet.',

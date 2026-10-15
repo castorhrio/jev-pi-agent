@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { getApi } from '../api';
 import { useT } from '../i18n-context';
 import { FileEditor } from './FileEditor';
+import { ReadFailure } from './ReadFailure';
 import type { AppData } from '../state/hooks';
 
 type Entry = { name: string; path: string; kind: 'file' | 'dir' };
@@ -29,6 +30,24 @@ export function Explorer({
     content: string;
     truncated: boolean;
   } | null>(null);
+  /*
+   * A failed read rendered as an empty read.
+   *
+   * All three of this panel's reads used to swallow their rejection — `list`
+   * fell back to `setEntries([])` and both `read` paths to `undefined` — so a
+   * permission error on the workspace directory, or an unreadable file, came
+   * out looking exactly like "there is nothing here". Measured in the browser
+   * with both reads rejecting: the list column said 选择左侧的文件查看内容 with
+   * nothing in it, and clicking a file put *the same sentence* in the main
+   * pane — telling the user to select a file they had just selected. No
+   * notice, no toast, no console error.
+   *
+   * `ReadFailure` exists for exactly this and says so in its own doc comment:
+   * "the value came back empty and the panel said so as if it were a fact".
+   * These three call sites were simply never moved onto it.
+   */
+  const [listError, setListError] = useState<string | null>(null);
+  const [fileError, setFileError] = useState<string | null>(null);
 
   const root = data.workspace?.path ?? null;
   useEffect(() => {
@@ -38,16 +57,20 @@ export function Explorer({
   useEffect(() => {
     if (!dir) {
       setEntries([]);
+      setListError(null);
       return;
     }
     let cancelled = false;
+    setListError(null);
     void getApi()
       .files.list(dir)
       .then((list) => {
         if (!cancelled) setEntries(list);
       })
-      .catch(() => {
-        if (!cancelled) setEntries([]);
+      .catch((error: unknown) => {
+        if (cancelled) return;
+        setEntries([]);
+        setListError(error instanceof Error ? error.message : String(error));
       });
     return () => {
       cancelled = true;
@@ -60,6 +83,7 @@ export function Explorer({
   useEffect(() => {
     if (!selectedPath) return;
     setFile(null);
+    setFileError(null);
     void getApi()
       .files.read(selectedPath, { maxBytes: 512 * 1024 })
       .then((result) =>
@@ -69,12 +93,15 @@ export function Explorer({
           truncated: result.truncated,
         }),
       )
-      .catch(() => undefined);
+      .catch((error: unknown) =>
+        setFileError(error instanceof Error ? error.message : String(error)),
+      );
   }, [selectedPath]);
 
   const open = useCallback(
     (path: string) => {
       setFile(null);
+      setFileError(null);
       // Report the selection outward. The left rail shows a file tree too, and
       // two identical lists that disagree about which file is open read as two
       // different applications.
@@ -84,7 +111,9 @@ export function Explorer({
         .then((result) =>
           setFile({ path, content: result.content, truncated: result.truncated }),
         )
-        .catch(() => undefined);
+        .catch((error: unknown) =>
+          setFileError(error instanceof Error ? error.message : String(error)),
+        );
     },
     [onSelectFile],
   );
@@ -94,6 +123,7 @@ export function Explorer({
     const idx = Math.max(dir.lastIndexOf('/'), dir.lastIndexOf('\\'));
     setDir(idx > 0 ? dir.slice(0, idx) : root);
     setFile(null);
+    setFileError(null);
   }, [dir, root]);
 
   const sorted = useMemo(
@@ -189,7 +219,9 @@ export function Explorer({
                 <span className="faint">{t('common.back')}</span>
               </div>
             )}
-            {sorted.length === 0 ? (
+            {listError ? (
+              <ReadFailure label={t('explorer.listFailed')} reason={listError} />
+            ) : sorted.length === 0 ? (
               <div className="faint rail-note">{t('empty.explorer')}</div>
             ) : (
               sorted.map((entry) => (
@@ -249,6 +281,8 @@ export function Explorer({
                   </div>
                 )}
               </>
+            ) : fileError ? (
+              <ReadFailure label={t('explorer.readFailed')} reason={fileError} />
             ) : (
               <div className="empty">{t('empty.explorer')}</div>
             )}
