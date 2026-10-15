@@ -218,62 +218,81 @@ export const Composer = forwardRef<
             />
 
           <div className="composer-bar">
-            <select
-              className="picker-select"
-              value={props.agentId}
-              onChange={(e) => props.onAgentChange(e.target.value)}
-              aria-label="Agent"
-              title={agent?.manifest.displayName ?? 'Agent'}
-              disabled={!props.hasWorkspace}
-            >
-              {(props.agents.length > 0
-                ? props.agents.map((a) => a.manifest.id)
-                : ['mock']
-              ).map((id) => (
-                <option key={id} value={id}>
-                  {props.agents.find((a) => a.manifest.id === id)?.manifest.displayName ?? id}
-                </option>
-              ))}
-            </select>
-
-            <select
-              className="picker-select"
-              value={props.providerId}
-              onChange={(e) => props.onProviderChange(e.target.value)}
-              aria-label={t('composer.provider')}
-              title={t('composer.provider')}
-              disabled={!props.hasWorkspace || props.providers.length === 0}
-            >
-              {/*
-                RESEARCH §1: switching vendors should cost one click, not a
-                trip through settings. A provider that this build cannot speak
-                is not offered at all — listing it would be offering something
-                that cannot work.
-              */}
-              <option value="">{t('composer.provider.auto')}</option>
-              {props.providers
-                .filter((p) => p.supported)
-                .map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.displayName}
+            {/*
+              Every picker here carries a *visible* label.
+              Three bare pills in a row — an agent's display name, a provider
+              and a permission mode — are three values with no names: nothing on
+              screen says which is which, and the first one reads "Universal
+              (any provider)", which sounds like the provider picker. Each of
+              these controls already had an `aria-label` and a `title`; neither
+              is visible without a hover, and neither exists at all on a touch
+              device. The label keys already existed.
+            */}
+            <label className="field">
+              <span className="field-label">{t('col.agent')}</span>
+              <select
+                className="picker-select"
+                value={props.agentId}
+                onChange={(e) => props.onAgentChange(e.target.value)}
+                aria-label={t('col.agent')}
+                title={agent?.manifest.displayName ?? t('col.agent')}
+                disabled={!props.hasWorkspace}
+              >
+                {(props.agents.length > 0
+                  ? props.agents.map((a) => a.manifest.id)
+                  : ['mock']
+                ).map((id) => (
+                  <option key={id} value={id}>
+                    {props.agents.find((a) => a.manifest.id === id)?.manifest.displayName ?? id}
                   </option>
                 ))}
-            </select>
+              </select>
+            </label>
 
-            <select
-              className={`picker-select ${modeDanger ? 'warn' : ''}`}
-              value={props.permissionMode}
-              onChange={(e) => props.onPermissionModeChange(e.target.value as PermissionMode)}
-              aria-label={t('session.permissionMode')}
-              title={t('session.permissionMode')}
-              disabled={!props.hasWorkspace}
-            >
-              <option value="read_only">{t('session.permission.read_only')}</option>
-              <option value="ask">{t('session.permission.ask')}</option>
-              <option value="workspace_write">
-                {t('session.permission.workspace_write')}
-              </option>
-            </select>
+            <label className="field">
+              <span className="field-label">{t('composer.provider')}</span>
+              <select
+                className="picker-select"
+                value={props.providerId}
+                onChange={(e) => props.onProviderChange(e.target.value)}
+                aria-label={t('composer.provider')}
+                title={t('composer.provider')}
+                disabled={!props.hasWorkspace || props.providers.length === 0}
+              >
+                {/*
+                  RESEARCH §1: switching vendors should cost one click, not a
+                  trip through settings. A provider that this build cannot speak
+                  is not offered at all — listing it would be offering something
+                  that cannot work.
+                */}
+                <option value="">{t('composer.provider.auto')}</option>
+                {props.providers
+                  .filter((p) => p.supported)
+                  .map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.displayName}
+                    </option>
+                  ))}
+              </select>
+            </label>
+
+            <label className="field">
+              <span className="field-label">{t('session.permissionMode')}</span>
+              <select
+                className={`picker-select ${modeDanger ? 'warn' : ''}`}
+                value={props.permissionMode}
+                onChange={(e) => props.onPermissionModeChange(e.target.value as PermissionMode)}
+                aria-label={t('session.permissionMode')}
+                title={t('session.permissionMode')}
+                disabled={!props.hasWorkspace}
+              >
+                <option value="read_only">{t('session.permission.read_only')}</option>
+                <option value="ask">{t('session.permission.ask')}</option>
+                <option value="workspace_write">
+                  {t('session.permission.workspace_write')}
+                </option>
+              </select>
+            </label>
 
             <span className="grow" />
 

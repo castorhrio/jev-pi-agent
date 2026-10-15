@@ -273,18 +273,27 @@ export function DecisionPanel({
           onChange={(e) => setObjective(e.target.value)}
         />
         <div className="row-gap" style={{ marginTop: 8, flexWrap: 'wrap' }}>
-          <select
-            className="picker-select"
-            value={kind}
-            aria-label={t('decision.kind')}
-            onChange={(e) => setKind(e.target.value as DecisionKind)}
-          >
-            {KINDS.map((value) => (
-              <option key={value} value={value}>
-                {value}
-              </option>
-            ))}
-          </select>
+          {/*
+            The kind picker had only an `aria-label`, so on screen it was a pill
+            reading `route` next to a button — the word "route" is a value, not a
+            name, and nothing said what it was choosing. `decision.kind` already
+            existed for this control and was never rendered.
+          */}
+          <label className="field">
+            <span className="field-label">{t('decision.kind')}</span>
+            <select
+              className="picker-select"
+              value={kind}
+              aria-label={t('decision.kind')}
+              onChange={(e) => setKind(e.target.value as DecisionKind)}
+            >
+              {KINDS.map((value) => (
+                <option key={value} value={value}>
+                  {value}
+                </option>
+              ))}
+            </select>
+          </label>
           <button
             className="primary"
             disabled={deciding || objective.trim() === ''}

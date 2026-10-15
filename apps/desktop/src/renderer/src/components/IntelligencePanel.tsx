@@ -426,26 +426,38 @@ export function IntelligencePanel({ data }: { data: AppData }): JSX.Element {
         </div>
 
         <div className="row-gap" style={{ flexWrap: 'wrap' }}>
-          <select
-            className="picker-select"
-            value={kind}
-            onChange={(event) => setKind(event.target.value as IntelligenceQueryKind)}
-            aria-label={t('intel.kind')}
-          >
-            {QUERY_KINDS.map((entry) => (
-              <option key={entry} value={entry}>
-                {entry}
-              </option>
-            ))}
-          </select>
-          <input
-            value={question}
-            placeholder={t('intel.queryInput')}
-            onChange={(event) => setQuestion(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === 'Enter') void runQuery();
-            }}
-          />
+          {/*
+            Two controls that had no name on screen: the kind picker showed a
+            bare `symbol`, and the query box used its placeholder as its label —
+            which disappears the moment a query is typed. `intel.kind` and
+            `intel.queryInput` already existed for exactly these two.
+          */}
+          <label className="field">
+            <span className="field-label">{t('intel.kind')}</span>
+            <select
+              className="picker-select"
+              value={kind}
+              onChange={(event) => setKind(event.target.value as IntelligenceQueryKind)}
+              aria-label={t('intel.kind')}
+            >
+              {QUERY_KINDS.map((entry) => (
+                <option key={entry} value={entry}>
+                  {entry}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="field" style={{ flex: '1 1 220px' }}>
+            <span className="field-label">{t('intel.queryInput')}</span>
+            <input
+              style={{ minWidth: 0, width: '100%' }}
+              value={question}
+              onChange={(event) => setQuestion(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') void runQuery();
+              }}
+            />
+          </label>
           <button className="primary" onClick={() => void runQuery()} disabled={queryBusy}>
             {queryBusy ? t('intel.querying') : t('intel.runQuery')}
           </button>

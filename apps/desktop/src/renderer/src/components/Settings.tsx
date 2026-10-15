@@ -390,21 +390,42 @@ export function SettingsPanel({
 
       <div className="card">
         <h2>{t('settings.secrets')}</h2>
-        <div className="row-gap">
-          <input
-            placeholder="providerId"
-            value={provider}
-            onChange={(e) => setProvider(e.target.value)}
-          />
-          <input placeholder="key" value={key} onChange={(e) => setKey(e.target.value)} />
+        {/*
+          Three controls that used to be named only by their placeholders.
+          `providerId` and `key` are the field *values* in the fixture, so on
+          screen those boxes showed `openai` and `api-key` with nothing saying
+          which was which — and the placeholder is gone the moment either is
+          edited anyway. The credential box loses its placeholder entirely: the
+          one thing it said ("cannot be read back") is already the subtitle at
+          the top of this surface, so repeating it inside the field was noise.
+        */}
+        <div className="row-gap" style={{ flexWrap: 'wrap' }}>
+          <label className="field" style={{ flex: '1 1 180px' }}>
+            <span className="field-label">{t('settings.secretProvider')}</span>
+            <input
+              style={{ minWidth: 0, width: '100%' }}
+              value={provider}
+              onChange={(e) => setProvider(e.target.value)}
+            />
+          </label>
+          <label className="field" style={{ flex: '1 1 180px' }}>
+            <span className="field-label">{t('settings.secretKey')}</span>
+            <input
+              style={{ minWidth: 0, width: '100%' }}
+              value={key}
+              onChange={(e) => setKey(e.target.value)}
+            />
+          </label>
         </div>
-        <input
-          style={{ marginTop: 8 }}
-          type="password"
-          placeholder={t('settings.secretPlaceholder')}
-          value={secret}
-          onChange={(e) => setSecret(e.target.value)}
-        />
+        <label className="field" style={{ marginTop: 8 }}>
+          <span className="field-label">{t('settings.secretValue')}</span>
+          <input
+            style={{ flex: 1, minWidth: 0 }}
+            type="password"
+            value={secret}
+            onChange={(e) => setSecret(e.target.value)}
+          />
+        </label>
         <div className="row-gap" style={{ marginTop: 8 }}>
           <button className="primary" onClick={() => void storeSecret()} disabled={!secret}>
             {t('settings.secretSave')}

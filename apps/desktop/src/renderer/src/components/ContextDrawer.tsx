@@ -219,25 +219,41 @@ export function ContextDrawer({
           value={objective}
           onChange={(e) => setObjective(e.target.value)}
         />
+        {/*
+          Both controls carry a *visible* label.
+
+          The strategy select had only an `aria-label`, so on screen it was a
+          pill reading "自动" with nothing to say what it changed, and the budget
+          input used its placeholder as its label — which vanishes the moment a
+          number is typed, leaving an unexplained box between the select and the
+          button. `context.strategy` and `context.budget` already existed for
+          exactly these two controls; neither was being rendered.
+        */}
         <div className="row-gap" style={{ marginTop: 8, flexWrap: 'wrap' }}>
-          <select
-            className="picker-select"
-            value={strategy}
-            aria-label={t('context.strategy')}
-            onChange={(e) => setStrategy(e.target.value as ContextStrategy | 'auto')}
-          >
-            {STRATEGIES.map((value) => (
-              <option key={value} value={value}>
-                {value === 'auto' ? t('context.strategyAuto') : value}
-              </option>
-            ))}
-          </select>
-          <input
-            style={{ width: 128 }}
-            placeholder={t('context.budgetInput')}
-            value={budgetInput}
-            onChange={(e) => setBudgetInput(e.target.value)}
-          />
+          <label className="field">
+            <span className="field-label">{t('context.strategy')}</span>
+            <select
+              className="picker-select"
+              value={strategy}
+              aria-label={t('context.strategy')}
+              onChange={(e) => setStrategy(e.target.value as ContextStrategy | 'auto')}
+            >
+              {STRATEGIES.map((value) => (
+                <option key={value} value={value}>
+                  {value === 'auto' ? t('context.strategyAuto') : value}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="field">
+            <span className="field-label">{t('context.budget')}</span>
+            <input
+              style={{ width: 108 }}
+              inputMode="numeric"
+              value={budgetInput}
+              onChange={(e) => setBudgetInput(e.target.value)}
+            />
+          </label>
           <button
             className="primary"
             disabled={previewing || objective.trim() === ''}

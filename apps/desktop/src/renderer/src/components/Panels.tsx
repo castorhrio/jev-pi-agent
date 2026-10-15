@@ -370,6 +370,12 @@ export function Changes({ data }: { data: AppData }): JSX.Element {  const t = u
         <h2>{t('changes.commitTitle')}</h2>
         <div className="row-gap">
           <input
+            /*
+             * The card heading names the action ("Commit"); this input still
+             * needs a name of its own that does not depend on the placeholder,
+             * which disappears as soon as a message is typed.
+             */
+            aria-label={t('changes.commitPlaceholder')}
             placeholder={t('changes.commitPlaceholder')}
             value={message}
             onChange={(e) => setMessage(e.target.value)}

@@ -591,16 +591,24 @@ function ServerCard({
           />
           <span>{t('mcp.enabled')}</span>
         </label>
-        <select
-          className="picker-select"
-          value={server.exposure}
-          disabled={busy === `exposure:${server.id}`}
-          aria-label={t('mcp.exposure')}
-          onChange={(event) => onExposure(event.target.value as Exposure)}
-        >
-          <option value="ucad_internal">{t('mcp.exposure_ucad_internal')}</option>
-          <option value="agent_facing">{t('mcp.exposure_agent_facing')}</option>
-        </select>
+        {/*
+          The exposure picker sat in a row of *buttons* with no name on screen,
+          so it read as one more action ("Agent（对话中可调用）") rather than as
+          the one setting in the row. `mcp.exposure` already named it.
+        */}
+        <label className="field">
+          <span className="field-label">{t('mcp.exposure')}</span>
+          <select
+            className="picker-select"
+            value={server.exposure}
+            disabled={busy === `exposure:${server.id}`}
+            aria-label={t('mcp.exposure')}
+            onChange={(event) => onExposure(event.target.value as Exposure)}
+          >
+            <option value="ucad_internal">{t('mcp.exposure_ucad_internal')}</option>
+            <option value="agent_facing">{t('mcp.exposure_agent_facing')}</option>
+          </select>
+        </label>
         <button className="primary" onClick={onTest} disabled={testing}>
           {testing ? t('mcp.testing') : t('mcp.test')}
         </button>

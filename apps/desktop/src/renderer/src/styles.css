@@ -956,6 +956,24 @@ code,
   min-width: 0;
 }
 
+/*
+ * When the row does wrap, Send must land at the *end* of its line.
+ *
+ * The `.grow` spacer before it only absorbs slack on the first line, so a
+ * wrapped Send used to sit at the left edge of the second row — looking like a
+ * control that had fallen out of the toolbar rather than a deliberate second
+ * line. `margin-left: auto` absorbs the slack on whichever line it lands on,
+ * which makes the wrap read as a two-row toolbar instead of a broken one.
+ *
+ * The wrap itself is reachable: three labelled pickers plus Send need ~631px
+ * and the composer gets 630px at a 1280px window. Named controls are worth the
+ * second row there — an unlabelled pill beside two others does not say what it
+ * changes, and one of these three is the permission mode.
+ */
+.composer-bar > button:last-child {
+  margin-left: auto;
+}
+
 /* Selectors: pill-shaped, quiet until hovered. */
 .picker {
   display: inline-flex;
@@ -1084,37 +1102,49 @@ code,
 }
 
 /* -- definition rows: the workhorse of every info surface here ------------ */
-.defs {
-  display: flex;
-  flex-direction: column;
-  gap: 0;
-}
-
 /*
- * A definition row is a two-column grid, not a `space-between` line.
+ * A definition *list* is the grid; each row is a `subgrid` of it.
  *
- * `justify-content: space-between` pins the label to the left edge of the row
- * and the value to the right edge, so the distance between a label and its own
- * value is whatever the row happens to be wide. Measured across the app that
- * was up to **896px** — `工具数` at x=381 and its `6` at x=1281, with nothing
- * in between. The eye cannot hold a pair together across that distance, and
- * the values of a column do not line up either, because each one is pushed to
+ * `justify-content: space-between` used to pin the label to the left edge of
+ * the row and the value to the right edge, so the distance between a label and
+ * its own value was whatever the row happened to be wide. Measured across the
+ * app that was up to **896px** — `工具数` at x=381 and its `6` at x=1281, with
+ * nothing in between. The eye cannot hold a pair together across that
+ * distance, and the values did not line up either, because each was pushed to
  * the same right edge regardless of length.
  *
- * The grid makes the label column size to the widest label *in its own list*
- * (`fit-content`, so a long label wraps instead of starving the value) and
- * gives the value column the rest. Values then start at a single x per list —
- * which is what makes a spec sheet scannable — and the label-to-value distance
- * is bounded by the label column instead of by the window.
+ * The obvious repair — making each *row* a `fit-content(40%) minmax(0,1fr)`
+ * grid — is not enough, and this was measured before being believed: the
+ * `fit-content` is resolved per row, so every row sized its own label column
+ * and the values still started at a different x on every line. The preview
+ * column made it obvious (`策略`/`条目`/`被省略的条目`/`revision`/`mode` all had
+ * their value at a different indent). What has to be shared is the *track*, and
+ * only a `subgrid` can share it: the row becomes a real box (so its padding and
+ * its hairline separator still draw) while its two columns are inherited from
+ * the list.
  *
- * `40%` is the cap: on the narrowest surface that uses these rows (the preview
- * column, ~308px) it still leaves the value two thirds of the row.
+ * That is what makes a spec sheet scannable — one label column, one value
+ * column, for the whole list.
+ *
+ * `40%` is the cap on the label track: on the narrowest surface that uses these
+ * rows (the preview column, ~308px) it still leaves the value two thirds of the
+ * row, and a longer label wraps rather than starving the value.
+ *
+ * `subgrid` needs Chromium 117+; this app ships on Electron 44 (Chromium 128)
+ * and its dev harness runs in the same engine, so the floor is already met.
  */
-.def {
+.defs {
   display: grid;
   grid-template-columns: fit-content(40%) minmax(0, 1fr);
-  align-items: baseline;
   column-gap: 18px;
+}
+
+.def {
+  display: grid;
+  /* Span the list's two tracks so `subgrid` has both to inherit. */
+  grid-column: 1 / -1;
+  grid-template-columns: subgrid;
+  align-items: baseline;
   padding: 5px 0;
   border-bottom: 1px solid var(--border-soft);
   font-size: 12px;
@@ -1712,6 +1742,27 @@ table.grid td.actions {
   display: flex;
   gap: 8px;
   align-items: center;
+}
+
+/*
+ * A labelled control inside a wrapping row.
+ *
+ * The label is visible, not only announced: a control whose only name is a
+ * placeholder loses that name the moment the user types, and a select has no
+ * placeholder at all, so it reads as an unlabelled pill. `label:has(input)`
+ * above already keeps these from wrapping their own text.
+ */
+.field {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.field-label {
+  font-size: 11px;
+  color: var(--text-3);
+  white-space: nowrap;
 }
 
 /* -- composer selectors: a select that reads as a pill ------------------- */
