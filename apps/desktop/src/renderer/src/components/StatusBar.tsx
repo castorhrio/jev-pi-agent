@@ -87,8 +87,15 @@ export function StatusBar({ data, view, onOpenHelp }: StatusBarProps): JSX.Eleme
         </span>
       )}
 
+      {/*
+        "2,460↑ 96↓" next to "ctx … 2,460 tok" read as the same number printed
+        twice: two different facts (the estimate for the next inject, and what
+        the last turn actually cost) with no label to tell them apart. One
+        faint word does it.
+      */}
       {view.usage && (
         <span className="seg" title={t('usage.title')}>
+          <span className="faint">{t('usage.turn')}</span>{' '}
           {view.usage.inputTokens.toLocaleString()}↑ {view.usage.outputTokens.toLocaleString()}↓
           {view.usage.estimated ? ' ≈' : ''}
         </span>

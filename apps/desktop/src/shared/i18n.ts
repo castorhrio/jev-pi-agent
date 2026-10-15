@@ -257,7 +257,7 @@ const zhCN: Dictionary = {
   'terminal.subtitle':
     '在当前项目目录里启动一个由 UCAD 托管的 shell，键入的命令会直接写入它的 stdin。',
   'terminal.ptyNotice':
-    '这是 §11.2 的用户交互终端：node-pty 提供真实 ConPTY 会话，支持回显、光标寻址，以及 vim、top 这类全屏程序。它不受权限引擎约束——那是给 Agent 的命令用的，那些命令仍以 command.* 卡片出现在对话记录里。',
+    'node-pty 提供真实 ConPTY 会话：回显、光标寻址、vim 与 top 这类全屏程序都可用；不受权限引擎约束——受约束的是 Agent 的命令。',
   'terminal.ptyUnavailable':
     '交互式终端不可用：{reason} 下面的命令通道仍可用，但它以管道运行：没有回显，也无法运行全屏程序。',
   'terminal.ptyLayers':
@@ -546,6 +546,7 @@ const zhCN: Dictionary = {
     '"允许一次"不会变成规则 —— 它只对当次请求生效，刷新后需要重新授权。',
 
   'usage.title': '用量',
+  'usage.turn': '本轮',
   'usage.subtitle': '厂商未返回可靠数据时显示"不可用"，不把估算值当作精确数字。',
   'usage.input': '输入 tokens',
   'usage.output': '输出 tokens',
@@ -975,7 +976,7 @@ const enUS: Dictionary = {
   'terminal.subtitle':
     'Starts a UCAD-managed shell inside the current project folder; whatever you type is written straight to its stdin.',
   'terminal.ptyNotice':
-    'This is the §11.2 user terminal: node-pty gives a real ConPTY session, with echo, cursor addressing and full-screen programs such as vim or top. It is not permission-gated — that applies to the agent’s commands, which still appear as command.* cards in the transcript.',
+    'node-pty gives a real ConPTY session: echo, cursor addressing and full-screen programs such as vim or top all work; it is not permission-gated — that applies to the agent’s commands.',
   'terminal.ptyUnavailable':
     'The interactive terminal is unavailable: {reason} The command channel below still works, but it runs over a pipe: no echo, and no full-screen programs.',
   'terminal.ptyLayers':
@@ -1271,6 +1272,7 @@ const enUS: Dictionary = {
     '"Allow once" never becomes a rule: it covers that single request, and the next one asks again.',
 
   'usage.title': 'Usage',
+  'usage.turn': 'turn',
   'usage.subtitle':
     'When a vendor reports no reliable numbers, this shows "unavailable" rather than a fabricated figure.',
   'usage.input': 'Input tokens',

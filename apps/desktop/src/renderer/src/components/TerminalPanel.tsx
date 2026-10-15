@@ -231,7 +231,14 @@ export function TerminalPanel({ data }: { data: AppData }): JSX.Element {
           {t('common.loading')}
         </div>
       ) : ptyReady ? (
-        <div className="notice info" style={{ marginBottom: 10 }}>
+        /*
+         * A faint line, not a second info bar. This used to be a paragraph
+         * opening with "§11.2" — spec language in the primary UI, stacked on
+         * top of the bar above it. What a user needs to know about the shell
+         * they are about to use is one sentence; the spec chapter is in the
+         * file header.
+         */
+        <div className="faint terminal-note" style={{ marginBottom: 10 }}>
           {t('terminal.ptyNotice')}
         </div>
       ) : (
