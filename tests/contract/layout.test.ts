@@ -196,12 +196,35 @@ function runProbe(
   targets: Array<{ name: string; width: number; height: number; url: string }>,
   outFile: string,
 ): Promise<{ code: number | null; stdout: string; stderr: string }> {
+  /*
+   * `ELECTRON_RUN_AS_NODE` must not reach the probe.
+   *
+   * Electron documents the variable as "start Electron as a plain Node.js
+   * process", and when it is set the probe runs under Node with no Chromium
+   * and no `electron` built-in module at all. The import at the top of the
+   * probe then resolves to `node_modules/electron/index.js` — the CommonJS
+   * shim whose only export is the path to the binary — and the process dies
+   * before a line of it runs:
+   *
+   *   SyntaxError: The requested module 'electron' does not provide an export
+   *   named 'BrowserWindow'
+   *
+   * The cause is invisible in that message, and the variable is not exotic:
+   * it is set in the environment of Electron-based editors (VS Code, and the
+   * editors built on it), so running `npm test` from an integrated terminal
+   * was enough to kill the entire geometry gate. Deleting it from the child
+   * env is the only place it can be done — by the time the probe is executing,
+   * the Node-vs-Electron decision has already been made.
+   */
+  const env = { ...process.env };
+  delete env.ELECTRON_RUN_AS_NODE;
+
   return new Promise((resolve, reject) => {
     const child = spawn(electronPath, [PROBE], {
       cwd: REPO_ROOT,
       windowsHide: true,
       env: {
-        ...process.env,
+        ...env,
         UCAD_LAYOUT_TARGETS: JSON.stringify(targets),
         UCAD_LAYOUT_OUT: outFile,
         // Screenshots are evidence, and `.run-logs/` is ignored, so writing

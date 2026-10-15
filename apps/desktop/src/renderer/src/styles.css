@@ -437,24 +437,37 @@ code,
 }
 
 /*
- * The session list is the rail's flexible region: it is the one that holds an
- * unbounded number of items, so it takes the slack and scrolls inside itself.
+ * Neither list absorbs the rail's leftover height.
  *
- * The file tree used to be a second `flex: 1` sibling, which split the rail
- * into two equal halves regardless of content — four files sat behind a
- * 190px void while the session list above them was equally empty (the dead
- * zone in every round-40 screenshot). The tree now takes exactly the height
- * its contents need, up to a ceiling so a huge project cannot push the
- * project facts out of the rail.
+ * `.grow` used to be `flex: 1 1 auto`, so the session list took every pixel the
+ * rail had spare. With two sessions and four files that put 517px of empty
+ * space *between* the session list and the file tree, with a section border
+ * drawn across the middle of it — the two lists a user navigates by looked like
+ * two unrelated panels, and the file tree read as detached from the rail it
+ * belongs to.
+ *
+ * Both lists now size to their contents up to a ceiling (so a long list scrolls
+ * instead of pushing the rest of the rail off), and the leftover height falls
+ * below both, where it is a deliberate gap before the footer rather than a
+ * divider inside a group.
  */
 .rail-section.grow {
-  flex: 1 1 auto;
+  flex: 0 1 auto;
   min-height: 128px;
+  max-height: 48%;
 }
 
 .rail-section.rail-files {
   flex: 0 1 auto;
-  max-height: 42%;
+  max-height: 36%;
+}
+
+/*
+ * The session/project facts are the rail's footer. `margin-top: auto` is what
+ * claims the leftover height for the gap above them.
+ */
+.rail-section:last-child {
+  margin-top: auto;
 }
 
 /* Small-caps section headers: the TypeSafe pattern, and the reason a rail with
@@ -659,25 +672,43 @@ code,
   color: var(--text-3);
 }
 
+/*
+ * The page column is established by the pane's own padding, not by the
+ * children's margins.
+ *
+ * It used to be `.pane > * { max-width: var(--page-w); margin-inline: auto }`,
+ * which centres every child *independently*. A child narrower than the measure
+ * therefore centred itself inside the column instead of starting at the
+ * column's left edge: the help page's `.steps` block (720px) began 120px to the
+ * right of every card above and below it, and `.first-run` (620px) sat 80px in
+ * from the transcript it replaces. Two blocks on one page, two different left
+ * edges, no rule that could explain either.
+ *
+ * Declaring the measure once, as padding on the scrolling container, gives
+ * every surface a single left edge: the column is centred, and everything
+ * inside it is left-aligned. Children only declare a *maximum*, which is what
+ * the old comment claimed was already happening.
+ *
+ * `max()` keeps the gutter as a floor, so a window narrower than the measure
+ * gets the normal page gutter instead of a negative inset.
+ *
+ * The left edge is stable by construction: this padding resolves against the
+ * main column's width, which the pane's own scrollbar does not change, so a
+ * surface that overflows and one that does not share the same left edge.
+ * (Reserving a scrollbar gutter instead would have *broken* that here —
+ * `.pane-stack` measures its children against its own scrollport, so reserving
+ * the track in one container and not the other put the settings column 5px
+ * away from every other surface's.)
+ */
 .pane {
   flex: 1;
   overflow-y: auto;
   min-height: 0;
-  padding: 22px var(--gutter) 36px;
+  padding: 22px max(var(--gutter), calc((100% - var(--page-w)) / 2)) 36px;
 }
 
-/*
- * The page column, applied to the pane's direct children.
- *
- * A child longer than the measure (a wide table, a diff) still scrolls the
- * pane rather than the window, and `margin-inline: auto` keeps the column
- * centred in whatever width the main column has left after the rail and the
- * preview column. Children keep their own width when they are narrower —
- * only the *maximum* is declared here.
- */
 .pane > * {
   max-width: var(--page-w);
-  margin-inline: auto;
 }
 
 .pane.flush {
@@ -697,6 +728,14 @@ code,
  *
  * Here the stack owns the scrolling and its panes size to their content, so
  * the surface reads top to bottom the way a settings page should.
+ *
+ * The stack also owns the page column's horizontal padding, and its panes take
+ * none. A `.pane` computes its padding against its containing block, and for
+ * these panes that is the stack's *scrollport* — which the stack's own
+ * scrollbar narrows by 10px. Left on the panes, the settings column would have
+ * measured 5px inboard of every other surface's on a page tall enough to
+ * scroll, and matched it on one short enough not to. Taking the padding from
+ * the stack derives the column from the main column's width here too.
  */
 .pane-stack {
   flex: 1;
@@ -704,12 +743,14 @@ code,
   overflow-y: auto;
   display: flex;
   flex-direction: column;
+  padding-inline: max(var(--gutter), calc((100% - var(--page-w)) / 2));
 }
 
 .pane-stack > .pane {
   flex: 0 0 auto;
   overflow: visible;
   min-height: 0;
+  padding-inline: 0;
 }
 
 .pane-head {
@@ -1049,11 +1090,31 @@ code,
   gap: 0;
 }
 
+/*
+ * A definition row is a two-column grid, not a `space-between` line.
+ *
+ * `justify-content: space-between` pins the label to the left edge of the row
+ * and the value to the right edge, so the distance between a label and its own
+ * value is whatever the row happens to be wide. Measured across the app that
+ * was up to **896px** — `工具数` at x=381 and its `6` at x=1281, with nothing
+ * in between. The eye cannot hold a pair together across that distance, and
+ * the values of a column do not line up either, because each one is pushed to
+ * the same right edge regardless of length.
+ *
+ * The grid makes the label column size to the widest label *in its own list*
+ * (`fit-content`, so a long label wraps instead of starving the value) and
+ * gives the value column the rest. Values then start at a single x per list —
+ * which is what makes a spec sheet scannable — and the label-to-value distance
+ * is bounded by the label column instead of by the window.
+ *
+ * `40%` is the cap: on the narrowest surface that uses these rows (the preview
+ * column, ~308px) it still leaves the value two thirds of the row.
+ */
 .def {
-  display: flex;
+  display: grid;
+  grid-template-columns: fit-content(40%) minmax(0, 1fr);
   align-items: baseline;
-  justify-content: space-between;
-  gap: 12px;
+  column-gap: 18px;
   padding: 5px 0;
   border-bottom: 1px solid var(--border-soft);
   font-size: 12px;
@@ -1066,13 +1127,14 @@ code,
 .def dt,
 .def .k {
   color: var(--text-3);
-  white-space: nowrap;
+  /* Wraps rather than running under the value column. `anywhere` is what keeps
+     a long identifier in a label from overflowing a track it cannot grow. */
+  overflow-wrap: anywhere;
 }
 
 .def dd,
 .def .v {
   margin: 0;
-  text-align: right;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1262,12 +1324,19 @@ code,
  * which axe-core flags as `heading-order` and which breaks the heading list a
  * screen-reader user navigates by. The visual treatment is unchanged; only the
  * level is correct now.
+ *
+ * The treatment itself is the same small-caps label as `.rail-head` and
+ * `.block-title`: 10.5px, 600, 0.09em. It had drifted to 11px / 0.07em, so the
+ * three places this app writes a section label rendered at two different sizes
+ * — a half-pixel and a hundredth of an em apart, which is enough to look like a
+ * mistake on a card that sits next to a `.block-title` (the storage panel has
+ * both, one under the other).
  */
 .card h2 {
   margin: 0 0 8px;
-  font-size: 11px;
+  font-size: 10.5px;
   font-weight: 600;
-  letter-spacing: 0.07em;
+  letter-spacing: 0.09em;
   text-transform: uppercase;
   color: var(--text-3);
 }
@@ -1323,6 +1392,20 @@ table.grid td {
 
 table.grid tr:last-child td {
   border-bottom: none;
+}
+
+/*
+ * A row whose last cell is the row's action keeps that action on the table's
+ * right edge.
+ *
+ * An `auto`-layout table hands the leftover width to whichever column has the
+ * longest content — on the recent-projects table that is the path column, so
+ * the action cell ended up ~340px wide with its button left-aligned inside it
+ * and 250px of dead space to the button's right. Right-aligning the cell is
+ * what puts the control where the eye already expects a row's action.
+ */
+table.grid td.actions {
+  text-align: right;
 }
 
 .code {
@@ -1712,10 +1795,14 @@ table.grid tr:last-child td {
   accent-color: var(--accent);
 }
 
-/* -- the empty conversation explains the pipeline rather than apologising -- */
+/* -- the empty conversation explains the pipeline rather than apologising --
+   Left-aligned on the conversation column, not centred in it: this block is
+   what the transcript will replace, and a transcript is left-aligned. The
+   `margin: 40px auto` it used to carry indented it 80px from the first message
+   that would appear directly beneath it. */
 .first-run {
   max-width: 620px;
-  margin: 40px auto;
+  margin: 40px 0;
   text-align: left;
 }
 
@@ -2045,7 +2132,7 @@ table.grid tr:last-child td {
   gap: 1px;
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: var(--r-md);
+  border-radius: var(--r);
   box-shadow: 0 12px 32px rgb(0 0 0 / 45%);
 }
 

@@ -361,6 +361,25 @@ describe('a second concurrent turn is rejected (S-1)', () => {
   }, 60_000);
 });
 
+/**
+ * Wait until a session has an admitted `turn.started`, and return its turn id.
+ *
+ * The point is to synchronise on the *event* rather than on `sendTurn`'s
+ * promise: the promise resolves after a round trip to the forked host, and that
+ * round trip is not bounded by anything the mock's pacing controls.
+ */
+async function waitForTurnStarted(sessionId: string, timeoutMs = 10_000): Promise<string> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const started = events.find(
+      (event) => event.sessionId === sessionId && event.type === 'turn.started',
+    );
+    if (started) return started.turnId;
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  throw new Error(`no turn.started event arrived for session ${sessionId}`);
+}
+
 describe('stop propagates to a running turn (NFR-05)', () => {
   it('cancels and reaches a terminal state with a terminal event', async () => {
     const session = sessionStore.createSession({
@@ -370,38 +389,81 @@ describe('stop propagates to a running turn (NFR-05)', () => {
       title: 'cancel',
     });
     const before = events.length;
-    const { turnId } = await runtime.sendTurn({
+
+    /*
+     * Send, then stop the moment the turn is *observably running* — without
+     * waiting for `sendTurn` to resolve.
+     *
+     * `sendTurn` resolves "once the Host has been handed `send_turn`", which is
+     * a round trip through a forked process. On a loaded machine that
+     * acknowledgement can take longer than the mock's whole turn (nine paced
+     * steps), so awaiting it before issuing the stop meant the stop sometimes
+     * arrived after the turn had already finished — and a turn that finished
+     * before the stop arrived *should* report COMPLETED. The gate then went red
+     * on scheduling rather than on cancellation, roughly one full-suite run in
+     * six: `expected [ 'CANCELLED', 'INTERRUPTED' ] to include 'COMPLETED'`.
+     *
+     * `turn.started` is admitted synchronously inside `sendTurn`, before that
+     * round trip and before `cancelTurn` needs anything from it —
+     * `activeBySession` is populated in the same synchronous step, so the stop
+     * cannot arrive too early. Synchronising on the event instead of on the
+     * acknowledgement hands the stop the entire turn to land in, which is what
+     * makes this assertion about cancellation rather than about timing.
+     */
+    const sending = runtime.sendTurn({
       sessionId: session.id,
       agentId,
       objective: '一个会被停止的任务',
     });
+    // Not a swallowed failure: `await sending` below still rejects. This only
+    // keeps the window between here and there from surfacing as an unhandled
+    // rejection.
+    void sending.catch(() => undefined);
+
+    const turnId = await waitForTurnStarted(session.id);
     await runtime.cancelTurn(session.id, 'user requested stop');
+    expect((await sending).turnId).toBe(turnId);
+
     const outcome = await runtime.waitForTurn(turnId, 20_000);
 
     expect(['CANCELLED', 'INTERRUPTED']).toContain(outcome.state);
 
     // The state flips before the terminal event is fanned out to listeners, so
     // wait for the event rather than sampling the array at resolve time.
+    const isTerminal = (event: TurnEvent | undefined): boolean =>
+      event?.type === 'turn.completed' || event?.type === 'turn.interrupted';
+
     const deadline = Date.now() + 5_000;
     let turnEvents = events.slice(before).filter((e) => e.turnId === turnId);
-    while (
-      Date.now() < deadline &&
-      !['turn.completed', 'turn.interrupted'].includes(
-        turnEvents[turnEvents.length - 1]?.type ?? '',
-      )
-    ) {
+    while (Date.now() < deadline && !turnEvents.some(isTerminal)) {
       await new Promise((resolve) => setTimeout(resolve, 25));
       turnEvents = events.slice(before).filter((e) => e.turnId === turnId);
     }
 
-    // whatever path cancellation took, the turn reached a terminal event
-    //
-    // `at(-1)` rather than `[length - 1]!`: the non-null assertion would turn
-    // "no event for this turn ever arrived" into a `TypeError` on `undefined`
-    // instead of a readable failure. A gate that reports a crash tells you
-    // nothing about which invariant broke.
-    const last = turnEvents.at(-1);
-    expect(last, 'the turn produced no events at all').toBeDefined();
-    expect(['turn.completed', 'turn.interrupted']).toContain(last?.type);
+    /*
+     * Whatever path cancellation took, the turn reached a terminal event —
+     * asserted with `some`, not on the last element.
+     *
+     * The terminal event is not necessarily last. A cancelled turn is followed
+     * by the adapter draining the proposals it had already queued, and the
+     * runtime admits each dropped one as a `PROPOSAL_WITHOUT_ACTIVE_TURN`
+     * warning. Measured on a real cancellation the tail is:
+     *
+     *   …, text.delta, turn.completed:cancelled,
+     *   warning:PROPOSAL_WITHOUT_ACTIVE_TURN ×5
+     *
+     * so `expect(…).toContain(turnEvents.at(-1)?.type)` was asserting that
+     * *nothing may follow* the terminal event — which the design permits, and
+     * which failed on the presence of the drain rather than on the absence of a
+     * terminal state. The invariant this test is named for is that the turn
+     * reaches a terminal event, so that is what it checks.
+     */
+    const terminal = turnEvents.filter(isTerminal);
+    expect(
+      terminal.length,
+      `the turn reached no terminal event; it produced: ${
+        turnEvents.map((e) => e.type).join(', ') || '(nothing)'
+      }`,
+    ).toBeGreaterThan(0);
   }, 60_000);
 });

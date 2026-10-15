@@ -92,7 +92,7 @@ export function RecentProjects({
                   <td className="mono faint" style={{ fontSize: 11, whiteSpace: 'nowrap' }}>
                     {index === 0 ? t('currentProject') : ''}
                   </td>
-                  <td>
+                  <td className="actions">
                     <button
                       className="primary"
                       disabled={busyId !== null}
