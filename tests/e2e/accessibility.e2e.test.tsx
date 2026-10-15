@@ -181,4 +181,45 @@ describe('accessibility — the scan must actually cover the app', () => {
 
     expect(unnamed, 'controls with no accessible name').toEqual([]);
   });
+
+  it('names a row control with the row’s own words, not its wire id', async () => {
+    /*
+     * A name is not the same as a *useful* name.
+     *
+     * The decision engines table renders each engine's display name and its
+     * machine id on two lines, and its checkbox was announced with the machine
+     * id — so a screen-reader user heard "rule" and "jev" for rows a sighted
+     * user reads as "Rule" and "Jev (scored, abstains when unsure)". The
+     * assertion above ("every control has a name") is satisfied by that, which
+     * is why this case exists: it is the difference between having a name and
+     * having the name the user can see.
+     */
+    const user = userEvent.setup();
+    mount();
+    await settle();
+
+    await user.click(within(nav()).getByRole('button', { name: new RegExp(`^${t('tab.decision')}`) }));
+    await screen.findByRole('heading', { level: 1, name: t('decision.title') });
+    await waitFor(() =>
+      expect(document.querySelector('.pane table.grid tbody tr')).toBeTruthy(),
+    );
+
+    const rows = Array.from(document.querySelectorAll('.pane table.grid tbody tr'));
+    expect(rows.length).toBeGreaterThan(0);
+    for (const row of rows) {
+      const displayName = row.querySelector('td:nth-child(2) > div')?.textContent?.trim() ?? '';
+      // The id sits on the second line of the same cell, as `id · version`.
+      const wireId =
+        row.querySelector('td:nth-child(2) .faint')?.textContent?.trim().split(' · ')[0] ?? '';
+      const box = row.querySelector('input[type="checkbox"]') as HTMLInputElement | null;
+      expect(box, 'the engine row has no checkbox').not.toBeNull();
+
+      const name = box?.getAttribute('aria-label') ?? '';
+      expect(displayName, 'the row shows no display name to compare against').not.toBe('');
+      expect(name, `announced as "${name}", which does not contain "${displayName}"`).toContain(
+        displayName,
+      );
+      expect(name, 'announced with the wire id rather than the row’s name').not.toBe(wireId);
+    }
+  });
 });

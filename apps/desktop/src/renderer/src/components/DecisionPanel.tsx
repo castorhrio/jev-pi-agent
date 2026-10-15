@@ -374,6 +374,16 @@ function EngineRow({
   return (
     <tr>
       <td>
+        {/*
+          Named by the engine's display name, not its id.
+          `aria-label={engine.id}` announced the machine identifier — "rule",
+          "jev" — while the row on screen reads "Rule" and "Jev (scored,
+          abstains when unsure)". A screen-reader user got a different name for
+          the control than the sighted user got for the same row, and the id is
+          a wire value this product never shows as a label anywhere else. The
+          column heading is folded in because the `<th>`s carry no `scope`, so
+          the cell context is not guaranteed.
+        */}
         <input
           type="checkbox"
           className="checkbox"
@@ -381,7 +391,7 @@ function EngineRow({
           checked={selected}
           disabled={gated}
           onChange={onToggle}
-          aria-label={engine.id}
+          aria-label={`${t('decision.inChain')}: ${engine.displayName}`}
         />
       </td>
       <td>
