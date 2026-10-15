@@ -121,7 +121,11 @@ export function HandoffPanel({
 
       {!handoff && hasSession && (
         <div className="empty-block">
-          <p>{t('handoff.empty')}</p>
+          <p>
+            {history.length > 0
+              ? t('handoff.emptyWithHistory', { count: history.length })
+              : t('handoff.empty')}
+          </p>
           <button className="primary" onClick={onRegenerate} disabled={busy}>
             {busy ? t('common.loading') : t('handoff.generate')}
           </button>
@@ -130,73 +134,6 @@ export function HandoffPanel({
 
       {handoff && (
         <>
-          {history.length > 0 && (
-            <div className="card mb-3">
-              <h2>{t('handoff.history')}</h2>
-              <div className="faint fs-note mb-2">
-                {t('handoff.historyHint')}
-              </div>
-              {/*
-                Newest first, because the question this answers is "which one
-                am I looking at, and has someone already taken it". An older
-                entry is still readable — nothing here is destructive — but it
-                is never the one a new agent should resume from.
-              */}
-              {history.map((record) => (
-                <div
-                  key={record.id}
-                  className="row-gap"
-                  style={{ padding: '4px 0', alignItems: 'center' }}
-                >
-                  <span className="mono faint fs-note">
-                    #{record.sequence}
-                  </span>
-                  <span
-                    className={
-                      record.state === 'done'
-                        ? 'badge ok'
-                        : record.state === 'claimed'
-                          ? 'badge warn'
-                          : 'badge'
-                    }
-                  >
-                    {t(`handoff.state_${record.state}`)}
-                  </span>
-                  {record.claimedBy && (
-                    <span className="faint fs-note">
-                      {t('handoff.claimedBy', { agent: record.claimedBy })}
-                    </span>
-                  )}
-                  {record.supersededBy && (
-                    <span className="faint fs-note">
-                      {t('handoff.superseded')}
-                    </span>
-                  )}
-                  {/*
-                    The action belongs to the newest entry only. Offering
-                    "认领" on a superseded handoff would be offering to take
-                    ownership of work that has already been replaced, and the
-                    store would happily allow it.
-                  */}
-                  {!record.supersededBy && record.state === 'open' && (
-                    <button className="ghost" onClick={() => onClaim(record.id)} disabled={busy}>
-                      {t('handoff.claim')}
-                    </button>
-                  )}
-                  {!record.supersededBy && record.state === 'claimed' && (
-                    <button
-                      className="ghost"
-                      onClick={() => onComplete(record.id)}
-                      disabled={busy}
-                    >
-                      {t('handoff.markDone')}
-                    </button>
-                  )}
-                </div>
-              ))}
-            </div>
-          )}
-
           <div className="row mb-3" style={{ display: 'flex' }}>
             <button className="primary" onClick={onRegenerate} disabled={busy}>
               {busy ? t('common.loading') : t('handoff.regenerate')}
@@ -349,6 +286,80 @@ export function HandoffPanel({
             </p>
           </div>
         </>
+      )}
+
+      {/*
+        The chain stands on its own, not as an appendix to the current
+        document. A session can hold three handoffs with no document on
+        screen — the records are the history whether or not one is open — and
+        nesting them inside the document made the only route to the past the
+        button that appends to it.
+      */}
+      {history.length > 0 && (
+        <div className="card">
+          <h2>{t('handoff.history')}</h2>
+          <div className="faint fs-note mb-2">
+            {t('handoff.historyHint')}
+          </div>
+          {/*
+            Newest first, because the question this answers is "which one
+            am I looking at, and has someone already taken it". An older
+            entry is still readable — nothing here is destructive — but it
+            is never the one a new agent should resume from.
+          */}
+          {history.map((record) => (
+            <div
+              key={record.id}
+              className="row-gap"
+              style={{ padding: '4px 0', alignItems: 'center' }}
+            >
+              <span className="mono faint fs-note">
+                #{record.sequence}
+              </span>
+              <span
+                className={
+                  record.state === 'done'
+                    ? 'badge ok'
+                    : record.state === 'claimed'
+                      ? 'badge warn'
+                      : 'badge'
+                }
+              >
+                {t(`handoff.state_${record.state}`)}
+              </span>
+              {record.claimedBy && (
+                <span className="faint fs-note">
+                  {t('handoff.claimedBy', { agent: record.claimedBy })}
+                </span>
+              )}
+              {record.supersededBy && (
+                <span className="faint fs-note">
+                  {t('handoff.superseded')}
+                </span>
+              )}
+              {/*
+                The action belongs to the newest entry only. Offering
+                "认领" on a superseded handoff would be offering to take
+                ownership of work that has already been replaced, and the
+                store would happily allow it.
+              */}
+              {!record.supersededBy && record.state === 'open' && (
+                <button className="ghost" onClick={() => onClaim(record.id)} disabled={busy}>
+                  {t('handoff.claim')}
+                </button>
+              )}
+              {!record.supersededBy && record.state === 'claimed' && (
+                <button
+                  className="ghost"
+                  onClick={() => onComplete(record.id)}
+                  disabled={busy}
+                >
+                  {t('handoff.markDone')}
+                </button>
+              )}
+            </div>
+          ))}
+        </div>
       )}
     </div>
   );

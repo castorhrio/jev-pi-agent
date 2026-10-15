@@ -113,7 +113,7 @@ describe('handoff history (RESEARCH §2 supersede-not-delete)', () => {
     expect(screen.getAllByText('已被更新的取代')).toHaveLength(2);
   });
 
-  it('hides the history block when there is only one handoff', async () => {
+  it('shows an existing chain on open, without asking for a new handoff first', async () => {
     const user = userEvent.setup();
     mount();
     await settle();
@@ -122,9 +122,38 @@ describe('handoff history (RESEARCH §2 supersede-not-delete)', () => {
     await user.click(await screen.findByRole('menuitem', { name: '交接' }));
     await screen.findByText('交接摘要', { selector: 'h1' });
 
-    // Before generating anything there is no chain to describe. An empty
-    // "交接历史" heading would be a section with nothing in it.
-    expect(screen.queryByText('交接历史')).toBeNull();
+    /*
+     * The fixture seeds a three-record chain, so this session *has* a history
+     * the moment the surface opens. It used to take a click on "generate" —
+     * the action that appends a new record — to see the old ones, and until
+     * then the panel said "还没有交接摘要" over a session holding three of
+     * them. The chain is read on open now; the generate button is for adding
+     * to it, not for discovering it.
+     */
+    await waitForHistory();
+    expect(screen.getByText('#3')).toBeTruthy();
+    expect(screen.getByText('#1')).toBeTruthy();
+    // And the empty-state copy admits the records exist rather than denying them.
+    expect(screen.getByText(/本会话已有 3 份交接记录/)).toBeTruthy();
+    expect(screen.queryByText('还没有交接摘要。生成一份')).toBeNull();
+  });
+
+  it('hides the history block when the session genuinely has no chain', async () => {
+    const user = userEvent.setup();
+    const fixture: Fixture = createFixtureApi('default');
+    (fixture.api.sessions as { listHandoffs: () => Promise<never> }).listHandoffs = () =>
+      Promise.resolve([] as never);
+    (window as unknown as Record<string, unknown>).ucad = fixture.api;
+    render(<App />);
+    await settle();
+
+    await user.click(within(nav()).getByRole('button', { name: /更多/ }));
+    await user.click(await screen.findByRole('menuitem', { name: '交接' }));
+    await screen.findByText('交接摘要', { selector: 'h1' });
+
+    // An empty "交接历史" heading would be a section with nothing in it, and
+    // "this session already has 0 records" would be a sentence with no point.
+    await waitFor(() => expect(screen.queryByText('交接历史')).toBeNull());
     expect(screen.getByText(/还没有交接摘要/)).toBeTruthy();
   });
 

@@ -186,6 +186,8 @@ const zhCN: Dictionary = {
   'handoff.subtitle':
     '把这次会话的实际状态交给下一个 Agent。不调用任何模型，也不做推断——只记录发生过什么。',
   'handoff.empty': '还没有交接摘要。生成一份，记录当前目标、状态、相关文件、已做的决定与未完成的工作。',
+  'handoff.emptyWithHistory':
+    '本会话已有 {count} 份交接记录，列在下方。生成一份新的，把当前状态交给下一个 Agent。',
   'handoff.generate': '生成交接摘要',
   'handoff.regenerate': '重新生成',
   'handoff.copy': '复制为 Markdown',
@@ -906,6 +908,8 @@ const enUS: Dictionary = {
     'Hand this session’s actual state to the next agent. No model is called and nothing is inferred — it only records what happened.',
   'handoff.empty':
     'No handoff yet. Generate one to record the current objective, state, relevant files, decisions made, and work left open.',
+  'handoff.emptyWithHistory':
+    'This session already has {count} handoff record(s), listed below. Generate a new one to hand the current state to the next agent.',
   'handoff.generate': 'Create Handoff',
   'handoff.regenerate': 'Regenerate',
   'handoff.copy': 'Copy as Markdown',

@@ -259,6 +259,31 @@ function Shell(): JSX.Element {
     if (data.loadError) setFatal(data.loadError);
   }, [data.loadError]);
 
+  /*
+   * The handoff chain is read when the surface opens, not when a handoff is
+   * generated.
+   *
+   * It used to be read only as the step after a write, so a session that
+   * already held three handoffs opened onto "还没有交接摘要" — a confident
+   * claim that is false, and the one class of bug this renderer everywhere
+   * else refuses to ship: an empty read rendered as an empty fact. Worse, the
+   * only route to the existing records was the button that creates a *new*
+   * one, so looking at the history meant appending to it.
+   */
+  useEffect(() => {
+    if (surface !== 'handoff' || !sessionId) return;
+    let cancelled = false;
+    void api.sessions
+      .listHandoffs(sessionId)
+      .then((list) => {
+        if (!cancelled) setHandoffHistory(list);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [surface, sessionId, api]);
+
   const flash = useCallback((message: string) => {
     setToast(message);
     setTimeout(() => setToast((current) => (current === message ? null : current)), 4000);

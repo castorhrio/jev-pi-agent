@@ -47,7 +47,7 @@ agent, or a model provider. It makes the two answers checkable.
 | ![Chat](docs/screenshots/chat.png) | ![Decision](docs/screenshots/decision.png) |
 | The conversation surface, with the session list and workspace tree. | The decision plane: engines, what they may decide, and the audit trail. |
 | ![Handoff](docs/screenshots/handoff.png) | |
-| A handoff record: what was decided, changed, run, and left open. | |
+| The handoff chain: every record with its claim state, newest first — the entry a next agent resumes from. | |
 
 ### Quick start
 
@@ -144,7 +144,7 @@ UCAD 就是为这两个问题做的控制面。它不试图当编辑器、当终
 | ![对话](docs/screenshots/chat.png) | ![决策](docs/screenshots/decision.png) |
 | 对话界面，左侧会话列表与工作区文件树。 | 决策平面：可用引擎、各自的决策类型、审计记录。 |
 | ![交接](docs/screenshots/handoff.png) | |
-| 交接记录：决定了什么、改了什么、跑过什么、还剩什么。 | |
+| 交接链：每一份记录及其认领状态，最新在前——下一个 Agent 从那一条继续。 | |
 
 ### 快速开始
 
