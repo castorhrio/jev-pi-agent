@@ -54,12 +54,22 @@ optional peer entries (`@emnapi/*`) that npm 11 prunes, so one lock file cannot
 validate under both — if a machine with a different npm major refreshes the
 lock, bump the pinned version in `.github/workflows/ci.yml` in the same commit.
 
-**Running the gates on Linux.** The layout gate launches a real Electron. On a
-rootless Linux box (CI runners, most containers) there is no setuid
-`chrome-sandbox` and Chromium aborts at startup rather than run without one —
-the probe then produces no result at all. CI sets `ELECTRON_DISABLE_SANDBOX=1`
-for the unit step for exactly this reason; a local Linux run needs the same
-env var in front of `npm test`. The gate measures geometry, not the sandbox.
+**Running the gates where Chromium has no sandbox.** The layout gate launches a
+real Electron. On a rootless Linux box (CI runners, most containers) there is no
+setuid `chrome-sandbox` and Chromium aborts at startup rather than run without
+one. The same happens on some Windows machines. CI sets
+`ELECTRON_DISABLE_SANDBOX=1` for the unit step for exactly this reason; a local
+run needs the same env var in front of `npm test`. The gate measures geometry,
+not the sandbox, so disabling it costs the gate nothing.
+
+The symptom is worth recognising, because the error does not name it. With no
+usable sandbox the renderer never starts, so `loadURL` returns `ERR_FAILED (-2)`
+**even for a `data:` URL** and the GPU process dies with an access violation
+(`exit_code=-1073741819`). The probe still writes its result file, so the gate
+used to report that as "the sweep did not visit every surface" — a symptom four
+assertions away from the cause — while the geometry checks above it passed over
+an empty list. The gate now asserts that it measured something, first, and says
+so by name.
 
 ## House rules
 

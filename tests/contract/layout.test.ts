@@ -185,6 +185,8 @@ function loadingMarkers(): string[] {
 let server: ViteDevServer | undefined;
 let measurements: Measurement[] = [];
 let failure: string | null = null;
+/** The probe's own stdout/stderr, kept so a dead run can name its cause. */
+let probeOutput = '';
 
 /**
  * Run the probe in one Electron process for all widths.
@@ -304,6 +306,7 @@ beforeAll(async () => {
 
   const outFile = path.join(os.tmpdir(), `ucad-layout-${process.pid}.json`);
   const { code, stdout, stderr } = await runProbe(targets, outFile);
+  probeOutput = `probe exited ${code}\n--- stdout ---\n${stdout}\n--- stderr ---\n${stderr}`;
 
   if (!fs.existsSync(outFile)) {
     // No result file means the probe never finished. Electron failing to start
@@ -322,6 +325,8 @@ beforeAll(async () => {
   };
   measurements = parsed.results;
   failure = parsed.failure;
+  // Derived here, not at module scope: see the note on `GEOMETRY` below.
+  GEOMETRY = measurements.filter((m) => m.geometry !== false);
   fs.rmSync(outFile, { force: true });
 }, 240_000);
 
@@ -332,8 +337,24 @@ beforeAll(async () => {
  * on purpose: letting it through would make every geometry assertion pass over
  * a frame where nothing was measured, which is how a gate stops meaning
  * anything without ever going red.
+ *
+ * ## Why this is `let` and filled in by `beforeAll`
+ *
+ * It used to be `const GEOMETRY = measurements.filter(...)` at module scope.
+ * A module body runs at *import* time, which is before `beforeAll`, and
+ * `beforeAll` *reassigns* `measurements` rather than mutating it — so the
+ * filter ran over the initial empty array and `GEOMETRY` stayed `[]` for the
+ * life of the process. Every `for (const m of GEOMETRY)` loop below then
+ * iterated nothing and passed, which is why a run where the probe died on its
+ * very first page load still reported eleven green geometry assertions
+ * ("reports the width it actually measured", "lays no text on top of other
+ * text, in any panel", "never needs a horizontal scrollbar", …).
+ *
+ * The list has to be derived from the data, after the data exists. Kept as a
+ * variable rather than a function so the call sites keep reading as the plain
+ * loops they are.
  */
-const GEOMETRY = measurements.filter((m) => m.geometry !== false);
+let GEOMETRY: Measurement[] = [];
 
 afterAll(async () => {
   await server?.close();
@@ -360,6 +381,37 @@ function codeOnly(source: string): string {
 }
 
 describe('layout in a real browser engine', () => {
+  /*
+   * First, on purpose.
+   *
+   * This gate has two ways to be dead. A probe that never finishes leaves no
+   * result file, and `beforeAll` throws for that. A probe that *does* finish
+   * but fails its very first `loadURL` leaves a result file whose `results`
+   * array is empty — and that used to be reported as "the sweep did not visit
+   * every surface", a symptom four assertions downstream of the cause, while
+   * everything above it passed over an empty list.
+   *
+   * "Measured nothing" and "measured no problems" must not read the same, so
+   * the emptiness is asserted first and by name.
+   *
+   * The cause is named in the message because the raw error does not name it:
+   * on a machine with no usable Chromium sandbox, `loadURL` returns
+   * `ERR_FAILED (-2)` even for a `data:` URL and the GPU process dies with an
+   * access violation. `ELECTRON_DISABLE_SANDBOX=1` fixes it, CI already sets
+   * it (see CONTRIBUTING), and the gate measures geometry, not the sandbox.
+   */
+  it('measured something at all', () => {
+    expect(
+      measurements.length,
+      'the probe ran but measured nothing, so every geometry assertion below ' +
+        'would pass over an empty list.\n' +
+        `probe failure: ${failure ?? '(none reported)'}\n` +
+        'if that is ERR_FAILED (-2) on the first page load, this machine has no ' +
+        'usable Chromium sandbox — re-run with ELECTRON_DISABLE_SANDBOX=1.\n' +
+        `--- probe output (tail) ---\n${probeOutput.slice(-1200)}`,
+    ).toBeGreaterThan(0);
+  });
+
   it('mounted the app at every gated width', () => {
     const broken = measurements.filter((m) => !m.mounted);
     expect(
