@@ -192,10 +192,25 @@ async function waitForData(win, timeoutMs = 30_000) {
 
 async function runTargets(targets) {
   const first = targets[0];
+  /*
+   * The window starts small and every target — including the first — reaches
+   * its size through `setContentSize`.
+   *
+   * Creating the first window at its target size and resizing the rest left
+   * two code paths, and they do not behave the same on every platform: a size
+   * given at creation is clamped to the display's work area on some Linux
+   * setups where a later `setContentSize` on the same hidden window is
+   * honoured (and vice versa), which reads as "measured 1280, requested 1440"
+   * for exactly one target in the list. One path for all targets means one
+   * place for that behaviour to live, and resizing a live window is the more
+   * faithful measurement anyway — it is what a user does when they drag the
+   * window narrower, so media queries re-evaluate against an app that was
+   * already running.
+   */
   const win = new BrowserWindow({
     ...WINDOW_OPTIONS,
-    width: first.width,
-    height: first.height ?? 900,
+    width: 1024,
+    height: 768,
   });
 
   const consoleErrors = [];
@@ -274,15 +289,13 @@ async function runTargets(targets) {
       }
 
       try {
-        if (target !== first) {
-          step(`${target.name}: resizing to ${target.width}x${target.height}`);
-          win.setContentSize(target.width, target.height ?? 900);
-          // Let the resize propagate through layout before reading geometry.
-          await win.webContents.executeJavaScript(
-            `new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))`,
-          );
-          await delay(120);
-        }
+        step(`${target.name}: resizing to ${target.width}x${target.height}`);
+        win.setContentSize(target.width, target.height ?? 900);
+        // Let the resize propagate through layout before reading geometry.
+        await win.webContents.executeJavaScript(
+          `new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))`,
+        );
+        await delay(120);
 
         /*
          * A surface list, or just the one the app opens on. The panels are

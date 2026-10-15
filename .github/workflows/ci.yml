@@ -55,9 +55,16 @@ jobs:
         # unprivileged without one — the probe then produces no result at all.
         # The probe measures geometry, not the sandbox, so the sandbox is
         # disabled for the suite in this environment only.
+        #
+        # The Xvfb screen must be at least as large as the widest window the
+        # gate requests (1440x900). `xvfb-run`'s default screen is 1280 wide,
+        # and a window larger than the display is clamped to it: the gate then
+        # measures 1280 where it asked for 1440 and fails on the one assertion
+        # whose job is to prove the measurement is the size it claims. The
+        # virtual display is part of the test environment, so it is sized here.
         env:
           ELECTRON_DISABLE_SANDBOX: '1'
-        run: xvfb-run --auto-servernum npm test
+        run: xvfb-run --auto-servernum --server-args="-screen 0 1920x1080x24" npm test
 
       - name: Interface E2E
         run: xvfb-run --auto-servernum npm run test:e2e

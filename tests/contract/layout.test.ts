@@ -423,18 +423,35 @@ describe('layout in a real browser engine', () => {
   it('reports the width it actually measured', () => {
     // `useContentSize` is the reason this holds; without it a 1100px request
     // lays out at 1084px and every width in this file would be a small lie.
+    //
+    // The other way to fail here is the display: a window wider than the
+    // screen it opens on is clamped to the screen. On a Linux runner that is
+    // the Xvfb screen, whose default is 1280 wide — which is how "measured
+    // 1280, requested 1440" reads when the virtual display is smaller than the
+    // product's own window. The workflow sizes Xvfb for exactly this reason;
+    // a failure here therefore names both causes instead of only the number.
     for (const m of GEOMETRY) {
-      expect(m.viewport.width, `${m.name} laid out at a different width than requested`)
-        .toBe(m.width);
+      expect(
+        m.viewport.width,
+        `${m.name} laid out at ${m.viewport.width}px, not the ${m.width}px it requested. ` +
+          'Either the window size included its frame (useContentSize lost), or the ' +
+          'display clamped the window: on Linux CI the Xvfb screen must be at least ' +
+          'as wide as the widest gated width (see the server-args in .github/workflows/ci.yml).',
+      ).toBe(m.width);
     }
   });
 
   it('reports the height it actually measured', () => {
     // Same honesty for the height axis: the wide-short and tight targets only
-    // mean something if the window really laid out at 700px tall.
+    // mean something if the window really laid out at 700px tall. A clamp
+    // here is the same display problem on the other axis.
     for (const m of GEOMETRY) {
-      expect(m.viewport.height, `${m.name} laid out at a different height than requested`)
-        .toBe(m.height);
+      expect(
+        m.viewport.height,
+        `${m.name} laid out at ${m.viewport.height}px tall, not the ${m.height}px it ` +
+          'requested — the display clamped the window (on Linux CI, size the Xvfb ' +
+          'screen in .github/workflows/ci.yml).',
+      ).toBe(m.height);
     }
   });
 
