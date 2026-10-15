@@ -579,7 +579,7 @@ function Shell(): JSX.Element {
             <h1>{t('error.title')}</h1>
             <p>{fatal}</p>
           </div>
-          <div className="row" style={{ display: 'flex', gap: 8 }}>
+          <div className="row-gap">
             <button className="primary" onClick={() => setFatal(null)}>
               {t('error.retry')}
             </button>
@@ -760,14 +760,14 @@ function Shell(): JSX.Element {
                      * data has arrived (so a session is known to exist or not),
                      * and this session's events have been replayed.
                      */
-                    <div className="faint" style={{ padding: '20px 0' }}>
+                    <div className="faint">
                       {t('common.loading')}
                     </div>
                   ) : view.messages.length === 0 && view.tools.length === 0 && !streamError ? (
 
                     <div className="first-run">
                       <div className="first-run-lead">{t('empty.chat')}</div>
-                      <div className="block-title" style={{ marginTop: 22 }}>
+                      <div className="block-title mt-5">
                         {t('empty.chatSteps')}
                       </div>
                       <ol className="first-run-steps">

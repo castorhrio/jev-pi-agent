@@ -127,7 +127,7 @@ function ContextTab({
     return (
       <>
         <div className="faint">{t('context.waiting')}</div>
-        <div className="faint" style={{ fontSize: 11.5, marginTop: 8, lineHeight: 1.7 }}>
+        <div className="faint fs-note mt-2">
           {t('context.waitingDetail')}
         </div>
       </>
@@ -151,7 +151,7 @@ function ContextTab({
           <Row k="mode" v={view.context.injectionMode} />
           <Row k={t('context.estimateSource')} v={view.context.estimateSource} />
         </div>
-        <div className="faint" style={{ fontSize: 10.5, marginTop: 6 }}>
+        <div className="faint fs-fine mt-2">
           {t('context.estimateNote')}
         </div>
       </div>
@@ -174,7 +174,7 @@ function ContextTab({
             ))}
           </div>
           {items.length > 12 && (
-            <div className="faint" style={{ fontSize: 10.5, marginTop: 5 }}>
+            <div className="faint fs-fine mt-1">
               +{items.length - 12}
             </div>
           )}
@@ -184,7 +184,7 @@ function ContextTab({
       {pack?.injection && (
         <div className="block">
           <div className="block-title">{t('context.renderedHash')}</div>
-          <div className="code" style={{ maxHeight: 200, fontSize: 10.5 }}>
+          <div className="code fs-fine" style={{ maxHeight: 200 }}>
             {pack.injection.renderedHash}
           </div>
         </div>
@@ -263,12 +263,12 @@ function DecisionsTab({ view }: { view: SessionViewState }): JSX.Element {
               <span>{Math.round(decision.confidence * 100)}%</span>
             </div>
             <div style={{ fontSize: 12.5 }}>{decision.summary}</div>
-            <div className="faint" style={{ fontSize: 11.5, marginTop: 4 }}>
+            <div className="faint fs-note mt-1">
               {decision.rationale}
             </div>
-            <div className="faint" style={{ fontSize: 10.5, marginTop: 4 }}>
+            <div className="faint fs-fine mt-1">
               {decision.engineId}
-              {decision.fallbackUsed && <span className="badge warn" style={{ marginLeft: 6 }}>fallback</span>}
+              {decision.fallbackUsed && <span className="badge warn ml-2">fallback</span>}
             </div>
           </div>
         ))}

@@ -66,7 +66,7 @@ export function LeftRail({
       <div className="rail-section grow">
         <div className="rail-head">
           <span>{t('rail.threads')}</span>
-          <span className="row-gap" style={{ gap: 2 }}>
+          <span className="row-gap gap-1">
             <button onClick={onResume} title={t('session.resume')} aria-label={t('session.resume')}>
               ⟳
             </button>
@@ -137,7 +137,7 @@ export function LeftRail({
                   <span>·</span>
                   <span>{session.status}</span>
                   <span className="spacer" />
-                  <span className="row-gap" style={{ gap: 2 }}>
+                  <span className="row-gap gap-1">
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
@@ -163,12 +163,11 @@ export function LeftRail({
                 </div>
                 {confirmDeleteId === session.id && (
                   <div
-                    className="notice warn"
+                    className="notice warn mt-2"
                     onClick={(e) => e.stopPropagation()}
-                    style={{ marginTop: 6 }}
                   >
                     <div>{t('session.deleteConfirm')}</div>
-                    <div className="row-gap" style={{ marginTop: 6 }}>
+                    <div className="row-gap mt-2">
                       <button
                         className="primary"
                         onClick={() => {

@@ -92,7 +92,7 @@ function PanelCrash({
       <div className="notice error">
         <div style={{ overflowWrap: 'anywhere' }}>{message}</div>
       </div>
-      <div className="row-gap" style={{ marginTop: 12 }}>
+      <div className="row-gap mt-3">
         <button className="primary" onClick={onRetry}>
           {t('error.retry')}
         </button>

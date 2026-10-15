@@ -131,7 +131,7 @@ export function FileEditor({
         <div className="notice warn">
           <div className="grow">
             <div>{t('editor.conflict')}</div>
-            <div className="faint mono" style={{ fontSize: 11 }}>
+            <div className="faint mono fs-note">
               {message}
             </div>
           </div>

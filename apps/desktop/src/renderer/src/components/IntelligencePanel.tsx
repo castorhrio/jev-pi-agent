@@ -293,7 +293,7 @@ export function IntelligencePanel({ data }: { data: AppData }): JSX.Element {
             <Def k={t('intel.tokenizer')}>{manifest.capabilities.tokenizer}</Def>
           </div>
 
-          <div className="block-title" style={{ marginTop: 14 }}>
+          <div className="block-title mt-4">
             <span>{t('intel.capabilities')}</span>
           </div>
           <div className="cap-grid">
@@ -308,11 +308,11 @@ export function IntelligencePanel({ data }: { data: AppData }): JSX.Element {
             ))}
           </div>
 
-          <div className="block-title" style={{ marginTop: 14 }}>
+          <div className="block-title mt-4">
             <span>{t('intel.optionalMethods')}</span>
           </div>
           {manifest.optionalMethods.length === 0 ? (
-            <div className="faint" style={{ fontSize: 11.5 }}>
+            <div className="faint fs-note">
               {t('intel.optionalNone')}
             </div>
           ) : (
@@ -338,7 +338,7 @@ export function IntelligencePanel({ data }: { data: AppData }): JSX.Element {
         <h2>{t('intel.status')}</h2>
 
         {statusFailure && (
-          <div className="notice error" style={{ marginBottom: 10 }}>
+          <div className="notice error mb-2">
             {statusFailure}
           </div>
         )}
@@ -356,23 +356,23 @@ export function IntelligencePanel({ data }: { data: AppData }): JSX.Element {
             </div>
 
             {status.stale && (
-              <div className="notice warn" style={{ marginTop: 10 }}>
+              <div className="notice warn mt-2">
                 {status.features.persistentIndex ? t('intel.staleGeneric') : t('intel.staleBasic')}
               </div>
             )}
 
-            <div className="defs" style={{ marginTop: 10 }}>
+            <div className="defs mt-2">
               <Def k={t('intel.reason')}>{status.reason ?? t('common.none')}</Def>
               <Def k={t('intel.indexedAt')}>{status.indexedAt ?? t('common.none')}</Def>
               <Def k={t('intel.indexedRevision')}>{status.indexedRevision ?? t('common.none')}</Def>
             </div>
 
             {status.degradation && (
-              <div className="notice error" style={{ marginTop: 10 }}>
+              <div className="notice error mt-2">
                 <div>
                   <strong>{t('intel.degradation')}</strong>: {status.degradation.because}
                 </div>
-                <div className="faint" style={{ marginTop: 4, fontSize: 11.5 }}>
+                <div className="faint mt-1 fs-note">
                   {t('intel.degradedSince')}: {status.degradation.since}
                 </div>
               </div>
@@ -382,7 +382,7 @@ export function IntelligencePanel({ data }: { data: AppData }): JSX.Element {
           !statusFailure && <div className="faint">{t('common.loading')}</div>
         )}
 
-        <div className="row-gap" style={{ marginTop: 12, flexWrap: 'wrap' }}>
+        <div className="row-gap mt-3" style={{ flexWrap: 'wrap' }}>
           <button onClick={() => void runOperation('index')} disabled={opBusy || !providerId}>
             {t('intel.index')}
           </button>
@@ -397,13 +397,13 @@ export function IntelligencePanel({ data }: { data: AppData }): JSX.Element {
         </div>
 
         {opFailure && (
-          <div className="notice error" style={{ marginTop: 10 }}>
+          <div className="notice error mt-2">
             {opFailure}
           </div>
         )}
 
         {handle && (
-          <div className="defs" style={{ marginTop: 10 }}>
+          <div className="defs mt-2">
             <Def k={t('intel.opId')}>
               <span className="mono truncate">{handle.operationId}</span>
             </Def>
@@ -416,12 +416,12 @@ export function IntelligencePanel({ data }: { data: AppData }): JSX.Element {
           </div>
         )}
 
-        {cancelNote && <div className="faint" style={{ marginTop: 8 }}>{cancelNote}</div>}
+        {cancelNote && <div className="faint mt-2">{cancelNote}</div>}
       </div>
 
       <div className="card">
         <h2>{t('intel.ask')}</h2>
-        <div className="faint" style={{ fontSize: 11.5, marginBottom: 10 }}>
+        <div className="faint fs-note mb-2">
           {t('intel.askHint')}
         </div>
 
@@ -488,7 +488,7 @@ function QueryReportView({ report }: { report: QueryReport }): JSX.Element {
       <div style={{ marginTop: 12 }}>
         <div className="notice warn">
           {t('intel.unknownShape')}
-          <div className="code" style={{ marginTop: 8 }}>
+          <div className="code mt-2">
             {JSON.stringify(report.raw, null, 2)}
           </div>
         </div>
@@ -504,7 +504,7 @@ function QueryReportView({ report }: { report: QueryReport }): JSX.Element {
             <span className="badge warn">{outcome.status}</span> {t('intel.queryUnsupported')}
           </div>
           {outcome.reason && (
-            <div className="faint" style={{ marginTop: 5, fontSize: 11.5 }}>
+            <div className="faint mt-1 fs-note">
               {outcome.reason}
             </div>
           )}
@@ -521,7 +521,7 @@ function QueryReportView({ report }: { report: QueryReport }): JSX.Element {
             <span className="badge err">{outcome.status}</span> {t('intel.queryError')}
           </div>
           {outcome.reason && (
-            <div className="error-text" style={{ marginTop: 5 }}>
+            <div className="error-text mt-1">
               {outcome.reason}
             </div>
           )}
@@ -536,7 +536,7 @@ function QueryReportView({ report }: { report: QueryReport }): JSX.Element {
         <div className="notice warn">
           <span className="badge warn">{outcome.status}</span> {t('intel.queryCancelled')}
           {outcome.reason && (
-            <div className="faint" style={{ marginTop: 5, fontSize: 11.5 }}>
+            <div className="faint mt-1 fs-note">
               {outcome.reason}
             </div>
           )}
@@ -550,7 +550,7 @@ function QueryReportView({ report }: { report: QueryReport }): JSX.Element {
       <div className="notice info">
         <span className="badge ok">{outcome.status}</span> {t('intel.queryOk')}
         {outcome.durationMs !== undefined && (
-          <span className="faint" style={{ marginLeft: 6 }}>
+          <span className="faint ml-2">
             {outcome.durationMs}ms
           </span>
         )}
@@ -645,7 +645,7 @@ function ResultBody({
         <div style={{ fontSize: 12.5 }}>{overview.summary}</div>
         {overview.modules && overview.modules.length > 0 && (
           <>
-            <div className="block-title" style={{ marginTop: 12 }}>
+            <div className="block-title mt-3">
               <span>{t('intel.modules')}</span>
             </div>
             <div className="defs">
@@ -669,7 +669,7 @@ function ResultBody({
       <div className="block-title">
         <span>{t('intel.rawResult')}</span>
       </div>
-      <div className="faint" style={{ fontSize: 11.5, marginBottom: 6 }}>
+      <div className="faint fs-note mb-2">
         {t('intel.unknownShape')}
       </div>
       <div className="code">{JSON.stringify(result, null, 2)}</div>

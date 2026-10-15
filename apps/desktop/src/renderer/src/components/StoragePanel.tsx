@@ -226,7 +226,7 @@ export function StoragePanel({ data }: { data: AppData }): JSX.Element {
             </Def>
           </div>
 
-          <div className="block-title" style={{ marginTop: 14 }}>
+          <div className="block-title mt-4">
             <span>{t('retention.counts')}</span>
           </div>
           <div className="defs">
@@ -242,8 +242,8 @@ export function StoragePanel({ data }: { data: AppData }): JSX.Element {
             </Def>
           </div>
 
-          <div className="row-gap" style={{ marginTop: 12, flexWrap: 'wrap' }}>
-            <span className="faint" style={{ fontSize: 11.5 }}>
+          <div className="row-gap mt-3" style={{ flexWrap: 'wrap' }}>
+            <span className="faint fs-note">
               {t('retention.orphans')}
             </span>
             <button onClick={() => void collectOrphans()} disabled={orphanBusy}>
@@ -251,12 +251,12 @@ export function StoragePanel({ data }: { data: AppData }): JSX.Element {
             </button>
           </div>
           {orphanNote && (
-            <div className="notice info" style={{ marginTop: 8 }}>
+            <div className="notice info mt-2">
               {orphanNote}
             </div>
           )}
           {orphanFailure && (
-            <div className="notice error" style={{ marginTop: 8 }}>
+            <div className="notice error mt-2">
               {orphanFailure}
             </div>
           )}
@@ -285,17 +285,17 @@ export function StoragePanel({ data }: { data: AppData }): JSX.Element {
           </button>
         </div>
         {daysInvalid && (
-          <div className="notice warn" style={{ marginTop: 10 }}>
+          <div className="notice warn mt-2">
             {t('retention.days')}: <span className="mono">{days}</span>
           </div>
         )}
         {saved && (
-          <div className="notice info" style={{ marginTop: 10 }}>
+          <div className="notice info mt-2">
             {saved}
           </div>
         )}
         {saveFailure && (
-          <div className="notice error" style={{ marginTop: 10 }}>
+          <div className="notice error mt-2">
             {saveFailure}
           </div>
         )}
@@ -305,7 +305,7 @@ export function StoragePanel({ data }: { data: AppData }): JSX.Element {
         <h2>{t('retention.purgeTitle')}</h2>
 
         {workspaceId === null && (
-          <div className="notice warn" style={{ marginBottom: 10 }}>
+          <div className="notice warn mb-2">
             {t('retention.workspaceMissing')}
           </div>
         )}
@@ -327,13 +327,13 @@ export function StoragePanel({ data }: { data: AppData }): JSX.Element {
         </div>
 
         {previewFailure && (
-          <div className="notice error" style={{ marginTop: 10 }}>
+          <div className="notice error mt-2">
             {previewFailure}
           </div>
         )}
 
         {armed !== null && preview && (
-          <div className="notice warn" style={{ marginTop: 10 }}>
+          <div className="notice warn mt-2">
             <div>
               <strong>{t('retention.purgeConfirmTitle')}</strong>
             </div>
@@ -345,10 +345,10 @@ export function StoragePanel({ data }: { data: AppData }): JSX.Element {
                 bytes: formatBytes(preview.blobBytes),
               })}
             </div>
-            <div className="faint" style={{ marginTop: 4, fontSize: 11.5 }}>
+            <div className="faint mt-1 fs-note">
               {t('retention.purgeIrreversible')}
             </div>
-            <div className="row-gap" style={{ marginTop: 10 }}>
+            <div className="row-gap mt-2">
               <button
                 className="danger"
                 disabled={purgeBusy !== null}
@@ -369,26 +369,26 @@ export function StoragePanel({ data }: { data: AppData }): JSX.Element {
         )}
 
         {armed === null && !preview && !previewFailure && (
-          <div className="faint" style={{ marginTop: 8, fontSize: 11.5 }}>
+          <div className="faint mt-2 fs-note">
             {t('retention.needConfirm')}
           </div>
         )}
 
         {purgeFailure && (
-          <div className="notice error" style={{ marginTop: 10 }}>
+          <div className="notice error mt-2">
             {purgeFailure}
           </div>
         )}
 
         {result && (
-          <div className="notice info" style={{ marginTop: 10 }}>
+          <div className="notice info mt-2">
             {result.sessionsRemoved === 0
               ? t('retention.purgeNothing')
               : t('retention.purgeDone', {
                   sessions: result.sessionsRemoved,
                   bytes: formatBytes(result.bytesReclaimed),
                 })}
-            <div className="defs" style={{ marginTop: 8 }}>
+            <div className="defs mt-2">
               <Def k={t('retention.events')}>{result.eventsRemoved.toLocaleString()}</Def>
               <Def k={t('retention.blobs')}>{result.blobFilesRemoved.toLocaleString()}</Def>
               <Def k={t('retention.onDisk')}>

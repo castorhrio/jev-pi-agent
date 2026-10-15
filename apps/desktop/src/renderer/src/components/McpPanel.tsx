@@ -339,7 +339,7 @@ export function McpPanel({ data }: { data: AppData }): JSX.Element {
           <button onClick={() => setForm({ ...EMPTY_FORM })}>{t('mcp.add')}</button>
         </div>
         {/* The disabled control alone would leave the user guessing. */}
-        {!workspaceOpen && <div className="faint" style={{ marginTop: 8, fontSize: 11.5 }}>{t('retention.workspaceMissing')}</div>}
+        {!workspaceOpen && <div className="faint mt-2 fs-note">{t('retention.workspaceMissing')}</div>}
       </div>
 
       {servers === null && !loadFailed && <div className="faint">{t('common.loading')}</div>}
@@ -412,7 +412,7 @@ export function McpPanel({ data }: { data: AppData }): JSX.Element {
               </select>
             </Def>
             {form.exposure === 'agent_facing' && (
-              <div className="notice warn" style={{ marginTop: 6 }}>
+              <div className="notice warn mt-2">
                 {t('mcp.exposureWarn')}
               </div>
             )}
@@ -458,13 +458,12 @@ export function McpPanel({ data }: { data: AppData }): JSX.Element {
               />
               {/* The placeholder is the credential string already in the
                   dictionary: a value here cannot be read back after saving. */}
-              <span className="faint" style={{ display: 'block', fontSize: 11.5, marginTop: 4 }}>
+              <span className="faint fs-note mt-1" style={{ display: 'block' }}>
                 {t('settings.secretPlaceholder')}
               </span>
               {form.envStored.length > 0 && (
                 <span
-                  className="faint mono"
-                  style={{ display: 'block', fontSize: 11.5, marginTop: 4 }}
+                  className="faint mono fs-note mt-1" style={{ display: 'block' }}
                 >
                   {`${t('settings.secretConfigured')}: `}
                   {form.envStored.map((name) => `${name}=${MCP_ENV_MASK}`).join('  ')}
@@ -483,12 +482,12 @@ export function McpPanel({ data }: { data: AppData }): JSX.Element {
           </div>
 
           {formError && (
-            <div className="notice error" style={{ marginTop: 10 }}>
+            <div className="notice error mt-2">
               <div className="error-text">{formError}</div>
             </div>
           )}
 
-          <div className="row-gap" style={{ marginTop: 12 }}>
+          <div className="row-gap mt-3">
             <button className="primary" onClick={save} disabled={busy === 'save'}>
               {t('mcp.save')}
             </button>
@@ -550,7 +549,7 @@ function ServerCard({
         {!server.enabled && <span className="badge warn">{t('mcp.enabled')} ✗</span>}
       </div>
 
-      <div className="defs" style={{ marginTop: 10 }}>
+      <div className="defs mt-2">
         <Def k={t('mcp.tools')}>
           {counted ? <span className="mono">{server.toolCount}</span> : <span className="faint">{t('mcp.neverTested')}</span>}
         </Def>
@@ -571,18 +570,18 @@ function ServerCard({
 
       {/* The reason, verbatim. Truncating it would defeat the purpose. */}
       {server.lastError && (
-        <div className="notice error" style={{ marginTop: 10 }}>
+        <div className="notice error mt-2">
           <div className="error-text">{server.lastError}</div>
           {server.lastCheckedAt && (
-            <div className="faint mono" style={{ marginTop: 4, fontSize: 11.5 }}>
+            <div className="faint mono mt-1 fs-note">
               {server.lastCheckedAt}
             </div>
           )}
         </div>
       )}
 
-      <div className="row-gap" style={{ marginTop: 12, flexWrap: 'wrap' }}>
-        <label className="row-gap" style={{ gap: 6 }}>
+      <div className="row-gap mt-3" style={{ flexWrap: 'wrap' }}>
+        <label className="row-gap">
           <input
             type="checkbox"
             checked={server.enabled}
@@ -621,17 +620,17 @@ function ServerCard({
       {/* §10.1: agent-facing tools bypass the Context Broker, so the warning
           travels with the setting, not with the damage. */}
       {server.exposure === 'agent_facing' && (
-        <div className="notice warn" style={{ marginTop: 10 }}>
+        <div className="notice warn mt-2">
           {t('mcp.exposureWarn')}
         </div>
       )}
 
       {armed && (
-        <div className="notice warn" style={{ marginTop: 10 }}>
+        <div className="notice warn mt-2">
           <div>
             {t('mcp.remove')} — {server.name}
           </div>
-          <div className="row-gap" style={{ marginTop: 8 }}>
+          <div className="row-gap mt-2">
             <button className="danger" onClick={onRemove} disabled={busy === `remove:${server.id}`}>
               {t('mcp.remove')}
             </button>
@@ -653,7 +652,7 @@ function TestLine({ test }: { test: TestOutcome }): JSX.Element {
         <div className="notice info">
           <span className="badge ok">✓</span>{' '}
           {t('mcp.testOk', { count: test.toolCount, ms: test.latencyMs })}
-          {test.serverInfo && <span className="faint mono" style={{ marginLeft: 6 }}>{test.serverInfo}</span>}
+          {test.serverInfo && <span className="faint mono ml-2">{test.serverInfo}</span>}
         </div>
       ) : (
         <div className="notice error">
@@ -663,12 +662,12 @@ function TestLine({ test }: { test: TestOutcome }): JSX.Element {
           </div>
           {/* What was checked, and — more importantly — what was not. */}
           {test.notVerified && (
-            <div className="faint" style={{ marginTop: 5, fontSize: 11.5 }}>
+            <div className="faint mt-1 fs-note">
               {test.notVerified}
             </div>
           )}
           {test.checks.length > 0 && (
-            <ul className="faint mono" style={{ marginTop: 5, fontSize: 11.5, paddingLeft: 18 }}>
+            <ul className="faint mono mt-1 fs-note" style={{ paddingLeft: 18 }}>
               {test.checks.map((check) => (
                 <li key={check}>{check}</li>
               ))}

@@ -214,7 +214,7 @@ export function TerminalPanel({ data }: { data: AppData }): JSX.Element {
         <p>{t('terminal.subtitle')}</p>
       </div>
 
-      <div className="notice info" style={{ marginBottom: 10 }}>
+      <div className="notice info mb-2">
         {t('terminal.distinct')}
       </div>
 
@@ -227,7 +227,7 @@ export function TerminalPanel({ data }: { data: AppData }): JSX.Element {
         entirely rather than drawn as two empty boxes.
       */}
       {availability === null ? (
-        <div className="faint" style={{ marginBottom: 10 }}>
+        <div className="faint mb-2">
           {t('common.loading')}
         </div>
       ) : ptyReady ? (
@@ -238,11 +238,11 @@ export function TerminalPanel({ data }: { data: AppData }): JSX.Element {
          * they are about to use is one sentence; the spec chapter is in the
          * file header.
          */
-        <div className="faint terminal-note" style={{ marginBottom: 10 }}>
+        <div className="faint terminal-note mb-2">
           {t('terminal.ptyNotice')}
         </div>
       ) : (
-        <div className="notice warn" style={{ marginBottom: 10 }}>
+        <div className="notice warn mb-2">
           {t('terminal.ptyUnavailable', {
             reason: availability.reason ?? t('common.unknown'),
           })}
@@ -250,7 +250,7 @@ export function TerminalPanel({ data }: { data: AppData }): JSX.Element {
       )}
 
       {failure && (
-        <div className="notice error" style={{ marginBottom: 10 }}>
+        <div className="notice error mb-2">
           {failure}
         </div>
       )}
@@ -286,8 +286,7 @@ export function TerminalPanel({ data }: { data: AppData }): JSX.Element {
                       <span className="spacer" />
                       {session.state === 'running' && (
                         <button
-                          className="danger"
-                          style={{ padding: '0 6px', fontSize: 10.5 }}
+                          className="danger fs-fine" style={{ padding: '0 6px' }}
                           onClick={(event) => {
                             event.stopPropagation();
                             void kill(id);
@@ -303,7 +302,7 @@ export function TerminalPanel({ data }: { data: AppData }): JSX.Element {
             )}
 
             {!hasSession && (
-              <div className="faint" style={{ fontSize: 11, marginTop: 8, lineHeight: 1.6 }}>
+              <div className="faint fs-note mt-2">
                 {t('terminal.needsSession')}
               </div>
             )}
@@ -327,7 +326,7 @@ export function TerminalPanel({ data }: { data: AppData }): JSX.Element {
               ) : (
                 <>
                   {active.exit && (
-                    <div className="notice" style={{ marginBottom: 10 }}>
+                    <div className="notice mb-2">
                       {active.exit}
                     </div>
                   )}
@@ -459,7 +458,7 @@ function PtyView({ session, api }: { session: PtySession; api: UcadApi }): JSX.E
       {showEmpty && session.state === 'running' && (
         <div className="pty-empty">
           <div>{t('terminal.noOutput')}</div>
-          <div className="faint" style={{ fontSize: 11.5, marginTop: 6 }}>
+          <div className="faint fs-note mt-2">
             {t('terminal.noOutputHint')}
           </div>
         </div>
@@ -580,7 +579,7 @@ function CommandConsole({ api }: { api: UcadApi }): JSX.Element {
   const active = consoles.find((entry) => entry.id === selected) ?? null;
 
   return (
-    <div className="card" style={{ marginTop: 10 }}>
+    <div className="card mt-2">
       {/*
         This header used to be `terminal.exitCodeNote` — a 50-character
         explanation rendered in the 11px uppercase section-title slot, so the
@@ -596,13 +595,13 @@ function CommandConsole({ api }: { api: UcadApi }): JSX.Element {
       <div className="faint terminal-note">{t('terminal.exitCodeNote')}</div>
 
       {failure && (
-        <div className="notice error" style={{ marginBottom: 10 }}>
+        <div className="notice error mb-2">
           {failure}
         </div>
       )}
 
       {consoles.length > 0 && (
-        <div className="block-title" style={{ marginTop: 8 }}>
+        <div className="block-title mt-2">
           <span>{t('terminal.consoles')}</span>
           <span className="spacer" />
           {consoles.map((entry) => (
@@ -618,7 +617,7 @@ function CommandConsole({ api }: { api: UcadApi }): JSX.Element {
       )}
 
       {active?.error && (
-        <div className="notice error" style={{ marginBottom: 10 }}>
+        <div className="notice error mb-2">
           {active.error}
         </div>
       )}
@@ -692,7 +691,7 @@ function ConsoleOutput({ segments }: { segments: Segment[] }): JSX.Element {
     return (
       <div className="console-out empty-console">
         <div>{t('terminal.noOutput')}</div>
-        <div className="faint" style={{ fontSize: 11.5, marginTop: 6 }}>
+        <div className="faint fs-note mt-2">
           {t('terminal.noOutputHint')}
         </div>
       </div>

@@ -103,11 +103,11 @@ export function RecentProjects({
                       <div className="truncate" title={workspace.path}>
                         {workspace.name}
                       </div>
-                      <div className="faint truncate" style={{ fontSize: 11 }}>
+                      <div className="faint truncate fs-note">
                         {workspace.path}
                       </div>
                     </td>
-                    <td className="mono faint" style={{ fontSize: 11, whiteSpace: 'nowrap' }}>
+                    <td className="mono faint fs-note" style={{ whiteSpace: 'nowrap' }}>
                       {isCurrent ? t('currentProject') : ''}
                     </td>
                     <td className="actions">

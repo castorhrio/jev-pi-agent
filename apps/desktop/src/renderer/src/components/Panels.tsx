@@ -178,7 +178,7 @@ export function Explorer({
     <div className="pane">
       <div className="pane-head">
         <h1>{t('tab.explorer')}</h1>
-        <p className="mono" style={{ fontSize: 11.5 }}>
+        <p className="mono fs-note">
           {root ?? t('welcome.step1')}
         </p>
       </div>
@@ -198,11 +198,11 @@ export function Explorer({
             ))}
           </div>
           {trustError && (
-            <div className="notice error" style={{ marginTop: 8 }}>
+            <div className="notice error mt-2">
               {trustError}
             </div>
           )}
-          <div className="faint" style={{ fontSize: 11.5, marginTop: 6 }}>
+          <div className="faint fs-note mt-2">
             {t(`trust.${trust}.hint`)}
           </div>
         </div>
@@ -262,7 +262,7 @@ export function Explorer({
                   ) : null}
                 </div>
                 {trust === 'untrusted' && (
-                  <div className="notice warn" style={{ marginBottom: 8 }}>
+                  <div className="notice warn mb-2">
                     <span className="grow">{t('editor.needsTrust')}</span>
                     <button onClick={() => void setTrust('trusted')}>
                       {t('trust.trusted')}
@@ -358,7 +358,7 @@ export function Changes({ data }: { data: AppData }): JSX.Element {  const t = u
       <div className="pane-head">
         <h1>{t('tab.changes')}</h1>
         {status && (
-          <p className="mono" style={{ fontSize: 11.5 }}>
+          <p className="mono fs-note">
             {status.branch} · {status.head.slice(0, 7)} · {allPaths.length}
           </p>
         )}

@@ -219,12 +219,12 @@ export function SettingsPanel({
         </div>
 
         {update?.state === 'available' && update.notes && (
-          <div className="code" style={{ marginTop: 10 }}>
+          <div className="code mt-2">
             {update.notes}
           </div>
         )}
 
-        <div className="row-gap" style={{ marginTop: 10, flexWrap: 'wrap' }}>
+        <div className="row-gap mt-2" style={{ flexWrap: 'wrap' }}>
           <button className="primary" onClick={() => void check()} disabled={checking}>
             {checking ? t('settings.checking') : t('settings.checkUpdate')}
           </button>
@@ -258,7 +258,7 @@ export function SettingsPanel({
           )}
         </div>
 
-        <div className="faint" style={{ marginTop: 8, fontSize: 11.5 }}>
+        <div className="faint mt-2 fs-note">
           {update?.state === 'up-to-date' && t('settings.upToDate')}
           {update?.state === 'unsupported' && t('settings.updateNone')}
           {update?.state === 'error' && `${t('settings.updateFailed')}: ${update.message}`}
@@ -383,7 +383,7 @@ export function SettingsPanel({
             </tbody>
           </table>
         )}
-        <div className="faint" style={{ marginTop: 8, fontSize: 11.5 }}>
+        <div className="faint mt-2 fs-note">
           {t('settings.toolsNote')}
         </div>
       </div>
@@ -417,7 +417,7 @@ export function SettingsPanel({
             />
           </label>
         </div>
-        <label className="field" style={{ marginTop: 8 }}>
+        <label className="field mt-2">
           <span className="field-label">{t('settings.secretValue')}</span>
           <input
             style={{ flex: 1, minWidth: 0 }}
@@ -426,7 +426,7 @@ export function SettingsPanel({
             onChange={(e) => setSecret(e.target.value)}
           />
         </label>
-        <div className="row-gap" style={{ marginTop: 8 }}>
+        <div className="row-gap mt-2">
           <button className="primary" onClick={() => void storeSecret()} disabled={!secret}>
             {t('settings.secretSave')}
           </button>
@@ -436,7 +436,7 @@ export function SettingsPanel({
             </span>
           )}
         </div>
-        {message && <div className="faint" style={{ marginTop: 6 }}>{message}</div>}
+        {message && <div className="faint mt-2">{message}</div>}
       </div>
 
       <div className="card">
@@ -620,7 +620,7 @@ function ProviderSection({
   return (
     <div className="card">
       <h2>{t('providers.title')}</h2>
-      <div className="faint" style={{ fontSize: 11.5, marginBottom: 10 }}>
+      <div className="faint fs-note mb-2">
         {t('providers.subtitle')}
       </div>
 
@@ -670,7 +670,7 @@ function ProviderSection({
                       )}
                     </div>
                     {p.notes && (
-                      <div className="faint" style={{ fontSize: 11, marginTop: 2 }}>
+                      <div className="faint fs-note mt-1">
                         {p.notes}
                       </div>
                     )}
@@ -694,17 +694,17 @@ function ProviderSection({
                       // and wide enough to wrap into five lines.
                       <span className="faint">—</span>
                     ) : busy === p.id ? (
-                      <span className="faint" style={{ fontSize: 11.5 }}>
+                      <span className="faint fs-note">
                         {t('common.loading')}
                       </span>
                     ) : state === undefined ? (
-                      <span className="faint" style={{ fontSize: 11.5 }}>
+                      <span className="faint fs-note">
                         {t('providers.probePending')}
                       </span>
                     ) : state.ok ? (
                       <span className="row-gap">
                         <span className="badge ok">{t('providers.probeOk')}</span>
-                        <span className="faint mono" style={{ fontSize: 11 }}>
+                        <span className="faint mono fs-note">
                           {t('providers.probeLatency', { ms: state.latencyMs })}
                         </span>
                       </span>
@@ -726,7 +726,7 @@ function ProviderSection({
                     {state?.code === 'BUDGET_EXCEEDED' ? (
                       <span className="badge err">{t('providers.quotaExhausted')}</span>
                     ) : (
-                      <span className="faint" style={{ fontSize: 11.5 }}>
+                      <span className="faint fs-note">
                         {t('providers.quotaNotProvided')}
                       </span>
                     )}
@@ -763,15 +763,14 @@ function ProviderSection({
                             labelled, and it is never the headline.
                           */}
                           <div
-                            className="faint"
-                            style={{ fontSize: 11.5, fontFamily: 'var(--mono)' }}
+                            className="faint fs-note" style={{ fontFamily: 'var(--mono)' }}
                           >
                             {state.reason}
                           </div>
                         </div>
                       )}
                       {p.requiresApiKey && (
-                        <div className="row-gap" style={{ marginBottom: 8 }}>
+                        <div className="row-gap mb-2">
                           <input
                             type="password"
                             placeholder={p.secretKey}
@@ -786,9 +785,9 @@ function ProviderSection({
                           </button>
                         </div>
                       )}
-                      <div className="row" style={{ flexWrap: 'wrap', gap: 6 }}>
+                      <div className="row" style={{ flexWrap: 'wrap' }}>
                         {models.length === 0 ? (
-                          <span className="faint" style={{ fontSize: 11.5 }}>
+                          <span className="faint fs-note">
                             {busy === p.id ? t('common.loading') : t('providers.noModels')}
                           </span>
                         ) : (
@@ -805,11 +804,11 @@ function ProviderSection({
                         readable, so this is where a user reads the actual
                         URL when a vendor behaves unexpectedly.
                       */}
-                      <div className="mono faint" style={{ fontSize: 10.5, marginTop: 8 }}>
+                      <div className="mono faint fs-fine mt-2">
                         {p.baseUrl}
                       </div>
                       {p.docsUrl && (
-                        <div className="faint" style={{ fontSize: 10.5, marginTop: 4 }}>
+                        <div className="faint fs-fine mt-1">
                           {p.docsUrl}
                         </div>
                       )}
@@ -831,7 +830,7 @@ function AgentRow({ agent }: { agent: AgentCatalogEntry }): JSX.Element {
     <tr>
       <td>
         {m.displayName}
-        {m.isDefaultRuntime && <span className="badge accent" style={{ marginLeft: 6 }}>default</span>}
+        {m.isDefaultRuntime && <span className="badge accent ml-2">default</span>}
       </td>
       <td className="mono">{m.kind}</td>
       <td className="mono">{m.transport}</td>
@@ -1086,7 +1085,7 @@ export function PermissionDialog({
             {request.command && <Def k={t('permission.command')}>{request.command}</Def>}
             {request.reason && <Def k={t('permission.reason')}>{request.reason}</Def>}
           </div>
-          <div className="faint" style={{ marginTop: 12, fontSize: 11.5 }}>
+          <div className="faint mt-3 fs-note">
             {t('permission.explain')}
           </div>
           {/* A request that timed out in Main still shows here. Saying so beats
@@ -1094,7 +1093,7 @@ export function PermissionDialog({
               decision the user just made was rejected — it has to be read out,
               not merely drawn. */}
           {error && (
-            <div className="notice error" style={{ marginTop: 10 }} role="alert">
+            <div className="notice error mt-2" role="alert">
               {t('permission.respondFailed', { reason: error })}
             </div>
           )}

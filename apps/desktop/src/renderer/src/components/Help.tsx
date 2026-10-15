@@ -55,7 +55,7 @@ export function HelpPanel({
             <div className="step-title">{t('welcome.step1')}</div>
             <div className="muted">{t('welcome.step1Hint')}</div>
             {!hasWorkspace && (
-              <button className="primary" style={{ marginTop: 10 }} onClick={onOpenProject}>
+              <button className="primary mt-2" onClick={onOpenProject}>
                 {t('welcome.open')}
               </button>
             )}
@@ -68,7 +68,7 @@ export function HelpPanel({
             <div className="step-title">{t('welcome.step2')}</div>
             <div className="muted">{t('welcome.step2Hint')}</div>
             {hasWorkspace && !hasSession && (
-              <button style={{ marginTop: 10 }} onClick={onNewSession}>
+              <button className="mt-2" onClick={onNewSession}>
                 {t('session.new')}
               </button>
             )}
@@ -102,14 +102,14 @@ export function HelpPanel({
 
       <div className="card">
         <h2>{t('help.whatIsContext')}</h2>
-        <p className="muted" style={{ margin: 0, fontSize: 12.5 }}>
+        <p className="muted">
           {t('help.whatIsContextBody')}
         </p>
       </div>
 
       <div className="card">
         <h2>{t('help.whatIsDecision')}</h2>
-        <p className="muted" style={{ margin: 0, fontSize: 12.5 }}>
+        <p className="muted">
           {t('help.whatIsDecisionBody')}
         </p>
       </div>

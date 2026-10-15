@@ -67,6 +67,29 @@
   --mono: ui-monospace, "Cascadia Code", "SF Mono", "JetBrains Mono", Menlo,
     Consolas, monospace;
 
+  /* -- rhythm: one scale for every gap between siblings ------------------
+     Before this existed, the space between two blocks was decided per call
+     site: 121 inline `marginTop` declarations across eleven values (10, 8,
+     12, 6, 4, 5, 14, 3, 22, 2, 0) and block rules at 18, 14 and 24. Measured
+     on one page that read as 24px, then 18, then 37, then 41 between
+     consecutive blocks — rhythm with no pattern is noise the eye keeps
+     trying to resolve. Five steps cover the whole shell; a gap that is not
+     one of these is a gap that needs a reason. */
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 24px;
+
+  /* -- type roles: prose is sans at three sizes, identifiers are mono -----
+     The "quiet note" role was written inline at 11.5px, 11px and 10.5px
+     interchangeably (81 inline fontSize declarations across five values),
+     so the same sentence role rendered at three sizes on one page. A role
+     has one size; these are the three. */
+  --fs-body: 13px;
+  --fs-note: 11.5px;
+  --fs-fine: 10.5px;
+
   --r-sm: 4px;
   --r: 7px;
   --r-lg: 10px;
@@ -437,19 +460,23 @@ code,
 }
 
 /*
- * Neither list absorbs the rail's leftover height.
+ * The file tree takes the rail's leftover height; the session list does not.
  *
- * `.grow` used to be `flex: 1 1 auto`, so the session list took every pixel the
- * rail had spare. With two sessions and four files that put 517px of empty
- * space *between* the session list and the file tree, with a section border
- * drawn across the middle of it — the two lists a user navigates by looked like
- * two unrelated panels, and the file tree read as detached from the rail it
- * belongs to.
+ * Both lists used to size to their content and cap themselves (48% / 36%),
+ * with `margin-top: auto` on the footer pushing the leftover into a gap above
+ * it. Measured at a 900px-tall window that gap was ~500px: more than half the
+ * rail was empty black between the file tree and the footer, while the tree —
+ * the one list here whose content is unbounded — scrolled inside a 300px cap
+ * with the spare height sitting unused directly beneath it.
  *
- * Both lists now size to their contents up to a ceiling (so a long list scrolls
- * instead of pushing the rest of the rail off), and the leftover height falls
- * below both, where it is a deliberate gap before the footer rather than a
- * divider inside a group.
+ * The tree is the section that benefits from height, so it is the one that
+ * grows. The session list stays content-sized under its cap: it is short in
+ * almost every real workspace, and letting *it* stretch is what once put a
+ * void between the two lists. With the tree absorbing the slack there is
+ * neither a gap between the lists nor a void above the footer, and the
+ * footer's separator lands directly above the footer in both states —
+ * including with the tree collapsed, where the empty tree area is exactly
+ * where a file tree belongs.
  */
 .rail-section.grow {
   flex: 0 1 auto;
@@ -458,13 +485,14 @@ code,
 }
 
 .rail-section.rail-files {
-  flex: 0 1 auto;
-  max-height: 36%;
+  flex: 1 1 auto;
+  min-height: 72px;
 }
 
 /*
- * The session/project facts are the rail's footer. `margin-top: auto` is what
- * claims the leftover height for the gap above them.
+ * The session/project facts are the rail's footer. `margin-top: auto` is now
+ * only the fallback for height the tree cannot take; with the tree growing it
+ * resolves to zero and the footer simply follows it.
  */
 .rail-section:last-child {
   margin-top: auto;
@@ -754,11 +782,11 @@ code,
 }
 
 .pane-head {
-  margin-bottom: 18px;
+  margin-bottom: var(--sp-4);
 }
 
 .pane-head h1 {
-  margin: 0 0 4px;
+  margin: 0 0 var(--sp-1);
   font-size: 18px;
   font-weight: 600;
   letter-spacing: -0.01em;
@@ -781,7 +809,7 @@ code,
   padding: 20px 24px 8px;
   display: flex;
   flex-direction: column;
-  gap: 18px;
+  gap: var(--sp-4);
 }
 
 .convo-inner {
@@ -790,13 +818,13 @@ code,
   margin: 0 auto;
   display: flex;
   flex-direction: column;
-  gap: 18px;
+  gap: var(--sp-4);
 }
 
 .turn {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: var(--sp-2);
 }
 
 .turn-head {
@@ -1172,15 +1200,15 @@ code,
 }
 
 .block {
-  margin-bottom: 18px;
+  margin-bottom: var(--sp-4);
 }
 
 .block-title {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
-  margin-bottom: 7px;
+  gap: var(--sp-2);
+  margin-bottom: var(--sp-2);
   font-size: 10.5px;
   font-weight: 600;
   letter-spacing: 0.09em;
@@ -1206,7 +1234,7 @@ code,
   letter-spacing: 0;
   text-transform: none;
   color: var(--text-2);
-  margin-bottom: 10px;
+  margin-bottom: var(--sp-2);
 }
 
 /* ===========================================================================
@@ -1272,6 +1300,65 @@ code,
 /* ===========================================================================
    Reusable atoms
    ======================================================================== */
+
+/*
+ * The scale, addressable from markup.
+ *
+ * Spacing between siblings used to be an inline `style={{ marginTop: 10 }}`
+ * chosen per call site — 121 of them across eleven values — so two blocks that
+ * meant "the next thing" were 8px apart on one page and 14px apart on the next.
+ * These classes are the only margins markup may add; a gap that is not one of
+ * them is a layout rule and belongs in the component's own class.
+ */
+.mt-1 {
+  margin-top: var(--sp-1);
+}
+.mt-2 {
+  margin-top: var(--sp-2);
+}
+.mt-3 {
+  margin-top: var(--sp-3);
+}
+.mt-4 {
+  margin-top: var(--sp-4);
+}
+.mt-5 {
+  margin-top: var(--sp-5);
+}
+.mb-1 {
+  margin-bottom: var(--sp-1);
+}
+.mb-2 {
+  margin-bottom: var(--sp-2);
+}
+.mb-3 {
+  margin-bottom: var(--sp-3);
+}
+.mb-4 {
+  margin-bottom: var(--sp-4);
+}
+.ml-2 {
+  margin-left: var(--sp-2);
+}
+.gap-1 {
+  gap: var(--sp-1);
+}
+
+/*
+ * The two quiet type roles, as classes rather than inline `fontSize`.
+ *
+ * The same sentence — a hint under a heading, a caveat under a table — was
+ * written at 11.5px, 11px and 10.5px depending on which round added it. A role
+ * has one size; markup picks the role, not the number.
+ */
+.fs-note {
+  font-size: var(--fs-note);
+  line-height: 1.65;
+}
+.fs-fine {
+  font-size: var(--fs-fine);
+  line-height: 1.6;
+}
 
 .badge {
   display: inline-flex;
@@ -1343,8 +1430,8 @@ code,
   border: 1px solid var(--border);
   border-radius: var(--r);
   background: var(--surface);
-  padding: 14px 16px;
-  margin-bottom: 14px;
+  padding: var(--sp-4);
+  margin-bottom: var(--sp-4);
 }
 
 /*
@@ -1363,12 +1450,19 @@ code,
  * both, one under the other).
  */
 .card h2 {
-  margin: 0 0 8px;
+  margin: 0 0 var(--sp-2);
   font-size: 10.5px;
   font-weight: 600;
   letter-spacing: 0.09em;
   text-transform: uppercase;
   color: var(--text-3);
+}
+
+/* A card's own prose starts under its title; the user agent's 1em margin
+   would put a paragraph's first line further from its heading than the
+   heading is from the card edge. */
+.card > p {
+  margin: 0;
 }
 
 .kv {
@@ -1438,6 +1532,21 @@ table.grid td.actions {
   text-align: right;
 }
 
+/*
+ * A numeric column: right-aligned, content-wide.
+ *
+ * Numbers are compared down a column, so their right edges have to line up,
+ * and a column of four-digit counts must not be handed the table's leftover
+ * width. Both facts were inline on every numeric cell of every table
+ * (`textAlign: 'right'`, `width: 1`), which is a rule about tables rather
+ * than about one cell.
+ */
+table.grid .num {
+  text-align: right;
+  width: 1px;
+  white-space: nowrap;
+}
+
 .code {
   font-family: var(--mono);
   font-size: 11.5px;
@@ -1487,7 +1596,7 @@ table.grid td.actions {
 .stack {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--sp-2);
 }
 .grow {
   flex: 1;
@@ -1505,12 +1614,20 @@ table.grid td.actions {
    Steps / onboarding
    ======================================================================== */
 
+/*
+ * The steps share the page column with the cards below them.
+ *
+ * They carried their own `max-width: 720px`, so on the one page where they sit
+ * above full-width cards the page had two right edges — measured at 1440px the
+ * step cards ended at x=1080 and the 键盘快捷键 card directly beneath them at
+ * x=1315. Two blocks on one page with two different measures reads as two
+ * documents stapled together; the column is the pane's job, not each block's.
+ */
 .steps {
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  max-width: 720px;
-  margin-bottom: 24px;
+  gap: var(--sp-2);
+  margin-bottom: var(--sp-4);
 }
 
 .step {
@@ -1850,9 +1967,14 @@ table.grid td.actions {
    Left-aligned on the conversation column, not centred in it: this block is
    what the transcript will replace, and a transcript is left-aligned. The
    `margin: 40px auto` it used to carry indented it 80px from the first message
-   that would appear directly beneath it. */
+   that would appear directly beneath it.
+
+   It also no longer carries its own narrower measure. At 620px inside the
+   780px conversation column, the empty state and the composer directly under
+   it ended at two different right edges on one screen; the column is the
+   conversation's, and the block that stands in for the conversation takes it.
+*/
 .first-run {
-  max-width: 620px;
   margin: 40px 0;
   text-align: left;
 }
@@ -2209,14 +2331,21 @@ table.grid td.actions {
    Handoff
    ======================================================================== */
 
+/*
+ * The handoff document takes the page column, like every other surface.
+ *
+ * It carried `max-width: 860px` inside the 960px column, so the one artefact
+ * this product exists to hand to the next agent ended 100px inboard of the
+ * settings and context pages a reader compares it against. A document may be
+ * narrower than a table; it may not be narrower than the page it is on.
+ */
 .handoff-doc {
-  max-width: 860px;
   padding-bottom: 32px;
 }
 
 .handoff-section {
-  margin-bottom: 18px;
-  padding-bottom: 14px;
+  margin-bottom: var(--sp-4);
+  padding-bottom: var(--sp-3);
   border-bottom: 1px solid var(--border);
 }
 

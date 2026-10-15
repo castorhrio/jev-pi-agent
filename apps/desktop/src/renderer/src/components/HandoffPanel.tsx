@@ -131,9 +131,9 @@ export function HandoffPanel({
       {handoff && (
         <>
           {history.length > 0 && (
-            <div className="card" style={{ marginBottom: 12 }}>
+            <div className="card mb-3">
               <h2>{t('handoff.history')}</h2>
-              <div className="faint" style={{ fontSize: 11.5, marginBottom: 8 }}>
+              <div className="faint fs-note mb-2">
                 {t('handoff.historyHint')}
               </div>
               {/*
@@ -148,7 +148,7 @@ export function HandoffPanel({
                   className="row-gap"
                   style={{ padding: '4px 0', alignItems: 'center' }}
                 >
-                  <span className="mono faint" style={{ fontSize: 11 }}>
+                  <span className="mono faint fs-note">
                     #{record.sequence}
                   </span>
                   <span
@@ -163,12 +163,12 @@ export function HandoffPanel({
                     {t(`handoff.state_${record.state}`)}
                   </span>
                   {record.claimedBy && (
-                    <span className="faint" style={{ fontSize: 11 }}>
+                    <span className="faint fs-note">
                       {t('handoff.claimedBy', { agent: record.claimedBy })}
                     </span>
                   )}
                   {record.supersededBy && (
-                    <span className="faint" style={{ fontSize: 11 }}>
+                    <span className="faint fs-note">
                       {t('handoff.superseded')}
                     </span>
                   )}
@@ -197,7 +197,7 @@ export function HandoffPanel({
             </div>
           )}
 
-          <div className="row" style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
+          <div className="row mb-3" style={{ display: 'flex' }}>
             <button className="primary" onClick={onRegenerate} disabled={busy}>
               {busy ? t('common.loading') : t('handoff.regenerate')}
             </button>
@@ -216,7 +216,7 @@ export function HandoffPanel({
            * nothing in it is not offered at all.
            */}
           {carriable.length > 0 && (
-            <div className="card" style={{ marginBottom: 12 }}>
+            <div className="card mb-3">
               <h2>{t('handoff.carryTitle')}</h2>
               <p className="faint" style={{ marginTop: 0 }}>
                 {t('handoff.carryHint')}
@@ -235,8 +235,7 @@ export function HandoffPanel({
                 ))}
               </div>
               <button
-                className="primary"
-                style={{ marginTop: 10 }}
+                className="primary mt-2"
                 disabled={selected.length === 0}
                 onClick={() => onStartWithHandoff(handoff, selected)}
               >

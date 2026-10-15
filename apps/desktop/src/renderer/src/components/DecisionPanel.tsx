@@ -215,22 +215,22 @@ export function DecisionPanel({
           </table>
         )}
 
-        <div className="row-gap" style={{ marginTop: 10, flexWrap: 'wrap' }}>
+        <div className="row-gap mt-2" style={{ flexWrap: 'wrap' }}>
           <button className="primary" disabled={savingChain} onClick={() => void applyChain()}>
             {savingChain ? t('decision.chainSaving') : t('decision.chainApply')}
           </button>
-          <span className="faint mono" style={{ fontSize: 11 }}>
+          <span className="faint mono fs-note">
             {t('decision.chain')}: {chain.join(' > ') || '—'} ·{' '}
             {data.settings?.decision.timeoutMs ?? 2000}ms
           </span>
         </div>
         {chainNote && (
-          <div className="faint" style={{ fontSize: 11.5, marginTop: 6 }}>
+          <div className="faint fs-note mt-2">
             {chainNote}
           </div>
         )}
         {chainError && (
-          <div className="notice error" style={{ marginTop: 8 }}>
+          <div className="notice error mt-2">
             {chainError}
           </div>
         )}
@@ -263,7 +263,7 @@ export function DecisionPanel({
 
       <div className="card">
         <h2>{t('decision.previewTitle')}</h2>
-        <div className="faint" style={{ fontSize: 11.5, marginBottom: 8 }}>
+        <div className="faint fs-note mb-2">
           {t('decision.previewHint')}
         </div>
         <textarea
@@ -272,7 +272,7 @@ export function DecisionPanel({
           value={objective}
           onChange={(e) => setObjective(e.target.value)}
         />
-        <div className="row-gap" style={{ marginTop: 8, flexWrap: 'wrap' }}>
+        <div className="row-gap mt-2" style={{ flexWrap: 'wrap' }}>
           {/*
             The kind picker had only an `aria-label`, so on screen it was a pill
             reading `route` next to a button — the word "route" is a value, not a
@@ -303,7 +303,7 @@ export function DecisionPanel({
           </button>
         </div>
         {decisionError && (
-          <div className="notice error" style={{ marginTop: 10 }}>
+          <div className="notice error mt-2">
             {decisionError}
           </div>
         )}
@@ -338,11 +338,11 @@ export function DecisionPanel({
                     <td>
                       {decision.summary}
                       {decision.fallbackUsed && (
-                        <span className="badge warn" style={{ marginLeft: 6 }}>
+                        <span className="badge warn ml-2">
                           {t('decision.fallback')}
                         </span>
                       )}
-                      <div className="faint" style={{ marginTop: 3, fontSize: 11.5 }}>
+                      <div className="faint mt-1 fs-note">
                         {decision.rationale}
                       </div>
                     </td>
@@ -396,12 +396,12 @@ function EngineRow({
       </td>
       <td>
         <div>{engine.displayName}</div>
-        <div className="faint mono" style={{ fontSize: 10.5 }}>
+        <div className="faint mono fs-fine">
           {engine.id}
           {engine.version ? ` · ${engine.version}` : ''}
         </div>
         {gated && (
-          <div className="badge warn" style={{ marginTop: 4 }}>
+          <div className="badge warn mt-1">
             {t('decision.networkGated')}
           </div>
         )}
@@ -417,7 +417,7 @@ function EngineRow({
           </span>
         ))}
       </td>
-      <td className="mono" style={{ fontSize: 10.5 }}>
+      <td className="mono fs-fine">
         {engine.supportedKinds.join(', ')}
       </td>
       <td className="mono" style={{ width: 1 }}>
@@ -456,18 +456,18 @@ function ResultView({ result }: { result: DecisionResult }): JSX.Element {
       </div>
 
       {result.fallback && (
-        <div className="notice warn" style={{ marginTop: 8 }}>
+        <div className="notice warn mt-2">
           {t('decision.fallbackReason', { reason: result.fallback.reason })}
         </div>
       )}
 
-      <div className="block-title" style={{ marginTop: 12 }}>
+      <div className="block-title mt-3">
         <span>{t('decision.rationale')}</span>
       </div>
       <div style={{ fontSize: 12.5 }}>{result.rationale}</div>
 
       {result.evidence && result.evidence.length > 0 && (
-        <div className="defs" style={{ marginTop: 8 }}>
+        <div className="defs mt-2">
           {result.evidence.map((entry) => (
             <div className="def" key={entry.ref}>
               <span className="k mono truncate">{entry.ref}</span>
@@ -477,7 +477,7 @@ function ResultView({ result }: { result: DecisionResult }): JSX.Element {
         </div>
       )}
 
-      <div className="faint" style={{ fontSize: 10.5, marginTop: 8 }}>
+      <div className="faint fs-fine mt-2">
         {t('decision.previewNote')}
       </div>
     </div>

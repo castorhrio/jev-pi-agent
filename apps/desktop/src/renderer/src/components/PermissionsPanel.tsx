@@ -81,7 +81,7 @@ export function PermissionsPanel(): JSX.Element {
       </div>
 
       <div className="card">
-        <div className="row-gap" style={{ marginBottom: 10, flexWrap: 'wrap' }}>
+        <div className="row-gap mb-2" style={{ flexWrap: 'wrap' }}>
           {SCOPES.map((value) => (
             <button
               key={value}
@@ -91,14 +91,14 @@ export function PermissionsPanel(): JSX.Element {
               {value === 'all' ? t('rules.filterAll') : t(`rules.scope_${value}`)}
             </button>
           ))}
-          <span className="faint" style={{ fontSize: 11 }}>
+          <span className="faint fs-note">
             {t('rules.scopeHint')}
           </span>
         </div>
 
         {error && <div className="notice error">{error}</div>}
         {revokeError && (
-          <div className="notice error" style={{ marginTop: 8 }}>
+          <div className="notice error mt-2">
             {revokeError}
           </div>
         )}
@@ -131,14 +131,14 @@ export function PermissionsPanel(): JSX.Element {
                       {t(`rules.scope_${rule.scope}`)}
                     </span>
                   </td>
-                  <td className="mono" style={{ fontSize: 11 }}>
+                  <td className="mono fs-note">
                     {rule.category}
                   </td>
                   <td>
                     <div className="truncate" title={rule.matcher.value} style={{ maxWidth: 320 }}>
                       {rule.matcher.value}
                     </div>
-                    <div className="faint mono" style={{ fontSize: 10.5 }}>
+                    <div className="faint mono fs-fine">
                       {rule.matcher.kind}
                     </div>
                   </td>
@@ -150,7 +150,7 @@ export function PermissionsPanel(): JSX.Element {
                       {t(`permission.${rule.decision}`)}
                     </span>
                   </td>
-                  <td className="mono" style={{ fontSize: 10.5 }}>
+                  <td className="mono fs-fine">
                     {rule.createdAt.slice(0, 19).replace('T', ' ')}
                   </td>
                   <td style={{ width: 1 }}>
@@ -168,7 +168,7 @@ export function PermissionsPanel(): JSX.Element {
           </table>
         )}
 
-        <div className="faint" style={{ fontSize: 11, marginTop: 10, lineHeight: 1.7 }}>
+        <div className="faint fs-note mt-2">
           {t('rules.onceNote')}
         </div>
       </div>

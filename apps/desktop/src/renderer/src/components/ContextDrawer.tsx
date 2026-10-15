@@ -210,7 +210,7 @@ export function ContextDrawer({
 
       <div className="card">
         <h2>{t('context.previewTitle')}</h2>
-        <div className="faint" style={{ fontSize: 11.5, marginBottom: 8 }}>
+        <div className="faint fs-note mb-2">
           {t('context.previewHint')}
         </div>
         <textarea
@@ -229,7 +229,7 @@ export function ContextDrawer({
           button. `context.strategy` and `context.budget` already existed for
           exactly these two controls; neither was being rendered.
         */}
-        <div className="row-gap" style={{ marginTop: 8, flexWrap: 'wrap' }}>
+        <div className="row-gap mt-2" style={{ flexWrap: 'wrap' }}>
           <label className="field">
             <span className="field-label">{t('context.strategy')}</span>
             <select
@@ -261,12 +261,12 @@ export function ContextDrawer({
           >
             {previewing ? t('context.previewBusy') : t('context.previewAction')}
           </button>
-          <span className="faint" style={{ fontSize: 11 }}>
+          <span className="faint fs-note">
             {t('context.budgetHint')}
           </span>
         </div>
         {previewError && (
-          <div className="notice error" style={{ marginTop: 10 }}>
+          <div className="notice error mt-2">
             {previewError}
           </div>
         )}
@@ -275,7 +275,7 @@ export function ContextDrawer({
       {preview && (
         <div className="card">
           <h2>{t('context.previewResult')}</h2>
-          <div className="faint" style={{ fontSize: 11.5, marginBottom: 8 }}>
+          <div className="faint fs-note mb-2">
             {t('context.previewNote')}
           </div>
           <PackDetails pack={preview} />
@@ -290,7 +290,7 @@ export function ContextDrawer({
         </div>
         {injectionError && <div className="notice error">{injectionError}</div>}
         {!injection && !injectionError && (
-          <div className="faint" style={{ fontSize: 11.5, lineHeight: 1.7 }}>
+          <div className="faint fs-note">
             {lastTurnId ? t('context.noInjection') : t('context.lastTurnNone')}
           </div>
         )}
@@ -305,7 +305,7 @@ export function ContextDrawer({
         {packError && <div className="notice error">{packError}</div>}
         {!packError && loadingPack && <div className="faint">{t('common.loading')}</div>}
         {!packError && !loadingPack && !pack && (
-          <div className="faint" style={{ fontSize: 11.5, lineHeight: 1.7 }}>
+          <div className="faint fs-note">
             {t('context.waitingDetail')}
           </div>
         )}
@@ -314,7 +314,7 @@ export function ContextDrawer({
 
       <div className="card">
         <h2>{t('context.extend')}</h2>
-        {!packId && <div className="faint" style={{ fontSize: 11.5 }}>{t('context.extendNeedsPack')}</div>}
+        {!packId && <div className="faint fs-note">{t('context.extendNeedsPack')}</div>}
         {packId && (
           <>
             <textarea
@@ -323,7 +323,7 @@ export function ContextDrawer({
               value={request}
               onChange={(e) => setRequest(e.target.value)}
             />
-            <div className="row-gap" style={{ marginTop: 8 }}>
+            <div className="row-gap mt-2">
               <button
                 className="primary"
                 disabled={extending || request.trim() === ''}
@@ -336,7 +336,7 @@ export function ContextDrawer({
           </>
         )}
         {deltaError && (
-          <div className="notice error" style={{ marginTop: 10 }}>
+          <div className="notice error mt-2">
             {deltaError}
           </div>
         )}
@@ -402,23 +402,23 @@ function PackDetails({
           <span className="v mono">{pack.revision}</span>
         </div>
       </div>
-      <div className="faint" style={{ fontSize: 10.5, marginTop: 6 }}>
+      <div className="faint fs-fine mt-2">
         {t('context.estimateNote')}
         {pack.budget.truncated ? ` · ${t('context.truncated')}` : ''}
       </div>
 
       {pack.items.length === 0 ? (
-        <div className="faint" style={{ fontSize: 11.5, marginTop: 8 }}>
+        <div className="faint fs-note mt-2">
           {t('context.itemsEmpty')}
         </div>
       ) : (
-        <table className="grid" style={{ marginTop: 10 }}>
+        <table className="grid mt-2">
           <thead>
             <tr>
               <th>{t('context.itemKind')}</th>
               <th>{t('context.itemSource')}</th>
-              <th style={{ textAlign: 'right' }}>{t('context.itemTokens', { source })}</th>
-              <th style={{ textAlign: 'right' }}>{t('context.budgetShare')}</th>
+              <th className="num">{t('context.itemTokens', { source })}</th>
+              <th className="num">{t('context.budgetShare')}</th>
               <th>{t('context.freshness')}</th>
             </tr>
           </thead>
@@ -430,14 +430,14 @@ function PackDetails({
         </table>
       )}
 
-      <div className="block-title" style={{ marginTop: 14 }}>
+      <div className="block-title mt-4">
         <span>{t('context.omitted')}</span>
         {pack.omitted.length === 0 && omittedCountHint > 0 && (
           <span className="mono">{omittedCountHint}</span>
         )}
       </div>
       {pack.omitted.length === 0 ? (
-        <div className="faint" style={{ fontSize: 11.5 }}>
+        <div className="faint fs-note">
           {omittedCountHint > 0 ? t('context.omittedNotPersisted') : t('context.omittedEmpty')}
         </div>
       ) : (
@@ -462,7 +462,7 @@ function ItemRow({ item }: { item: ContextItem }): JSX.Element {
       <td className="mono" style={{ width: 1 }}>
         {item.kind}
         {item.truncated && (
-          <span className="badge" style={{ marginLeft: 6 }}>
+          <span className="badge ml-2">
             {t('context.truncated')}
           </span>
         )}
@@ -471,14 +471,14 @@ function ItemRow({ item }: { item: ContextItem }): JSX.Element {
         <div className="truncate" title={reference} style={{ maxWidth: 320 }}>
           {reference}
         </div>
-        <div className="faint truncate" style={{ fontSize: 10.5 }} title={item.reason}>
+        <div className="faint fs-fine truncate" title={item.reason}>
           {item.source.providerId} · {item.reason}
         </div>
       </td>
-      <td className="mono" style={{ textAlign: 'right', width: 1 }}>
+      <td className="mono num">
         {item.estimatedTokens.toLocaleString()}
       </td>
-      <td className="mono" style={{ textAlign: 'right', width: 1 }}>
+      <td className="mono num">
         {(item.budgetShare * 100).toFixed(0)}%
       </td>
       <td style={{ width: 1 }}>
@@ -487,7 +487,7 @@ function ItemRow({ item }: { item: ContextItem }): JSX.Element {
             {/* NFR-11: stale must not look like fresh. */}
             <span className="badge warn">{t('context.stale')}</span>
             {item.freshness.stalenessReason && (
-              <div className="faint" style={{ fontSize: 10.5 }}>
+              <div className="faint fs-fine">
                 {item.freshness.stalenessReason}
               </div>
             )}
@@ -577,21 +577,21 @@ function InjectionBlock({ plan }: { plan: ContextInjectionPlan }): JSX.Element {
         )}
       </div>
 
-      <div className="code" style={{ marginTop: 8, fontSize: 10.5 }}>
+      <div className="code fs-fine mt-2">
         {hash}
       </div>
-      <div className="faint" style={{ fontSize: 11, marginTop: 6, lineHeight: 1.7 }}>
+      <div className="faint fs-note mt-2">
         {t('context.hashExplains')}
       </div>
       {plan.estimateSource && plan.estimateSource !== 'provider_tokenizer' && (
-        <div className="notice warn" style={{ marginTop: 8 }}>
+        <div className="notice warn mt-2">
           {t('context.injectionEstimateWarn')}
         </div>
       )}
 
       {plan.rendered ? (
         <>
-          <div className="block-title" style={{ marginTop: 12 }}>
+          <div className="block-title mt-3">
             <span>{t('context.rendered')}</span>
           </div>
           <div className="code" style={{ maxHeight: 280 }}>
@@ -610,7 +610,7 @@ function InjectionBlock({ plan }: { plan: ContextInjectionPlan }): JSX.Element {
 function DeltaView({ delta }: { delta: ContextPackDelta }): JSX.Element {
   const t = useT();
   return (
-    <div style={{ marginTop: 12 }}>
+    <div className="mt-3">
       <div className="defs">
         <div className="def">
           <span className="k">{t('context.deltaAdded')}</span>
@@ -638,18 +638,18 @@ function DeltaView({ delta }: { delta: ContextPackDelta }): JSX.Element {
       </div>
 
       {delta.addedItems.length === 0 && delta.dropped.length === 0 && (
-        <div className="faint" style={{ fontSize: 11.5, marginTop: 8 }}>
+        <div className="faint fs-note mt-2">
           {t('context.extendNoChange')}
         </div>
       )}
 
       {delta.addedItems.length > 0 && (
-        <table className="grid" style={{ marginTop: 10 }}>
+        <table className="grid mt-2">
           <thead>
             <tr>
               <th>{t('context.itemKind')}</th>
               <th>{t('context.itemSource')}</th>
-              <th style={{ textAlign: 'right' }}>
+              <th className="num">
                 {t('context.itemTokens', { source: delta.budget.estimateSource })}
               </th>
             </tr>
@@ -665,7 +665,7 @@ function DeltaView({ delta }: { delta: ContextPackDelta }): JSX.Element {
                     {item.source.reference ?? item.id}
                   </span>
                 </td>
-                <td className="mono" style={{ textAlign: 'right', width: 1 }}>
+                <td className="mono num">
                   {item.estimatedTokens.toLocaleString()}
                 </td>
               </tr>
@@ -676,7 +676,7 @@ function DeltaView({ delta }: { delta: ContextPackDelta }): JSX.Element {
 
       {delta.dropped.length > 0 && (
         <>
-          <div className="block-title" style={{ marginTop: 12 }}>
+          <div className="block-title mt-3">
             <span>{t('context.deltaDropped')}</span>
           </div>
           <div className="defs">
