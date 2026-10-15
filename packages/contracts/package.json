@@ -1,6 +1,6 @@
 {
   "name": "@ucad/contracts",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "private": true,
   "description": "UCAD stable contracts: IPC DTO / TurnEvent / plane contracts. Zero implementation, zero vendor types.",
   "main": "dist/index.js",
@@ -11,7 +11,9 @@
       "default": "./dist/index.js"
     }
   },
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "build": "tsc -b",
     "clean": "tsc -b --clean"

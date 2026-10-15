@@ -1,6 +1,6 @@
 {
   "name": "@ucad/agent-core",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "private": true,
   "description": "AgentRuntimeManager, event admission pipeline, session/turn state machines, ucad.* tool bridge.",
   "main": "dist/index.js",
@@ -19,10 +19,10 @@
     "clean": "tsc -b --clean"
   },
   "dependencies": {
-    "@ucad/contracts": "0.1.0",
-    "@ucad/observability": "0.1.0",
-    "@ucad/storage": "0.1.0",
-    "@ucad/session": "0.1.0",
-    "@ucad/permissions": "0.1.0"
+    "@ucad/contracts": "1.0.0",
+    "@ucad/observability": "1.0.0",
+    "@ucad/storage": "1.0.0",
+    "@ucad/session": "1.0.0",
+    "@ucad/permissions": "1.0.0"
   }
 }

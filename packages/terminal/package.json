@@ -1,6 +1,6 @@
 {
   "name": "@ucad/terminal",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "private": true,
   "description": "UCAD-managed command runner with permission gating and streamed output.",
   "main": "dist/index.js",
@@ -19,8 +19,8 @@
     "clean": "tsc -b --clean"
   },
   "dependencies": {
-    "@ucad/contracts": "0.1.0",
-    "@ucad/observability": "0.1.0",
-    "@ucad/permissions": "0.1.0"
+    "@ucad/contracts": "1.0.0",
+    "@ucad/observability": "1.0.0",
+    "@ucad/permissions": "1.0.0"
   }
 }

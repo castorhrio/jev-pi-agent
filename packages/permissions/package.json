@@ -1,6 +1,6 @@
 {
   "name": "@ucad/permissions",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "private": true,
   "description": "PermissionEngine, scoped rules, deterministic risk, policy defaults.",
   "main": "dist/index.js",
@@ -19,7 +19,7 @@
     "clean": "tsc -b --clean"
   },
   "dependencies": {
-    "@ucad/contracts": "0.1.0",
-    "@ucad/observability": "0.1.0"
+    "@ucad/contracts": "1.0.0",
+    "@ucad/observability": "1.0.0"
   }
 }

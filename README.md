@@ -49,6 +49,14 @@ agent, or a model provider. It makes the two answers checkable.
 | ![Handoff](docs/screenshots/handoff.png) | |
 | The handoff chain: every record with its claim state, newest first — the entry a next agent resumes from. | |
 
+### Installers
+
+Windows installers are published on the
+[Releases page](https://github.com/castorhrio/jev-pi-agent/releases): each
+release carries the NSIS setup (`UCAD-Setup-<version>.exe`) plus an
+`update-feed.json` the app's update check can read. The installer is unsigned,
+so Windows SmartScreen warns on first run.
+
 ### Quick start
 
 Requires Node.js 22.12 or newer (the Electron 44 packaging toolchain and the
@@ -93,9 +101,10 @@ that does not.
 - **One provider protocol ships.** The bundled adapter speaks the
   OpenAI-compatible protocol. Native vendor adapters are not implemented.
 - **The installer is unsigned.** Windows SmartScreen warns on first run.
-- **Auto-update is inert until a feed is configured.** Set `UCAD_UPDATE_FEED` to
-  an `https://` URL and the app will check it. With no feed it says so rather
-  than failing quietly.
+- **Auto-update needs a feed URL.** Releases publish one: set
+  `UCAD_UPDATE_FEED=https://github.com/castorhrio/jev-pi-agent/releases/latest/download/update-feed.json`
+  and the update check (Settings → 检查更新) reads it. With no feed the app
+  says so rather than failing quietly.
 - **The interactive terminal needs `node-pty`.** It is an optional dependency;
   without it the terminal panel reports that it is unavailable instead of
   pretending to work. The command channel still runs.
@@ -146,6 +155,13 @@ UCAD 就是为这两个问题做的控制面。它不试图当编辑器、当终
 | ![交接](docs/screenshots/handoff.png) | |
 | 交接链：每一份记录及其认领状态，最新在前——下一个 Agent 从那一条继续。 | |
 
+### 安装包
+
+Windows 安装包发布在
+[Releases 页](https://github.com/castorhrio/jev-pi-agent/releases)：每个 release
+带 NSIS 安装包（`UCAD-Setup-<版本>.exe`）与一份 `update-feed.json`，供应用的
+更新检查读取。安装包未签名，Windows SmartScreen 首次运行会提示。
+
 ### 快速开始
 
 需要 Node.js 22.12 或更高版本（Electron 44 打包工具链与测试套件都以它为下限）。
@@ -186,8 +202,9 @@ npm run package  # 免安装目录，不出安装包
 
 - **只随包发布一种厂商协议。** 内置适配器走 OpenAI 兼容协议，厂商原生适配器未实现。
 - **安装包未签名。** Windows 首次运行会有 SmartScreen 提示。
-- **自动更新在配置更新源之前是空的。** 把 `UCAD_UPDATE_FEED` 指向一个 `https://`
-  地址即可启用；没有配置时应用会直说，而不是静默失败。
+- **自动更新需要一个 feed 地址。** Releases 发布了一份：把 `UCAD_UPDATE_FEED` 设为
+  `https://github.com/castorhrio/jev-pi-agent/releases/latest/download/update-feed.json`，
+  更新检查（设置 → 检查更新）即会读取；没有配置时应用会直说，而不是静默失败。
 - **交互式终端依赖 `node-pty`。** 它是可选依赖；缺失时终端面板会如实说不可用，
   而不是假装能跑。命令通道仍然可用。
 

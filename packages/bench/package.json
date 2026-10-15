@@ -1,6 +1,6 @@
 {
   "name": "@ucad/bench",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "private": true,
   "description": "Token accounting for the Context Broker: deterministic fixtures, three retrieval strategies, one estimator.",
   "main": "dist/index.js",
@@ -19,6 +19,6 @@
     "clean": "tsc -b --clean"
   },
   "dependencies": {
-    "@ucad/contracts": "0.1.0"
+    "@ucad/contracts": "1.0.0"
   }
 }

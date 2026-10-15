@@ -98,7 +98,7 @@ let previewCounter = 0;
 /** A finished update check: no feed configured locally, version known. */
 const updateStatus = {
   state: 'up-to-date' as const,
-  currentVersion: '0.1.0',
+  currentVersion: '1.0.0',
   checkedAt: ISO,
   feedConfigured: false,
 };
@@ -151,7 +151,7 @@ const agents: AgentCatalogEntry[] = [
       displayName: 'Universal (any provider)',
       kind: 'universal',
       isDefaultRuntime: true,
-      version: '0.1.0',
+      version: '1.0.0',
       pinned: [],
       transport: 'child_process',
       providerBinding: 'ucad_managed',
@@ -189,7 +189,7 @@ const agents: AgentCatalogEntry[] = [
       displayName: 'Mock (offline, echoes input)',
       kind: 'mock',
       isDefaultRuntime: false,
-      version: '0.1.0',
+      version: '1.0.0',
       pinned: [],
       transport: 'worker',
       providerBinding: 'agent_owned',
@@ -246,7 +246,7 @@ const settings: SettingsSnapshot = {
 };
 
 const diagnostics: DiagnosticsInfo = {
-  version: '0.1.0',
+  version: '1.0.0',
   schemaVersion: 4,
   dbPath: 'C:/Users/dev/AppData/UCAD/ucad.db',
   logDir: 'C:/Users/dev/AppData/UCAD/logs',
@@ -377,7 +377,7 @@ const providers: CodeIntelligenceManifest[] = [
     id: 'basic',
     displayName: 'Basic (built-in)',
     tier: 'basic',
-    version: '0.1.0',
+    version: '1.0.0',
     pinned: [],
     transport: 'in_process',
     requires: ['node'],
@@ -418,7 +418,7 @@ const decisionEngines: DecisionEngineManifest[] = [
   {
     id: 'jev',
     displayName: 'Jev (scored, abstains when unsure)',
-    version: '0.1.0',
+    version: '1.0.0',
     sideEffects: ['none'],
     supportedKinds: ['route', 'risk'],
     timeoutMs: 1500,
