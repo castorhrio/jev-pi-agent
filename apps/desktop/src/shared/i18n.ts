@@ -121,6 +121,7 @@ const zhCN: Dictionary = {
   'changes.commitTitle': '提交',
   'changes.commitPlaceholder': '提交信息',
   'changes.commit': '提交',
+  'changes.needsWorkspace': '请先打开一个项目：变更列表读的是该项目的 Git 状态。',
   'decision.kindColumn': '类型',
   // Table column headers. They were hardcoded English, so a table inside a
   // Chinese panel had a Chinese card title over an English header row.
@@ -840,6 +841,8 @@ const enUS: Dictionary = {
   'changes.commitTitle': 'Commit',
   'changes.commitPlaceholder': 'Commit message',
   'changes.commit': 'Commit',
+  'changes.needsWorkspace':
+    'Open a project first — the changes list reads the Git status of that project.',
   'decision.kindColumn': 'Kind',
   // Table column headers. They were hardcoded English, so a table inside a
   // Chinese panel had a Chinese card title over an English header row.

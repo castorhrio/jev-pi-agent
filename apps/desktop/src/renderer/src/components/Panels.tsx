@@ -308,7 +308,19 @@ export function Changes({ data }: { data: AppData }): JSX.Element {  const t = u
 
       {error && <div className="notice error">{error}</div>}
 
-      {allPaths.length === 0 ? (
+      {/*
+        Three states, not two.
+
+        With no project open there is no worktree, so "the worktree has no
+        uncommitted changes" is not a fact — it is a claim about something that
+        does not exist. `allPaths` was `[]` in that case (because `status` is
+        `null`), so the surface said the tree was clean and then offered a
+        Commit card whose button could only ever fail. Every other surface says
+        "open a project first"; this one now does too.
+      */}
+      {!workspaceId ? (
+        <div className="empty">{t('changes.needsWorkspace')}</div>
+      ) : allPaths.length === 0 ? (
         <div className="empty">{t('empty.changes')}</div>
       ) : (
         <div className="card" style={{ padding: '4px 0' }}>
@@ -366,34 +378,44 @@ export function Changes({ data }: { data: AppData }): JSX.Element {  const t = u
         </div>
       )}
 
-      <div className="card">
-        <h2>{t('changes.commitTitle')}</h2>
-        <div className="row-gap">
-          <input
-            /*
-             * The card heading names the action ("Commit"); this input still
-             * needs a name of its own that does not depend on the placeholder,
-             * which disappears as soon as a message is typed.
-             */
-            aria-label={t('changes.commitPlaceholder')}
-            placeholder={t('changes.commitPlaceholder')}
-            value={message}
-            onChange={(e) => setMessage(e.target.value)}
-          />
-          <button
-            className="primary"
-            disabled={!message.trim()}
-            onClick={() =>
-              void run(async () => {
-                await getApi().git.commit(message.trim());
-                setMessage('');
-              })
-            }
-          >
-            {t('changes.commit')}
-          </button>
+      {/*
+        The commit card belongs to the worktree, so it goes with it. Its button
+        stays enabled when the tree is clean on purpose: this panel's `status`
+        can be stale, and a user who staged from a terminal outside the app
+        would otherwise be blocked by a disabled control. `git.commit` answers
+        "没有需要提交的更改" in that case, which is a legible failure rather
+        than a silent one.
+      */}
+      {workspaceId && (
+        <div className="card">
+          <h2>{t('changes.commitTitle')}</h2>
+          <div className="row-gap">
+            <input
+              /*
+               * The card heading names the action ("Commit"); this input still
+               * needs a name of its own that does not depend on the placeholder,
+               * which disappears as soon as a message is typed.
+               */
+              aria-label={t('changes.commitPlaceholder')}
+              placeholder={t('changes.commitPlaceholder')}
+              value={message}
+              onChange={(e) => setMessage(e.target.value)}
+            />
+            <button
+              className="primary"
+              disabled={!message.trim()}
+              onClick={() =>
+                void run(async () => {
+                  await getApi().git.commit(message.trim());
+                  setMessage('');
+                })
+              }
+            >
+              {t('changes.commit')}
+            </button>
+          </div>
         </div>
-      </div>
+      )}
 
       {patch && (
         <>
