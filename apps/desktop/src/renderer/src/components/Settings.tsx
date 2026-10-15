@@ -85,16 +85,16 @@ export function UsagePanel({
             <thead>
               <tr>
                 <th>{t('usage.model')}</th>
-                <th>{t('usage.in')}</th>
-                <th>{t('usage.out')}</th>
+                <th className="num">{t('usage.in')}</th>
+                <th className="num">{t('usage.out')}</th>
               </tr>
             </thead>
             <tbody>
               {summary.byModel.map((row) => (
                 <tr key={row.modelId}>
                   <td className="mono truncate">{row.modelId}</td>
-                  <td className="mono">{row.inputTokens.toLocaleString()}</td>
-                  <td className="mono">{row.outputTokens.toLocaleString()}</td>
+                  <td className="mono num">{row.inputTokens.toLocaleString()}</td>
+                  <td className="mono num">{row.outputTokens.toLocaleString()}</td>
                 </tr>
               ))}
             </tbody>

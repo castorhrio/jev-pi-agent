@@ -324,7 +324,7 @@ export function DecisionPanel({
                 <th>
                   <span className="sr-only">{t('col.reason')}</span>
                 </th>
-                <th>{t('decision.confidence')}</th>
+                <th className="num">{t('decision.confidence')}</th>
                 <th>{t('decision.engine')}</th>
               </tr>
             </thead>
@@ -346,7 +346,7 @@ export function DecisionPanel({
                         {decision.rationale}
                       </div>
                     </td>
-                    <td className="mono">{(decision.confidence * 100).toFixed(0)}%</td>
+                    <td className="mono num">{(decision.confidence * 100).toFixed(0)}%</td>
                     <td className="mono">{decision.engineId}</td>
                   </tr>
                 ))}
