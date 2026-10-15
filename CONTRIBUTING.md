@@ -109,6 +109,27 @@ For layout work, `tests/contract/layout.test.ts` measures a real Chromium window
 screenshots to `.run-logs/layout/`. Geometry is judged automatically; whether it *looks*
 right is still a human call.
 
+### The layout language
+
+Three rules keep the interface legible; each is enforced by a gate, so a change that breaks
+one fails in CI rather than in a screenshot review.
+
+- **One scale for rhythm.** Gaps between siblings are `--sp-1..5` (4/8/12/16/24px), reached
+  from markup as `.mt-*` / `.mb-*` / `.ml-2` / `.gap-1`. Type roles are `--fs-body/note/fine`
+  (13/11.5/10.5px) as `.fs-note` / `.fs-fine`. Inline `marginTop`, `marginBottom`,
+  `marginLeft`, `fontSize` and `lineHeight` are rejected by
+  `tests/contract/layout.test.ts` ("adds no spacing or type size from markup"): a value
+  chosen at the call site is exactly how the rhythm drifted to eleven different gaps in the
+  first place. One-off geometry — a table column's width, a positioned menu's coordinates —
+  stays inline and stays legal.
+- **One measure per page.** `.pane` centres a `--page-w` (960px) column and every block in it
+  is left-aligned to that column's edge. A block that declares its own `max-width` gives the
+  page a second right edge; the conversation is the one narrower column (780px) and it owns
+  both the transcript and the composer.
+- **Colour carries meaning, prose is sans, identifiers are mono.** Blue interactive, green
+  success, amber attention, red failure, nothing else coloured; a path or hash in a sentence
+  wears `--mono` so it never reads as a word.
+
 ## Packaging on Windows
 
 `npm run package` and `npm run dist` can fail on Windows with a cryptic

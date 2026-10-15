@@ -218,7 +218,7 @@ export function HandoffPanel({
           {carriable.length > 0 && (
             <div className="card mb-3">
               <h2>{t('handoff.carryTitle')}</h2>
-              <p className="faint" style={{ marginTop: 0 }}>
+              <p className="faint m-0">
                 {t('handoff.carryHint')}
               </p>
               <div className="handoff-carry">
@@ -242,7 +242,7 @@ export function HandoffPanel({
                 {t('handoff.startNew')}
               </button>
               {selected.length === 0 && (
-                <p className="faint" style={{ marginBottom: 0 }}>
+                <p className="faint m-0">
                   {t('handoff.carryNothing')}
                 </p>
               )}

@@ -624,7 +624,7 @@ function DeltaView({ delta }: { delta: ContextPackDelta }): JSX.Element {
           <span className="k">{t('context.remaining')}</span>
           <span className="v mono">
             {delta.budget.remainingTokens} / {delta.budget.limitTokens}
-            <span className={`badge ${delta.budget.estimateSource === 'provider_tokenizer' ? 'ok' : 'warn'}`} style={{ marginLeft: 6 }}>
+            <span className={`badge ${delta.budget.estimateSource === 'provider_tokenizer' ? 'ok' : 'warn'} ml-2`}>
               {delta.budget.estimateSource}
             </span>
           </span>

@@ -262,7 +262,7 @@ function DecisionsTab({ view }: { view: SessionViewState }): JSX.Element {
               <span>{decision.kind}</span>
               <span>{Math.round(decision.confidence * 100)}%</span>
             </div>
-            <div style={{ fontSize: 12.5 }}>{decision.summary}</div>
+            <div>{decision.summary}</div>
             <div className="faint fs-note mt-1">
               {decision.rationale}
             </div>

@@ -646,6 +646,57 @@ describe('layout in a real browser engine', () => {
   });
 });
 
+describe('the rhythm stays on the scale', () => {
+  /**
+   * Spacing and type size are the scale's job, not markup's.
+   *
+   * The layout order this repository restored was lost one inline declaration
+   * at a time: 121 `marginTop` values across eleven numbers and 81 `fontSize`
+   * values across five, each chosen at the call site, which is how one page
+   * ended up with 24px between two blocks and 41px between the next pair. The
+   * scale (--sp-1..5, --fs-body/note/fine) and its classes (.mt-*, .mb-*,
+   * .fs-*) exist so that decision is made once. An inline value here is that
+   * decision being made again, quietly, in a fourteenth place.
+   *
+   * Geometry that is genuinely one-off — a table column's width, a fixed input
+   * width, a positioned menu's coordinates — stays inline and stays legal;
+   * only the five properties the scale owns are gated.
+   */
+  const OWNED_BY_SCALE = /\b(marginTop|marginBottom|marginLeft|fontSize|lineHeight)\s*:/;
+
+  function rendererSources(): Array<{ file: string; source: string }> {
+    const dir = path.join(REPO_ROOT, 'apps', 'desktop', 'src', 'renderer', 'src');
+    return fs
+      .readdirSync(dir, { recursive: true })
+      .map((entry) => String(entry))
+      .filter((name) => name.endsWith('.tsx'))
+      .map((name) => ({
+        file: name,
+        source: fs.readFileSync(path.join(dir, name), 'utf8'),
+      }));
+  }
+
+  it('adds no spacing or type size from markup', () => {
+    const sources = rendererSources();
+    expect(sources.length, 'found no renderer sources to scan').toBeGreaterThan(5);
+
+    const offenders: string[] = [];
+    for (const { file, source } of sources) {
+      for (const match of source.matchAll(/style=\{\{([^{}]*)\}\}/g)) {
+        if (OWNED_BY_SCALE.test(match[1]!)) {
+          offenders.push(`${file}: style={{ ${match[1]!.trim()} }}`);
+        }
+      }
+    }
+    expect(
+      offenders,
+      'spacing and type size come from the scale via .mt-*/.mb-*/.ml-*/.fs-* classes; ' +
+        'an inline value re-opens the per-call-site decision the scale removed\n' +
+        offenders.join('\n'),
+    ).toEqual([]);
+  });
+});
+
 describe('the gate tracks the product it measures', () => {
   /** The window geometry the product actually declares, comments excluded. */
   function declaredWindow(): {

@@ -466,7 +466,7 @@ export function SettingsPanel({
             <span className="mono truncate">{data.diagnostics?.dbPath ?? '—'}</span>
           </Def>
         </div>
-        <button style={{ marginTop: 10 }} onClick={onChanged}>
+        <button className="mt-2" onClick={onChanged}>
           {t('error.retry')}
         </button>
       </div>
@@ -753,8 +753,8 @@ function ProviderSection({
                   <tr>
                     <td colSpan={6} style={{ background: 'var(--inset)' }}>
                       {state && !state.ok && state.reason && (
-                        <div style={{ fontSize: 11.5, marginBottom: 8 }}>
-                          <div style={{ marginBottom: 2 }}>{t('providers.probeDetail')}</div>
+                        <div className="fs-note mb-2">
+                          <div className="mb-1">{t('providers.probeDetail')}</div>
                           {/*
                             The main process writes English here on purpose:
                             it is a diagnostic, it names the HTTP status and the

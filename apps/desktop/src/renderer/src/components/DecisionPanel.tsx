@@ -430,7 +430,7 @@ function EngineRow({
 function ResultView({ result }: { result: DecisionResult }): JSX.Element {
   const t = useT();
   return (
-    <div style={{ marginTop: 12 }}>
+    <div className="mt-3">
       <div className="defs">
         <div className="def">
           <span className="k">{t('decision.outcome')}</span>
@@ -464,7 +464,7 @@ function ResultView({ result }: { result: DecisionResult }): JSX.Element {
       <div className="block-title mt-3">
         <span>{t('decision.rationale')}</span>
       </div>
-      <div style={{ fontSize: 12.5 }}>{result.rationale}</div>
+      <div>{result.rationale}</div>
 
       {result.evidence && result.evidence.length > 0 && (
         <div className="defs mt-2">

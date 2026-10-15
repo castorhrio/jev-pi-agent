@@ -1340,6 +1340,11 @@ code,
 .ml-2 {
   margin-left: var(--sp-2);
 }
+/* Prose that must sit flush against its neighbour: the user agent's margin is
+   the right default for a paragraph and the wrong one for a meta line. */
+.m-0 {
+  margin: 0;
+}
 .gap-1 {
   gap: var(--sp-1);
 }

@@ -302,7 +302,7 @@ export function McpPanel({ data }: { data: AppData }): JSX.Element {
       {loadFailed && (
         <div className="notice error">
           {t('mcp.loadFailed', { reason: loadFailed })}
-          <div style={{ marginTop: 8 }}>
+          <div className="mt-2">
             <button onClick={() => void load()}>{t('error.retry')}</button>
           </div>
         </div>
@@ -647,7 +647,7 @@ function ServerCard({
 function TestLine({ test }: { test: TestOutcome }): JSX.Element {
   const t = useT();
   return (
-    <div style={{ marginTop: 10 }}>
+    <div className="mt-2">
       {test.ok ? (
         <div className="notice info">
           <span className="badge ok">✓</span>{' '}

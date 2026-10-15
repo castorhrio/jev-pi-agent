@@ -474,7 +474,7 @@ function QueryReportView({ report }: { report: QueryReport }): JSX.Element {
 
   if (report.failure !== null) {
     return (
-      <div style={{ marginTop: 12 }}>
+      <div className="mt-3">
         <div className="notice error">
           {t('intel.queryError')} — {report.failure}
         </div>
@@ -485,7 +485,7 @@ function QueryReportView({ report }: { report: QueryReport }): JSX.Element {
   const outcome = report.outcome;
   if (!outcome) {
     return (
-      <div style={{ marginTop: 12 }}>
+      <div className="mt-3">
         <div className="notice warn">
           {t('intel.unknownShape')}
           <div className="code mt-2">
@@ -498,7 +498,7 @@ function QueryReportView({ report }: { report: QueryReport }): JSX.Element {
 
   if (outcome.status === 'unsupported') {
     return (
-      <div style={{ marginTop: 12 }}>
+      <div className="mt-3">
         <div className="notice warn">
           <div>
             <span className="badge warn">{outcome.status}</span> {t('intel.queryUnsupported')}
@@ -515,7 +515,7 @@ function QueryReportView({ report }: { report: QueryReport }): JSX.Element {
 
   if (outcome.status === 'error') {
     return (
-      <div style={{ marginTop: 12 }}>
+      <div className="mt-3">
         <div className="notice error">
           <div>
             <span className="badge err">{outcome.status}</span> {t('intel.queryError')}
@@ -532,7 +532,7 @@ function QueryReportView({ report }: { report: QueryReport }): JSX.Element {
 
   if (outcome.status === 'cancelled') {
     return (
-      <div style={{ marginTop: 12 }}>
+      <div className="mt-3">
         <div className="notice warn">
           <span className="badge warn">{outcome.status}</span> {t('intel.queryCancelled')}
           {outcome.reason && (
@@ -546,7 +546,7 @@ function QueryReportView({ report }: { report: QueryReport }): JSX.Element {
   }
 
   return (
-    <div style={{ marginTop: 12 }}>
+    <div className="mt-3">
       <div className="notice info">
         <span className="badge ok">{outcome.status}</span> {t('intel.queryOk')}
         {outcome.durationMs !== undefined && (
@@ -565,7 +565,7 @@ function FreshnessLine({ freshness }: { freshness?: FreshnessState }): JSX.Eleme
   const t = useT();
   if (!freshness) return null;
   return (
-    <div className={`notice ${freshness.stale ? 'warn' : 'info'}`} style={{ marginTop: 8 }}>
+    <div className={`notice ${freshness.stale ? 'warn' : 'info'} mt-2`}>
       {t('intel.freshness')}:{' '}
       <span className={freshness.stale ? 'badge warn' : 'badge ok'}>
         {freshness.stale ? t('intel.stale') : t('intel.fresh')}
@@ -617,7 +617,7 @@ function ResultBody({
   const locations = locationsOf(result);
   if (locations) {
     return (
-      <div style={{ marginTop: 10 }}>
+      <div className="mt-2">
         <div className="block-title">
           <span>{t('intel.items')}</span>
           <span>{locations.length}</span>
@@ -638,11 +638,11 @@ function ResultBody({
   const overview = overviewOf(result);
   if (overview) {
     return (
-      <div style={{ marginTop: 10 }}>
+      <div className="mt-2">
         <div className="block-title">
           <span>{t('intel.summary')}</span>
         </div>
-        <div style={{ fontSize: 12.5 }}>{overview.summary}</div>
+        <div>{overview.summary}</div>
         {overview.modules && overview.modules.length > 0 && (
           <>
             <div className="block-title mt-3">
@@ -665,7 +665,7 @@ function ResultBody({
   }
 
   return (
-    <div style={{ marginTop: 10 }}>
+    <div className="mt-2">
       <div className="block-title">
         <span>{t('intel.rawResult')}</span>
       </div>

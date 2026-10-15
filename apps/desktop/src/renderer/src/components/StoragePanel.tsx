@@ -337,7 +337,7 @@ export function StoragePanel({ data }: { data: AppData }): JSX.Element {
             <div>
               <strong>{t('retention.purgeConfirmTitle')}</strong>
             </div>
-            <div style={{ marginTop: 6 }}>
+            <div className="mt-2">
               {t('retention.purgeConfirm', {
                 sessions: preview.sessions,
                 events: preview.events,
