@@ -224,6 +224,7 @@ const zhCN: Dictionary = {
 
   // The replay/subscription stream. A failure here used to be invisible.
   'stream.errorTitle': '无法加载这次会话的历史',
+  'chat.you': '你',
   'stream.gapWarning': '事件流有 {count} 条缺口，下面显示的历史可能不完整。',
   'sessions.loadFailed': '会话列表读取失败（不是空的）',
   'stream.unmodelledWarning':
@@ -947,6 +948,7 @@ const enUS: Dictionary = {
 
   // The replay/subscription stream. A failure here used to be invisible.
   'stream.errorTitle': 'Could not load this session’s history',
+  'chat.you': 'You',
   'stream.gapWarning': '{count} event(s) are missing from the stream — the history below may be incomplete.',
   'sessions.loadFailed': 'Could not read the session list (it is not empty)',
   'stream.unmodelledWarning':

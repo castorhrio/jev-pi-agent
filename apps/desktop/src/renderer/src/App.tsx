@@ -588,6 +588,16 @@ function Shell(): JSX.Element {
   const showPreview = !FULL_SURFACES.has(surface);
   const visibleSurface = surface === 'chat' ? 'chat' : surface;
 
+  /**
+   * Whose words the assistant lines are. A transcript where only the user is
+   * named leaves every other line unattributed, in a product that runs several
+   * agents; the session's own agent wins over the composer's current pick.
+   */
+  const activeAgentName = useMemo(() => {
+    const id = data.activeSession?.agentId ?? agentId;
+    return data.agents.find((a) => a.manifest.id === id)?.manifest.displayName ?? id;
+  }, [data.activeSession, data.agents, agentId]);
+
   if (fatal) {
     return (
       <div className="app">
@@ -816,6 +826,7 @@ function Shell(): JSX.Element {
                         tools={view.tools}
                         commands={view.commands}
                         notices={view.notices}
+                        agentName={activeAgentName}
                       />
                     </PanelBoundary>
                   )}

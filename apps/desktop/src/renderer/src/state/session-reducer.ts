@@ -42,6 +42,7 @@ export interface CommandView {
   output: Array<{ stream: 'stdout' | 'stderr'; chunk: string }>;
   exitCode: number | null;
   durationMs?: number;
+  startedAtSeq: number;
 }
 
 interface DecisionView {
@@ -86,6 +87,13 @@ interface ChatMessageView {
   text: string;
   ts: string;
   turnId: string;
+  /**
+   * The seq of the event that created the message. The transcript is four
+   * streams folded into one column, and seq is the only clock they share:
+   * without it a tool call can only be drawn after every message, which puts
+   * an agent's conclusion above the work that produced it.
+   */
+  seq: number;
   interrupted?: boolean;
 }
 
@@ -100,7 +108,7 @@ export interface SessionViewState {
   commands: CommandView[];
   decisions: DecisionView[];
   context: ContextView | null;
-  notices: Array<{ level: 'warn' | 'error'; code: string; message: string; ts: string }>;
+  notices: Array<{ level: 'warn' | 'error'; code: string; message: string; ts: string; seq: number }>;
   usage: { inputTokens: number; outputTokens: number; estimated: boolean } | null;
   /** set when the stream contains an event this reducer does not model */
   unmodelledEventCount: number;
@@ -121,7 +129,7 @@ export interface SessionViewState {
  */
 export function mergeDeltaText(
   state: SessionViewState,
-  delta: { messageId: string; text: string; turnId: string; ts: string },
+  delta: { messageId: string; text: string; turnId: string; ts: string; seq: number },
 ): ChatMessageView[] {
   const last = state.messages[state.messages.length - 1];
   if (last && last.id === delta.messageId && last.role === 'assistant') {
@@ -138,6 +146,7 @@ export function mergeDeltaText(
     text: delta.text,
     ts: delta.ts,
     turnId: delta.turnId,
+    seq: delta.seq,
   };
   return [...state.messages, created].slice(-MAX_MESSAGES);
 }
@@ -215,6 +224,7 @@ export function reduceEvent(state: SessionViewState, event: TurnEvent): SessionV
           text: payload.objective,
           ts: event.ts,
           turnId: event.turnId,
+          seq: event.seq,
         },
       ];
       return next;
@@ -227,6 +237,7 @@ export function reduceEvent(state: SessionViewState, event: TurnEvent): SessionV
         text: payload.text,
         turnId: event.turnId,
         ts: event.ts,
+        seq: event.seq,
       });
       return next;
     }
@@ -257,6 +268,7 @@ export function reduceEvent(state: SessionViewState, event: TurnEvent): SessionV
             payload.recoverable ? '历史已保留，可继续会话。' : '该会话已无法恢复。'
           }`,
           ts: event.ts,
+          seq: event.seq,
         },
       ];
       return next;
@@ -328,6 +340,7 @@ export function reduceEvent(state: SessionViewState, event: TurnEvent): SessionV
           cwd: payload.cwd,
           output: [],
           exitCode: null,
+          startedAtSeq: event.seq,
         },
       ].slice(-MAX_TOOLS_PER_TURN);
       return next;
@@ -480,7 +493,13 @@ export function reduceEvent(state: SessionViewState, event: TurnEvent): SessionV
       const payload = event.payload as { code: string; message: string };
       next.notices = [
         ...next.notices,
-        { level: 'warn' as const, code: payload.code, message: payload.message, ts: event.ts },
+        {
+          level: 'warn' as const,
+          code: payload.code,
+          message: payload.message,
+          ts: event.ts,
+          seq: event.seq,
+        },
       ].slice(-MAX_NOTICES);
       return next;
     }
@@ -489,7 +508,13 @@ export function reduceEvent(state: SessionViewState, event: TurnEvent): SessionV
       const payload = event.payload as { code: string; message: string };
       next.notices = [
         ...next.notices,
-        { level: 'error' as const, code: payload.code, message: payload.message, ts: event.ts },
+        {
+          level: 'error' as const,
+          code: payload.code,
+          message: payload.message,
+          ts: event.ts,
+          seq: event.seq,
+        },
       ].slice(-MAX_NOTICES);
       return next;
     }

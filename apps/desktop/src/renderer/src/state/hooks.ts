@@ -279,7 +279,13 @@ export function useSessionEvents(sessionId: string | null): SessionEvents {
   const liveSeqRef = useRef(0);
   /** The session the current view belongs to, so a switch resets the fold. */
   const viewSessionRef = useRef<string | null>(null);
-  const pending = useRef<{ messageId: string; text: string; turnId: string; ts: string } | null>(null);
+  const pending = useRef<{
+    messageId: string;
+    text: string;
+    turnId: string;
+    ts: string;
+    seq: number;
+  } | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
@@ -366,6 +372,9 @@ export function useSessionEvents(sessionId: string | null): SessionEvents {
               text: payload.text,
               turnId: event.turnId,
               ts: event.ts,
+              // The first delta's seq: the message's place in the transcript
+              // is where it *started*, not where the buffer happened to flush.
+              seq: event.seq,
             };
           }
           // lastSeq still advances per delta so gap detection stays honest.
