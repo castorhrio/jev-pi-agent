@@ -283,7 +283,24 @@ function Shell(): JSX.Element {
    * sites route here rather than through `ensureSession`.
    */
   const createSession = useCallback(async (): Promise<string | null> => {
-    if (!data.workspace) return null;
+    /*
+     * No workspace means no session, and that used to be a bare `return null`.
+     *
+     * The guard is correct; returning silently was not. It is reached from the
+     * rail's "+" and the menu item, both of which the user clicks expecting a
+     * session — and on a first run, with no project open, nothing happened at
+     * all: no row, no notice, no reason. The `catch` below already carries the
+     * comment that an action which looks like it did nothing is the bug; the
+     * guard clause was that bug.
+     *
+     * A session is scoped to a workspace, so the reason has to be stated. The
+     * rail shows the same sentence as its empty note, so the answer is on
+     * screen before the click as well as after it.
+     */
+    if (!data.workspace) {
+      flash(t('empty.sessionsNoWorkspace'));
+      return null;
+    }
     try {
       const created = await api.sessions.create({
         workspaceId: data.workspace.id,
@@ -622,7 +639,17 @@ function Shell(): JSX.Element {
             // real action, not a view toggle — it goes through Main so the
             // INTERRUPTED -> READY transition and the native-session probe
             // actually happen.
-            if (!sessionId) return;
+            //
+            // Both guards used to return silently, so on a first run (no
+            // project, no session) the ⟳ button was inert with no explanation.
+            if (!data.workspace) {
+              flash(t('empty.sessionsNoWorkspace'));
+              return;
+            }
+            if (!sessionId) {
+              flash(t('session.resumeNeedsSession'));
+              return;
+            }
             void api.sessions
               .resume(sessionId)
               .then(() => data.refresh())

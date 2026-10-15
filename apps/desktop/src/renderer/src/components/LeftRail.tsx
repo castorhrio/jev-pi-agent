@@ -95,7 +95,15 @@ export function LeftRail({
              */
             <div className="faint rail-note">{t('common.loading')}</div>
           ) : data.sessions.length === 0 ? (
-            <div className="faint rail-note">{t('empty.sessions')}</div>
+            /*
+             * "Click + above to start one" is an invitation the "+" cannot
+             * honour with no project open — a session belongs to a workspace.
+             * The first-run copy therefore names the real blocker instead of
+             * pointing at a control that will not do anything.
+             */
+            <div className="faint rail-note">
+              {data.workspace ? t('empty.sessions') : t('empty.sessionsNoWorkspace')}
+            </div>
           ) : (
             data.sessions.map((session) => (
               <div

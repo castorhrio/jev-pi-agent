@@ -249,6 +249,7 @@ const zhCN: Dictionary = {
   'empty.decision': '本会话还没有产生决策记录。',
   'empty.usage': '尚无用量记录。',
   'empty.sessions': '还没有会话。点击上方"新建会话"开始。',
+  'empty.sessionsNoWorkspace': '会话属于某个项目。先打开一个项目，再新建会话。',
   'empty.diff': '没有文本差异。',
 
   // -- Terminal (§9 / §11.2). The PTY paragraph is the point of this surface:
@@ -386,6 +387,7 @@ const zhCN: Dictionary = {
   'session.exportFailed': '导出失败：{reason}',
   'session.deleteConfirm': '删除后无法恢复，对话记录和其中的源码片段都会一起消失。',
   'session.createFailed': '新建会话失败：{reason}',
+  'session.resumeNeedsSession': '还没有可恢复的会话。',
   'session.stopFailed': '停止失败，这一轮仍在运行：{reason}',
   'session.renameFailed': '重命名失败：{reason}',
   'session.deleted': '已删除「{title}」。',
@@ -972,6 +974,8 @@ const enUS: Dictionary = {
   'empty.decision': 'No decisions have been made in this session yet.',
   'empty.usage': 'No usage recorded yet.',
   'empty.sessions': 'No sessions yet. Click "New Session" above to start one.',
+  'empty.sessionsNoWorkspace':
+    'Sessions belong to a project. Open one first, then start a session.',
   'empty.diff': 'No textual differences.',
 
   // -- Terminal (§9 / §11.2). The PTY paragraph is the point of this surface:
@@ -1109,6 +1113,7 @@ const enUS: Dictionary = {
   'session.deleteConfirm':
     'This cannot be undone — the conversation and the source snippets inside it are removed together.',
   'session.createFailed': 'Could not create a session: {reason}',
+  'session.resumeNeedsSession': 'There is no session to resume yet.',
   'session.stopFailed': 'Stop did not land; the turn is still running: {reason}',
   'session.renameFailed': 'Rename failed: {reason}',
   'session.deleted': 'Deleted “{title}”.',
