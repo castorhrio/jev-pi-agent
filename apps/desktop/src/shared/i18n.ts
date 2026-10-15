@@ -112,6 +112,7 @@ const zhCN: Dictionary = {
   'trust.untrusted.hint': '只读。可以浏览代码，但不能编辑文件或执行命令。',
   'trust.trusted.hint': '允许编辑工作区内文件与执行经确认的命令。项目级 Skill 与 MCP 需要信任。',
   'trust.restricted.hint': '可读可写，但工作区外路径与破坏性 Git 操作一律询问。',
+  'trust.failed': '信任状态没有改变：{reason}',
 
   'changes.unstage': '取消暂存',
   'changes.discard': '放弃修改',
@@ -835,6 +836,7 @@ const enUS: Dictionary = {
     'Editing files inside the workspace and running confirmed commands are allowed. Project skills and MCP servers require trust.',
   'trust.restricted.hint':
     'Read and write, but anything outside the workspace and any destructive git operation always asks first.',
+  'trust.failed': 'The trust state did not change: {reason}',
 
   'changes.unstage': 'Unstage',
   'changes.discard': 'Discard',

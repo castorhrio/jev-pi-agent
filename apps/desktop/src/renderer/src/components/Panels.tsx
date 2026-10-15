@@ -110,19 +110,38 @@ export function Explorer({
   // user makes once — and it must be visible and revocable. A trust state the
   // user cannot see or change is not a control, it is a constant.
   const trust = data.workspace?.trustState ?? 'untrusted';
+  const [trustError, setTrustError] = useState<string | null>(null);
   const setTrust = useCallback(
     async (next: 'untrusted' | 'trusted' | 'restricted') => {
+      setTrustError(null);
       try {
         await getApi().workspace.setTrust(next);
         await data.refresh();
       } catch (error) {
-        // Surface it: silently ignoring a failed trust change would leave the
-        // user believing a permission decision they did not make.
-        setEntries((prev) => prev);
-        throw error;
+        /*
+         * Reported here, not rethrown.
+         *
+         * This catch used to `setEntries((prev) => prev)` — a no-op — and then
+         * `throw`. Both call sites invoke the function as `void setTrust(...)`,
+         * so nothing ever handled the rejection. Measured in the browser with
+         * `setTrust` rejecting: the trust state correctly did not change, the
+         * user was shown *nothing at all*, and the only trace was an unhandled
+         * rejection in the console.
+         *
+         * That is precisely the outcome the comment here always claimed to
+         * prevent. Trust gates file writes and command execution, so a failed
+         * change the user believes succeeded is worse on this control than
+         * anywhere else in the app — and the wording below says the state did
+         * not change rather than only that something went wrong.
+         */
+        setTrustError(
+          t('trust.failed', {
+            reason: error instanceof Error ? error.message : String(error),
+          }),
+        );
       }
     },
-    [data],
+    [data, t],
   );
 
   return (
@@ -148,6 +167,11 @@ export function Explorer({
               </button>
             ))}
           </div>
+          {trustError && (
+            <div className="notice error" style={{ marginTop: 8 }}>
+              {trustError}
+            </div>
+          )}
           <div className="faint" style={{ fontSize: 11.5, marginTop: 6 }}>
             {t(`trust.${trust}.hint`)}
           </div>
