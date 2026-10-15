@@ -1019,42 +1019,11 @@ code,
   margin-left: auto;
 }
 
-/* Selectors: pill-shaped, quiet until hovered. */
-.picker {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  height: 25px;
-  padding: 0 8px;
-  border: 1px solid transparent;
-  border-radius: 999px;
-  background: var(--surface-2);
-  color: var(--text-2);
-  font-size: 11.5px;
-  cursor: pointer;
-  white-space: nowrap;
-}
-
-.picker:hover {
-  border-color: var(--border);
-  background: var(--surface-3);
-  color: var(--text);
-}
-
-.picker .caret {
-  color: var(--text-3);
-  font-size: 9px;
-}
-
-.picker.warn {
-  color: var(--warn);
-}
-
 .composer-hint {
   display: flex;
   align-items: center;
   gap: 10px;
-  font-size: 11px;
+  font-size: var(--fs-note);
   color: var(--text-3);
 }
 
@@ -1487,23 +1456,6 @@ code,
   margin: 0;
 }
 
-.kv {
-  display: grid;
-  grid-template-columns: minmax(96px, auto) minmax(0, 1fr);
-  gap: 4px 14px;
-  font-size: 12.5px;
-  margin: 0;
-}
-
-.kv dt {
-  color: var(--text-3);
-}
-
-.kv dd {
-  margin: 0;
-  word-break: break-word;
-}
-
 table.grid {
   width: 100%;
   border-collapse: collapse;
@@ -1840,13 +1792,6 @@ table.grid .num {
   font-size: 10.5px;
 }
 
-.rail-link {
-  text-align: left;
-  font-size: 12.5px;
-  padding: 5px 9px;
-  color: var(--text-2);
-}
-
 .surfaces::-webkit-scrollbar,
 .preview-tabs::-webkit-scrollbar {
   height: 0;
@@ -1936,18 +1881,6 @@ table.grid .num {
 
 .picker-select.warn {
   color: var(--warn);
-}
-
-.composer-hint-inline {
-  font-size: 10.5px;
-  white-space: nowrap;
-  /* The first thing to go when space runs out: it is a keyboard reminder,
-     not a control, and losing it costs the user nothing they cannot rediscover
-     by pressing Ctrl+Enter once. */
-  margin-left: auto;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 
 /* -- the mention popup is anchored to the composer box ------------------- */
