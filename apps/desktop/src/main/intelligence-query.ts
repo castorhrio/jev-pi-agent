@@ -39,7 +39,7 @@
  */
 
 import { z } from 'zod';
-import type { IntelligenceQueryKind } from '@ucad/contracts';
+import { codedError, type IntelligenceQueryKind } from '@ucad/contracts';
 
 /** The query kinds the bridge accepts. */
 const QUERY_KINDS = [
@@ -136,8 +136,10 @@ function mergeInput(
   // is a caller bug, and the safe answer is "no query ran", not "here are
   // some results".
   if (claimed !== undefined && claimed !== workspaceId) {
-    throw new Error(
+    throw codedError(
+      'INVALID_INPUT',
       '查询载荷中的项目与请求不一致：一次查询只能针对一个项目，请重新发起查询。',
+      'ipc',
     );
   }
   return { ...payload, workspaceId };

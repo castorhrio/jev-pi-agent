@@ -30,7 +30,7 @@
  */
 
 import * as z from 'zod';
-import { IPC_CHANNELS } from '@ucad/contracts';
+import { IPC_CHANNELS, codedError } from '@ucad/contracts';
 import type { McpServerDto, McpTestResult } from '@ucad/contracts';
 import { nowIso } from '@ucad/observability';
 import { probeMcpServer } from '@ucad/mcp';
@@ -138,7 +138,7 @@ function readRow(ucad: UcadApp, id: string): McpRow {
     'SELECT scope, scope_ref, name, exposure, transport, endpoint_json, secret_ref_json, enabled FROM mcp_servers WHERE id = ?',
     [id],
   );
-  if (!row) throw new Error(`MCP 服务器不存在：${id}`);
+  if (!row) throw codedError('NOT_FOUND', `MCP 服务器不存在：${id}`, 'ipc');
   return row;
 }
 
@@ -233,8 +233,10 @@ export function registerMcpIpc(deps: McpIpcDeps): void {
     if (typeof raw === 'object' && raw !== null) {
       for (const key of Object.keys(raw as Record<string, unknown>)) {
         if (!UPSERT_KEYS.has(key) && SECRET_LIKE_KEY.test(key)) {
-          throw new Error(
+          throw codedError(
+            'INVALID_INPUT',
             '不接受明文凭据：请用「凭据名称」引用已经保存的凭据，凭据本身不会经过这条通道。',
+            'ipc',
           );
         }
       }
@@ -242,10 +244,10 @@ export function registerMcpIpc(deps: McpIpcDeps): void {
     const parsed = upsertSchema.parse(raw);
 
     if (parsed.transport === 'http') {
-      if (!parsed.url) throw new Error('http 方式必须填地址。');
+      if (!parsed.url) throw codedError('INVALID_INPUT', 'http 方式必须填地址。', 'ipc');
       assertHttps(parsed.url);
     } else if (!parsed.command) {
-      throw new Error('stdio 方式必须填可执行命令。');
+      throw codedError('INVALID_INPUT', 'stdio 方式必须填可执行命令。', 'ipc');
     }
 
     const existing = parsed.id ? readRow(ucad, parsed.id) : null;
@@ -258,7 +260,9 @@ export function registerMcpIpc(deps: McpIpcDeps): void {
       // No fallback: a workspace-scoped server with no open project is refused.
       const workspaceId = ucad.currentWorkspaceId;
       const workspace = workspaceId ? ucad.sessionStore.getWorkspace(workspaceId) : null;
-      if (!workspace) throw new Error('请先打开一个项目，再添加本项目作用域的 MCP 服务器。');
+      if (!workspace) {
+        throw codedError('NO_ACTIVE_WORKSPACE', '请先打开一个项目，再添加本项目作用域的 MCP 服务器。', 'ipc');
+      }
       scopeRef = workspace.id;
     } else if (existing?.scope_ref) {
       scopeRef = existing.scope_ref;
@@ -368,7 +372,7 @@ export function registerMcpIpc(deps: McpIpcDeps): void {
  */
 function assertHttps(url: string): void {
   if (!url.toLowerCase().startsWith('https://')) {
-    throw new Error('只接受 https:// 地址（远程 MCP 服务器必须加密传输）。');
+    throw codedError('INVALID_INPUT', '只接受 https:// 地址（远程 MCP 服务器必须加密传输）。', 'ipc');
   }
 }
 

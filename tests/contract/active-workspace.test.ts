@@ -56,7 +56,7 @@ import { Database } from '@ucad/storage';
 import { SessionStore } from '@ucad/session';
 import { McpManager } from '@ucad/mcp';
 import { IPC_CHANNELS } from '@ucad/contracts';
-import { silentLogger } from '@ucad/observability';
+import { Logger, MemoryLogSink, silentLogger } from '@ucad/observability';
 import { registerIpc } from '../../apps/desktop/src/main/ipc';
 import { registerMcpIpc } from '../../apps/desktop/src/main/ipc-mcp';
 import type { UcadApp } from '../../apps/desktop/src/main/app-container';
@@ -75,11 +75,11 @@ let projectB: string;
  * `currentWorkspaceId` is a getter so the value is read at handler time, the
  * same as the real container.
  */
-function fakeApp() {
+function fakeApp(logger = silentLogger('active-workspace')) {
   const state: { activeId: string | undefined } = { activeId: undefined };
   const app = {
     sessionStore: store,
-    logger: silentLogger('active-workspace'),
+    logger,
     get currentWorkspaceId(): string | undefined {
       return state.activeId;
     },
@@ -281,5 +281,60 @@ describe('reopening a project reuses its row (§8.1)', () => {
     expect(second.id).toBe(a.id);
     // Two projects were seeded; activation must not have made a third row.
     expect(store.listWorkspaces()).toHaveLength(2);
+  });
+});
+
+/**
+ * What the log says about a refusal.
+ *
+ * Every handler is wrapped once in `ipc.ts`, and the wrapper logs the channel
+ * and the error's `code` before it converts the failure into the user-facing
+ * sentence that crosses the bridge. Until the refusals here were given codes,
+ * that line said `UNKNOWN` — so "the project is gone", "no project is open" and
+ * "the provider exploded" were the same entry in the log, and the sentence was
+ * the only thing telling them apart.
+ *
+ * The code cannot be asserted on the thrown value: Electron carries an `Error`
+ * across the bridge by its message alone, and the wrapper deliberately answers
+ * with the user-safe sentence. The log line is the observable, so that is what
+ * this asserts — through a real `Logger` and a `MemoryLogSink`, the same pair
+ * the app builds.
+ */
+describe('an IPC refusal is logged under a stable code', () => {
+  /** The last `ipc handler failed` record for one channel. */
+  function refusal(sink: MemoryLogSink, channel: string) {
+    return sink.records
+      .filter((record) => record.msg === 'ipc handler failed' && record.meta?.['channel'] === channel)
+      .pop();
+  }
+
+  it('logs NO_ACTIVE_WORKSPACE when a trust change has no project to apply to', async () => {
+    twoProjects();
+    const sink = new MemoryLogSink();
+    const app = fakeApp(new Logger({ scope: 'test', sink }));
+    app.setActive(undefined);
+
+    const setTrust = ipcHandlers(app).get(IPC_CHANNELS.workspace.setTrust)!;
+    await expect(setTrust(null, 'trusted')).rejects.toThrow(/没有已打开的项目/);
+
+    const record = refusal(sink, IPC_CHANNELS.workspace.setTrust);
+    expect(record, 'no refusal was logged').toBeDefined();
+    expect(record?.meta?.['code']).toBe('NO_ACTIVE_WORKSPACE');
+    // The user's sentence is unchanged: this step adds a code, it does not
+    // reword the interface.
+    expect(record?.meta?.['message']).toBe('没有已打开的项目');
+  });
+
+  it('logs WORKSPACE_NOT_FOUND when the requested project has no row', async () => {
+    twoProjects();
+    const sink = new MemoryLogSink();
+    const app = fakeApp(new Logger({ scope: 'test', sink }));
+
+    const activate = ipcHandlers(app).get(IPC_CHANNELS.workspace.activate)!;
+    await expect(activate(null, 'ws_does_not_exist')).rejects.toThrow(/项目不存在/);
+
+    expect(refusal(sink, IPC_CHANNELS.workspace.activate)?.meta?.['code']).toBe(
+      'WORKSPACE_NOT_FOUND',
+    );
   });
 });

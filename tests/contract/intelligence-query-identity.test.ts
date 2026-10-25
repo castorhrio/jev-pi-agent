@@ -411,6 +411,28 @@ describe('the payload the provider receives', () => {
     expect(provider.lastInput).toBeUndefined();
   });
 
+  it('refuses a mismatched payload under a stable code', async () => {
+    const { manager, provider } = makeRecordingManager();
+
+    // The sentence is what the user reads; the code is what the log and any
+    // later statistics read. A refusal that only carried a sentence was logged
+    // as `UNKNOWN`, the same entry as a provider crash.
+    const failure = await runIntelligenceQuery({ intelligence: manager }, {
+      workspaceId: 'ws_1',
+      kind: 'search',
+      input: { query: 'needle', workspaceId: 'ws_other' },
+    }).then(
+      () => null,
+      (error: unknown) => error as { code?: string; message?: string },
+    );
+
+    expect(failure?.code).toBe('INVALID_INPUT');
+    // Still an `Error`: Electron carries a rejection across the bridge as an
+    // Error, and the panels branch on `instanceof Error`.
+    expect(failure).toBeInstanceOf(Error);
+    expect(provider.lastInput).toBeUndefined();
+  });
+
   it('accepts a payload that repeats the request’s workspace id', async () => {
     const { manager, provider } = makeRecordingManager();
     await runIntelligenceQuery({ intelligence: manager }, {

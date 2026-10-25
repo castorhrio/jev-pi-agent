@@ -47,7 +47,7 @@ import type {
   ProviderDescriptorDto,
   WorkspaceActivationDto,
 } from '@ucad/contracts';
-import { IPC_PUSH, describeError } from '@ucad/contracts';
+import { IPC_PUSH, codedError, describeError } from '@ucad/contracts';
 import type { AppPaths } from './paths';
 import { DecisionFacade } from './decision-facade';
 import { GitLikeBridge } from './git-bridge';
@@ -313,7 +313,7 @@ export class UcadApp {
   async activateWorkspace(workspaceId: string): Promise<WorkspaceActivationDto> {
     const workspace = this.sessionStore.getWorkspace(workspaceId);
     if (!workspace) {
-      throw new Error(`项目不存在：${workspaceId}`);
+      throw codedError('WORKSPACE_NOT_FOUND', `项目不存在：${workspaceId}`, 'ipc');
     }
     // Recorded synchronously, before any await, so "which project am I working
     // on" is decided by the last request rather than by whichever activation
@@ -359,7 +359,11 @@ export class UcadApp {
       // explicitly *not* the one in force, so naming it would navigate the user
       // to the project whose code and rules were never loaded. Say that instead
       // of guessing.
-      throw new Error(`激活被更新的请求取代，但该项目已不存在：${outcome.supersededBy ?? workspace.id}`);
+      throw codedError(
+        'WORKSPACE_NOT_FOUND',
+        `激活被更新的请求取代，但该项目已不存在：${outcome.supersededBy ?? workspace.id}`,
+        'ipc',
+      );
     }
     return dto;
   }
@@ -679,7 +683,7 @@ export class UcadApp {
    */
   async resumeSession(sessionId: string) {
     const session = this.sessionStore.getSession(sessionId);
-    if (!session) throw new Error('会话不存在');
+    if (!session) throw codedError('NOT_FOUND', '会话不存在', 'ipc');
 
     const agentSession = this.sessionStore.getAgentSession(sessionId);
     if (!agentSession?.nativeSessionId) {

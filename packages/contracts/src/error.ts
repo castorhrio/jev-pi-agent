@@ -18,6 +18,14 @@ export type AppErrorCode =
   | 'TOOL_CONTRACT_UNAVAILABLE'
   | 'DECISION_TIMEOUT'
   | 'INTELLIGENCE_UNAVAILABLE'
+  // The three refusals below used to be plain `Error`s with only a message.
+  // The message is what the user reads; the code is what the log line, the
+  // support report and any later statistics read. Without one, "the project
+  // is not there" and "the provider exploded" were both `UNKNOWN`.
+  | 'WORKSPACE_NOT_FOUND'
+  | 'NO_ACTIVE_WORKSPACE'
+  | 'NOT_FOUND'
+  | 'INVALID_INPUT'
   | 'UNKNOWN';
 
 export type ErrorComponent =
@@ -62,6 +70,39 @@ export function appError(
     ...(extra.details !== undefined ? { details: extra.details } : {}),
     ...(extra.vendor !== undefined ? { vendor: extra.vendor } : {}),
   };
+}
+
+/**
+ * The throwable form of `appError()`.
+ *
+ * `appError()` returns a plain object, and a plain object is the right thing to
+ * *return*. It is the wrong thing to *throw*:
+ *
+ *  - `throw { code, message }` reaches `ipcMain.handle`, which serialises the
+ *    rejection to the Renderer; only `Error` instances are carried faithfully,
+ *    so a bare object arrives as unhelpful text;
+ *  - half the app catches with `instanceof Error`, and a thrown object silently
+ *    stops matching those branches;
+ *  - the old workaround at the call sites was
+ *    `throw new Error(appError('PERMISSION_DENIED', …).message)`, which kept the
+ *    message and threw the code away — so the log line for a refusal nobody
+ *    could distinguish from a crash said `UNKNOWN`.
+ *
+ * `codedError()` is an `Error` that carries `code`/`component`/`retryable`, so
+ * `handle()` in `ipc.ts` logs a stable code while `error.message` stays the
+ * user-safe sentence it always was. `toAppError()` recognises it as-is.
+ */
+export function codedError(
+  code: AppErrorCode,
+  message: string,
+  component: ErrorComponent,
+): Error & { code: AppErrorCode; component: ErrorComponent; retryable: boolean } {
+  return Object.assign(new Error(message), {
+    name: 'AppFailure',
+    code,
+    component,
+    retryable: RETRYABLE.has(code),
+  });
 }
 
 /**

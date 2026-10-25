@@ -6,13 +6,15 @@
  *  - every path goes through FileService.canonicalize before touching disk
  *  - every failure is returned as a plain `Error` whose message is already
  *    user-safe; vendor errors and AppError internals never cross the bridge
+ *  - every failure carries a §4.11 `code` into the log line, so a refusal is
+ *    not a `UNKNOWN` entry indistinguishable from a crash (`codedError()`)
  *  - no response ever carries secret plaintext
  */
 
 import { BrowserWindow, dialog, ipcMain } from 'electron';
 import * as path from 'node:path';
 import { ZodError, z } from 'zod';
-import { IPC_CHANNELS, appError, toAppError } from '@ucad/contracts';
+import { IPC_CHANNELS, codedError, toAppError } from '@ucad/contracts';
 import type { UcadApp } from './app-container';
 import { requestHighRiskPermission } from './local-permission';
 import type { UpdateService } from './update-service';
@@ -146,12 +148,14 @@ export function registerIpc(
     ok(async (workspaceId: unknown) => {
       const id = workspaceIdSchema.parse(workspaceId);
       const existing = ucad.sessionStore.getWorkspace(id);
-      if (!existing) throw new Error(`项目不存在：${id}`);
+      if (!existing) throw codedError('WORKSPACE_NOT_FOUND', `项目不存在：${id}`, 'ipc');
 
       const fs = await import('node:fs');
       if (!fs.existsSync(existing.path) || !fs.statSync(existing.path).isDirectory()) {
-        throw new Error(
+        throw codedError(
+          'WORKSPACE_NOT_FOUND',
           `找不到文件夹「${existing.path}」。它可能已被移动、重命名，或者所在的磁盘没有挂载。请重新打开项目。`,
+          'ipc',
         );
       }
       const workspace = ucad.sessionStore.upsertWorkspace({
@@ -184,11 +188,11 @@ export function registerIpc(
       // is nothing to trust, and saying so is better than picking one.
       const targetId = ucad.currentWorkspaceId;
       if (!targetId) {
-        throw new Error('没有已打开的项目');
+        throw codedError('NO_ACTIVE_WORKSPACE', '没有已打开的项目', 'ipc');
       }
       const target = ucad.sessionStore.getWorkspace(targetId);
       if (!target) {
-        throw new Error(`项目不存在：${targetId}`);
+        throw codedError('WORKSPACE_NOT_FOUND', `项目不存在：${targetId}`, 'ipc');
       }
       const updated = ucad.sessionStore.setWorkspaceTrust(target.id, parsed);
       // Trust is part of what the workspace-rooted subsystems are initialised
@@ -378,7 +382,7 @@ export function registerIpc(
       // `agentId` is not part of the wire DTO: the session already knows which
       // Agent it belongs to, and an explicit `override.agentId` (D-4) wins.
       const session = ucad.sessionStore.getSession(parsed.sessionId);
-      if (!session) throw new Error('会话不存在');
+      if (!session) throw codedError('NOT_FOUND', '会话不存在', 'ipc');
       return ucad.runtime.sendTurn({
         ...parsed,
         agentId: parsed.override?.agentId ?? session.agentId,
@@ -628,10 +632,10 @@ export function registerIpc(
     ok(async (paths: unknown) => {
       const session = ucad.sessionStore.listSessions()[0];
       const list = z.array(z.string()).min(1).parse(paths);
-      if (!session) throw new Error('没有活动会话');
+      if (!session) throw codedError('NOT_FOUND', '没有活动会话', 'ipc');
       // discard destroys work, so it goes through the Permission Engine
       const allowed = await requestHighRiskPermission(ucad, session.id, `discard: ${list.join(', ')}`, list);
-      if (!allowed) throw new Error(appError('PERMISSION_DENIED', '已拒绝丢弃修改', 'ipc').message);
+      if (!allowed) throw codedError('PERMISSION_DENIED', '已拒绝丢弃修改', 'ipc');
       ucad.git.discard(activeRoot(ucad), list);
     }),
   );
@@ -641,9 +645,9 @@ export function registerIpc(
     ok(async (message: unknown) => {
       const session = ucad.sessionStore.listSessions()[0];
       const msg = z.string().min(1).parse(message);
-      if (!session) throw new Error('没有活动会话');
+      if (!session) throw codedError('NOT_FOUND', '没有活动会话', 'ipc');
       const allowed = await requestHighRiskPermission(ucad, session.id, `commit: ${msg}`, [`commit:${msg}`]);
-      if (!allowed) throw new Error(appError('PERMISSION_DENIED', '已拒绝提交', 'ipc').message);
+      if (!allowed) throw codedError('PERMISSION_DENIED', '已拒绝提交', 'ipc');
       return ucad.git.commit(activeRoot(ucad), msg);
     }),
   );
@@ -656,7 +660,7 @@ export function registerIpc(
         .object({ cwd: z.string().min(1), cols: z.number().int().positive(), rows: z.number().int().positive() })
         .parse(input);
       const session = ucad.sessionStore.listSessions()[0];
-      if (!session) throw new Error('没有活动会话');
+      if (!session) throw codedError('NOT_FOUND', '没有活动会话', 'ipc');
       return ucad.terminal.create({
         sessionId: session.id,
         workspaceRoot: activeRoot(ucad),
@@ -836,7 +840,7 @@ export function registerIpc(
     IPC_CHANNELS.context.getPack,
     ok(async (packId: unknown) => {
       const pack = ucad.broker.getPack(z.string().min(1).parse(packId));
-      if (!pack) throw new Error('Context Pack 不存在');
+      if (!pack) throw codedError('NOT_FOUND', 'Context Pack 不存在', 'ipc');
       return pack;
     }),
   );
@@ -862,7 +866,7 @@ export function registerIpc(
        * that knows the real ownership, so it is what decides.
        */
       const pack = ucad.broker.getPack(parsed.packId);
-      if (!pack) throw new Error('Context Pack 不存在');
+      if (!pack) throw codedError('NOT_FOUND', 'Context Pack 不存在', 'ipc');
       return ucad.broker.extend({
         packId: pack.id,
         sessionId: pack.sessionId,
@@ -919,7 +923,7 @@ export function registerIpc(
       // no `decisions` row, no `decision.made` event, and no `turnId`, because a
       // decision asked at the composer has no turn to belong to yet.
       const session = ucad.sessionStore.getSession(parsed.sessionId);
-      if (!session) throw new Error('会话不存在');
+      if (!session) throw codedError('NOT_FOUND', '会话不存在', 'ipc');
       return ucad.decisions.preview({
         sessionId: parsed.sessionId,
         objective: parsed.objective,
@@ -998,7 +1002,11 @@ export function registerIpc(
        * declines to carry it at all.
        */
       if ('mcp' in parsed) {
-        throw new Error('MCP 服务器设置归 MCP 界面所有：请走 mcp.upsert / setEnabled / setExposure');
+        throw codedError(
+          'INVALID_INPUT',
+          'MCP 服务器设置归 MCP 界面所有：请走 mcp.upsert / setEnabled / setExposure',
+          'ipc',
+        );
       }
       return ucad.sessionStore.patchSettings(parsed as never);
     }),
@@ -1039,7 +1047,7 @@ export function registerIpc(
     IPC_CHANNELS.app.setLocale,
     ok(async (next: unknown) => {
       const parsed = z.string().parse(next);
-      if (!isLocale(parsed)) throw new Error(`不支持的语言：${parsed}`);
+      if (!isLocale(parsed)) throw codedError('INVALID_INPUT', `不支持的语言：${parsed}`, 'ipc');
       deps.setLocale(parsed);
       // Persisted so the choice survives a restart; the menu reads it back on
       // the next launch through the same settings document.
@@ -1154,7 +1162,7 @@ function activeWorkspaceId(ucad: UcadApp): string {
 function activeRoot(ucad: UcadApp): string {
   const workspace = activeWorkspace(ucad);
   if (!workspace) {
-    throw new Error('请先打开一个项目');
+    throw codedError('NO_ACTIVE_WORKSPACE', '请先打开一个项目', 'ipc');
   }
   return workspace.path;
 }
