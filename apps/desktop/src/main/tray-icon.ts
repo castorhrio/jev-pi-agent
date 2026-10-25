@@ -13,6 +13,7 @@
  */
 
 import { join } from 'node:path';
+import type { CloseBehaviour } from '@ucad/contracts';
 
 export interface TrayIconContext {
   platform: NodeJS.Platform;
@@ -55,4 +56,58 @@ export function loadTrayIcon<T extends TrayIcon>(
   const path = trayIconPath(context);
   const image = images.createFromPath(path);
   return { path, image, empty: image.isEmpty() };
+}
+
+// ---------------------------------------------------------------------------
+// close semantics
+// ---------------------------------------------------------------------------
+
+/**
+ * Why the tray cannot be used, when it cannot.
+ *
+ * The two cases are not the same bug: `icon-empty` means the asset shipped
+ * broken, `no-tray` means the platform gave us no notification area at all.
+ */
+export type TrayProblem = 'no-tray' | 'icon-empty';
+
+export interface WindowCloseDecision {
+  /** the window hides and the app keeps running */
+  hideToTray: boolean;
+  /** why, for the log line that explains it later */
+  reason: 'preference' | 'no-tray' | 'icon-empty';
+}
+
+/**
+ * The one place that decides what closing the window does.
+ *
+ * Three facts go in:
+ *
+ *  - **what the user asked for** (`preference`), read from Settings;
+ *  - **whether a tray exists at all**;
+ *  - **whether the tray icon actually decoded**.
+ *
+ * The third fact is the one that used to be missing. A tray whose image did not
+ * decode is an *invisible* slot: the window hides into it and the app is alive
+ * with nothing to click — the exact failure the tray fix was meant to close.
+ * So a tray that cannot be seen is treated as no tray at all, and the window
+ * quits instead of hiding.
+ *
+ * The user's preference never overrides a missing tray: "hide to tray" means
+ * "hide to *a tray*", and there is none to hide to.
+ */
+export function decideWindowClose(input: {
+  /** a tray exists and shows a real icon */
+  trayUsable: boolean;
+  /** what the user chose in Settings */
+  preference: CloseBehaviour;
+  /** why the tray is unusable, when it is */
+  trayProblem?: TrayProblem;
+}): WindowCloseDecision {
+  if (input.preference === 'quit') {
+    return { hideToTray: false, reason: 'preference' };
+  }
+  if (!input.trayUsable) {
+    return { hideToTray: false, reason: input.trayProblem ?? 'no-tray' };
+  }
+  return { hideToTray: true, reason: 'preference' };
 }

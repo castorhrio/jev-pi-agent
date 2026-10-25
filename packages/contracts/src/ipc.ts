@@ -269,11 +269,23 @@ export interface AgentCatalogEntry {
   models: ModelDescriptor[];
 }
 
+/**
+ * What closing the window does.
+ *
+ * `hide_to_tray` keeps a long agent run alive behind a tray icon; `quit` ends
+ * the app. The choice used to be implicit — the window always hid, and the
+ * only way out was the tray menu — and an implicit choice cannot be changed by
+ * the person it affects.
+ */
+export type CloseBehaviour = 'hide_to_tray' | 'quit';
+
 export interface SettingsSnapshot {
   version: number;
   /** UI language; `zh-CN` and `en-US` are the supported values */
   locale: 'zh-CN' | 'en-US';
   agent: { defaultAgentId: string; permissionMode: PermissionMode };
+  /** how the window behaves when it is closed */
+  window: { closeBehaviour: CloseBehaviour };
   /**
    * Which vendor new turns use unless the composer overrides it.
    *

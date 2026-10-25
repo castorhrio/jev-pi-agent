@@ -10,6 +10,7 @@
 
 import { DECISION_HARD_TIMEOUT_MS, DEFAULT_DECISION_CHAIN } from '@ucad/contracts';
 import type {
+  CloseBehaviour,
   ContextBudget,
   ContextStrategy,
   DeepPartial,
@@ -44,6 +45,9 @@ export const TOKEN_ESTIMATE_SOURCES: ReadonlyArray<TokenEstimateSource> = [
   'unknown',
 ];
 
+/** What closing the window may do. */
+const CLOSE_BEHAVIOURS: ReadonlyArray<CloseBehaviour> = ['hide_to_tray', 'quit'];
+
 /** V1 defaults. D-1: the decision chain starts as `['rule']`. */
 export const DEFAULT_SETTINGS: Readonly<SettingsSnapshot> = Object.freeze({
   version: 1,
@@ -53,6 +57,12 @@ export const DEFAULT_SETTINGS: Readonly<SettingsSnapshot> = Object.freeze({
     // and is never a fabricated vendor id (NFR-04)
     defaultAgentId: '',
     permissionMode: 'ask' as PermissionMode,
+  },
+  window: {
+    // A long agent run is not something a user wants to kill by clicking X.
+    // The tray is the app's home after the window is closed, and quitting is
+    // explicit — the tray menu, or the menu bar's File → Quit.
+    closeBehaviour: 'hide_to_tray' as CloseBehaviour,
   },
   provider: {
     // Same rule as `defaultAgentId`: empty means "no preference", never a
@@ -179,6 +189,7 @@ export function normalizeSettings(raw: unknown): SettingsSnapshot {
   const root = asRecord(raw);
   const d = DEFAULT_SETTINGS;
   const agent = asRecord(root['agent']);
+  const window = asRecord(root['window']);
   const provider = asRecord(root['provider']);
   const decision = asRecord(root['decision']);
   const context = asRecord(root['context']);
@@ -192,6 +203,13 @@ export function normalizeSettings(raw: unknown): SettingsSnapshot {
     agent: {
       defaultAgentId: asString(agent['defaultAgentId'], d.agent.defaultAgentId),
       permissionMode: asEnum(agent['permissionMode'], PERMISSION_MODES, d.agent.permissionMode),
+    },
+    window: {
+      closeBehaviour: asEnum(
+        window['closeBehaviour'],
+        CLOSE_BEHAVIOURS,
+        d.window.closeBehaviour,
+      ),
     },
     provider: {
       defaultProviderId: asString(provider['defaultProviderId'], d.provider.defaultProviderId),

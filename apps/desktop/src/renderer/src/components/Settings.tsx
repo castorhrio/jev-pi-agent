@@ -1,6 +1,7 @@
 import { Fragment, useCallback, useEffect, useRef, useState } from 'react';
 import type {
   AgentCatalogEntry,
+  CloseBehaviour,
   ModelDescriptor,
   PermissionDecision,
   ProviderDescriptorDto,
@@ -149,6 +150,9 @@ export function SettingsPanel({
   const [secret, setSecret] = useState('');
   const [hint, setHint] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  const [closeError, setCloseError] = useState<string | null>(null);
+  /** the stored choice, read once so the render cannot see a half-loaded snapshot */
+  const closeBehaviour = data.settings?.window.closeBehaviour;
 
   useEffect(() => {
     const api = getApi();
@@ -184,6 +188,26 @@ export function SettingsPanel({
     }
   }, [provider, key, secret]);
 
+  /**
+   * What closing the window does.
+   *
+   * The choice was implicit until now — the window always hid — and an implicit
+   * choice cannot be changed by the person it affects. A failed patch says so
+   * instead of leaving a button that looks selected but was never saved.
+   */
+  const setCloseBehaviour = useCallback(
+    async (next: CloseBehaviour) => {
+      setCloseError(null);
+      try {
+        await getApi().settings.patch({ window: { closeBehaviour: next } });
+        onChanged();
+      } catch (error) {
+        setCloseError(error instanceof Error ? error.message : String(error));
+      }
+    },
+    [onChanged],
+  );
+
   return (
     <div className="pane">
       <div className="pane-head">
@@ -204,6 +228,34 @@ export function SettingsPanel({
             </button>
           ))}
         </div>
+      </div>
+
+      <div className="card">
+        <h2>{t('settings.closeBehaviour')}</h2>
+        {/*
+         * Three states, again: a failed read of the settings is not the same
+         * as "no preference chosen", and it is certainly not the same as
+         * whichever button happens to be highlighted.
+         */}
+        {data.settings === null ? (
+          <div className="faint">{t('settings.closeBehaviourUnknown')}</div>
+        ) : (
+          <div className="row-gap">
+            {(['hide_to_tray', 'quit'] as const).map((value) => (
+              <button
+                key={value}
+                className={closeBehaviour === value ? 'primary' : ''}
+                onClick={() => void setCloseBehaviour(value)}
+              >
+                {value === 'hide_to_tray'
+                  ? t('settings.closeBehaviourHide')
+                  : t('settings.closeBehaviourQuit')}
+              </button>
+            ))}
+          </div>
+        )}
+        <div className="faint mt-2 fs-note">{t('settings.closeBehaviourNote')}</div>
+        {closeError && <div className="faint mt-2">{closeError}</div>}
       </div>
 
       <div className="card">

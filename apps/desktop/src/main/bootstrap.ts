@@ -9,7 +9,7 @@
 import { app, BrowserWindow, shell, Tray, Menu, nativeImage } from 'electron';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { IPC_PUSH, describeError, type TurnEvent } from '@ucad/contracts';
+import { IPC_PUSH, describeError, type CloseBehaviour, type TurnEvent } from '@ucad/contracts';
 import type { Logger } from '@ucad/observability';
 import { FileLogSink, Logger as UcadLogger, MemoryLogSink, MultiLogSink } from '@ucad/observability';
 import { UcadApp } from './app-container';
@@ -18,7 +18,7 @@ import { registerIpc } from './ipc';
 import { installApplicationMenu } from './menu';
 import { UpdateService, type UpdateStatus } from './update-service';
 import { resolveUpdateFeed } from './update-feed';
-import { loadTrayIcon } from './tray-icon';
+import { loadTrayIcon, decideWindowClose, type TrayProblem } from './tray-icon';
 import { IPC_MENU } from './ipc-menus';
 import { createTranslator, negotiateLocale, type Locale } from '../shared/i18n';
 
@@ -36,14 +36,26 @@ let appLog: Logger | null = null;
 let updates: UpdateService | null = null;
 let tray: Tray | null = null;
 /**
- * Whether closing the window hides to tray or quits.
+ * Whether a *usable* tray exists: one that was created and whose icon decoded.
+ *
+ * A tray slot with an invisible icon is not a tray — hiding the window there
+ * strands the app with nothing to click — so the two are tracked separately and
+ * the decision below treats them as one.
+ */
+let trayUsable = false;
+/** Why the tray is unusable, when it is. */
+let trayProblem: TrayProblem | undefined;
+/**
+ * What closing the window does.
  *
  * Default is **hide to tray**: a long agent run is not something a user wants to
  * kill by clicking the X, and a desktop agent that silently disappears is a
  * desktop agent that looks broken. Quitting is explicit — the tray menu, or the
  * menu bar's File → Quit.
+ *
+ * The default is only the default: Settings → 关闭窗口时 can change it, and the
+ * setting is read when the window closes so a change takes effect at once.
  */
-let closeToTray = true;
 let locale: Locale = negotiateLocale(app.getPreferredSystemLanguages?.() ?? ['zh-CN']);
 
 /**
@@ -55,6 +67,43 @@ interface QuittableApp {
   isQuitting?: boolean;
 }
 const appState = app as QuittableApp;
+
+/**
+ * What the user chose in Settings → 关闭窗口时.
+ *
+ * Read from the store rather than cached at startup, so a change made while
+ * the app is running takes effect the next time the window is closed — a
+ * preference that needs a restart to apply is a preference most people never
+ * find.
+ */
+function closePreference(): CloseBehaviour {
+  try {
+    return ucad?.sessionStore.getSettings().window.closeBehaviour ?? 'hide_to_tray';
+  } catch (error) {
+    // An unreadable settings document must not decide the app's exit
+    // behaviour by accident; the documented default is the safe one.
+    appLog?.warn('close behaviour could not be read; using the default', {
+      error: describeError(error),
+    });
+    return 'hide_to_tray';
+  }
+}
+
+/**
+ * Whether closing the window hides it to the tray or quits the app.
+ *
+ * The decision lives in `tray-icon.ts` as a pure function, so the branch that
+ * matters — an icon that did not decode must never become a place to hide —
+ * is testable without Electron.
+ */
+function shouldHideToTray(): boolean {
+  const decision = decideWindowClose({
+    trayUsable,
+    preference: closePreference(),
+    ...(trayProblem ? { trayProblem } : {}),
+  });
+  return decision.hideToTray;
+}
 
 /**
  * Adapters are resolved through Node's module resolution rather than by
@@ -152,7 +201,12 @@ async function createWindow(): Promise<BrowserWindow> {
   // The user's expectation for a long-running agent app: closing the window
   // means "get it out of my way", not "kill my run". Quitting is explicit.
   win.on('close', (event) => {
-    if (!closeToTray || appState.isQuitting) return;
+    // An app that is really quitting must never be talked out of it: the
+    // close handler below would hide the window and the process would sit
+    // there with no window and no tray, which is the "alive but unreachable"
+    // failure this whole file exists to prevent.
+    if (appState.isQuitting) return;
+    if (!shouldHideToTray()) return;
     event.preventDefault();
     win.hide();
     if (process.platform === 'darwin') app.dock?.hide();
@@ -355,15 +409,23 @@ function installTray(): void {
     // An empty image would create a tray slot with nothing in it, and the
     // window would still hide there — the app alive but unreachable. Fail into
     // the catch below instead, which turns close-to-tray off.
-    if (icon.empty) throw new Error(`tray icon could not be decoded: ${icon.path}`);
+    if (icon.empty) {
+      trayProblem = 'icon-empty';
+      throw new Error(`tray icon could not be decoded: ${icon.path}`);
+    }
     tray = new Tray(icon.image);
     tray.setToolTip('UCAD');
+    trayUsable = true;
   } catch (error) {
-    // No tray (some Linux sessions, some CI). The window then quits normally.
+    // No tray (some Linux sessions, some CI) — or a tray whose icon did not
+    // decode, which is the same thing with worse optics. The window then
+    // quits normally instead of hiding into a slot nobody can see.
+    trayUsable = false;
+    trayProblem = trayProblem ?? 'no-tray';
     appLog?.warn('tray unavailable; closing the window will quit', {
+      reason: trayProblem,
       error: error instanceof Error ? error.message : String(error),
     });
-    closeToTray = false;
     return;
   }
 
@@ -412,7 +474,11 @@ function refreshTrayMenu(): void {
       {
         label: t('tray.quit'),
         click: () => {
-          closeToTray = false;
+          // The flag is what tells the close handler this is a real exit and
+          // not a request to get out of the way. Without it the window would
+          // hide on the way down and the app would keep running with no
+          // window and no way back — the "quit" that does not quit.
+          appState.isQuitting = true;
           app.quit();
         },
       },
@@ -474,7 +540,7 @@ app.whenReady().then(bootstrap).catch((error) => {
 app.on('window-all-closed', () => {
   // On macOS the app conventionally stays alive; everywhere else the tray keeps
   // it alive. Quitting is explicit from the tray or the File menu.
-  if (process.platform !== 'darwin' && !tray) app.quit();
+  if (process.platform !== 'darwin' && !trayUsable) app.quit();
 });
 
 app.on('activate', () => {

@@ -219,6 +219,8 @@ const settings: SettingsSnapshot = {
   version: 3,
   locale: 'zh-CN',
   agent: { defaultAgentId: 'universal', permissionMode: 'ask' },
+  // The product default: closing the window hides it to the tray.
+  window: { closeBehaviour: 'hide_to_tray' },
   // No remembered vendor: the composer's "follow agent / session" is the
   // default, which is what the picker shows on a fresh launch.
   provider: { defaultProviderId: '' },
@@ -1520,6 +1522,7 @@ export function createFixtureApi(scenario: Scenario): FixtureHandle {
           ...liveSettings,
           ...next,
           agent: { ...liveSettings.agent, ...next.agent },
+          window: { ...liveSettings.window, ...next.window },
           provider: { ...liveSettings.provider, ...next.provider },
           decision: { ...liveSettings.decision, ...next.decision },
           context: {

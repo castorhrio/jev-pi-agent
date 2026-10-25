@@ -19,6 +19,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
+  decideWindowClose,
   loadTrayIcon,
   trayIconPath,
   type TrayIconContext,
@@ -112,5 +113,62 @@ describe('tray icon', () => {
       sizes.push(ico[6 + index * 16]! === 0 ? 256 : ico[6 + index * 16]!);
     }
     expect(sizes).toContain(16);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// what closing the window does
+// ---------------------------------------------------------------------------
+
+describe('closing the window', () => {
+  it('quits instead of hiding when the tray icon did not decode', () => {
+    // The failure this rules out: a tray slot with nothing in it. The window
+    // hides there, the app is alive, and there is no icon to click — the app
+    // is running and unreachable at the same time.
+    const loaded = loadTrayIcon(factory(true), context());
+    expect(loaded.empty).toBe(true);
+
+    const decision = decideWindowClose({
+      trayUsable: !loaded.empty,
+      preference: 'hide_to_tray',
+      trayProblem: 'icon-empty',
+    });
+
+    expect(decision.hideToTray).toBe(false);
+    expect(decision.reason).toBe('icon-empty');
+  });
+
+  it('hides to the tray when the user asked for it and a real tray exists', () => {
+    const loaded = loadTrayIcon(factory(false), context());
+    expect(loaded.empty).toBe(false);
+
+    const decision = decideWindowClose({
+      trayUsable: !loaded.empty,
+      preference: 'hide_to_tray',
+    });
+
+    expect(decision.hideToTray).toBe(true);
+    expect(decision.reason).toBe('preference');
+  });
+
+  it('quits when the user asked the app to quit', () => {
+    const decision = decideWindowClose({
+      trayUsable: true,
+      preference: 'quit',
+    });
+
+    expect(decision.hideToTray).toBe(false);
+    expect(decision.reason).toBe('preference');
+  });
+
+  it('never hides to a tray that does not exist', () => {
+    const decision = decideWindowClose({
+      trayUsable: false,
+      preference: 'hide_to_tray',
+      trayProblem: 'no-tray',
+    });
+
+    expect(decision.hideToTray).toBe(false);
+    expect(decision.reason).toBe('no-tray');
   });
 });

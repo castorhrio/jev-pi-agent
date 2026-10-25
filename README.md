@@ -46,6 +46,10 @@ agent, or a model provider. It makes the two answers checkable.
   pick is the vendor that answers: the base URL, the model and the credential
   all come from that one choice.
 - **MCP servers.** Configure a server, see its health honestly, remove it.
+- **A tray you can get out of.** Closing the window hides it to the tray — or
+  quits the app, if you say so in Settings → When the window is closed. The
+  tray menu carries both *Show window* and *Quit*, and an icon that failed to
+  decode makes the app quit rather than hide somewhere you cannot see.
 - **Bilingual.** The interface is Chinese and English, switchable at runtime.
 
 ### Screenshots
@@ -177,6 +181,9 @@ UCAD 就是为这两个问题做的控制面。它不试图当编辑器、当终
   发请求时才经本机进程通道把它交给 Agent Host——全程只在内存里，不经过环境变量，
   也不进日志。选了哪家，就真是哪家：地址、模型和凭据都出自同一个选择。
 - **MCP 服务器。** 添加、看健康状态、移除。
+- **一个能出来的托盘。** 关窗会藏到托盘——也可以在「设置 → 关闭窗口时」改成直接退出。
+  托盘菜单里既有「显示主窗口」也有「退出」；图标没解出来时，应用会退出，
+  而不是藏到一个你看不见也点不到的地方。
 - **中英双语。** 界面中英可切换。
 
 ### 截图
