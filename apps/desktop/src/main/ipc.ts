@@ -43,6 +43,15 @@ const secretRefSchema = z.object({
   key: z.string().min(1).max(64),
 });
 
+/**
+ * The last narrowing before the bridge: one user-safe sentence, and no fields.
+ *
+ * The `code` was already logged by `handle()`; it is dropped here on purpose.
+ * Electron carries an `Error` to the Renderer as its message, so a `code` on the
+ * rejection would arrive as `undefined` and invite a Renderer branch that never
+ * matches. The message is the whole contract — see
+ * `tests/contract/ipc-error-bridge.test.ts`.
+ */
 function toUserError(error: unknown): Error {
   // A ZodError's .message is a multi-line JSON dump of every issue — valid in
   // a log, hostile in a toast, and it echoes the raw input. One line naming

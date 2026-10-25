@@ -47,11 +47,33 @@ const retentionSchema = z.union([z.number().int().positive(), z.null()]);
  * which `toUserError` turns into 「输入无效 (confirm)」. A real permission
  * decision (the project is untrusted, the path is outside the workspace) keeps
  * its own code unchanged.
+ *
+ * The sentence is the one a person reads, so it is written once here and it has
+ * to come out in Chinese for *every* way of not confirming. `z.literal(true,
+ * { message })` did not: a missing field produced the sentence, but `false`,
+ * `"true"`, `1` and `null` fell through to Zod's own `Invalid literal value,
+ * expected true` — English, and about a type rather than about confirming a
+ * deletion. The realistic caller is a UI that sends `confirm: false`, so the
+ * half that worked was the half that never happens. An explicit refinement is
+ * the version that covers the whole field: `unknown`, so no shape gets past it
+ * with a second opinion, then a transform so the parsed type is still exactly
+ * `true`.
  */
+const PURGE_UNCONFIRMED = '清理未确认：请先预览要删除的内容，再确认一次。';
+
+const confirmSchema = z
+  .unknown()
+  .superRefine((value, ctx) => {
+    if (value !== true) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: PURGE_UNCONFIRMED });
+    }
+  })
+  .transform(() => true as const);
+
 const purgeRequestSchema = z.object({
   scope: purgeScopeSchema,
   workspaceId: z.string().min(1).optional(),
-  confirm: z.literal(true, { message: '清理未确认：请先预览要删除的内容，再确认一次。' }),
+  confirm: confirmSchema,
 });
 
 export interface StorageIpcDeps {

@@ -95,10 +95,21 @@ describe('storage:purge refuses an unconfirmed request at the schema', () => {
     expect(issue?.message).toContain('确认');
   });
 
-  it('rejects confirm: false and confirm: "true" the same way', async () => {
+  it('rejects confirm: false and confirm: "true" with the same sentence', async () => {
+    // `false` is the value a UI actually sends when the user has not ticked the
+    // box, so it is the case that has to read like a sentence, not like a type
+    // error. `z.literal(true, { message })` answered a *missing* field in
+    // Chinese and every wrong value in English; this loop is what catches a
+    // return to that.
     for (const confirm of [false, 'true', 1, null]) {
       const error = await rejection({ scope: 'all', confirm });
       expect(isValidationFailure(error), `confirm: ${String(confirm)} was accepted`).toBe(true);
+      const issue = (error as ValidationFailure).issues[0];
+      expect(issue?.path, `confirm: ${String(confirm)} blamed the wrong field`).toEqual(['confirm']);
+      expect(issue?.message, `confirm: ${String(confirm)} got no Chinese prompt`).toContain(
+        '确认',
+      );
+      expect(issue?.message).not.toMatch(/invalid|Invalid|expected/i);
     }
   });
 

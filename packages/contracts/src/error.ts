@@ -85,7 +85,8 @@ export function appError(
  *
  *  - `throw { code, message }` reaches `ipcMain.handle`, which serialises the
  *    rejection to the Renderer; only `Error` instances are carried faithfully,
- *    so a bare object arrives as unhelpful text;
+ *    and even then only the *message* survives the bridge — a bare object
+ *    arrives as unhelpful text;
  *  - half the app catches with `instanceof Error`, and a thrown object silently
  *    stops matching those branches;
  *  - the old workaround at the call sites was
@@ -96,6 +97,15 @@ export function appError(
  * `codedError()` is an `Error` that carries `code`/`component`/`retryable`, so
  * `handle()` in `ipc.ts` logs a stable code while `error.message` stays the
  * user-safe sentence it always was. `toAppError()` recognises it as-is.
+ *
+ * The code stops there — at Main's log line. It is **not** part of what the
+ * Renderer receives: `handle()` logs the full `AppError` and then rejects with
+ * `new Error(appError.message)`, so the Renderer gets one sentence and no
+ * fields. That narrowing is deliberate, not incidental. Electron carries an
+ * `Error` across the bridge as its message, so a `code` attached here would
+ * arrive as `undefined` anyway; a Renderer that branched on it would branch on
+ * nothing, forever. Read the sentence for the user, read this object for the
+ * log. `tests/contract/ipc-error-bridge.test.ts` holds the boundary.
  */
 export function codedError(
   code: AppErrorCode,
