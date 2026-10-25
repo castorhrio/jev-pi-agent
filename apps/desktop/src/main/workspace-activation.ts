@@ -268,7 +268,7 @@ export class WorkspaceActivator {
         workspaceRoot: workspace.path,
         skillRoots: this.#currentSkillRoots(),
         intelligence: 'superseded',
-        supersededBy: this.latest.id,
+        supersededBy: this.latest?.id ?? workspace.id,
       };
     }
 
@@ -289,7 +289,7 @@ export class WorkspaceActivator {
         // which request took over and let the caller read the rest as
         // "state at the moment this returned".
         intelligence: 'superseded',
-        supersededBy: this.latest.id,
+        supersededBy: this.latest?.id ?? workspace.id,
       };
     }
 

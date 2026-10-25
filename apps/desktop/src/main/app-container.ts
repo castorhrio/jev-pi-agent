@@ -324,8 +324,10 @@ export class UcadApp {
     // took over, this call did not put its project in force, and the Renderer
     // navigates on `id`/`name`. `toWorkspaceActivationDto` names the project
     // that is actually loaded and keeps the requested one beside it.
-    return toWorkspaceActivationDto(workspace, outcome, (id) =>
-      this.sessionStore.getWorkspace(id),
+    return toWorkspaceActivationDto(
+      workspace,
+      outcome,
+      (id) => this.sessionStore.getWorkspace(id) ?? undefined,
     );
   }
 
