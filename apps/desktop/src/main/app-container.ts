@@ -750,6 +750,11 @@ export class UcadApp {
       cwd: process.cwd(),
       configDir: this.paths.userData,
       hostEntry: resolveHostEntry(),
+      // The Host needs the credential the user saved in Settings, and only
+      // Main can read the keychain. It asks for a reference over the protocol
+      // and Main answers — the key itself is never in the fork's environment,
+      // never in the `initialize` payload and never in a log line.
+      secretResolver: async (ref) => this.secrets.get(ref),
     });
     try {
       await host.start();

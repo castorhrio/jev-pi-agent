@@ -340,6 +340,11 @@ export function registerIpc(
         .object({
           sessionId: sessionIdSchema,
           objective: z.string().min(1),
+          // The Composer's vendor choice for this turn. It was missing from
+          // this schema, and `z.object` strips what it does not know — so the
+          // Renderer sent it and the turn ran against the adapter's default
+          // instead. The picker was a label; now it is the request.
+          providerId: z.string().min(1).optional(),
           attachments: z
             .array(z.object({ path: z.string(), kind: z.enum(['image', 'file']) }))
             .optional(),

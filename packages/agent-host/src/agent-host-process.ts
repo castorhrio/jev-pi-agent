@@ -19,6 +19,7 @@ import type {
   AgentManifest,
   AppError,
   MainToAgentHost,
+  SecretRef,
   Unsubscribe,
 } from '@ucad/contracts';
 import { nowIso } from '@ucad/observability';
@@ -50,6 +51,15 @@ export interface AgentHostOptions {
   hostEntry?: string;
   /** extra environment entries; the redacted allow-list is supplied by Main. */
   env?: Record<string, string | undefined>;
+  /**
+   * Turns a credential reference into the credential itself.
+   *
+   * This is the only place a secret enters the Host, and it is Main's job:
+   * the Host asks for a reference, Main looks it up in the OS keychain and
+   * answers. Without a resolver the Host is told "no credential", which is
+   * why the default is "no resolver" rather than "read the environment".
+   */
+  secretResolver?: (ref: SecretRef) => Promise<string | null>;
 }
 
 /**
@@ -92,6 +102,7 @@ export class AgentHostProcess {
   private readonly handshakeTimeoutMs: number;
   private readonly hostEntry: string;
   private readonly extraEnv: Record<string, string | undefined>;
+  private readonly secretResolver: ((ref: SecretRef) => Promise<string | null>) | undefined;
 
   private child: ChildProcess | null = null;
   private manifestValue: AgentManifest | null = null;
@@ -115,6 +126,7 @@ export class AgentHostProcess {
     this.handshakeTimeoutMs = opts.handshakeTimeoutMs ?? DEFAULT_HANDSHAKE_TIMEOUT_MS;
     this.hostEntry = opts.hostEntry ?? resolveHostEntry();
     this.extraEnv = opts.env ?? {};
+    this.secretResolver = opts.secretResolver;
   }
 
   /**
@@ -373,6 +385,11 @@ export class AgentHostProcess {
     if (msg.op === 'health' && typeof msg.payload.rssBytes === 'number') {
       this.lastRssBytes = msg.payload.rssBytes;
     }
+    if (msg.op === 'secret_request') {
+      // Answered here, not in the generic callback list: the answer is a
+      // credential and has no business travelling to anyone else.
+      void this.answerSecretRequest(msg.payload);
+    }
     for (const cb of [...this.messageCbs]) {
       try {
         cb(msg);
@@ -382,6 +399,39 @@ export class AgentHostProcess {
         });
       }
     }
+  }
+
+  /**
+   * Answer a credential request from the Host.
+   *
+   * The reference is logged, the value never is. A failure to read the vault
+   * answers with `null` rather than with an error: the Host's contract is
+   * "here is the credential or there is none", and a thrown error would leave
+   * the requester waiting until its own timeout.
+   */
+  private async answerSecretRequest(payload: { requestId: string; ref: SecretRef }): Promise<void> {
+    const { requestId, ref } = payload;
+    const resolver = this.secretResolver;
+    if (!resolver) {
+      this.logger.warn('credential request without a resolver', {
+        providerId: ref.providerId,
+        key: ref.key,
+      });
+      this.send({ op: 'secret_response', payload: { requestId, value: null } });
+      return;
+    }
+
+    let value: string | null = null;
+    try {
+      value = await resolver(ref);
+    } catch (err) {
+      this.logger.warn('credential lookup failed', {
+        providerId: ref.providerId,
+        key: ref.key,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+    this.send({ op: 'secret_response', payload: { requestId, value } });
   }
 
   private notifyExit(info: AgentHostExitInfo): void {

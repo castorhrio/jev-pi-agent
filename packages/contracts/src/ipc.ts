@@ -95,6 +95,15 @@ export interface SendTurnInput {
   sessionId: string;
   objective: string;
   attachments?: Array<{ path: string; kind: 'image' | 'file' }>;
+  /**
+   * The vendor this turn talks to.
+   *
+   * It is the Composer's choice for this turn; the session's own binding is
+   * the fallback when it is absent. It used to be missing here, which meant
+   * the Renderer sent it and the IPC layer dropped it — the picker changed a
+   * label while the request went to the adapter's default.
+   */
+  providerId?: string;
   /** explicit selection wins over a DecisionEngine route result (D-4) */
   override?: { agentId?: string; modelId?: string };
 }

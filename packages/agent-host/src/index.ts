@@ -24,6 +24,7 @@ export {
   normalizePermissionRequest,
   DEFAULT_HEARTBEAT_MS,
   DEFAULT_PERMISSION_TIMEOUT_MS,
+  DEFAULT_SECRET_TIMEOUT_MS,
 } from './agent-host-runner';
 export type { AgentHostRunnerOptions, HostTransport } from './agent-host-runner';
 

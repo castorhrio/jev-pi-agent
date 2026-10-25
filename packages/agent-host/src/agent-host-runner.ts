@@ -26,6 +26,7 @@ import type {
   PermissionDecision,
   PermissionRequest,
   ResumeAgentSessionInput,
+  SecretRef,
   Unsubscribe,
 } from '@ucad/contracts';
 import { nowIso, ulid } from '@ucad/observability';
@@ -41,6 +42,15 @@ export const DEFAULT_HEARTBEAT_MS = 5_000;
  * lifetime of the process. Denying is the fail-safe answer.
  */
 export const DEFAULT_PERMISSION_TIMEOUT_MS = 120_000;
+/**
+ * How long Main has to answer a credential request.
+ *
+ * A credential that never arrives must not hang a turn: the request resolves
+ * to `null`, the provider reports "no key for this vendor", and the user is
+ * told to add it in Settings. Waiting forever would turn a missing key into a
+ * frozen application.
+ */
+export const DEFAULT_SECRET_TIMEOUT_MS = 5_000;
 
 /** The channel the runner speaks on. `processTransport()` binds it to the fork IPC. */
 export interface HostTransport {
@@ -58,15 +68,25 @@ export interface AgentHostRunnerOptions {
   /**
    * `AdapterInitializeContext.secretResolver` is a function and therefore cannot
    * survive the IPC boundary; Main can never supply it. The Host injects its own
-   * and rejects every lookup by default — the mock needs none.
+   * — and that one asks Main, over the protocol, for the credential it needs.
+   *
+   * A caller may still pass its own resolver (the mock adapter needs none, and
+   * a test may want a fixed value); the default is the protocol-backed one.
    */
   secretResolver?: AdapterInitializeContext['secretResolver'];
+  secretTimeoutMs?: number;
   /** defaults to `process.exit`; overridable so the runner stays testable. */
   exit?: (code: number) => void;
 }
 
 interface PendingPermission {
   resolve: (decision: PermissionDecision) => void;
+  timer: NodeJS.Timeout;
+}
+
+/** A credential request waiting for Main's answer. */
+interface PendingSecret {
+  resolve: (value: string | null) => void;
   timer: NodeJS.Timeout;
 }
 
@@ -100,6 +120,7 @@ export class AgentHostRunner {
   private readonly transport: HostTransport;
   private readonly heartbeatMs: number;
   private readonly permissionTimeoutMs: number;
+  private readonly secretTimeoutMs: number;
   private readonly secretResolver: AdapterInitializeContext['secretResolver'];
   private readonly exitFn: (code: number) => void;
 
@@ -107,6 +128,8 @@ export class AgentHostRunner {
   /** turnId -> ucadSessionId, so `cancel_turn` can find the owning handle. */
   private readonly turnOwners = new Map<string, string>();
   private readonly pendingPermissions = new Map<string, PendingPermission>();
+  /** requestId -> the credential request waiting for Main's answer. */
+  private readonly pendingSecrets = new Map<string, PendingSecret>();
 
   private started = false;
   private initialized = false;
@@ -129,7 +152,12 @@ export class AgentHostRunner {
     this.transport = opts.transport ?? processTransport();
     this.heartbeatMs = opts.heartbeatMs ?? DEFAULT_HEARTBEAT_MS;
     this.permissionTimeoutMs = opts.permissionTimeoutMs ?? DEFAULT_PERMISSION_TIMEOUT_MS;
-    this.secretResolver = opts.secretResolver ?? (async () => null);
+    this.secretTimeoutMs = opts.secretTimeoutMs ?? DEFAULT_SECRET_TIMEOUT_MS;
+    // The default resolver asks Main over the protocol. It used to be
+    // "reject every lookup", which made the credential the user saved in
+    // Settings unreachable from the Host — the process that actually talks to
+    // the provider.
+    this.secretResolver = opts.secretResolver ?? ((ref: SecretRef) => this.requestSecret(ref));
     this.exitFn = opts.exit ?? ((code: number) => process.exit(code));
   }
 
@@ -138,6 +166,15 @@ export class AgentHostRunner {
     if (this.started) return;
     this.started = true;
     this.unsubscribe = this.transport.onMessage((msg) => {
+      // A credential answer is handled *outside* the dispatch queue. The
+      // queue serialises the other ops, and `initialize` holds it while it
+      // runs — so a credential requested from inside `initialize` would wait
+      // for an answer that the queue itself is blocking. Answering it here
+      // keeps the request/response pair free of the queue in both directions.
+      if (msg.op === 'secret_response') {
+        this.onSecretResponse(msg.payload);
+        return;
+      }
       // Never let a rejected dispatch become an unhandled rejection (NFR-02).
       this.queue = this.queue.then(() => this.dispatch(msg)).catch(() => undefined);
     });
@@ -159,6 +196,13 @@ export class AgentHostRunner {
       this.pendingPermissions.delete(requestId);
       clearTimeout(pending.timer);
       pending.resolve('deny');
+    }
+    // The same for a credential request: the answer can no longer arrive, so
+    // the waiter is released with "no credential" instead of a leaked promise.
+    for (const [requestId, pending] of [...this.pendingSecrets]) {
+      this.pendingSecrets.delete(requestId);
+      clearTimeout(pending.timer);
+      pending.resolve(null);
     }
     for (const handle of [...this.sessions.values()]) {
       try {
@@ -402,6 +446,49 @@ export class AgentHostRunner {
       this.pendingPermissions.set(normalized.id, { resolve, timer });
       this.emit({ op: 'permission_request', payload: normalized });
     });
+  }
+
+  // -------------------------------------------------------------------------
+  // credential channel
+  // -------------------------------------------------------------------------
+
+  /**
+   * Ask Main for one credential.
+   *
+   * The Host never holds a vault: it sends a *reference* and Main answers with
+   * the value or with `null`. The request is bounded — an unanswered request
+   * resolves to `null` rather than hanging the caller, because a turn that
+   * waits forever for a key is worse than a turn that says "no key".
+   */
+  private requestSecret(ref: SecretRef): Promise<string | null> {
+    const requestId = ulid('sec_');
+    return new Promise<string | null>((resolve) => {
+      const timer = setTimeout(() => {
+        this.pendingSecrets.delete(requestId);
+        this.logger.warn('credential request timed out', {
+          requestId,
+          providerId: ref.providerId,
+          key: ref.key,
+        });
+        resolve(null);
+      }, this.secretTimeoutMs);
+      timer.unref();
+
+      this.pendingSecrets.set(requestId, { resolve, timer });
+      this.emit({ op: 'secret_request', payload: { requestId, ref } });
+    });
+  }
+
+  private onSecretResponse(payload: { requestId: string; value: string | null }): void {
+    const pending = this.pendingSecrets.get(payload.requestId);
+    if (!pending) {
+      // The reference, never the value: the answer itself is not logged.
+      this.logger.warn('credential response for unknown request', { requestId: payload.requestId });
+      return;
+    }
+    this.pendingSecrets.delete(payload.requestId);
+    clearTimeout(pending.timer);
+    pending.resolve(payload.value);
   }
 
   // -------------------------------------------------------------------------

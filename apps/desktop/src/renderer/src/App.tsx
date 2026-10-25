@@ -332,6 +332,10 @@ function Shell(): JSX.Element {
         agentId,
         permissionMode,
         title: t('session.new'),
+        // The session records the vendor it was opened with, so a later turn
+        // without an explicit choice still has one to fall back to. `''` means
+        // "no preference" and is never sent as a provider id.
+        ...(providerId !== '' ? { providerId } : {}),
       });
       setSessionId(created.id);
       await data.refresh();
@@ -343,7 +347,7 @@ function Shell(): JSX.Element {
       flash(t('session.createFailed', { reason: describe(error) }));
       return null;
     }
-  }, [api, data, agentId, permissionMode, t, flash]);
+  }, [api, data, agentId, permissionMode, providerId, t, flash]);
 
   const ensureSession = useCallback(async (): Promise<string | null> => {
     if (!data.workspace) return null;

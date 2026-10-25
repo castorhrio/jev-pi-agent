@@ -798,6 +798,12 @@ export class AgentRuntimeManager {
         case 'exited':
           // `exited` is delivered through onExit; `ready` is consumed by start().
           break;
+        case 'secret_request':
+          // Answered by `AgentHostProcess`, which owns the keychain. The
+          // runtime has nothing to do with it — but it *is* a known op, and
+          // reporting it as unknown would put "unknown host frame op" in the
+          // log of every single request that needed a credential.
+          break;
         default:
           // E-3: an op this Main does not know is reported, not swallowed.
           this.log.warn('unknown host frame op', { agentId });

@@ -39,8 +39,12 @@ agent, or a model provider. It makes the two answers checkable.
   live in `<project>/.ucad/skills/<name>/SKILL.md`. They are injected as
   ordinary context items, so you can read them in the Context Drawer, and they
   change with the project you have open — not with the one you opened first.
-- **Any OpenAI-compatible provider.** One protocol, many vendors; credentials
-  are stored one-way in the OS keychain and never leave the main process.
+- **Any OpenAI-compatible provider.** One protocol, many vendors. Credentials
+  are stored one-way in the OS keychain, and the key is handed to the Agent
+  Host only when a request needs it — over the local process channel, in
+  memory, never through an environment variable or a log line. The vendor you
+  pick is the vendor that answers: the base URL, the model and the credential
+  all come from that one choice.
 - **MCP servers.** Configure a server, see its health honestly, remove it.
 - **Bilingual.** The interface is Chinese and English, switchable at runtime.
 
@@ -169,8 +173,9 @@ UCAD 就是为这两个问题做的控制面。它不试图当编辑器、当终
 - **随项目走的项目规则。** 仓库自己的规矩放在 `<project>/.ucad/skills/<name>/SKILL.md`，
   它们作为普通上下文项注入——在上下文面板里可以逐字核对；换个项目打开，规则也跟着换，
   而不是留在第一次打开的那个项目上。
-- **任意 OpenAI 兼容厂商。** 一个协议覆盖多家；凭据单向存进系统钥匙串，
-  永不离开主进程。
+- **任意 OpenAI 兼容厂商。** 一个协议覆盖多家。凭据单向存进系统钥匙串，只有真正
+  发请求时才经本机进程通道把它交给 Agent Host——全程只在内存里，不经过环境变量，
+  也不进日志。选了哪家，就真是哪家：地址、模型和凭据都出自同一个选择。
 - **MCP 服务器。** 添加、看健康状态、移除。
 - **中英双语。** 界面中英可切换。
 

@@ -1077,6 +1077,9 @@ export function createFixtureApi(scenario: Scenario): FixtureHandle {
           workspaceId: input.workspaceId,
           title: input.title ?? '新会话',
           agentId: input.agentId,
+          // The real store records the vendor the session was opened with, so
+          // the harness says the same thing instead of leaving it undefined.
+          ...(input.providerId !== undefined ? { providerId: input.providerId } : {}),
           status: 'READY',
           createdAt: ISO,
           updatedAt: ISO,

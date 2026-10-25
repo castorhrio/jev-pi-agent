@@ -4,6 +4,7 @@ import type { AdapterInitializeContext, AgentManifest, AgentTurnInput, CreateAge
 import type { InboundEventProposal, IntelligenceIndexProgressPayload } from './events';
 import type { PermissionRequest, PermissionDecision } from './permission';
 import type { AppError } from './error';
+import type { SecretRef } from './secret';
 import type {
   IntelligenceInitializeContext,
   IntelligenceOperationHandle,
@@ -26,6 +27,15 @@ export type MainToAgentHost =
   | { op: 'cancel_turn'; payload: { turnId: string; reason?: string } }
   | { op: 'permission_response'; payload: { requestId: string; decision: PermissionDecision } }
   | { op: 'dispose_session'; payload: { ucadSessionId: string } }
+  /**
+   * The answer to a `secret_request`: the plaintext credential, or `null` when
+   * Main holds none for that ref.
+   *
+   * It travels on the same channel as everything else — a forked child's IPC
+   * port — and nowhere else. It is never written to a log, never put in
+   * `process.env` and never returned to the Renderer (NFR-01).
+   */
+  | { op: 'secret_response'; payload: { requestId: string; value: string | null } }
   | { op: 'shutdown'; payload: { gracePeriodMs: number } };
 
 export type AgentHostToMain =
@@ -46,6 +56,16 @@ export type AgentHostToMain =
         resumed: boolean;
       };
     }
+  /**
+   * The Host needs a credential it cannot hold: the API key the user saved in
+   * Settings lives in Main's OS keychain, and the Host is a separate process.
+   *
+   * The Host asks for a *reference*; only Main may turn a reference into a
+   * value. That is the whole point of the direction of the request — the Host
+   * never receives a vault, a path or an environment variable that names a
+   * secret, so a compromised Host cannot enumerate what the user has stored.
+   */
+  | { op: 'secret_request'; payload: { requestId: string; ref: SecretRef } }
   /** no seq — Main assigns it */
   | { op: 'event'; payload: InboundEventProposal }
   | { op: 'permission_request'; payload: PermissionRequest }
