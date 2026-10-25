@@ -603,3 +603,114 @@ describe('mcp:test / the probe comes from the package barrel', () => {
     expect(stored?.lastCheckedAt).toBeTruthy();
   });
 });
+
+// ---------------------------------------------------------------------------
+// mcp:upsert — the environment survives persist() and a reload
+// ---------------------------------------------------------------------------
+
+/**
+ * An MCP `env` is a credential store in all but name: it is written through
+ * `mcp:upsert`, persisted into the settings document by `persist()`, and read
+ * back by the registry only when Main spawns the child process. That is three
+ * places where it can be dropped without anything failing loudly — an upsert
+ * that stores it in the DTO but not in `env_json`, a `persist()` that keeps only
+ * the masked shape, a `listServers()`/`mergeStored()` that "cleans" the entry.
+ *
+ * Every one of those looks like a working settings page: the panel shows the
+ * variable *names* (that is the mask), so a lost value renders identically to a
+ * stored one. Only `resolveEnv` — the read Main performs — can tell the
+ * difference, so that is what these tests ask.
+ */
+describe('mcp:upsert / the environment round trip', () => {
+  const SECRET = 'ghp_round_trip_secret_value';
+
+  function harness(settings: { mcp: { servers: McpServerDto[] } }) {
+    const handlers = new Map<string, (...args: unknown[]) => unknown>();
+    const app = {
+      db,
+      mcp: manager,
+      logger: silentLogger('ipc-mcp'),
+      sessionStore: {
+        getSettings: () => settings,
+        patchSettings: (patch: { mcp?: { servers?: McpServerDto[] } }) => {
+          if (patch.mcp?.servers) settings.mcp = { servers: patch.mcp.servers };
+        },
+        listWorkspaces: () => [],
+      },
+    } as unknown as UcadApp;
+
+    registerMcpIpc({ handle: (channel, fn) => handlers.set(channel, fn), ucad: app, getWindow: () => null });
+
+    function channel(name: string): (...args: unknown[]) => unknown {
+      const fn = handlers.get(name);
+      if (!fn) throw new Error(`${name} is not registered`);
+      return fn;
+    }
+
+    return { channel };
+  }
+
+  it('writes env, persists it, and the registry still holds it after a reload', () => {
+    const settings = { mcp: { servers: [] as McpServerDto[] } };
+    const { channel } = harness(settings);
+
+    const dto = channel(IPC_CHANNELS.mcp.upsert)({
+      scope: 'global',
+      name: 'github',
+      exposure: 'ucad_internal',
+      transport: 'stdio',
+      command: process.execPath,
+      args: [mcpStub],
+      env: { GITHUB_TOKEN: SECRET, LOG_LEVEL: 'debug' },
+    }) as McpServerDto;
+
+    // What the Renderer gets back: the names, never the values (NFR-01).
+    expect(Object.keys(dto.envMasked ?? {}).sort()).toEqual(['GITHUB_TOKEN', 'LOG_LEVEL']);
+    expect(JSON.stringify(dto)).not.toContain(SECRET);
+
+    // Written through to the settings document — this is what a restart reads.
+    expect(settings.mcp.servers).toHaveLength(1);
+
+    // ...and what the registry would actually launch the server with.
+    expect(manager.resolveEnv(dto.id)).toEqual({ GITHUB_TOKEN: SECRET, LOG_LEVEL: 'debug' });
+
+    // A reload is a new manager over the same database: the values are in the
+    // row, not in the DTO's mask and not only in this process's memory.
+    const reloaded = new McpManager({ db, logger: silentLogger('ipc-mcp-reload') });
+    expect(reloaded.resolveEnv(dto.id)).toEqual({ GITHUB_TOKEN: SECRET, LOG_LEVEL: 'debug' });
+  });
+
+  it('keeps env through a list and through a write that does not mention it', () => {
+    const settings = { mcp: { servers: [] as McpServerDto[] } };
+    const { channel } = harness(settings);
+
+    const dto = channel(IPC_CHANNELS.mcp.upsert)({
+      scope: 'global',
+      name: 'github',
+      exposure: 'ucad_internal',
+      transport: 'stdio',
+      command: process.execPath,
+      args: [mcpStub],
+      env: { GITHUB_TOKEN: SECRET },
+    }) as McpServerDto;
+
+    // `listServers()` merges the probe outcome from settings over the DTO. The
+    // merge must not take the mask for the value — the names have to survive it.
+    const listed = channel(IPC_CHANNELS.mcp.list)(undefined) as McpServerDto[];
+    expect(listed).toHaveLength(1);
+    expect(listed[0]?.envMasked).toEqual({ GITHUB_TOKEN: MCP_ENV_MASK });
+
+    // `setEnabled` re-persists the whole list. If the round trip through
+    // settings ever carried only `envMasked`, this is where the token would
+    // become the literal mask, and the next launch would fail to authenticate
+    // with no error to show for it.
+    channel(IPC_CHANNELS.mcp.setEnabled)(dto.id, false);
+
+    expect(manager.resolveEnv(dto.id)).toEqual({ GITHUB_TOKEN: SECRET });
+    const persisted = settings.mcp.servers.find((entry) => entry.id === dto.id);
+    // The settings document keeps the mask, which is the point: it is a copy of
+    // the panel's view, not a second place the plaintext lives.
+    expect(persisted?.envMasked).toEqual({ GITHUB_TOKEN: MCP_ENV_MASK });
+    expect(JSON.stringify(settings)).not.toContain(SECRET);
+  });
+});
