@@ -1065,8 +1065,11 @@ export function registerIpc(
     ok(async () => {
       const service = deps.getUpdates();
       if (!service) throw new Error('更新服务不可用');
-      service.installAndRestart();
-      return true;
+      // The installer is verified before it is launched, so this call can
+      // refuse. `false` says "not installed", and the reason is in the
+      // pushed status — a failure that looked like a success would be the
+      // worst possible answer here.
+      return service.installAndRestart();
     }),
   );
 

@@ -444,6 +444,8 @@ export interface UpdateStatus {
   /** 0..1, meaningful while `downloading` */
   progress?: number;
   downloadedPath?: string;
+  /** true once the staged installer matched the SHA-256 the feed published */
+  verified?: boolean;
   message?: string;
   checkedAt?: string;
   /** false => no release feed is configured, and the UI says so plainly */

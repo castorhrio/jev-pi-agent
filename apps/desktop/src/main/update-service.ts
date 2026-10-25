@@ -11,11 +11,23 @@
  * already expose, and the shape a self-hosted one usually does too):
  *
  * ```json
- * { "version": "0.2.0", "notes": "…", "url": "https://…/UCAD-0.2.0-setup.exe" }
+ * {
+ *   "version": "0.2.0",
+ *   "notes": "…",
+ *   "url": "https://…/UCAD-Setup-0.2.0.exe",
+ *   "sha256": "9f86d0…",
+ *   "size": 91234567
+ * }
  * ```
  *
  * `version` is compared with `semver`-style dotted numbers. Anything unparsable
  * is reported as an error, never as "up to date".
+ *
+ * `sha256` and `size` are what make the download checkable: the installer is
+ * hashed before it is ever launched, and a file that does not match is
+ * deleted rather than run. A feed that carries no hash can still announce a
+ * version, but it cannot be installed from — see `update-feed.ts` for why
+ * that is a refusal and not a warning.
  */
 
 import { app, shell } from 'electron';
@@ -28,6 +40,12 @@ import * as https from 'node:https';
 import * as http from 'node:http';
 import { describeError } from '@ucad/contracts';
 import type { Logger } from '@ucad/observability';
+import {
+  normalizeSha256,
+  verifyInstaller,
+  type InstallerVerification,
+  type UpdateFeedDocument,
+} from './update-feed';
 
 type UpdateState =
   | 'idle'
@@ -39,12 +57,6 @@ type UpdateState =
   | 'error'
   | 'unsupported';
 
-export interface UpdateInfo {
-  version: string;
-  notes?: string;
-  url?: string;
-}
-
 export interface UpdateStatus {
   state: UpdateState;
   currentVersion: string;
@@ -54,6 +66,8 @@ export interface UpdateStatus {
   progress?: number;
   /** where the installer was written, when `ready` */
   downloadedPath?: string;
+  /** true once the staged installer matched the feed's SHA-256 */
+  verified?: boolean;
   message?: string;
   checkedAt?: string;
   feedConfigured: boolean;
@@ -69,15 +83,51 @@ export interface UpdateServiceOptions {
   currentVersion: string;
   /** test seam */
   fetchImpl?: typeof fetch;
+  /**
+   * test seam: fetches the installer to `target`.
+   *
+   * The default is the real network download. The seam exists because the
+   * behaviour worth gating — a package that does not match its hash is
+   * deleted and never launched — happens *after* the bytes land, and a gate
+   * that cannot reach that point proves nothing.
+   */
+  downloadImpl?: (
+    url: URL,
+    target: string,
+    onProgress: (received: number, total: number) => void,
+  ) => Promise<void>;
+  /**
+   * test seam: launches the staged installer. Resolves with an error string
+   * when the launch failed, and with an empty string when it started.
+   */
+  openInstaller?: (target: string) => Promise<string>;
 }
 
 const CHECK_TIMEOUT_MS = 15_000;
 const DOWNLOAD_TIMEOUT_MS = 10 * 60_000;
+/**
+ * How many redirects a download may follow. The old code followed them
+ * without a limit, so a feed that pointed at a redirect loop turned the
+ * download into an infinite loop rather than an error.
+ */
+const MAX_DOWNLOAD_REDIRECTS = 5;
 
 export class UpdateService {
   private readonly opts: UpdateServiceOptions;
   private status: UpdateStatus;
   private readonly listeners = new Set<(s: UpdateStatus) => void>();
+  /**
+   * The feed document the version check read.
+   *
+   * The download uses *this* document rather than fetching the feed a second
+   * time. Two reasons, and the second is the one that matters: the hash and
+   * the URL then come from a single read of the feed, so a feed that changes
+   * between the check and the download cannot point the download at a
+   * different file than the one the user was shown; and the comparison the
+   * user was shown — "1.1.0 is available" — is the comparison the download
+   * is made against.
+   */
+  private feed: UpdateFeedDocument | null = null;
 
   constructor(opts: UpdateServiceOptions) {
     this.opts = opts;
@@ -132,6 +182,7 @@ export class UpdateService {
   async check(): Promise<UpdateStatus> {
     const feed = this.resolveFeed();
     if (!feed) {
+      this.feed = null;
       return this.set({
         state: 'unsupported',
         feedConfigured: false,
@@ -153,6 +204,7 @@ export class UpdateService {
       clearTimeout(timer);
 
       if (!response.ok) {
+        this.feed = null;
         return this.set({
           state: 'error',
           message: `更新源返回 HTTP ${response.status}`,
@@ -160,15 +212,19 @@ export class UpdateService {
         });
       }
 
-      const body = (await response.json()) as Partial<UpdateInfo>;
+      const body = (await response.json()) as UpdateFeedDocument;
       const latest = typeof body.version === 'string' ? body.version.trim() : '';
       if (!latest) {
+        this.feed = null;
         return this.set({
           state: 'error',
           message: '更新源缺少 version 字段',
           checkedAt: new Date().toISOString(),
         });
       }
+
+      // The document the user was shown is the document the download uses.
+      this.feed = { ...body, version: latest };
 
       if (compareVersions(latest, this.status.currentVersion) <= 0) {
         return this.set({
@@ -187,6 +243,7 @@ export class UpdateService {
         checkedAt: new Date().toISOString(),
       });
     } catch (error) {
+      this.feed = null;
       const message = describeError(error);
       this.opts.logger.warn('update check failed', { message });
       return this.set({
@@ -205,9 +262,35 @@ export class UpdateService {
         message: '没有可下载的新版本',
       });
     }
-    const info = await this.fetchLatest();
-    if (!info?.url) {
+    // The document the check read, not a second read of the feed: the hash
+    // and the URL the installer is fetched from must be the ones the version
+    // the user was shown was compared against.
+    let info = this.feed;
+    if (!info) {
+      info = await this.fetchLatest();
+      // A document read here has to be kept, or the install step would have
+      // no hash to check the staged file against and would refuse its own
+      // download.
+      if (info) this.feed = info;
+    }
+    if (!info) {
+      return this.set({ state: 'error', message: '更新源不可用' });
+    }
+    if (!info.url) {
       return this.set({ state: 'error', message: '更新源未提供下载地址' });
+    }
+
+    // The installer is only ever installed if it can be checked against a
+    // hash the feed published. A feed without one announces a version and
+    // nothing more: the bytes it points at cannot be told apart from the
+    // bytes an attacker would serve, so they are not fetched at all.
+    const expectedSha256 = normalizeSha256(info.sha256);
+    if (expectedSha256 === null) {
+      this.opts.logger.warn('update feed carries no sha256; refusing to download');
+      return this.set({
+        state: 'error',
+        message: '更新源未提供 SHA-256 校验值，已拒绝下载未经验证的安装包',
+      });
     }
 
     let url: URL;
@@ -228,7 +311,7 @@ export class UpdateService {
     // the name is a constant and no feed-controlled string ever becomes a path
     // component. The version stays a display fact, and still has to be sane
     // for the comparison above to have meant anything.
-    if (!isSafeVersion(info.version)) {
+    if (!isSafeVersion(info.version ?? '')) {
       return this.set({ state: 'error', message: '更新源返回的版本号无效' });
     }
 
@@ -244,48 +327,135 @@ export class UpdateService {
     }
     try {
       fs.mkdirSync(this.opts.downloadDir, { recursive: true });
-      await downloadTo(url, target, (received, total) => {
+      const downloader = this.opts.downloadImpl ?? downloadTo;
+      await downloader(url, target, (received, total) => {
         this.set({ progress: total > 0 ? Math.min(1, received / total) : 0 });
       });
-      this.opts.logger.info('update downloaded', { target, version: info.version });
-      return this.set({ state: 'ready', progress: 1, downloadedPath: target });
     } catch (error) {
+      // A half-written file is not an update, and it must not be left on disk
+      // under the name that means "pending update".
+      removeStagedInstaller(target);
       const message = describeError(error);
       return this.set({ state: 'error', progress: 0, message });
     }
+
+    // The bytes are now on disk and have never been checked. They are checked
+    // now, before anything is allowed to treat them as an installer.
+    const verification = await verifyInstaller(target, {
+      sha256: expectedSha256,
+      size: info.size,
+    });
+    if (!verification.ok) {
+      removeStagedInstaller(target);
+      this.opts.logger.error('update verification failed', {
+        reason: verification.reason,
+        expected: verification.expected,
+        actual: verification.actual,
+      });
+      return this.set({
+        state: 'error',
+        progress: 0,
+        verified: false,
+        message: verificationMessage(verification),
+      });
+    }
+
+    this.opts.logger.info('update downloaded', {
+      target,
+      version: info.version,
+      sha256: verification.sha256,
+    });
+    return this.set({
+      state: 'ready',
+      progress: 1,
+      downloadedPath: target,
+      verified: true,
+      message: undefined,
+    });
   }
 
-  private async fetchLatest(): Promise<UpdateInfo | null> {
+  private async fetchLatest(): Promise<UpdateFeedDocument | null> {
     const feed = this.resolveFeed();
     if (!feed) return null;
     try {
       const doFetch = this.opts.fetchImpl ?? fetch;
-      const response = await doFetch(feed);
-      return (await response.json()) as UpdateInfo;
-    } catch {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), CHECK_TIMEOUT_MS);
+      try {
+        const response = await doFetch(feed, {
+          signal: controller.signal,
+          headers: { accept: 'application/json' },
+        });
+        // A feed that answers 404 is not a feed. Without this check the error
+        // page's body was parsed as a document, and the failure surfaced as
+        // "更新源缺少 version 字段" — true, but about the wrong thing.
+        if (!response.ok) {
+          this.opts.logger.warn('update feed request failed', { status: response.status });
+          return null;
+        }
+        return (await response.json()) as UpdateFeedDocument;
+      } finally {
+        clearTimeout(timer);
+      }
+    } catch (error) {
+      this.opts.logger.warn('update feed unreadable', { message: describeError(error) });
       return null;
     }
   }
 
-  /** Launches the staged installer and restarts. Windows: the installer takes over. */
-  installAndRestart(): void {
+  /**
+   * Launches the staged installer and restarts. Windows: the installer takes over.
+   *
+   * The staged file is verified again here, and the answer is returned rather
+   * than assumed: the file sat on disk between the download and this click,
+   * in the user's own profile directory, and the promise that it was the
+   * file the feed named was made at a different moment. A file that no
+   * longer matches is deleted and never launched.
+   */
+  async installAndRestart(): Promise<boolean> {
     const target = this.status.downloadedPath;
     if (!target || !fs.existsSync(target)) {
       this.set({ state: 'error', message: '安装包不存在，请重新下载' });
-      return;
+      return false;
     }
-    this.opts.logger.info('installing update', { target });
+
+    const verification = await verifyInstaller(target, {
+      sha256: this.feed?.sha256,
+      size: this.feed?.size,
+    });
+    if (!verification.ok) {
+      removeStagedInstaller(target);
+      this.opts.logger.error('refusing to install an unverified update', {
+        reason: verification.reason,
+        expected: verification.expected,
+        actual: verification.actual,
+      });
+      this.set({
+        state: 'error',
+        verified: false,
+        downloadedPath: undefined,
+        message: verificationMessage(verification),
+      });
+      return false;
+    }
+
+    this.opts.logger.info('installing update', { target, sha256: verification.sha256 });
     // Launching must happen before quit, and a failed launch must be visible:
     // after quit() the process is going away, so an unchecked openPath would
     // end the app with the user never seeing an installer.
-    void shell.openPath(target).then((opened) => {
+    const launcher = this.opts.openInstaller ?? ((file: string) => shell.openPath(file));
+    void launcher(target).then((opened) => {
       if (opened) {
         this.opts.logger.error('update installer failed to launch', { target, reason: opened });
         this.set({ state: 'error', message: opened });
       } else {
-        app.quit();
+        // `app` is always present in the real main process; the guard keeps
+        // a test that exercises the launch path from taking the process down
+        // with it.
+        app?.quit?.();
       }
     });
+    return true;
   }
 
   /** Used by the Settings screen when the user would rather do it themselves. */
@@ -299,12 +469,21 @@ async function downloadTo(
   url: URL,
   target: string,
   onProgress: (received: number, total: number) => void,
+  depth = 0,
 ): Promise<void> {
   const client = url.protocol === 'https:' ? https : http;
   await new Promise<void>((resolve, reject) => {
     const request = client.get(url, { timeout: DOWNLOAD_TIMEOUT_MS }, (response) => {
       if (response.statusCode && response.statusCode >= 300 && response.headers.location) {
         response.resume();
+        // A feed that points at a redirect loop used to be followed forever,
+        // which turned a broken update into a download that never ends and
+        // never fails. The number of hops is now bounded, and exceeding it is
+        // an error like any other.
+        if (depth >= MAX_DOWNLOAD_REDIRECTS) {
+          reject(new Error('下载重定向次数过多'));
+          return;
+        }
         const next = new URL(response.headers.location, url);
         // Same rule as the feed itself: the bytes being downloaded are the RCE
         // surface, so no hop may downgrade to cleartext.
@@ -312,7 +491,7 @@ async function downloadTo(
           reject(new Error('下载重定向必须使用 https'));
           return;
         }
-        void downloadTo(next, target, onProgress).then(resolve, reject);
+        void downloadTo(next, target, onProgress, depth + 1).then(resolve, reject);
         return;
       }
       if (response.statusCode !== 200) {
@@ -330,6 +509,44 @@ async function downloadTo(
     request.on('timeout', () => request.destroy(new Error('下载超时')));
     request.on('error', reject);
   });
+}
+
+/**
+ * Removes a staged file that must not be launched.
+ *
+ * The staged name is a constant, so this cannot be pointed at anything else —
+ * and if it ever is, `path.basename` is checked again here, because a
+ * cleanup routine that deletes by path is the last place a bug would be
+ * harmless.
+ */
+function removeStagedInstaller(target: string): void {
+  if (path.basename(target) !== STAGED_INSTALLER_NAME) return;
+  try {
+    fs.rmSync(target, { force: true });
+  } catch {
+    /* a file we cannot delete is a file we also never launch */
+  }
+}
+
+/**
+ * What the user is told when the installer did not check out.
+ *
+ * The wording names the reason rather than saying "update failed", because
+ * the three failures mean different things to the person reading them: the
+ * feed said nothing about the file, the file is not the file, or the file
+ * could not be read at all.
+ */
+function verificationMessage(verification: Extract<InstallerVerification, { ok: false }>): string {
+  switch (verification.reason) {
+    case 'no-hash':
+      return '更新源未提供 SHA-256 校验值，安装包未经验证';
+    case 'hash-mismatch':
+      return '安装包校验失败：SHA-256 不匹配，已删除该文件';
+    case 'size-mismatch':
+      return '安装包校验失败：文件大小与更新源不符，已删除该文件';
+    case 'unreadable':
+      return '安装包校验失败：无法读取已下载的文件';
+  }
 }
 
 /**

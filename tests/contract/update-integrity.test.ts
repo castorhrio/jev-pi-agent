@@ -1,0 +1,386 @@
+/**
+ * The update channel: a released build has a feed, and an installer is only
+ * ever launched if it matches the hash the feed published.
+ *
+ * ## Why this file exists
+ *
+ * Two defects sat on the same path, and neither was visible in a screenshot.
+ *
+ *  1. **A released build had no feed.** `readUpdateFeed()` read one
+ *     environment variable and nothing else, so the update button in a
+ *     published app could only ever answer "未配置更新源". The feature was
+ *     unreachable for every user who had not hand-set an environment
+ *     variable — the app shipped an update button that could not update.
+ *
+ *  2. **Nothing proved the installer was the one the feed named.** The bytes
+ *     were fetched, written to disk and handed to the shell, with nothing in
+ *     between. A feed that was tampered with, or a download replaced in
+ *     flight, was arbitrary code execution behind one click.
+ *
+ * The second is fixed by making the hash mandatory: a feed without one can
+ * still announce a version, but nothing is downloaded from it, and a file
+ * that does not match the hash is deleted rather than launched. That is a
+ * refusal rather than a warning on purpose — an installer that cannot be
+ * checked is exactly the installer an attacker would send.
+ *
+ * The gates below are the mechanism, so the rule cannot rot: a feed without
+ * a hash, a download that does not match, and a build that does not ship a
+ * feed all fail here.
+ */
+
+import { describe, expect, it, beforeEach, afterEach } from 'vitest';
+import { createHash } from 'node:crypto';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { silentLogger } from '@ucad/observability';
+import {
+  normalizeSha256,
+  parseUpdateConfig,
+  resolveUpdateFeed,
+  verifyInstaller,
+} from '../../apps/desktop/src/main/update-feed';
+import { UpdateService } from '../../apps/desktop/src/main/update-service';
+import { buildFeedDocument, installerUrlFor } from '../../scripts/make-update-feed.mjs';
+
+const FEED_URL = 'https://example.test/update-feed.json';
+const INSTALLER_URL = 'https://example.test/UCAD-Setup-9.9.9.exe';
+
+function sha256Of(text: string): string {
+  return createHash('sha256').update(text).digest('hex');
+}
+
+/** A fetch stand-in that answers with one document, and counts its calls. */
+function feedFetch(document: unknown): { fetchImpl: typeof fetch; calls: number } {
+  const state = { calls: 0 };
+  const fetchImpl = (async () => {
+    state.calls += 1;
+    return new Response(JSON.stringify(document), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    });
+  }) as unknown as typeof fetch;
+  return { fetchImpl, get calls() { return state.calls; } } as { fetchImpl: typeof fetch; calls: number };
+}
+
+describe('the feed a released build ships with', () => {
+  it('is configured in a file that the packaging step copies into the app', () => {
+    const pkg = JSON.parse(readFileSync('package.json', 'utf8')) as {
+      build: { extraResources?: Array<{ from: string; to: string }> };
+    };
+    const resources = pkg.build.extraResources ?? [];
+    const entry = resources.find((r) => r.to === 'update-config.json');
+
+    expect(
+      entry,
+      'the packaged build has no update-config.json, so a released app has no feed ' +
+        'and its update button can only say "未配置更新源"',
+    ).toBeDefined();
+    expect(existsSync(entry!.from), `${entry!.from} is missing`).toBe(true);
+  });
+
+  it('names an https feed', () => {
+    const raw = readFileSync('apps/desktop/resources/update-config.json', 'utf8');
+    const feedUrl = parseUpdateConfig(raw);
+
+    expect(feedUrl, 'the shipped configuration names no feed').not.toBeNull();
+    expect(feedUrl!.startsWith('https://')).toBe(true);
+  });
+});
+
+describe('resolving the feed', () => {
+  let dir: string;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'ucad-feed-'));
+  });
+
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('prefers the developer override over the packaged file', () => {
+    const configPath = join(dir, 'update-config.json');
+    writeFileSync(configPath, JSON.stringify({ feedUrl: 'https://example.test/packaged.json' }));
+
+    const resolved = resolveUpdateFeed({
+      envValue: 'https://example.test/override.json',
+      configPaths: [configPath],
+    });
+
+    expect(resolved.url).toBe('https://example.test/override.json');
+    expect(resolved.source).toBe('env');
+  });
+
+  it('falls back to the packaged file', () => {
+    const configPath = join(dir, 'update-config.json');
+    writeFileSync(configPath, JSON.stringify({ feedUrl: 'https://example.test/packaged.json' }));
+
+    const resolved = resolveUpdateFeed({ configPaths: [configPath] });
+
+    expect(resolved.url).toBe('https://example.test/packaged.json');
+    expect(resolved.source).toBe('config');
+  });
+
+  it('reports no feed rather than a broken one', () => {
+    const notJson = join(dir, 'broken.json');
+    writeFileSync(notJson, 'this is not json');
+    const cleartext = join(dir, 'cleartext.json');
+    writeFileSync(cleartext, JSON.stringify({ feedUrl: 'http://example.test/feed.json' }));
+    const empty = join(dir, 'empty.json');
+    writeFileSync(empty, JSON.stringify({ somethingElse: true }));
+
+    for (const configPath of [notJson, cleartext, empty, join(dir, 'absent.json')]) {
+      const resolved = resolveUpdateFeed({ configPaths: [configPath] });
+      expect(resolved.url, `${configPath} produced a feed`).toBeNull();
+      expect(resolved.source).toBe('none');
+    }
+  });
+});
+
+describe('a hash is a hash', () => {
+  it('accepts the shapes a release tool writes', () => {
+    const digest = sha256Of('installer');
+    expect(normalizeSha256(digest)).toBe(digest);
+    expect(normalizeSha256(digest.toUpperCase())).toBe(digest);
+    expect(normalizeSha256(`  ${digest}\n`)).toBe(digest);
+  });
+
+  it('refuses anything that is not one', () => {
+    expect(normalizeSha256('')).toBeNull();
+    expect(normalizeSha256('not a hash')).toBeNull();
+    expect(normalizeSha256(sha256Of('installer').slice(0, 63))).toBeNull();
+    expect(normalizeSha256(`${sha256Of('installer')}0`)).toBeNull();
+    expect(normalizeSha256(undefined)).toBeNull();
+    expect(normalizeSha256(12345)).toBeNull();
+  });
+});
+
+describe('proving a downloaded file is the one the feed named', () => {
+  let dir: string;
+  let file: string;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'ucad-verify-'));
+    file = join(dir, 'installer.exe');
+  });
+
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('accepts a file that matches', async () => {
+    const bytes = 'the genuine installer';
+    writeFileSync(file, bytes);
+
+    const result = await verifyInstaller(file, { sha256: sha256Of(bytes), size: bytes.length });
+
+    expect(result.ok).toBe(true);
+  });
+
+  it('rejects a file that was swapped in flight', async () => {
+    writeFileSync(file, 'the genuine installer');
+    const expected = sha256Of('the genuine installer');
+
+    // The bytes on disk are no longer the bytes the feed described.
+    writeFileSync(file, 'a different installer with the same name');
+
+    const result = await verifyInstaller(file, { sha256: expected });
+
+    expect(result.ok).toBe(false);
+    expect(result.ok === false && result.reason).toBe('hash-mismatch');
+  });
+
+  it('rejects a file whose size does not match', async () => {
+    writeFileSync(file, 'short');
+    const result = await verifyInstaller(file, { sha256: sha256Of('short'), size: 999 });
+    expect(result.ok === false && result.reason).toBe('size-mismatch');
+  });
+
+  it('says "not checked" rather than "checked" when the feed has no hash', async () => {
+    writeFileSync(file, 'anything');
+    const result = await verifyInstaller(file, {});
+    expect(result.ok === false && result.reason).toBe('no-hash');
+  });
+
+  it('reports a file it cannot read as unreadable', async () => {
+    const result = await verifyInstaller(join(dir, 'absent.exe'), { sha256: sha256Of('x') });
+    expect(result.ok === false && result.reason).toBe('unreadable');
+  });
+});
+
+describe('the updater itself', () => {
+  let dir: string;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'ucad-update-'));
+  });
+
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  function service(options: {
+    feed: unknown;
+    download?: (url: URL, target: string) => Promise<void>;
+    open?: (target: string) => Promise<string>;
+  }) {
+    const fetched = feedFetch(options.feed);
+    const downloads: string[] = [];
+    const launched: string[] = [];
+    const instance = new UpdateService({
+      logger: silentLogger('test'),
+      getFeedUrl: () => FEED_URL,
+      downloadDir: dir,
+      currentVersion: '1.0.0',
+      fetchImpl: fetched.fetchImpl,
+      downloadImpl: async (url, target, onProgress) => {
+        downloads.push(url.toString());
+        if (options.download) await options.download(url, target);
+        onProgress(1, 1);
+      },
+      openInstaller: async (target) => {
+        launched.push(target);
+        return options.open ? options.open(target) : '';
+      },
+    });
+    return { instance, downloads, launched, fetchCalls: fetched };
+  }
+
+  it('refuses to download from a feed that carries no hash', async () => {
+    const { instance, downloads, fetchCalls } = service({
+      feed: { version: '9.9.9', url: INSTALLER_URL },
+    });
+
+    await instance.check();
+    expect(instance.current.state).toBe('available');
+
+    const status = await instance.download();
+
+    expect(status.state).toBe('error');
+    expect(status.message).toContain('SHA-256');
+    // Nothing was fetched — not the installer, and not the feed a second
+    // time: the document the check read is the document the download uses.
+    expect(downloads).toEqual([]);
+    expect(fetchCalls.calls).toBe(1);
+  });
+
+  it('deletes a package that does not match the hash and never launches it', async () => {
+    const genuine = 'the genuine installer';
+    // The replacement is the *same length* as the original, so the size
+    // check cannot catch it. The hash is the defence, and this is the case
+    // that proves the defence is the hash.
+    const swapped = 'the evil installer!!!';
+    expect(swapped.length).toBe(genuine.length);
+
+    const { instance, launched } = service({
+      feed: {
+        version: '9.9.9',
+        url: INSTALLER_URL,
+        sha256: sha256Of(genuine),
+        size: genuine.length,
+      },
+      download: async (_url, target) => {
+        writeFileSync(target, swapped);
+      },
+    });
+
+    await instance.check();
+    const status = await instance.download();
+
+    expect(status.state).toBe('error');
+    expect(status.message).toContain('SHA-256');
+    expect(status.verified).toBe(false);
+    // The file is gone rather than left on disk under a name that means
+    // "pending update", and nothing was launched.
+    expect(existsSync(join(dir, 'UCAD-setup.exe'))).toBe(false);
+
+    const installed = await instance.installAndRestart();
+    expect(installed).toBe(false);
+    expect(launched).toEqual([]);
+  });
+
+  it('installs a package that matches the hash', async () => {
+    const genuine = 'the genuine installer';
+    const { instance, launched } = service({
+      feed: {
+        version: '9.9.9',
+        url: INSTALLER_URL,
+        sha256: sha256Of(genuine),
+        size: genuine.length,
+      },
+      download: async (_url, target) => {
+        writeFileSync(target, genuine);
+      },
+    });
+
+    await instance.check();
+    const status = await instance.download();
+
+    expect(status.state).toBe('ready');
+    expect(status.verified).toBe(true);
+
+    const installed = await instance.installAndRestart();
+    expect(installed).toBe(true);
+    expect(launched).toHaveLength(1);
+    expect(launched[0]).toBe(join(dir, 'UCAD-setup.exe'));
+  });
+
+  it('refuses to launch a file that was replaced after the download', async () => {
+    const genuine = 'the genuine installer';
+    const { instance, launched } = service({
+      feed: {
+        version: '9.9.9',
+        url: INSTALLER_URL,
+        sha256: sha256Of(genuine),
+      },
+      download: async (_url, target) => {
+        writeFileSync(target, genuine);
+      },
+    });
+
+    await instance.check();
+    await instance.download();
+
+    // The staged file lives in the user's own profile directory, between the
+    // download and the click that launches it.
+    writeFileSync(join(dir, 'UCAD-setup.exe'), 'replaced after the check');
+
+    const installed = await instance.installAndRestart();
+
+    expect(installed).toBe(false);
+    expect(launched).toEqual([]);
+    expect(instance.current.state).toBe('error');
+  });
+});
+
+describe('the release feed a publisher uploads', () => {
+  it('carries the hash and the size of the file it names', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'ucad-release-'));
+    try {
+      const installer = join(dir, 'UCAD-Setup-9.9.9.exe');
+      const bytes = 'the genuine installer';
+      writeFileSync(installer, bytes);
+
+      const document = await buildFeedDocument({
+        version: '9.9.9',
+        installerPath: installer,
+      });
+
+      expect(document.version).toBe('9.9.9');
+      expect(document.sha256).toBe(sha256Of(bytes));
+      expect(document.size).toBe(bytes.length);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('points at the release, not at "latest"', () => {
+    // A feed published as v1.0.0 pointed at `releases/latest/download/…`,
+    // which resolves while 1.0.0 is the newest release and 404s the moment
+    // 1.1.0 is published.
+    const url = installerUrlFor('1.1.0', 'UCAD-Setup-1.1.0.exe');
+    expect(url).toContain('/releases/download/v1.1.0/');
+    expect(url).not.toContain('/latest/');
+  });
+});

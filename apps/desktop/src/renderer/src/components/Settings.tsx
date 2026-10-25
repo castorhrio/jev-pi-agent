@@ -151,10 +151,13 @@ export function SettingsPanel({
   const [message, setMessage] = useState<string | null>(null);
 
   useEffect(() => {
-    void getApi()
-      .app.updateStatus()
-      .then(setUpdate)
-      .catch(() => undefined);
+    const api = getApi();
+    void api.app.updateStatus().then(setUpdate).catch(() => undefined);
+    // The updater pushes a status whenever it changes — including the
+    // failures that happen *after* a click, such as an installer that no
+    // longer matches its hash. Without this subscription those failures
+    // landed nowhere, and the card kept saying the update was ready.
+    return api.app.onUpdateStatus(setUpdate);
   }, []);
 
   const check = useCallback(async () => {
@@ -263,6 +266,7 @@ export function SettingsPanel({
           {update?.state === 'up-to-date' && t('settings.upToDate')}
           {update?.state === 'unsupported' && t('settings.updateNone')}
           {update?.state === 'error' && `${t('settings.updateFailed')}: ${update.message}`}
+          {update?.state === 'ready' && update.verified && t('settings.updateVerified')}
         </div>
       </div>
 

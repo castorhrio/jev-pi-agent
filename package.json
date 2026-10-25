@@ -46,6 +46,12 @@
       "!**/*.map",
       "!**/node_modules/**/test/**"
     ],
+    "extraResources": [
+      {
+        "from": "apps/desktop/resources/update-config.json",
+        "to": "update-config.json"
+      }
+    ],
     "asar": true,
     "npmRebuild": false,
     "win": {

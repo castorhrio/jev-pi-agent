@@ -704,6 +704,7 @@ const zhCN: Dictionary = {
   'settings.updateNone': '未配置更新源',
   'settings.updateFailed': '检查更新失败',
   'settings.restartNow': '立即重启并安装',
+  'settings.updateVerified': '安装包已通过 SHA-256 校验',
   'settings.version': '当前版本',
 
   'diagnostics.title': '诊断',
@@ -1441,6 +1442,7 @@ const enUS: Dictionary = {
   'settings.updateNone': 'No update feed configured',
   'settings.updateFailed': 'Update check failed',
   'settings.restartNow': 'Restart and install now',
+  'settings.updateVerified': 'The installer passed its SHA-256 check',
   'settings.version': 'Current version',
 
   'diagnostics.title': 'Diagnostics',

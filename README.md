@@ -57,6 +57,24 @@ release carries the NSIS setup (`UCAD-Setup-<version>.exe`) plus an
 `update-feed.json` the app's update check can read. The installer is unsigned,
 so Windows SmartScreen warns on first run.
 
+The app checks for updates on its own — the feed URL ships inside the
+installed build. `UCAD_UPDATE_FEED` overrides it for a private or
+self-hosted feed.
+
+The feed is generated from the installer, so the digest in it is the digest
+of the file that was uploaded:
+
+```bash
+node scripts/make-update-feed.mjs --version 1.1.0 \
+  --installer release/UCAD-Setup-1.1.0.exe \
+  --out release/update-feed.json
+```
+
+Upload the result as `update-feed.json` on the release. It must carry a
+`sha256`: the app hashes the downloaded installer and refuses to launch one
+that does not match. A feed without a hash can announce a version, but
+nothing is installed from it — the update button says why.
+
 ### Quick start
 
 Requires Node.js 22.12 or newer (the Electron 44 packaging toolchain and the
@@ -100,11 +118,14 @@ that does not.
 
 - **One provider protocol ships.** The bundled adapter speaks the
   OpenAI-compatible protocol. Native vendor adapters are not implemented.
-- **The installer is unsigned.** Windows SmartScreen warns on first run.
-- **Auto-update needs a feed URL.** Releases publish one: set
+- **The installer is unsigned.** Windows SmartScreen warns on first run. The
+  download is still checked: the feed publishes a SHA-256, and the app
+  refuses to launch an installer whose digest does not match.
+- **Auto-update needs a feed URL.** Releases publish one, and the released
+  build carries it — nothing to configure. To point at another feed, set
   `UCAD_UPDATE_FEED=https://github.com/castorhrio/jev-pi-agent/releases/latest/download/update-feed.json`
-  and the update check (Settings → 检查更新) reads it. With no feed the app
-  says so rather than failing quietly.
+  and the update check (Settings → 检查更新) reads it instead. With no feed
+  the app says so rather than failing quietly.
 - **The interactive terminal needs `node-pty`.** It is an optional dependency;
   without it the terminal panel reports that it is unavailable instead of
   pretending to work. The command channel still runs.
@@ -162,6 +183,21 @@ Windows 安装包发布在
 带 NSIS 安装包（`UCAD-Setup-<版本>.exe`）与一份 `update-feed.json`，供应用的
 更新检查读取。安装包未签名，Windows SmartScreen 首次运行会提示。
 
+应用会自己检查更新——feed 地址随安装包一起发布，不需要用户配置。
+`UCAD_UPDATE_FEED` 可以覆盖它，指向私有或自建的 feed。
+
+feed 由安装包生成，里面的摘要就是上传的那个文件的摘要：
+
+```bash
+node scripts/make-update-feed.mjs --version 1.1.0 \
+  --installer release/UCAD-Setup-1.1.0.exe \
+  --out release/update-feed.json
+```
+
+把生成的文件作为 `update-feed.json` 上传到该 release。它必须带 `sha256`：
+应用会对下载到的安装包做哈希校验，对不上的绝不启动。没有哈希的 feed 仍能
+播报新版本，但不会从中安装任何东西——更新按钮会说明原因。
+
 ### 快速开始
 
 需要 Node.js 22.12 或更高版本（Electron 44 打包工具链与测试套件都以它为下限）。
@@ -201,10 +237,12 @@ npm run package  # 免安装目录，不出安装包
 直说，因为**藏边界的工具比不藏的更不值得信任**。
 
 - **只随包发布一种厂商协议。** 内置适配器走 OpenAI 兼容协议，厂商原生适配器未实现。
-- **安装包未签名。** Windows 首次运行会有 SmartScreen 提示。
-- **自动更新需要一个 feed 地址。** Releases 发布了一份：把 `UCAD_UPDATE_FEED` 设为
+- **安装包未签名。** Windows 首次运行会有 SmartScreen 提示。下载本身仍然过校验：
+  feed 里带 SHA-256，摘要对不上的安装包不会被启动。
+- **自动更新需要一个 feed 地址。** Releases 发布了一份，发布版也把它带在身上——
+  不需要配置。要指向别处，把 `UCAD_UPDATE_FEED` 设为
   `https://github.com/castorhrio/jev-pi-agent/releases/latest/download/update-feed.json`，
-  更新检查（设置 → 检查更新）即会读取；没有配置时应用会直说，而不是静默失败。
+  更新检查（设置 → 检查更新）即会改读它；没有配置时应用会直说，而不是静默失败。
 - **交互式终端依赖 `node-pty`。** 它是可选依赖；缺失时终端面板会如实说不可用，
   而不是假装能跑。命令通道仍然可用。
 

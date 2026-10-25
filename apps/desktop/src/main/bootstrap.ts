@@ -17,10 +17,16 @@ import { resolvePaths } from './paths';
 import { registerIpc } from './ipc';
 import { installApplicationMenu } from './menu';
 import { UpdateService, type UpdateStatus } from './update-service';
+import { resolveUpdateFeed } from './update-feed';
 import { IPC_MENU } from './ipc-menus';
 import { createTranslator, negotiateLocale, type Locale } from '../shared/i18n';
 
 const isDev = !app.isPackaged;
+
+/** The packaged configuration that names the release feed. */
+const UPDATE_CONFIG_FILE = 'update-config.json';
+/** The feed is read on every check; it is announced once. */
+let updateFeedLogged = false;
 
 let mainWindow: BrowserWindow | null = null;
 let ucad: UcadApp | null = null;
@@ -415,14 +421,40 @@ function bootstrapTray(): void {
 }
 
 /**
- * The release feed. A published build gets it from the packaged config; a
- * development build can point at one with `UCAD_UPDATE_FEED`, and otherwise
- * reports "not configured" rather than pretending to check.
+ * The release feed.
+ *
+ * A released build carries its feed in `update-config.json`, which the
+ * packaging step copies next to the app — so the update check works in the
+ * published app without the user setting an environment variable. A
+ * development build reads the same file from `apps/desktop/resources`, and
+ * `UCAD_UPDATE_FEED` overrides both for anyone pointing at a private feed.
  */
 function readUpdateFeed(): string | null {
-  const fromEnv = process.env.UCAD_UPDATE_FEED?.trim();
-  if (fromEnv) return fromEnv;
-  return null;
+  const resolved = resolveUpdateFeed({
+    envValue: process.env.UCAD_UPDATE_FEED,
+    configPaths: updateConfigPaths(),
+  });
+  if (resolved.url && !updateFeedLogged) {
+    updateFeedLogged = true;
+    ucad?.logger.info('update feed resolved', { source: resolved.source });
+  }
+  return resolved.url;
+}
+
+/**
+ * Where the packaged configuration may live.
+ *
+ * A packaged app keeps its resources beside the asar, so that is the first
+ * candidate; the second is the same file in the source tree, which is what a
+ * development build sees. Both are tried, and a file that is not there is
+ * simply not a candidate — a build without the file is a development build,
+ * not an error.
+ */
+function updateConfigPaths(): string[] {
+  return [
+    path.join(process.resourcesPath, UPDATE_CONFIG_FILE),
+    path.join(__dirname, '..', '..', 'resources', UPDATE_CONFIG_FILE),
+  ];
 }
 
 app.whenReady().then(bootstrap).catch((error) => {
