@@ -12,6 +12,12 @@
  * those files are real images rather than the old placeholder. The last step —
  * `Tray` accepting the image — is exercised by the Electron smoke check, not a
  * DOM test.
+ *
+ * The closing half of the file also pins the other direction: an exit that
+ * arrives while a usable tray exists must not be turned into "hide and keep
+ * running". The decision is a pure function, and the flag that decides it is
+ * asserted against the source that wires it, because a quit flag nobody sets is
+ * exactly as broken as no flag at all.
  */
 
 import { describe, expect, it } from 'vitest';
@@ -21,6 +27,7 @@ import { fileURLToPath } from 'node:url';
 import {
   decideWindowClose,
   loadTrayIcon,
+  shouldPreventWindowClose,
   trayIconPath,
   type TrayIconContext,
 } from '../../apps/desktop/src/main/tray-icon';
@@ -170,5 +177,79 @@ describe('closing the window', () => {
 
     expect(decision.hideToTray).toBe(false);
     expect(decision.reason).toBe('no-tray');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// a real exit is never cancelled by the hide-to-tray default
+// ---------------------------------------------------------------------------
+
+describe('quitting', () => {
+  it('does not cancel a close that came from a real exit', () => {
+    // The path this rules out: Cmd+Q, Dock → Quit, or an OS shutdown reaches
+    // the window's `close` handler while "hide to tray" is the preference and a
+    // usable tray exists. Cancelling that close hides the window instead of
+    // quitting, and once the session is ending there is nothing left to click.
+    const prevented = shouldPreventWindowClose({
+      isQuitting: true,
+      trayUsable: true,
+      preference: 'hide_to_tray',
+    });
+
+    expect(prevented).toBe(false);
+  });
+
+  it('still hides on an ordinary close', () => {
+    expect(
+      shouldPreventWindowClose({ isQuitting: false, trayUsable: true, preference: 'hide_to_tray' }),
+    ).toBe(true);
+    expect(
+      shouldPreventWindowClose({ isQuitting: false, trayUsable: false, preference: 'hide_to_tray' }),
+    ).toBe(false);
+    expect(
+      shouldPreventWindowClose({ isQuitting: false, trayUsable: true, preference: 'quit' }),
+    ).toBe(false);
+  });
+});
+
+/**
+ * The flag above is only worth having if Main actually sets it.
+ *
+ * `before-quit` is the one Electron event that must reach the close handler with
+ * "we are leaving" already recorded, and nothing in a unit test can install an
+ * Electron app object. So the wiring is asserted on the source: the listener
+ * exists, it sets the flag *before* it decides anything else, and the close
+ * handler reads it through `shouldPreventWindowClose`.
+ *
+ * The `expect` on the extracted blocks is what keeps this honest: a regex that
+ * stopped matching would otherwise turn every assertion below green while
+ * checking nothing.
+ */
+describe('the quit flag is wired into the lifecycle', () => {
+  const bootstrapSource = readFileSync(
+    join(repoRoot, 'apps', 'desktop', 'src', 'main', 'bootstrap.ts'),
+    'utf8',
+  );
+
+  const beforeQuit = /app\.on\('before-quit',[\s\S]*?\n\}\);/.exec(bootstrapSource)?.[0];
+  const closeHandler = /win\.on\('close',[\s\S]*?\n {2}\}\);/.exec(bootstrapSource)?.[0];
+
+  it('has a before-quit listener that sets the flag before it prevents anything', () => {
+    expect(beforeQuit, 'bootstrap.ts has no before-quit listener').toBeDefined();
+    const setAt = beforeQuit!.indexOf('appState.isQuitting = true');
+    const preventAt = beforeQuit!.indexOf('event.preventDefault()');
+
+    expect(setAt, 'before-quit does not set isQuitting').toBeGreaterThanOrEqual(0);
+    expect(preventAt, 'before-quit does not defer to the teardown').toBeGreaterThanOrEqual(0);
+    expect(setAt, 'isQuitting must be set before the quit is deferred').toBeLessThan(preventAt);
+  });
+
+  it('routes the window close through the quit-aware decision', () => {
+    expect(closeHandler, 'bootstrap.ts has no close handler on the window').toBeDefined();
+    expect(closeHandler).toContain('shouldPreventClose()');
+    expect(bootstrapSource).toMatch(/isQuitting:\s*appState\.isQuitting === true/);
+    // The old shape — reading the flag inline and then falling back to the
+    // preference-only decision — is what made the two orderings diverge.
+    expect(closeHandler).not.toContain('isQuitting) return;');
   });
 });

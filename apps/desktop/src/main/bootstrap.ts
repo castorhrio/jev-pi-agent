@@ -18,7 +18,7 @@ import { registerIpc } from './ipc';
 import { installApplicationMenu } from './menu';
 import { UpdateService, type UpdateStatus } from './update-service';
 import { resolveUpdateFeed } from './update-feed';
-import { loadTrayIcon, decideWindowClose, type TrayProblem } from './tray-icon';
+import { loadTrayIcon, shouldPreventWindowClose, type TrayProblem } from './tray-icon';
 import { IPC_MENU } from './ipc-menus';
 import { createTranslator, negotiateLocale, type Locale } from '../shared/i18n';
 
@@ -28,6 +28,8 @@ const isDev = !app.isPackaged;
 const UPDATE_CONFIG_FILE = 'update-config.json';
 /** The feed is read on every check; it is announced once. */
 let updateFeedLogged = false;
+/** A refused `UCAD_UPDATE_FEED` is equally worth saying once, not per check. */
+let updateFeedRejectedLogged = false;
 
 let mainWindow: BrowserWindow | null = null;
 let ucad: UcadApp | null = null;
@@ -82,19 +84,22 @@ function closePreference(): CloseBehaviour {
 }
 
 /**
- * Whether closing the window hides it to the tray or quits the app.
+ * Whether this close must be cancelled so the window hides instead of dying.
  *
- * The decision lives in `tray-icon.ts` as a pure function, so the branch that
- * matters — an icon that did not decode must never become a place to hide —
- * is testable without Electron.
+ * The decision lives in `tray-icon.ts` as a pure function, so the branches that
+ * matter are testable without Electron: an icon that did not decode must never
+ * become a place to hide, and a real exit — `before-quit`, from the Dock, the
+ * menu bar or an OS shutdown — must never be cancelled by the hide-to-tray
+ * default. `isQuitting` is read first there precisely because it outranks the
+ * preference.
  */
-function shouldHideToTray(): boolean {
-  const decision = decideWindowClose({
+function shouldPreventClose(): boolean {
+  return shouldPreventWindowClose({
+    isQuitting: appState.isQuitting === true,
     trayUsable,
     preference: closePreference(),
     ...(trayProblem ? { trayProblem } : {}),
   });
-  return decision.hideToTray;
 }
 
 /**
@@ -193,12 +198,11 @@ async function createWindow(): Promise<BrowserWindow> {
   // The user's expectation for a long-running agent app: closing the window
   // means "get it out of my way", not "kill my run". Quitting is explicit.
   win.on('close', (event) => {
-    // An app that is really quitting must never be talked out of it: the
-    // close handler below would hide the window and the process would sit
-    // there with no window and no tray, which is the "alive but unreachable"
-    // failure this whole file exists to prevent.
-    if (appState.isQuitting) return;
-    if (!shouldHideToTray()) return;
+    // An app that is really quitting must never be talked out of it: hiding
+    // here would leave the process with no window and no tray, the "alive but
+    // unreachable" failure this file exists to prevent. `shouldPreventClose()`
+    // checks the quit flag itself, so the ordering cannot drift.
+    if (!shouldPreventClose()) return;
     event.preventDefault();
     win.hide();
     if (process.platform === 'darwin') app.dock?.hide();
@@ -492,13 +496,26 @@ function bootstrapTray(): void {
  * packaging step copies next to the app — so the update check works in the
  * published app without the user setting an environment variable. A
  * development build reads the same file from `apps/desktop/resources`, and
- * `UCAD_UPDATE_FEED` overrides both for anyone pointing at a private feed.
+ * `UCAD_UPDATE_FEED` overrides both for anyone pointing at a private feed —
+ * as long as it is https, the same rule the file is held to.
+ *
+ * A refused override is logged once, loudly enough to be found: the alternative
+ * is an app that says "未配置更新源" while the variable the operator set sits
+ * right there in the environment, which reads like the override was ignored for
+ * no reason. The check runs on every update check, so the line is de-duplicated
+ * like the resolved-feed line above.
  */
 function readUpdateFeed(): string | null {
   const resolved = resolveUpdateFeed({
     envValue: process.env.UCAD_UPDATE_FEED,
     configPaths: updateConfigPaths(),
   });
+  if (resolved.rejected && !updateFeedRejectedLogged) {
+    updateFeedRejectedLogged = true;
+    ucad?.logger.warn('UCAD_UPDATE_FEED ignored: the feed must be an https URL', {
+      reason: resolved.rejected,
+    });
+  }
   if (resolved.url && !updateFeedLogged) {
     updateFeedLogged = true;
     ucad?.logger.info('update feed resolved', { source: resolved.source });
