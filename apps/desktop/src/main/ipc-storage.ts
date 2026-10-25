@@ -30,10 +30,28 @@ const purgeScopeSchema = z.enum(['expired', 'workspace', 'all']);
 /** §8.4: a positive number of days, or `null` for "keep forever". */
 const retentionSchema = z.union([z.number().int().positive(), z.null()]);
 
+/**
+ * `confirm` is a literal `true`, not a boolean.
+ *
+ * A field that only ever means "yes" should not be able to carry "no": with
+ * `z.boolean().optional()` the two failure modes — a caller that forgot the
+ * field and a caller that sent `false` — both arrived as a well-formed request
+ * and were refused by a hand-written branch below, which is a second, weaker
+ * input contract next to the one every other channel has. The hand-written
+ * branch also answered `PERMISSION_DENIED`, so a request the schema could have
+ * rejected as malformed was reported as a permission problem — and that is the
+ * code a person reads as "the app does not let me do this", not "the request
+ * was wrong".
+ *
+ * So the refusal happens where every other input refusal happens: here, in Zod,
+ * which `toUserError` turns into 「输入无效 (confirm)」. A real permission
+ * decision (the project is untrusted, the path is outside the workspace) keeps
+ * its own code unchanged.
+ */
 const purgeRequestSchema = z.object({
   scope: purgeScopeSchema,
   workspaceId: z.string().min(1).optional(),
-  confirm: z.boolean().optional(),
+  confirm: z.literal(true, { message: '清理未确认：请先预览要删除的内容，再确认一次。' }),
 });
 
 export interface StorageIpcDeps {
@@ -99,19 +117,11 @@ export function registerStorageIpc(deps: StorageIpcDeps): void {
   handle(
     IPC_CHANNELS.storage.purge,
     ok(async (request: unknown) => {
-      const parsed = purgeRequestSchema.parse(request);
       // Irreversible, so the UI has to have previewed and the user confirmed.
-      // Refusing here is what makes `previewPurge` a promise rather than a
-      // suggestion.
-      if (parsed.confirm !== true) {
-        throw new Error(
-          appError(
-            'PERMISSION_DENIED',
-            '清理未确认：请先预览要删除的内容，再确认一次。',
-            'ipc',
-          ).message,
-        );
-      }
+      // The confirmation is now part of the schema, which is what makes
+      // `previewPurge` a promise rather than a suggestion — and what makes an
+      // unconfirmed purge a malformed request rather than a permission problem.
+      const parsed = purgeRequestSchema.parse(request);
       if (parsed.scope === 'workspace' && parsed.workspaceId === undefined) {
         throw new Error(
           appError('STORAGE_ERROR', '没有已打开的项目，无法清理本项目的对话。', 'ipc').message,

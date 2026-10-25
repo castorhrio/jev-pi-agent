@@ -1,0 +1,107 @@
+/**
+ * An unconfirmed purge is a malformed request, not a permission problem.
+ *
+ * ## Why this file exists
+ *
+ * `storage:purge` deletes transcripts and blobs, so it is refused unless the
+ * caller has previewed the scope and said yes — that part was always true. What
+ * was not: the "yes" was checked by hand, after the request had already passed
+ * validation, and the refusal answered `PERMISSION_DENIED`.
+ *
+ * Both halves of that are the same bug from a distance. Every other IPC channel
+ * in this app rejects a bad payload as 「输入无效」 because the payload is
+ * described by a schema; the purge channel described `confirm` as an optional
+ * boolean (so `false`, `"true"` and *missing* all validated) and then refused it
+ * as a permission decision. A user whose client forgot the field got told the
+ * app would not let them do something, which is not what happened and not
+ * something they can fix.
+ *
+ * The confirmation now lives in the schema, which is the one place the Renderer
+ * contract is written down. These tests are what keeps it there: they call the
+ * handler registered on the real channel, and assert that an unconfirmed purge
+ * fails in validation — before the retention service is ever constructed — while
+ * a confirmed one gets through to the next rule.
+ */
+
+import { describe, expect, it } from 'vitest';
+import { ZodError } from 'zod';
+import { IPC_CHANNELS } from '@ucad/contracts';
+import { registerStorageIpc } from '../../apps/desktop/src/main/ipc-storage';
+import type { UcadApp } from '../../apps/desktop/src/main/app-container';
+
+/** The handlers `registerStorageIpc` registers, by channel. */
+function registeredHandlers(): Map<string, (...args: unknown[]) => unknown> {
+  const handlers = new Map<string, (...args: unknown[]) => unknown>();
+  registerStorageIpc({
+    handle: (channel, fn) => {
+      handlers.set(channel, fn);
+    },
+    // Nothing here should reach the container: every case below is decided by
+    // validation (or by the "no project open" rule), both of which run before
+    // the retention service touches `db`, `blobs` or `sessionStore`.
+    ucad: {} as UcadApp,
+    getWindow: () => null,
+  });
+  return handlers;
+}
+
+const handlers = registeredHandlers();
+const purge = handlers.get(IPC_CHANNELS.storage.purge);
+
+async function rejection(payload: unknown): Promise<unknown> {
+  expect(purge, 'storage:purge is not registered').toBeDefined();
+  try {
+    await purge!(payload);
+    return null;
+  } catch (error) {
+    return error;
+  }
+}
+
+describe('storage:purge refuses an unconfirmed request at the schema', () => {
+  it('registers the channel', () => {
+    // Guard: if registration changed shape and the map went empty, every
+    // assertion below would be vacuous.
+    expect(handlers.size).toBeGreaterThan(0);
+    expect(typeof purge).toBe('function');
+  });
+
+  it('rejects a request with no confirm field', async () => {
+    const error = await rejection({ scope: 'all' });
+
+    expect(error, 'an unconfirmed purge was accepted').toBeInstanceOf(ZodError);
+    const issue = (error as ZodError).issues[0];
+    expect(issue?.path).toEqual(['confirm']);
+    // The message a person sees: `toUserError` renders a ZodError as
+    // 「输入无效 (confirm): …」 with this text after the colon.
+    expect(issue?.message).toContain('确认');
+  });
+
+  it('rejects confirm: false and confirm: "true" the same way', async () => {
+    for (const confirm of [false, 'true', 1, null]) {
+      const error = await rejection({ scope: 'all', confirm });
+      expect(error, `confirm: ${String(confirm)} was accepted`).toBeInstanceOf(ZodError);
+    }
+  });
+
+  it('does not report an input mistake as PERMISSION_DENIED', async () => {
+    const error = await rejection({ scope: 'all' });
+
+    expect(error).toBeInstanceOf(ZodError);
+    // A hand-written appError('PERMISSION_DENIED', …) is a plain Error whose
+    // message is already user-facing; that shape must not come back.
+    expect((error as Error).message).not.toContain('PERMISSION_DENIED');
+    expect((error as Error).message).not.toContain('权限');
+  });
+
+  it('lets a confirmed request through to the next rule', async () => {
+    // `workspace` scope without a workspace id is refused by the storage rule
+    // that sits *after* validation, so reaching it proves the schema accepted
+    // `confirm: true` — no database is needed to see that.
+    const error = await rejection({ scope: 'workspace', confirm: true });
+
+    expect(error).toBeInstanceOf(Error);
+    expect(error).not.toBeInstanceOf(ZodError);
+    expect((error as Error).message).toContain('没有已打开的项目');
+  });
+});
