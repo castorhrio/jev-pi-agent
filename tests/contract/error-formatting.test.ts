@@ -9,6 +9,9 @@
  */
 
 import { describe, it, expect } from 'vitest';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { appError, codedError, describeError, toAppError } from '@ucad/contracts';
 
 describe('describeError', () => {
@@ -110,5 +113,114 @@ describe('codedError', () => {
 
   it('renders as its message, never as [object Object]', () => {
     expect(describeError(codedError('NOT_FOUND', '会话不存在', 'ipc'))).toBe('会话不存在');
+  });
+});
+
+/**
+ * The meta-test: a *new* one must not be able to ask for the same silence.
+ *
+ * The tests above pin what `codedError()` does. They do not pin that the code
+ * base *uses* it — and the failure they were written for was not one bad
+ * formatting function, it was five call sites that each reached for
+ * `throw new Error(appError(…).message)` and threw the code away. A test per
+ * call site would be back to "the one place we remembered"; this one reads the
+ * sources instead, so a throw added tomorrow fails here rather than in a
+ * support report.
+ *
+ * Two patterns are refused:
+ *
+ *   - `throw new Error(...)` — a rejection crossing the bridge with no §4.11
+ *     code, which `toAppError()` can only answer as `UNKNOWN`;
+ *   - `throw appError(...)` — a thrown plain object, which stops matching every
+ *     `instanceof Error` branch and does not survive Electron's serialisation.
+ *
+ * The allowlist is a debt ledger, not a filter: it is compared for equality, so
+ * it fails when a bare throw appears **and** when an entry is fixed and left
+ * behind.
+ */
+
+const here = path.dirname(fileURLToPath(import.meta.url));
+const mainSrc = path.resolve(here, '../../apps/desktop/src/main');
+
+/**
+ * The one bare `throw new Error()` Main may keep.
+ *
+ * `bootstrap.ts` raises it inside `installTray()` and catches it a few lines
+ * below: nothing crosses the IPC bridge, the app degrades to
+ * "closing the window quits", and the reason goes into the log as a `warn`
+ * with the tray problem, not as a §4.11 code the Renderer could act on.
+ */
+const ALLOWED = [
+  {
+    file: 'bootstrap.ts',
+    line: 'throw new Error(`tray icon could not be decoded: ${icon.path}`);',
+    why: 'thrown and caught inside installTray(); the tray degrades, nothing crosses IPC',
+  },
+];
+
+interface Bare {
+  file: string;
+  line: string;
+}
+
+/**
+ * The sources with comments removed.
+ *
+ * The comments in this code base *discuss* the anti-pattern — "the previous
+ * workaround was `throw new Error(appError(…).message)`" is a sentence in three
+ * files — and a scan that counted prose would be a scan nobody could keep
+ * green. Strings are left alone: a bare throw hidden behind a `//` in a string
+ * literal is not a thing that happens, while stripping string literals would
+ * also strip the messages this test is about.
+ */
+function codeOnly(text: string): string {
+  return text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+}
+
+function bareThrows(): Bare[] {
+  const found: Bare[] = [];
+  for (const file of fs.readdirSync(mainSrc).sort()) {
+    if (!file.endsWith('.ts') || file.endsWith('.test.ts')) continue;
+    const text = codeOnly(fs.readFileSync(path.join(mainSrc, file), 'utf8'));
+    for (const raw of text.split('\n')) {
+      const line = raw.trim();
+      if (/\bthrow\s+new\s+Error\s*\(/.test(line) || /\bthrow\s+appError\s*\(/.test(line)) {
+        found.push({ file, line });
+      }
+    }
+  }
+  return found;
+}
+
+describe('every refusal in Main names a code (§4.11)', () => {
+  it('main/*.ts throws no bare Error outside the allowlist', () => {
+    const found = bareThrows();
+    const asText = found.map((entry) => `${entry.file}: ${entry.line}`).sort();
+    const allowed = ALLOWED.map((entry) => `${entry.file}: ${entry.line}`).sort();
+
+    // Equality, not "subset": an entry that was fixed has to leave the ledger,
+    // otherwise the ledger slowly becomes a description of nothing.
+    expect(asText).toEqual(allowed);
+  });
+
+  it('the allowlist entry still exists, so the ledger is not stale', () => {
+    for (const entry of ALLOWED) {
+      const text = fs.readFileSync(path.join(mainSrc, entry.file), 'utf8');
+      expect(text, `${entry.file} no longer contains the allowlisted throw`).toContain(
+        entry.line,
+      );
+      expect(entry.why.length).toBeGreaterThan(0);
+    }
+  });
+
+  it('the IPC surface refuses through codedError, not through a bare sentence', () => {
+    // The two files that hold every handler. A `new Error` here is the exact
+    // shape that made "the project is gone" and "the provider exploded" both
+    // log as `UNKNOWN`.
+    for (const file of ['ipc.ts', 'ipc-storage.ts', 'ipc-mcp.ts']) {
+      const text = fs.readFileSync(path.join(mainSrc, file), 'utf8');
+      expect(text, `${file} throws a bare Error`).not.toMatch(/throw new Error\(/);
+      expect(text, `${file} throws a plain appError object`).not.toMatch(/throw appError\(/);
+    }
   });
 });

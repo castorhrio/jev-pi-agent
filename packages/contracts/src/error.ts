@@ -18,7 +18,7 @@ export type AppErrorCode =
   | 'TOOL_CONTRACT_UNAVAILABLE'
   | 'DECISION_TIMEOUT'
   | 'INTELLIGENCE_UNAVAILABLE'
-  // The three refusals below used to be plain `Error`s with only a message.
+  // The refusals below used to be plain `Error`s with only a message.
   // The message is what the user reads; the code is what the log line, the
   // support report and any later statistics read. Without one, "the project
   // is not there" and "the provider exploded" were both `UNKNOWN`.
@@ -26,6 +26,11 @@ export type AppErrorCode =
   | 'NO_ACTIVE_WORKSPACE'
   | 'NOT_FOUND'
   | 'INVALID_INPUT'
+  // Something this build has no way to offer right now: no window to put a
+  // dialog in, no update service wired up, an attachment type no adapter
+  // reads. The message names which one; the code keeps the refusal out of
+  // `UNKNOWN`, where it was indistinguishable from a crash.
+  | 'FEATURE_UNAVAILABLE'
   | 'UNKNOWN';
 
 export type ErrorComponent =

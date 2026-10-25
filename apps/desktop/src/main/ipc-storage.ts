@@ -15,7 +15,7 @@
 
 import type { BrowserWindow } from 'electron';
 import { z } from 'zod';
-import { IPC_CHANNELS, appError } from '@ucad/contracts';
+import { IPC_CHANNELS, codedError } from '@ucad/contracts';
 import type { RetentionService } from '@ucad/session';
 import type { StoragePurgeScope } from '@ucad/contracts';
 import type { UcadApp } from './app-container';
@@ -115,8 +115,13 @@ export function registerStorageIpc(deps: StorageIpcDeps): void {
       // unconfirmed purge a malformed request rather than a permission problem.
       const parsed = purgeRequestSchema.parse(request);
       if (parsed.scope === 'workspace' && parsed.workspaceId === undefined) {
-        throw new Error(
-          appError('STORAGE_ERROR', '没有已打开的项目，无法清理本项目的对话。', 'ipc').message,
+        // Not a storage fault: there is simply no project to scope the purge
+        // to. Wrapping the sentence in `new Error(...)` kept the message and
+        // dropped the code, so the log line for this refusal read `UNKNOWN`.
+        throw codedError(
+          'NO_ACTIVE_WORKSPACE',
+          '没有已打开的项目，无法清理本项目的对话。',
+          'ipc',
         );
       }
       return service().purge(parsed.scope, parsed.workspaceId);

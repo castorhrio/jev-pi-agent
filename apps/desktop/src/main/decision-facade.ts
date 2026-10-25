@@ -160,7 +160,10 @@ export class DecisionFacade {
    *   chain rebuild.
    * - **`['none', …]` mixed with anything** — a manifest that contradicts
    *   itself. A contradiction is not a permission: refused, whatever the
-   *   settings say.
+   *   settings say. This includes `['none', 'none']`: a declaration has exactly
+   *   one way to say "no side effects", so a manifest that repeats it is not a
+   *   different statement, it is a malformed one — and it is refused rather
+   *   than silently read as `['none']`.
    * - **anything else** (`process`, or an effect a newer build added) — there
    *   is no setting behind it, so nobody can have agreed to it. Refused: fail
    *   closed rather than run something nobody authorised (NFR-14).
@@ -170,7 +173,10 @@ export class DecisionFacade {
     // Nothing declared => nothing to authorise.
     if (effects.length === 0) return true;
     // `none` alongside a real effect is a self-contradicting manifest; it is
-    // never allowed, not even when the real effect would have been.
+    // never allowed, not even when the real effect would have been. `none`
+    // twice is refused for the same reason the case list gives: the manifest
+    // must state one thing, and "no effects, declared twice" is not a second
+    // kind of statement.
     if (effects.includes('none')) return effects.length === 1;
     // Every effect needs a setting behind it. `network` has one; `process`
     // does not yet, so it is refused whatever `allowNetworkEngines` says.

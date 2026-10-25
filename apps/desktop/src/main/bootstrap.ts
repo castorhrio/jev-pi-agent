@@ -429,7 +429,10 @@ function installTray(): void {
     });
     // An empty image would create a tray slot with nothing in it, and the
     // window would still hide there — the app alive but unreachable. Fail into
-    // the catch below instead, which turns close-to-tray off.
+    // the catch below instead, which turns close-to-tray off. This is the one
+    // `throw new Error()` in Main that stays: it is raised and caught inside
+    // this function, never crosses the IPC bridge, and the app degrades rather
+    // than reporting a failure to anyone (§4.11 codes are for the bridge).
     if (icon.empty) {
       trayProblem = 'icon-empty';
       throw new Error(`tray icon could not be decoded: ${icon.path}`);

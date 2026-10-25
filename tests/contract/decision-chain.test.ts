@@ -229,6 +229,18 @@ describe('a declared side effect is a permission question, answered one case at 
     expect(facade.setChain(['plain'])).toEqual(['plain']);
   });
 
+  it('refuses a manifest that repeats `none`', () => {
+    // Not a permission question — there is nothing to authorise — but the case
+    // list says a declaration has exactly one way to say "no side effects", and
+    // `['none']` is refused-compared-to `['none','none']` only because of that
+    // rule. Pinned here so a later "be lenient about duplicates" edit has to
+    // change the documented intent first.
+    const repeated = stubEngine('repeated', { sideEffects: ['none', 'none'] });
+    const { facade } = makeFacade({ engines: [repeated], allowNetworkEngines: true });
+
+    expect(facade.setChain(['repeated'])).toEqual(['rule']);
+  });
+
   it('refuses a manifest that says `none` and a real effect at once', () => {
     // A contradiction is not a permission — not even when the real effect
     // (here `network`) is authorised. The manifest has to say one thing.

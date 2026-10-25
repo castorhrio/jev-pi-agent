@@ -270,7 +270,10 @@ export function registerIpc(
       const id = sessionIdSchema.parse(sessionId);
       const fmt = z.enum(['json', 'markdown']).parse(format);
       const win = getWindow();
-      if (!win) throw new Error('窗口不可用');
+      // A dialog needs a window to belong to. There is no window when the app
+      // is shutting down, so the export cannot be offered at all — a refusal
+      // with a code, not a `UNKNOWN` log line (§4.11).
+      if (!win) throw codedError('FEATURE_UNAVAILABLE', '窗口不可用', 'ipc');
 
       const result = await dialog.showSaveDialog(win, {
         title: '导出会话',
@@ -376,7 +379,11 @@ export function registerIpc(
       // host payload and dropped there, a silent no-op wearing a wire type.
       // Until one ships, accepting them would be the product pretending.
       if (parsed.attachments && parsed.attachments.length > 0) {
-        throw new Error('附件暂未实现：当前没有任何 Agent 会读取它们，已拒绝而不是静默丢弃');
+        throw codedError(
+          'FEATURE_UNAVAILABLE',
+          '附件暂未实现：当前没有任何 Agent 会读取它们，已拒绝而不是静默丢弃',
+          'ipc',
+        );
       }
 
       // `agentId` is not part of the wire DTO: the session already knows which
@@ -1099,7 +1106,7 @@ export function registerIpc(
     IPC_CHANNELS.app.checkUpdate,
     ok(async () => {
       const service = deps.getUpdates();
-      if (!service) throw new Error('更新服务不可用');
+      if (!service) throw codedError('FEATURE_UNAVAILABLE', '更新服务不可用', 'ipc');
       return service.check();
     }),
   );
@@ -1108,7 +1115,7 @@ export function registerIpc(
     IPC_CHANNELS.app.downloadUpdate,
     ok(async () => {
       const service = deps.getUpdates();
-      if (!service) throw new Error('更新服务不可用');
+      if (!service) throw codedError('FEATURE_UNAVAILABLE', '更新服务不可用', 'ipc');
       return service.download();
     }),
   );
@@ -1117,7 +1124,7 @@ export function registerIpc(
     IPC_CHANNELS.app.installUpdate,
     ok(async () => {
       const service = deps.getUpdates();
-      if (!service) throw new Error('更新服务不可用');
+      if (!service) throw codedError('FEATURE_UNAVAILABLE', '更新服务不可用', 'ipc');
       // The installer is verified before it is launched, so this call can
       // refuse. `false` says "not installed", and the reason is in the
       // pushed status — a failure that looked like a success would be the
