@@ -19,6 +19,7 @@ import { installApplicationMenu } from './menu';
 import { UpdateService, type UpdateStatus } from './update-service';
 import { resolveUpdateFeed } from './update-feed';
 import { loadTrayIcon, shouldPreventWindowClose, type TrayProblem } from './tray-icon';
+import { evaluateNavigation } from './navigation-guard';
 import { IPC_MENU } from './ipc-menus';
 import { createTranslator, negotiateLocale, type Locale } from '../shared/i18n';
 
@@ -251,9 +252,21 @@ async function createWindow(): Promise<BrowserWindow> {
   // whatever this window actually loaded (file in production, dev server in
   // dev) rather than a string this file guesses at; before the first load
   // completes it is empty and everything is refused — fail closed.
+  //
+  // The rule itself lives in `navigation-guard.ts` because it is a security
+  // boundary, and a boundary that can only be checked by booting Electron is a
+  // boundary nobody checks. It compares origins, not string prefixes:
+  // `http://localhost:52730.evil` and `file:///…/index.html.evil` both start
+  // with our own URL and both point somewhere else.
   win.webContents.on('will-navigate', (event, url) => {
     const own = devServer ? devUrl : win.webContents.getURL();
-    if (!own || !url.startsWith(own)) {
+    const verdict = evaluateNavigation(url, own);
+    if (!verdict.allow) {
+      appLog?.warn('refused a navigation away from the app document', {
+        url,
+        own,
+        reason: verdict.reason,
+      });
       event.preventDefault();
     }
   });
