@@ -51,7 +51,7 @@ import { IPC_PUSH, describeError } from '@ucad/contracts';
 import type { AppPaths } from './paths';
 import { DecisionFacade } from './decision-facade';
 import { GitLikeBridge } from './git-bridge';
-import { activateWorkspace } from './workspace-activation';
+import { WorkspaceActivator } from './workspace-activation';
 
 export interface UcadAppOptions {
   paths: AppPaths;
@@ -103,6 +103,8 @@ export class UcadApp {
   private dataSink: ((channel: string, payload: unknown) => void) | null = null;
   /** the workspace the user is currently working in; set by `activateWorkspace` */
   private activeWorkspaceId: string | undefined;
+  /** serialises activation so the *last* request is the one in force */
+  private workspaceActivator: WorkspaceActivator | null = null;
 
   constructor(opts: UcadAppOptions) {
     this.paths = opts.paths;
@@ -309,9 +311,30 @@ export class UcadApp {
     if (!workspace) {
       throw new Error(`项目不存在：${workspaceId}`);
     }
+    // Recorded synchronously, before any await, so "which project am I working
+    // on" is decided by the last request rather than by whichever activation
+    // finishes last. Every workspace-scoped IPC handler reads this value.
     this.activeWorkspaceId = workspace.id;
-    await activateWorkspace(
-      {
+    await this.activator.activate({
+      id: workspace.id,
+      path: workspace.path,
+      trustState: workspace.trustState,
+    });
+    return workspace;
+  }
+
+  /**
+   * The single activation queue (§4.5 / §4.8).
+   *
+   * Activation is asynchronous and moves two subsystems, so two overlapping
+   * requests — opening a project while the previous one is still initialising
+   * its provider, or a trust change arriving with a project switch — used to
+   * interleave and let the *slower* provider win. The queue makes the later
+   * request the one in force; see `WorkspaceActivator`.
+   */
+  private get activator(): WorkspaceActivator {
+    if (this.workspaceActivator === null) {
+      this.workspaceActivator = new WorkspaceActivator({
         logger: this.logger,
         intelligence: this.intelligence,
         skills: this.skills,
@@ -319,14 +342,9 @@ export class UcadApp {
         cacheDir: this.paths.cacheDir,
         providerId: 'basic',
         extraSkillRoots: this.extraSkillRoots(),
-      },
-      {
-        id: workspace.id,
-        path: workspace.path,
-        trustState: workspace.trustState,
-      },
-    );
-    return workspace;
+      });
+    }
+    return this.workspaceActivator;
   }
 
   /**

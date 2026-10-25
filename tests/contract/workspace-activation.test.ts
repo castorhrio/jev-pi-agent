@@ -36,7 +36,10 @@ import {
 import { SkillRegistry, defaultSkillRoots } from '@ucad/skills';
 import { BlobStore, silentLogger } from '@ucad/observability';
 
-import { activateWorkspace } from '../../apps/desktop/src/main/workspace-activation';
+import {
+  WorkspaceActivator,
+  activateWorkspace,
+} from '../../apps/desktop/src/main/workspace-activation';
 
 let root: string;
 let projectA: string;
@@ -198,6 +201,89 @@ describe('workspace activation', () => {
     // A personal rule is not a project's rule: it must not be lost when the
     // project changes.
     expect(skillNames()).toContain('personal-rule');
+    expect(skillNames()).toContain('beta-rules');
+  });
+
+  it('a request that arrives mid-initialisation takes over; the last one wins', async () => {
+    // The failure this replaces: activation is asynchronous, so opening B while
+    // A's provider is still initialising used to interleave — B's skills went
+    // in, then A's *slower* provider finished last and the provider was left
+    // pointing at A. The screen says B; the code intelligence is A's, and A's
+    // rules are the ones injected into B's context.
+    //
+    // The basic provider tolerates a stale root by design (it keys roots by
+    // workspace), so it cannot show this. A provider that holds *one* root —
+    // what an index or language server does — can. That is what is simulated.
+    const events: string[] = [];
+    let providerRoot: string | undefined;
+    const singleRooted = {
+      initializeProvider: async (
+        providerId: string,
+        ctx: Parameters<IntelligenceManager['initializeProvider']>[1],
+      ): Promise<void> => {
+        events.push(`start:${ctx.workspaceId}`);
+        if (ctx.workspaceId === 'ws_a') {
+          await new Promise((resolve) => setTimeout(resolve, 40));
+        }
+        providerRoot = ctx.workspaceRoot;
+        events.push(`end:${ctx.workspaceId}`);
+        await intelligence.initializeProvider(providerId, ctx);
+      },
+    };
+
+    const activator = new WorkspaceActivator({ ...deps(), intelligence: singleRooted });
+
+    const first = activator.activate({ id: 'ws_a', path: projectA, trustState: 'trusted' });
+    // Let A actually begin, so B arrives while A is in flight rather than
+    // before it started — the two paths are different.
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    const second = activator.activate({ id: 'ws_b', path: projectB, trustState: 'trusted' });
+
+    const [firstOutcome, secondOutcome] = await Promise.all([first, second]);
+
+    // One at a time, in the order the user asked: A's initialisation finishes
+    // before B's starts, so the slower one cannot outlive the newer request.
+    expect(events).toEqual(['start:ws_a', 'end:ws_a', 'start:ws_b', 'end:ws_b']);
+
+    // The provider is left on the project that is open...
+    expect(providerRoot).toBe(projectB);
+    expect(secondOutcome.intelligence).toBe('initialized');
+    // ...and the request that lost does not claim to be the state in force.
+    expect(firstOutcome.intelligence).toBe('superseded');
+    expect(firstOutcome.workspaceId).toBe('ws_a');
+
+    // Skills and intelligence agree with each other: both are B's.
+    expect(skillNames()).toContain('beta-rules');
+    expect(skillNames()).not.toContain('alpha-rules');
+  });
+
+  it('a request superseded before it started touches nothing', async () => {
+    const events: string[] = [];
+    const recorder = {
+      initializeProvider: async (
+        providerId: string,
+        ctx: Parameters<IntelligenceManager['initializeProvider']>[1],
+      ): Promise<void> => {
+        events.push(ctx.workspaceId);
+        await intelligence.initializeProvider(providerId, ctx);
+      },
+    };
+
+    const activator = new WorkspaceActivator({ ...deps(), intelligence: recorder });
+
+    // Both requested in the same tick, the way a double-click on two recent
+    // projects does it. The first one is already stale when its turn comes, so
+    // it must not point the provider at a project the user has left.
+    const [firstOutcome, secondOutcome] = await Promise.all([
+      activator.activate({ id: 'ws_a', path: projectA, trustState: 'trusted' }),
+      activator.activate({ id: 'ws_b', path: projectB, trustState: 'trusted' }),
+    ]);
+
+    expect(events).toEqual(['ws_b']);
+    expect(firstOutcome.intelligence).toBe('superseded');
+    // The outcome still names the request it answers, not the winner.
+    expect(firstOutcome.workspaceId).toBe('ws_a');
+    expect(secondOutcome.intelligence).toBe('initialized');
     expect(skillNames()).toContain('beta-rules');
   });
 

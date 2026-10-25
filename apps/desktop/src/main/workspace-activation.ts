@@ -78,8 +78,15 @@ export interface WorkspaceActivationOutcome {
   workspaceRoot: string;
   /** the skill roots in force after activation */
   skillRoots: readonly string[];
-  /** whether code intelligence was pointed at this workspace */
-  intelligence: 'initialized' | 'degraded';
+  /**
+   * Whether code intelligence was pointed at this workspace.
+   *
+   * `superseded` is the honest third answer: a newer activation was requested
+   * before this one finished, so *this* request is not the state in force.
+   * Reporting `initialized` there would be a claim the caller could disprove
+   * by asking the provider what it is looking at.
+   */
+  intelligence: 'initialized' | 'degraded' | 'superseded';
 }
 
 /**
@@ -137,4 +144,96 @@ export async function activateWorkspace(
     skillRoots,
     intelligence,
   };
+}
+
+/**
+ * Serialised, last-request-wins activation (§4.5 / §4.8).
+ *
+ * ## The failure this class closes
+ *
+ * `activateWorkspace()` is asynchronous and sets two subsystems. Two
+ * overlapping calls — the user opens a project while the previous one is still
+ * initialising its provider, or a trust change and a project switch arrive
+ * together — therefore interleave:
+ *
+ *     activate(A): skills <- A ... await initializeProvider(A) ...
+ *     activate(B): skills <- B ... await initializeProvider(B) ...
+ *     A's provider finishes LAST  => intelligence answers for A
+ *
+ * The result is not a crash and not an empty screen. It is project A's code
+ * searchable while project B is on screen, and — worse — A's rules injected
+ * into B's context. That is exactly the product claim the single activation
+ * entry point exists to protect, so ordering cannot be left to whichever
+ * provider happens to be slower.
+ *
+ * So requests go through one queue and carry a monotonic token:
+ *
+ *   - the queue makes the *order* of the two subsystems' work the same as the
+ *     order the user asked for them, so the later request is the one that ends
+ *     up in force;
+ *   - the token lets a request that was already superseded before it started
+ *     return without touching anything, and lets an in-flight request say so
+ *     (`intelligence: 'superseded'`) rather than claim a state it no longer
+ *     holds.
+ */
+export class WorkspaceActivator {
+  private readonly deps: WorkspaceActivationDeps;
+  /** id of the most recent request; anything older is stale */
+  private requested = 0;
+  /** the tail of the queue — never rejected, so one failure cannot poison it */
+  private tail: Promise<void> = Promise.resolve();
+
+  constructor(deps: WorkspaceActivationDeps) {
+    this.deps = deps;
+  }
+
+  activate(workspace: ActivatableWorkspace): Promise<WorkspaceActivationOutcome> {
+    const token = ++this.requested;
+    const run = this.tail.then(() => this.#activate(token, workspace));
+    this.tail = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run;
+  }
+
+  async #activate(
+    token: number,
+    workspace: ActivatableWorkspace,
+  ): Promise<WorkspaceActivationOutcome> {
+    if (token !== this.requested) {
+      // A newer request arrived while this one waited its turn. Running it
+      // would only be undone, so nothing is touched — and the answer says so.
+      this.deps.logger.info('workspace activation skipped; superseded while queued', {
+        workspaceId: workspace.id,
+        skillRoots: this.#currentSkillRoots(),
+      });
+      return {
+        workspaceId: workspace.id,
+        workspaceRoot: workspace.path,
+        skillRoots: this.#currentSkillRoots(),
+        intelligence: 'superseded',
+      };
+    }
+
+    const outcome = await activateWorkspace(this.deps, workspace);
+
+    // A newer request may have arrived while the provider initialised. The
+    // queue guarantees it runs *after* this one, so the state on record is
+    // already being replaced — say that instead of claiming to be in force.
+    if (token !== this.requested) {
+      this.deps.logger.info('workspace activation superseded by a newer one', {
+        workspaceId: workspace.id,
+        intelligence: outcome.intelligence,
+      });
+      return { ...outcome, intelligence: 'superseded' };
+    }
+
+    return outcome;
+  }
+
+  /** The skill roots in force right now — what a skipped request leaves behind. */
+  #currentSkillRoots(): readonly string[] {
+    return this.deps.skills.watchedRoots().map((root) => root.path);
+  }
 }
