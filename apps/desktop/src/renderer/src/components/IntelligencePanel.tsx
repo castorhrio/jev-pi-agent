@@ -89,6 +89,27 @@ interface QueryReport {
   raw: unknown;
   /** the whole call failed (IPC rejected) rather than returning an outcome */
   failure: string | null;
+  /** the id `intelligence.cancel` can reach */
+  operationId: string;
+}
+
+/**
+ * The id a query is cancelled by.
+ *
+ * It is allocated here, before the request goes out, because the name of a
+ * running operation has to be known *while* it runs: an id that only arrives
+ * with the answer cannot stop anything. The prefix keeps it apart from the
+ * ids Main allocates on its own.
+ */
+let queryCounter = 0;
+
+function newQueryOperationId(): string {
+  queryCounter += 1;
+  const random =
+    typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+      ? crypto.randomUUID().slice(0, 8)
+      : Math.random().toString(36).slice(2, 10);
+  return `uiq_${Date.now().toString(36)}_${random}_${queryCounter}`;
 }
 
 function message(error: unknown): string {
@@ -133,6 +154,9 @@ export function IntelligencePanel({ data }: { data: AppData }): JSX.Element {
   const [question, setQuestion] = useState('');
   const [queryBusy, setQueryBusy] = useState(false);
   const [report, setReport] = useState<QueryReport | null>(null);
+  /** the id of the query that is running right now — the cancel target */
+  const [runningQueryId, setRunningQueryId] = useState<string | null>(null);
+  const [queryCancelNote, setQueryCancelNote] = useState<string | null>(null);
 
   const workspaceId = data.workspace?.id ?? null;
 
@@ -222,22 +246,52 @@ export function IntelligencePanel({ data }: { data: AppData }): JSX.Element {
 
   const runQuery = useCallback(async () => {
     if (!workspaceId) return;
+    // The id goes out with the request so a cancel can reach this exact
+    // operation while it is still running.
+    const operationId = newQueryOperationId();
+    setRunningQueryId(operationId);
+    setQueryCancelNote(null);
     setQueryBusy(true);
     try {
       const raw = await api.intelligence.query({
         workspaceId,
         kind,
         input: queryInputFor(kind, question),
+        providerId: providerId ?? undefined,
+        operationId,
       });
       const envelope = raw as { result?: unknown };
       const payload = 'result' in envelope ? envelope.result : raw;
-      setReport({ kind, outcome: toOutcome(payload), raw: payload, failure: null });
+      setReport({ kind, outcome: toOutcome(payload), raw: payload, failure: null, operationId });
     } catch (error) {
-      setReport({ kind, outcome: null, raw: null, failure: message(error) });
+      setReport({ kind, outcome: null, raw: null, failure: message(error), operationId });
     } finally {
       setQueryBusy(false);
+      setRunningQueryId(null);
     }
-  }, [api, workspaceId, kind, question]);
+  }, [api, workspaceId, kind, question, providerId]);
+
+  /**
+   * Stops the query that is running.
+   *
+   * The cancel says whether it reached anything. "Missed" and "cancelled" are
+   * different states and the panel says which one happened — a cancel that
+   * found nothing must not read as a cancellation.
+   */
+  const cancelQuery = useCallback(async () => {
+    if (!runningQueryId) return;
+    try {
+      const result = await api.intelligence.cancel(runningQueryId);
+      const reason = (result as { reason?: unknown }).reason;
+      setQueryCancelNote(
+        result.cancelled
+          ? t('intel.cancelled')
+          : (typeof reason === 'string' ? reason : t('intel.cancelMissed')),
+      );
+    } catch (error) {
+      setQueryCancelNote(message(error));
+    }
+  }, [api, runningQueryId, t]);
 
   const manifest = providers.find((entry) => entry.id === providerId) ?? null;
 
@@ -461,7 +515,14 @@ export function IntelligencePanel({ data }: { data: AppData }): JSX.Element {
           <button className="primary" onClick={() => void runQuery()} disabled={queryBusy}>
             {queryBusy ? t('intel.querying') : t('intel.runQuery')}
           </button>
+          {runningQueryId && (
+            <button className="danger" onClick={() => void cancelQuery()}>
+              {t('intel.cancelQuery')}
+            </button>
+          )}
         </div>
+
+        {queryCancelNote && <div className="faint mt-2">{queryCancelNote}</div>}
 
         {report && <QueryReportView report={report} />}
       </div>
@@ -472,12 +533,26 @@ export function IntelligencePanel({ data }: { data: AppData }): JSX.Element {
 function QueryReportView({ report }: { report: QueryReport }): JSX.Element {
   const t = useT();
 
+  /*
+   * The id is shown on purpose. It is the name the operation can be cancelled
+   * by, and a query that came back "cancelled" should be traceable to the
+   * operation that was actually stopped.
+   */
+  const operationLine = (
+    <div className="defs mt-2">
+      <Def k={t('intel.opId')}>
+        <span className="mono truncate">{report.operationId}</span>
+      </Def>
+    </div>
+  );
+
   if (report.failure !== null) {
     return (
       <div className="mt-3">
         <div className="notice error">
           {t('intel.queryError')} — {report.failure}
         </div>
+        {operationLine}
       </div>
     );
   }
@@ -492,6 +567,7 @@ function QueryReportView({ report }: { report: QueryReport }): JSX.Element {
             {JSON.stringify(report.raw, null, 2)}
           </div>
         </div>
+        {operationLine}
       </div>
     );
   }
@@ -509,6 +585,7 @@ function QueryReportView({ report }: { report: QueryReport }): JSX.Element {
             </div>
           )}
         </div>
+        {operationLine}
       </div>
     );
   }
@@ -526,6 +603,7 @@ function QueryReportView({ report }: { report: QueryReport }): JSX.Element {
             </div>
           )}
         </div>
+        {operationLine}
       </div>
     );
   }
@@ -541,6 +619,7 @@ function QueryReportView({ report }: { report: QueryReport }): JSX.Element {
             </div>
           )}
         </div>
+        {operationLine}
       </div>
     );
   }
@@ -555,6 +634,7 @@ function QueryReportView({ report }: { report: QueryReport }): JSX.Element {
           </span>
         )}
       </div>
+      {operationLine}
       <FreshnessLine freshness={outcome.freshness} />
       <ResultBody kind={report.kind} result={outcome.result} />
     </div>

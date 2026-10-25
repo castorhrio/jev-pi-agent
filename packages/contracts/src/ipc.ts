@@ -600,7 +600,25 @@ export interface UcadApi {
       workspaceId: string;
       kind: IntelligenceQueryKind;
       input: unknown;
-    }): Promise<{ operationId: string }>;
+      /**
+       * Which provider answers. The panel shows a provider picker, so the
+       * query has to run against the one the user picked — Main used to
+       * hard-code `basic` and the picker was decoration.
+       */
+      providerId?: string;
+      /**
+       * Pre-allocated by the caller so the operation can be *cancelled while
+       * it is still running*: the id is known before the answer comes back.
+       */
+      operationId?: string;
+    }): Promise<{
+      /** the id `cancel()` can reach — not the provider's id */
+      operationId: string;
+      /** the provider that actually answered */
+      providerId: string;
+      /** the manager's outcome */
+      result: unknown;
+    }>;
     cancel(operationId: string): Promise<{ cancelled: boolean }>;
     onEvent(cb: (e: TurnEvent) => void): Unsubscribe;
   };

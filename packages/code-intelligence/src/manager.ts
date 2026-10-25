@@ -37,6 +37,15 @@ import { BASIC_PROVIDER_ID } from './basic-provider';
 
 /** The manager's own return shape for `query`. */
 export interface IntelligenceQueryOutcome {
+  /**
+   * The id `cancel()` can reach.
+   *
+   * It used to be missing here, so the bridge had nothing honest to return
+   * and passed the *provider* id off as the operation id. `cancel('basic')`
+   * then found no in-flight operation and reported a miss — the operation
+   * existed, it just had no name anyone could use.
+   */
+  operationId: string;
   status: IntelligenceQueryStatus;
   result: unknown;
   freshness: FreshnessState;
@@ -260,6 +269,10 @@ export class IntelligenceManager {
   }): Promise<IntelligenceQueryOutcome> {
     const started = Date.now();
     const provider = this.resolve(input.providerId);
+    // The id is allocated before anything can go wrong, so every outcome —
+    // including "unsupported" — carries the id of the operation it belongs
+    // to. A caller that started a query can always name it afterwards.
+    const operationId = input.operationId ?? ulid('iop_');
 
     if (!hasMethod(provider, input.kind)) {
       // C-1: absence is the honest signal. Say so explicitly, distinguishably.
@@ -268,6 +281,7 @@ export class IntelligenceManager {
         kind: input.kind,
       });
       return {
+        operationId,
         status: 'unsupported',
         result: null,
         freshness: { ...UNKNOWN_REVISION },
@@ -280,7 +294,6 @@ export class IntelligenceManager {
       };
     }
 
-    const operationId = input.operationId ?? ulid('iop_');
     const controller = new AbortController();
     const onOuterAbort = (): void => controller.abort();
     if (input.signal) {
@@ -291,7 +304,23 @@ export class IntelligenceManager {
 
     try {
       const result = await callMethod(provider, input.kind, input.input, controller.signal);
+      // A provider that stops early because it was cancelled may still resolve
+      // normally — the Basic provider breaks out of its walk and hands back
+      // whatever it had. Reporting that as `ok` would turn a cancellation into
+      // a confident partial answer, so the aborted signal wins.
+      if (controller.signal.aborted) {
+        return {
+          operationId,
+          status: 'cancelled',
+          result: null,
+          freshness: { ...UNKNOWN_REVISION },
+          durationMs: Math.max(0, Date.now() - started),
+          providerId: provider.manifest.id,
+          reason: `query '${input.kind}' was cancelled (${operationId})`,
+        };
+      }
       return {
+        operationId,
         status: 'ok',
         result,
         freshness: freshnessOf(result),
@@ -301,6 +330,7 @@ export class IntelligenceManager {
     } catch (error) {
       if (controller.signal.aborted) {
         return {
+          operationId,
           status: 'cancelled',
           result: null,
           freshness: { ...UNKNOWN_REVISION },
@@ -316,6 +346,7 @@ export class IntelligenceManager {
         error: message.slice(0, 300),
       });
       return {
+        operationId,
         status: 'error',
         result: null,
         freshness: { ...UNKNOWN_REVISION },

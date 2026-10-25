@@ -18,6 +18,7 @@ import { requestHighRiskPermission } from './local-permission';
 import type { UpdateService } from './update-service';
 import { registerStorageIpc } from './ipc-storage';
 import { registerMcpIpc } from './ipc-mcp';
+import { runIntelligenceQuery } from './intelligence-query';
 import { recentLogEntries } from './log-tail';
 import { isLocale, type Locale } from '../shared/i18n';
 
@@ -773,21 +774,15 @@ export function registerIpc(
 
   handle(
     IPC_CHANNELS.intelligence.query,
-    ok(async (input: unknown) => {
-      const parsed = z
-        .object({
-          workspaceId: workspaceIdSchema,
-          kind: z.enum(['search', 'locate', 'overview', 'callers', 'callees', 'trace', 'impact']),
-          input: z.unknown(),
-        })
-        .parse(input);
-      const result = await ucad.intelligence.query({
-        kind: parsed.kind,
-        providerId: 'basic',
-        input: { workspaceId: parsed.workspaceId, ...(parsed.input as object) },
-      });
-      return { operationId: result.providerId, result };
-    }),
+    ok(async (input: unknown) =>
+      runIntelligenceQuery(
+        {
+          intelligence: ucad.intelligence,
+          defaultProviderId: ucad.sessionStore.getSettings().intelligence.defaultProviderId,
+        },
+        input,
+      ),
+    ),
   );
 
   handle(

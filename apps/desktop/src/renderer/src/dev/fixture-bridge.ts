@@ -1291,21 +1291,32 @@ export function createFixtureApi(scenario: Scenario): FixtureHandle {
        * the state this surface is supposed to show. Freshness likewise follows
        * NFR-11: no persistent index, so every result is honestly stale.
        */
-      query: (input: { kind: string; input: unknown }) => {
+      query: (input: { kind: string; input: unknown; providerId?: string; operationId?: string }) => {
         const q = (input.input ?? {}) as Record<string, unknown>;
         const needle = String(q.query ?? q.symbol ?? q.target ?? '') || 'renderContextPack';
         // NFR-11: the basic provider has no index, so it never claims fresh.
         const stale = { stale: true, stalenessReason: 'unknown_revision' as const };
         const GRAPH_KINDS = ['callers', 'callees', 'trace', 'impact'];
+        /*
+         * The operation id is the caller's when the caller sent one: the
+         * panel allocates it so it can cancel the query while it is still
+         * running, and the cancel has to name the same id the query was
+         * started under. The fixture used to answer `operationId: 'basic'` —
+         * the provider's id in an operation's clothes — which is exactly the
+         * lie Main used to tell.
+         */
+        const operationId = input.operationId ?? `iop_fixture_${++previewCounter}`;
+        const providerId = input.providerId ?? 'basic';
         if (GRAPH_KINDS.includes(input.kind)) {
           return delay({
-            operationId: 'basic',
+            operationId,
+            providerId,
             result: {
               status: 'unsupported',
               result: null,
               freshness: { ...stale },
               durationMs: 0,
-              providerId: 'basic',
+              providerId,
               reason:
                 `method '${input.kind}' is absent on provider 'basic' (optionalMethods: [none]); ` +
                 'the provider cannot answer, which is not the same as having no results',
@@ -1342,22 +1353,28 @@ export function createFixtureApi(scenario: Scenario): FixtureHandle {
             : { items: locations, truncated: false, freshness: { ...stale } };
         return delay({
           /*
-           * Main wraps the manager outcome as `{ operationId, result }` — the
-           * panel reaches through `result` for the outcome, then again for
-           * the provider payload. Nesting the outcome one level down is what
-           * makes the ok/cancelled/error branches render instead of the
-           * "unrecognised shape" raw view.
+           * Main wraps the manager outcome as `{ operationId, providerId,
+           * result }` — the panel reaches through `result` for the outcome,
+           * then again for the provider payload. Nesting the outcome one level
+           * down is what makes the ok/cancelled/error branches render instead
+           * of the "unrecognised shape" raw view.
            */
-          operationId: 'basic',
+          operationId,
+          providerId,
           result: {
             status: 'ok',
             result,
             freshness: { ...stale },
             durationMs: 8,
-            providerId: 'basic',
+            providerId,
           },
         });
       },
+      /*
+       * The fixture's cancel only reports that the cancel reached something.
+       * A real Main reports a miss as a miss, and the panel says which of the
+       * two happened.
+       */
       cancel: () => delay({ cancelled: true }),
       onEvent: () => () => undefined,
     },
