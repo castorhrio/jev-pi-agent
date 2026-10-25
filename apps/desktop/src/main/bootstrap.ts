@@ -19,7 +19,7 @@ import { installApplicationMenu } from './menu';
 import { UpdateService, type UpdateStatus } from './update-service';
 import { resolveUpdateFeed } from './update-feed';
 import { loadTrayIcon, shouldPreventWindowClose, type TrayProblem } from './tray-icon';
-import { evaluateNavigation } from './navigation-guard';
+import { evaluateNavigation, evaluateWindowOpen } from './navigation-guard';
 import { IPC_MENU } from './ipc-menus';
 import { createTranslator, negotiateLocale, type Locale } from '../shared/i18n';
 
@@ -235,10 +235,22 @@ async function createWindow(): Promise<BrowserWindow> {
     appLog?.error('renderer failed to load', { code, desc, url });
   });
 
-  // External links open in the user's browser, never inside the app shell.
+  // External links open in the user's browser, never inside the app shell. The
+  // rule lives in `navigation-guard.ts` (same reason as `will-navigate` below):
+  // `window.open()` always gets `deny`, and only `http(s)` reaches the browser.
+  // A `file:` or `javascript:` target used to be refused here too, but by a
+  // regex — which is a spelling check, not a protocol check.
   win.webContents.setWindowOpenHandler(({ url }) => {
-    if (/^https?:\/\//i.test(url)) void shell.openExternal(url);
-    return { action: 'deny' };
+    const verdict = evaluateWindowOpen(url);
+    if (verdict.reason !== 'external-link') {
+      appLog?.warn('refused a window open from the app document', {
+        url,
+        reason: verdict.reason,
+      });
+    } else {
+      void shell.openExternal(url);
+    }
+    return { action: verdict.action };
   });
 
   const devUrl = 'http://localhost:5273';

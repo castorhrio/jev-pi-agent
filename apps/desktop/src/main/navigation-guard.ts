@@ -133,3 +133,49 @@ export function isOwnNavigation(
 ): boolean {
   return evaluateNavigation(target, own).allow;
 }
+
+/** What `setWindowOpenHandler` is told: never a new window, sometimes a browser. */
+export interface WindowOpenVerdict {
+  /** always `deny` — kept in the verdict so the caller cannot return `allow` */
+  action: 'deny';
+  /** whether the URL may be handed to the OS browser */
+  openExternal: boolean;
+  /** why it was not opened; for the log line, not for the decision */
+  reason: 'external-link' | 'unsupported-protocol' | 'invalid-url';
+}
+
+/**
+ * §11 window open — `window.open()` and every `target="_blank"` link.
+ *
+ * The rule is not the same as a navigation, so it gets its own function rather
+ * than a branch next to `will-navigate`:
+ *
+ * - The app opens **no** second window. A window opened from the Renderer would
+ *   inherit UCAD's preload — and therefore `files.write`, `terminal`,
+ *   `secrets.set` — for a page this app does not own. So the answer to
+ *   `open()` is always `deny`.
+ * - A `http(s)` link is a link the user meant to follow, so it is handed to the
+ *   OS browser (`openExternal`). That is origin-agnostic on purpose: the page
+ *   leaves the app, so it no longer has a bridge.
+ * - Everything else — `file:`, `javascript:`, `data:`, `about:blank`, an
+ *   unparseable string — is denied *and* opened nowhere. Handing `file:` or
+ *   `javascript:` to `openExternal` is how a "link" becomes code execution, and
+ *   nothing in this product needs it.
+ *
+ * Pure for the same reason as `evaluateNavigation`: a deny rule that can only
+ * be checked by booting Electron is a rule nobody checks.
+ */
+export function evaluateWindowOpen(target: string): WindowOpenVerdict {
+  const url = parse(target);
+  if (!url) return { action: 'deny', openExternal: false, reason: 'invalid-url' };
+
+  // Only `http(s)` is a document a browser can be asked to show. Notably not
+  // `file:`: the app already shows its own file, and any other local file is
+  // the case `will-navigate` refuses, so opening it in the browser would be the
+  // same bypass with an extra step.
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+    return { action: 'deny', openExternal: false, reason: 'unsupported-protocol' };
+  }
+
+  return { action: 'deny', openExternal: true, reason: 'external-link' };
+}

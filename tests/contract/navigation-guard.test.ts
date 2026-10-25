@@ -16,10 +16,20 @@
  * answer that question on the pure function, without booting Electron — a
  * boundary that can only be checked by running the app is a boundary nobody
  * checks.
+ *
+ * The second guard is `setWindowOpenHandler` (`window.open`, `target="_blank"`).
+ * It used to be inline in `bootstrap.ts` and decided with
+ * `/^https?:\/\//i.test(url)` — a spelling check on a URL, not a protocol
+ * check, and untestable without an Electron window. It has its own section
+ * below, on the same extracted function the bootstrap calls.
  */
 
 import { describe, expect, it } from 'vitest';
-import { evaluateNavigation, isOwnNavigation } from '../../apps/desktop/src/main/navigation-guard';
+import {
+  evaluateNavigation,
+  evaluateWindowOpen,
+  isOwnNavigation,
+} from '../../apps/desktop/src/main/navigation-guard';
 
 /** The production window: the packaged renderer document. */
 const OWN_FILE = 'file:///C:/ucad/apps/desktop/dist/renderer/index.html';
@@ -139,5 +149,84 @@ describe('navigation guard: the window shows exactly one document', () => {
     expect(isOwnNavigation('file:///C:/ucad/apps/desktop/dist/renderer/my%20app.html.evil', own)).toBe(
       false,
     );
+  });
+});
+
+describe('window open guard: no second window, links go to the browser', () => {
+  it('opens an http(s) link in the browser and never in the app', () => {
+    // `action` is `deny` in every case: a window opened from the Renderer would
+    // get UCAD's preload, and with it `files.write`, `terminal`, `secrets.set`.
+    expect(evaluateWindowOpen('https://github.com/castorhrio/jev-pi-agent')).toEqual({
+      action: 'deny',
+      openExternal: true,
+      reason: 'external-link',
+    });
+    expect(evaluateWindowOpen('http://example.com/docs?x=1#y')).toEqual({
+      action: 'deny',
+      openExternal: true,
+      reason: 'external-link',
+    });
+  });
+
+  it('refuses file: instead of handing it to the browser', () => {
+    // The same local page `will-navigate` refuses: opening it externally would
+    // be the same bypass with an extra step.
+    for (const target of [
+      OWN_FILE,
+      'file:///C:/ucad/apps/desktop/dist/renderer/other.html',
+      'file:///etc/passwd',
+    ]) {
+      expect(evaluateWindowOpen(target)).toEqual({
+        action: 'deny',
+        openExternal: false,
+        reason: 'unsupported-protocol',
+      });
+    }
+  });
+
+  it('refuses a script url rather than launching it', () => {
+    // `shell.openExternal('javascript:…')` is code execution dressed as a link.
+    expect(evaluateWindowOpen('javascript:alert(1)')).toEqual({
+      action: 'deny',
+      openExternal: false,
+      reason: 'unsupported-protocol',
+    });
+    expect(evaluateWindowOpen('data:text/html,<script>alert(1)</script>').openExternal).toBe(false);
+    expect(evaluateWindowOpen('about:blank').openExternal).toBe(false);
+  });
+
+  it('refuses what is not a url at all', () => {
+    for (const target of ['', 'not a url']) {
+      expect(evaluateWindowOpen(target)).toEqual({
+        action: 'deny',
+        openExternal: false,
+        reason: 'invalid-url',
+      });
+    }
+  });
+
+  it('refuses a bare windows path', () => {
+    // A path rendered in chat is not a link. `new URL()` reads `C:` as a
+    // scheme, so this lands on `unsupported-protocol` rather than
+    // `invalid-url` — either way it is denied and nothing is opened, which is
+    // the property the handler depends on.
+    expect(evaluateWindowOpen('C:\\ucad\\index.html')).toEqual({
+      action: 'deny',
+      openExternal: false,
+      reason: 'unsupported-protocol',
+    });
+  });
+
+  it('denies the window whatever the link is', () => {
+    // The one property a caller cannot get wrong: there is no input for which
+    // the handler is told to open a window.
+    for (const target of [
+      'https://example.com',
+      'javascript:alert(1)',
+      'file:///C:/ucad/index.html',
+      '',
+    ]) {
+      expect(evaluateWindowOpen(target).action).toBe('deny');
+    }
   });
 });
