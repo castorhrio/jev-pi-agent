@@ -88,7 +88,7 @@ export function normalizeSha256(value: unknown): string | null {
  * over https; what a developer gains from cleartext is a shorter URL, and what
  * they lose is the property that the bytes came from the place they named.
  */
-export function parseFeedUrl(value: unknown): string | null {
+function parseFeedUrl(value: unknown): string | null {
   if (typeof value !== 'string') return null;
   const trimmed = value.trim();
   if (trimmed.length === 0) return null;
@@ -124,7 +124,7 @@ export function parseUpdateConfig(raw: string): string | null {
 type UpdateFeedSource = 'env' | 'config' | 'none';
 
 /** Why a configured feed was not used, when it was configured but refused. */
-export type UpdateFeedRejection = 'not-https';
+type UpdateFeedRejection = 'not-https';
 
 export interface ResolvedUpdateFeed {
   /** the feed URL, or null when no feed is configured */

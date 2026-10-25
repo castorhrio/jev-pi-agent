@@ -24,7 +24,6 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { ZodError } from 'zod';
 import { IPC_CHANNELS } from '@ucad/contracts';
 import { registerStorageIpc } from '../../apps/desktop/src/main/ipc-storage';
 import type { UcadApp } from '../../apps/desktop/src/main/app-container';
@@ -48,6 +47,25 @@ function registeredHandlers(): Map<string, (...args: unknown[]) => unknown> {
 const handlers = registeredHandlers();
 const purge = handlers.get(IPC_CHANNELS.storage.purge);
 
+/**
+ * A Zod failure, recognised by shape rather than by `instanceof`.
+ *
+ * The Renderer side is out of reach here (this test loads a Main module), and
+ * the app keeps `zod` as a workspace dependency of the app itself rather than a
+ * root one, so an import of it from a test would be an undeclared dependency —
+ * `npm run knip` says so. The shape is stable and narrow enough: an `issues`
+ * array whose first entry names the failing field is exactly what `toUserError`
+ * reads when it renders 「输入无效 (confirm)」.
+ */
+interface ValidationFailure {
+  issues: Array<{ path: Array<string | number>; message: string }>;
+}
+
+function isValidationFailure(error: unknown): error is ValidationFailure {
+  const issues = (error as { issues?: unknown } | null)?.issues;
+  return Array.isArray(issues) && issues.length > 0;
+}
+
 async function rejection(payload: unknown): Promise<unknown> {
   expect(purge, 'storage:purge is not registered').toBeDefined();
   try {
@@ -69,8 +87,8 @@ describe('storage:purge refuses an unconfirmed request at the schema', () => {
   it('rejects a request with no confirm field', async () => {
     const error = await rejection({ scope: 'all' });
 
-    expect(error, 'an unconfirmed purge was accepted').toBeInstanceOf(ZodError);
-    const issue = (error as ZodError).issues[0];
+    expect(isValidationFailure(error), 'an unconfirmed purge was accepted').toBe(true);
+    const issue = (error as ValidationFailure).issues[0];
     expect(issue?.path).toEqual(['confirm']);
     // The message a person sees: `toUserError` renders a ZodError as
     // 「输入无效 (confirm): …」 with this text after the colon.
@@ -80,14 +98,14 @@ describe('storage:purge refuses an unconfirmed request at the schema', () => {
   it('rejects confirm: false and confirm: "true" the same way', async () => {
     for (const confirm of [false, 'true', 1, null]) {
       const error = await rejection({ scope: 'all', confirm });
-      expect(error, `confirm: ${String(confirm)} was accepted`).toBeInstanceOf(ZodError);
+      expect(isValidationFailure(error), `confirm: ${String(confirm)} was accepted`).toBe(true);
     }
   });
 
   it('does not report an input mistake as PERMISSION_DENIED', async () => {
     const error = await rejection({ scope: 'all' });
 
-    expect(error).toBeInstanceOf(ZodError);
+    expect(isValidationFailure(error)).toBe(true);
     // A hand-written appError('PERMISSION_DENIED', …) is a plain Error whose
     // message is already user-facing; that shape must not come back.
     expect((error as Error).message).not.toContain('PERMISSION_DENIED');
@@ -101,7 +119,7 @@ describe('storage:purge refuses an unconfirmed request at the schema', () => {
     const error = await rejection({ scope: 'workspace', confirm: true });
 
     expect(error).toBeInstanceOf(Error);
-    expect(error).not.toBeInstanceOf(ZodError);
+    expect(isValidationFailure(error), 'a confirmed purge was rejected as malformed').toBe(false);
     expect((error as Error).message).toContain('没有已打开的项目');
   });
 });
