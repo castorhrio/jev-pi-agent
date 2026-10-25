@@ -18,6 +18,7 @@ import { registerIpc } from './ipc';
 import { installApplicationMenu } from './menu';
 import { UpdateService, type UpdateStatus } from './update-service';
 import { resolveUpdateFeed } from './update-feed';
+import { loadTrayIcon } from './tray-icon';
 import { IPC_MENU } from './ipc-menus';
 import { createTranslator, negotiateLocale, type Locale } from '../shared/i18n';
 
@@ -345,12 +346,17 @@ async function bootstrap(): Promise<void> {
 function installTray(): void {
   if (tray) return;
   try {
-    // A 1x1 transparent PNG: a generated icon is not worth failing startup for,
-    // and the menu + notification area affordance is the real affordance.
-    const icon = nativeImage.createFromDataURL(
-      'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=',
-    );
-    tray = new Tray(icon);
+    const icon = loadTrayIcon(nativeImage, {
+      platform: process.platform,
+      packaged: app.isPackaged,
+      mainDir: __dirname,
+      resourcesPath: process.resourcesPath,
+    });
+    // An empty image would create a tray slot with nothing in it, and the
+    // window would still hide there — the app alive but unreachable. Fail into
+    // the catch below instead, which turns close-to-tray off.
+    if (icon.empty) throw new Error(`tray icon could not be decoded: ${icon.path}`);
+    tray = new Tray(icon.image);
     tray.setToolTip('UCAD');
   } catch (error) {
     // No tray (some Linux sessions, some CI). The window then quits normally.

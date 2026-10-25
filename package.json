@@ -50,6 +50,14 @@
       {
         "from": "apps/desktop/resources/update-config.json",
         "to": "update-config.json"
+      },
+      {
+        "from": "apps/desktop/resources/icon.png",
+        "to": "icon.png"
+      },
+      {
+        "from": "apps/desktop/resources/icon.ico",
+        "to": "icon.ico"
       }
     ],
     "asar": true,
