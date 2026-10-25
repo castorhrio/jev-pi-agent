@@ -38,11 +38,13 @@ import { fileURLToPath } from 'node:url';
 
 import { AgentHostProcess, resolveHostEntry } from '@ucad/agent-host';
 import { AgentHostRunner } from '@ucad/agent-host';
+import { createUniversalAdapter } from '@ucad/adapter-universal';
 import { silentLogger } from '@ucad/observability';
-import type {
-  AgentHostToMain,
-  MainToAgentHost,
-  SecretRef,
+import {
+  appError,
+  type AgentHostToMain,
+  type MainToAgentHost,
+  type SecretRef,
 } from '@ucad/contracts';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -173,8 +175,142 @@ describe('the Host asks Main for a credential', () => {
       runner as unknown as { secretResolver: (ref: SecretRef) => Promise<string | null> }
     ).secretResolver;
 
-    await expect(resolver(REF)).resolves.toBeNull();
+    // The answer that never came is not the same as "Main holds no key".
+    // Resolving both to `null` made the app blame the user's Settings for a
+    // desktop process that had stopped answering, so the timeout rejects
+    // with a code of its own.
+    await expect(resolver(REF)).rejects.toMatchObject({
+      code: 'HOST_UNRESPONSIVE',
+      component: 'agent',
+    });
+
     await runner.dispose();
+  });
+
+  it('says how long it waited, so the diagnosis is actionable', async () => {
+    const transport = memoryTransport();
+    const runner = new AgentHostRunner({
+      adapter: {
+        manifest: { id: 'probe' },
+        initialize: async () => undefined,
+        listModels: async () => [],
+        createSession: async () => {
+          throw new Error('not used');
+        },
+        resumeSession: async () => {
+          throw new Error('not used');
+        },
+        dispose: async () => undefined,
+      } as never,
+      agentHostId: 'host_probe',
+      logger: silentLogger('secret-channel'),
+      transport: transport as never,
+      secretTimeoutMs: 50,
+    });
+    runner.start();
+
+    const resolver = (
+      runner as unknown as { secretResolver: (ref: SecretRef) => Promise<string | null> }
+    ).secretResolver;
+
+    const failure = await resolver(REF).then(
+      () => undefined,
+      (error: unknown) => error,
+    );
+    const details = (failure as { details?: { waitedMs?: number } }).details;
+    expect(details?.waitedMs).toBe(50);
+
+    await runner.dispose();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// the turn half: which failure the user is told about
+// ---------------------------------------------------------------------------
+
+/**
+ * The two failures that used to look like one.
+ *
+ * "Main holds no key for this vendor" and "Main never answered" both ended
+ * up as a 401-shaped complaint about a missing key, so a user whose key was
+ * saved correctly was told to go and enter it again. The turn has to say
+ * which one happened, because the two need different actions.
+ */
+describe('the turn tells the two credential failures apart', () => {
+  async function turnError(
+    resolve: (ref: SecretRef) => Promise<string | null>,
+  ): Promise<{ code?: string; message?: string }> {
+    const adapter = createUniversalAdapter({
+      logger: silentLogger('secret-channel'),
+      // A fetch that must never be reached: the turn has to fail on the
+      // credential, before any request leaves the machine.
+      fetchImpl: (async () => {
+        throw new Error('the request must not be sent without a credential');
+      }) as unknown as typeof fetch,
+    });
+    await adapter.initialize({
+      agentHostId: 'host_probe',
+      workspaceRoot: '/tmp/ucad-secret-channel',
+      configDir: '/tmp/ucad-secret-channel',
+      env: {},
+      secretResolver: resolve,
+      logger: silentLogger('secret-channel'),
+    });
+
+    const handle = await adapter.createSession({
+      ucadSessionId: 'ses_probe',
+      workspaceId: 'ws_probe',
+      workspaceRoot: '/tmp/ucad-secret-channel',
+      permissionMode: 'ask',
+      trustState: 'trusted',
+      providerId: 'openai',
+    });
+
+    const events = [];
+    for await (const proposal of handle.send({
+      turnId: 'turn_probe',
+      objective: 'probe',
+      injection: {
+        turnId: 'turn_probe',
+        packId: 'pack_probe',
+        packRevision: 1,
+        profile: 'universal',
+        rendered: 'rendered',
+        renderedHash: 'sha256:probe',
+        index: [],
+        omitted: [],
+        estTokens: 1,
+        estimateSource: 'computed',
+      },
+      permissionMode: 'ask',
+    })) {
+      events.push(proposal);
+    }
+
+    const failure = events.find((event) => event.type === 'error');
+    return (failure?.payload ?? {}) as { code?: string; message?: string };
+  }
+
+  it('says the desktop did not answer, and does not blame the key', async () => {
+    const error = await turnError(async () => {
+      // Exactly what the Host's runner rejects with when Main is silent.
+      throw appError('HOST_UNRESPONSIVE', 'Main did not answer', 'agent', {
+        details: { providerId: 'openai', key: 'api-key', waitedMs: 5_000 },
+      });
+    });
+
+    expect(error.code).toBe('HOST_UNRESPONSIVE');
+    expect(error.message).toContain('主进程');
+    // The sentence that sends the user to re-enter a key they already entered
+    // must not be here: the key was never the problem.
+    expect(error.message).not.toContain('No API key is stored');
+  });
+
+  it('says the credential is missing when Main answers that it has none', async () => {
+    const error = await turnError(async () => null);
+
+    expect(error.code).toBe('AUTH_REQUIRED');
+    expect(error.message).toContain('No API key is stored');
   });
 });
 

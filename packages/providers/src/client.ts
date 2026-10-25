@@ -761,7 +761,12 @@ export class ProviderClient {
     let stored: string | null;
     try {
       stored = await this.secrets.get({ providerId: provider.id, key: provider.secretKey });
-    } catch {
+    } catch (error) {
+      // A classified failure keeps its own diagnosis. Flattening it into
+      // STORAGE_ERROR turned "the desktop did not answer the credential
+      // request" into "the vault could not be read" — two different problems
+      // with two different fixes, and the user is sent to the wrong one.
+      if (isAppErrorLike(error)) throw error;
       throw appError(
         'STORAGE_ERROR',
         `The credential vault could not be read for ${provider.displayName}.`,
@@ -787,7 +792,13 @@ export class ProviderClient {
     try {
       const stored = await this.secrets.get({ providerId: provider.id, key: provider.secretKey });
       if ((stored ?? '').trim().length > 0) return { ok: true };
-    } catch {
+    } catch (error) {
+      // Same rule as `readApiKey`: a classified failure keeps its code, so a
+      // credential channel that did not answer is not reported as an
+      // unreadable vault.
+      if (isAppErrorLike(error)) {
+        return { ok: false, code: error.code, reason: error.message };
+      }
       return {
         ok: false,
         code: 'STORAGE_ERROR',

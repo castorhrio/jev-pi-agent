@@ -25,12 +25,14 @@ import {
 } from '@ucad/providers';
 import {
   appError,
+  toAppError,
   type AdapterInitializeContext,
   type AgentAdapter,
   type AgentCapabilities,
   type AgentManifest,
   type AgentSessionHandle,
   type AgentTurnInput,
+  type AppError,
   type CreateAgentSessionInput,
   type InboundEventProposal,
   type ModelDescriptor,
@@ -38,7 +40,6 @@ import {
   type ResumeAgentSessionInput,
   type SecretRef,
 } from '@ucad/contracts';
-import { describeError } from '@ucad/contracts';
 import type { Logger } from '@ucad/observability';
 import { silentLogger, ulid } from '@ucad/observability';
 
@@ -92,6 +93,33 @@ const CAPABILITIES: AgentCapabilities = {
   toolContract: 'none',
   contextWindowTokens: 128_000,
 };
+
+/**
+ * The user-facing sentence for a credential channel that did not answer.
+ *
+ * It has to say *which* failure this is. "No API key is stored" sends the
+ * user to Settings to re-enter a key they already entered; "the desktop did
+ * not answer" sends them to restart the app. Collapsing the two sends people
+ * to fix the wrong thing — and the one they are told to fix (the key) is the
+ * one that was never broken.
+ */
+function channelFailure(error: AppError, ref: SecretRef): AppError {
+  const waitedMs = (error.details as { waitedMs?: number } | undefined)?.waitedMs;
+  const waited = typeof waitedMs === 'number' ? ` ${Math.round(waitedMs / 1000)} 秒内` : '限定时间内';
+  return appError(
+    'HOST_UNRESPONSIVE',
+    `桌面主进程未在${waited}应答凭据请求（${ref.providerId} / ${ref.key}）。` +
+      'Key 可能已经存好了——这是主进程没有回应，不是没有 Key。',
+    'agent',
+    {
+      details: {
+        providerId: ref.providerId,
+        key: ref.key,
+        ...(waitedMs !== undefined ? { waitedMs } : {}),
+      },
+    },
+  );
+}
 
 export class UniversalAgentAdapter implements AgentAdapter {
   readonly manifest: AgentManifest;
@@ -167,22 +195,35 @@ export class UniversalAgentAdapter implements AgentAdapter {
    * `announceFallback` exists so that the "the key came from the environment"
    * warning is logged once per lookup that actually uses it — `exists()` is a
    * probe and must not double the noise.
+   *
+   * The three outcomes are kept apart, because they need three different
+   * answers from the user:
+   *
+   *  - **the channel answered with a key** — use it;
+   *  - **the channel answered "no key"** — the environment may still have one
+   *    (development, CI), and if not, the user is told to add it in Settings;
+   *  - **the channel failed** — Main never answered. The environment is *not*
+   *    consulted: falling back to it would silently substitute a different
+   *    credential for the one the user saved, and the vendor would reject that
+   *    one with a 401 that reads exactly like a bad key.
    */
   private async resolveSecret(ref: SecretRef, announceFallback: boolean): Promise<string | null> {
     const resolver = this.secretResolver;
     if (resolver) {
+      let value: string | null;
       try {
-        const value = await resolver(ref);
-        if (value !== null && value.trim() !== '') return value;
+        value = await resolver(ref);
       } catch (err) {
-        // A broken channel is not a broken credential: the fallback may still
-        // have one, and the failure is worth saying out loud either way.
+        const appErr = toAppError(err, 'agent');
         this.opts.logger.warn('credential channel failed', {
           providerId: ref.providerId,
           key: ref.key,
-          error: err instanceof Error ? err.message : String(err),
+          code: appErr.code,
+          error: appErr.message,
         });
+        throw channelFailure(appErr, ref);
       }
+      if (value !== null && value.trim() !== '') return value;
     }
 
     const fallback = this.opts.secrets;
@@ -399,8 +440,14 @@ class UniversalSession implements AgentSessionHandle {
       });
     } catch (error) {
       const aborted = controller.signal.aborted;
-      const message =
-        describeError(error);
+      // The failure keeps its own classification. Everything used to be
+      // reported as `NETWORK_ERROR`, which made a missing key and a stalled
+      // desktop look like the same thing on screen — and both of them look
+      // like the network, which neither of them is.
+      const classified = toAppError(error, 'agent');
+      const code = classified.code === 'UNKNOWN' ? 'NETWORK_ERROR' : classified.code;
+      const retryable = classified.code === 'UNKNOWN' ? true : classified.retryable;
+      const message = classified.message;
       if (aborted) {
         yield emit('turn.completed', {
           status: 'cancelled',
@@ -411,12 +458,13 @@ class UniversalSession implements AgentSessionHandle {
           turnId: input.turnId,
           providerId,
           model,
+          code,
           message,
         });
         yield emit('error', {
-          code: 'NETWORK_ERROR',
+          code,
           message: `模型调用失败：${message}`,
-          retryable: true,
+          retryable,
           component: 'agent',
           vendor: { name: providerId },
         });

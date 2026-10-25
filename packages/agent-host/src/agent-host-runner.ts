@@ -87,6 +87,7 @@ interface PendingPermission {
 /** A credential request waiting for Main's answer. */
 interface PendingSecret {
   resolve: (value: string | null) => void;
+  reject: (reason: unknown) => void;
   timer: NodeJS.Timeout;
 }
 
@@ -198,11 +199,20 @@ export class AgentHostRunner {
       pending.resolve('deny');
     }
     // The same for a credential request: the answer can no longer arrive, so
-    // the waiter is released with "no credential" instead of a leaked promise.
+    // the waiter is released with "the host is going away" instead of a
+    // leaked promise. "Absent" would be a lie — the credential may well be
+    // in the keychain; the process that reads it is the one that is leaving.
     for (const [requestId, pending] of [...this.pendingSecrets]) {
       this.pendingSecrets.delete(requestId);
       clearTimeout(pending.timer);
-      pending.resolve(null);
+      pending.reject(
+        appError(
+          'PROCESS_EXITED',
+          'the Agent Host is shutting down before the credential arrived',
+          'agent',
+          { details: { requestId } },
+        ),
+      );
     }
     for (const handle of [...this.sessions.values()]) {
       try {
@@ -457,26 +467,55 @@ export class AgentHostRunner {
    *
    * The Host never holds a vault: it sends a *reference* and Main answers with
    * the value or with `null`. The request is bounded — an unanswered request
-   * resolves to `null` rather than hanging the caller, because a turn that
-   * waits forever for a key is worse than a turn that says "no key".
+   * never hangs the caller, because a turn that waits forever for a key is
+   * worse than a turn that says "no key".
+   *
+   * An unanswered request **rejects** rather than resolving to `null`, and
+   * that difference is the whole point: "Main holds no key for this vendor"
+   * and "Main never answered" are different problems with different fixes.
+   * Resolving both to `null` made the app blame the user's Settings for a
+   * desktop process that had stopped answering — the user re-entered a key
+   * that was already saved, and nothing changed.
    */
   private requestSecret(ref: SecretRef): Promise<string | null> {
     const requestId = ulid('sec_');
-    return new Promise<string | null>((resolve) => {
+    const pending = new Promise<string | null>((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pendingSecrets.delete(requestId);
         this.logger.warn('credential request timed out', {
           requestId,
           providerId: ref.providerId,
           key: ref.key,
+          waitedMs: this.secretTimeoutMs,
         });
-        resolve(null);
+        reject(
+          appError(
+            'HOST_UNRESPONSIVE',
+            `Main did not answer the credential request within ${this.secretTimeoutMs}ms`,
+            'agent',
+            {
+              details: {
+                requestId,
+                providerId: ref.providerId,
+                key: ref.key,
+                waitedMs: this.secretTimeoutMs,
+              },
+            },
+          ),
+        );
       }, this.secretTimeoutMs);
       timer.unref();
 
-      this.pendingSecrets.set(requestId, { resolve, timer });
+      this.pendingSecrets.set(requestId, { resolve, reject, timer });
       this.emit({ op: 'secret_request', payload: { requestId, ref } });
     });
+
+    // A rejection nobody awaits is fatal to the Host process under Node's
+    // default settings. The safety net marks this promise as handled while
+    // the caller still receives the rejection — the diagnosis must not be
+    // able to take the process down.
+    pending.catch(() => undefined);
+    return pending;
   }
 
   private onSecretResponse(payload: { requestId: string; value: string | null }): void {
