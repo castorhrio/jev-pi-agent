@@ -114,6 +114,19 @@ describe('codedError', () => {
   it('renders as its message, never as [object Object]', () => {
     expect(describeError(codedError('NOT_FOUND', '会话不存在', 'ipc'))).toBe('会话不存在');
   });
+
+  it('attaches code/component/retryable as own enumerable properties', () => {
+    // This is a contract, not an implementation detail: the Renderer-side test
+    // "nothing enumerable crosses the bridge" is only meaningful because these
+    // three *are* enumerable here and `toUserError()` rebuilds a clean `Error`.
+    // Attach them with `Object.defineProperty` instead (enumerable: false) and
+    // that test would keep passing for the wrong reason — there would be
+    // nothing left for the wrapper to drop.
+    const keys = Object.keys(codedError('NOT_FOUND', '会话不存在', 'ipc'));
+    expect(keys).toContain('code');
+    expect(keys).toContain('component');
+    expect(keys).toContain('retryable');
+  });
 });
 
 /**

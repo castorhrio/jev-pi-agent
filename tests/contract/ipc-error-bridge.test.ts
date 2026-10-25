@@ -132,6 +132,12 @@ describe('a coded refusal crosses the bridge as one sentence', () => {
     // And nothing enumerable rides along either: Electron's serialisation of an
     // `Error` keeps the message, so an own enumerable field is the shape a
     // "let's also pass the code" change would take.
+    //
+    // This line's meaning depends on a contract one file over: `codedError()`
+    // attaches `code`/`component`/`retryable` as *enumerable*, and
+    // `toUserError()` rebuilds a clean `new Error(message)`. Make those fields
+    // non-enumerable and this assertion stops proving anything while still
+    // passing. `error-formatting.test.ts` pins the enumerable half.
     expect(Object.keys(rejection)).toEqual([]);
     // Same statement from the Renderer's side of a structured clone.
     expect(JSON.parse(JSON.stringify(rejection))).toEqual({});

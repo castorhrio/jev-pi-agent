@@ -113,6 +113,16 @@ export class GitLikeBridge {
 
       let next = 0;
       let expired = false;
+      // How many workers are inside `git.diff` right now. At the deadline this
+      // is the number of subprocesses still running, and it is the difference
+      // between "the diff was short because there was little to diff" and "the
+      // diff was short because git hung".
+      let inFlight = 0;
+      // Paths whose `git diff` actually returned, whatever it printed. Not the
+      // same as `collected`: a binary or empty patch came back in time and was
+      // dropped on purpose, and calling that "abandoned" would put a hang and a
+      // binary in the same bucket.
+      let answered = 0;
       let timer: ReturnType<typeof setTimeout> | undefined;
       const deadline = new Promise<void>((resolve) => {
         timer = setTimeout(() => {
@@ -128,13 +138,19 @@ export class GitLikeBridge {
           const index = next++;
           if (index >= paths.length) return;
           const path = paths[index] as string;
-          const diff = await this.opts.git.diff({ workspaceRoot: root, path });
-          if (diff.binary || diff.patch.trim() === '') continue;
-          collected[index] = {
-            path,
-            patch: diff.patch,
-            tokens: this.opts.estimator.estimate(diff.patch),
-          };
+          inFlight += 1;
+          try {
+            const diff = await this.opts.git.diff({ workspaceRoot: root, path });
+            answered += 1;
+            if (diff.binary || diff.patch.trim() === '') continue;
+            collected[index] = {
+              path,
+              patch: diff.patch,
+              tokens: this.opts.estimator.estimate(diff.patch),
+            };
+          } finally {
+            inFlight -= 1;
+          }
         }
       };
 
@@ -152,11 +168,22 @@ export class GitLikeBridge {
         // Not an error: the turn gets a smaller `git_diff` than it asked for,
         // and the reason has to be findable, otherwise "the diff was short" and
         // "the diff was empty" read the same in a bug report.
+        //
+        // The deadline stops the *waiting*, not the subprocesses that already
+        // started: a `git diff` in flight keeps running and its result is
+        // discarded when it lands. That is deliberate — cancelling would mean
+        // an `AbortSignal` threaded through `GitService.diff` — but it has to
+        // be visible, so `abandoned` names the paths git never answered for and
+        // `inFlight` names how many subprocesses are still out there. Binary and
+        // empty patches are not abandoned: they answered, and were dropped for
+        // a reason the other two fields already tell.
         this.opts.logger.debug('git diff summary stopped at its deadline', {
           workspaceId: input.workspaceId,
           deadlineMs,
           collected: out.length,
           requested: paths.length,
+          abandoned: paths.length - answered,
+          inFlight,
         });
       }
       return out;

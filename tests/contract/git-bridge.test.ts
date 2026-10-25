@@ -234,6 +234,36 @@ describe('git diffSummary — the bounds', () => {
     expect(stopped, 'a short summary was returned with no log line explaining it').toBeDefined();
     expect(stopped!.fields?.collected).toBe(3);
     expect(stopped!.fields?.requested).toBe(4);
+    // The number that was missing: three files answered, and `c-hangs.ts` was
+    // still inside a subprocess when the deadline fired. Without it, a summary
+    // truncated by a hang and a workspace with four dirty files where one was
+    // binary read the same in the log.
+    expect(stopped!.fields?.abandoned).toBe(1);
+    expect(stopped!.fields?.inFlight).toBe(1);
+  });
+
+  it('does not call a binary patch that answered in time "abandoned"', async () => {
+    const h = harness({
+      unstaged: ['a.ts', 'assets/logo.bin', 'c-hangs.ts'],
+      diffFor: async (path) => {
+        if (path === 'c-hangs.ts') return new Promise<never>(() => {});
+        if (path === 'assets/logo.bin') return { patch: 'Binary files differ', binary: true };
+        return patch(path);
+      },
+      diffConcurrency: 4,
+      diffDeadlineMs: 25,
+    });
+
+    await h.bridge.diffSummary({ workspaceId: 'ws_1' });
+
+    const stopped = h.logs.find((line) => line.event === 'git diff summary stopped at its deadline');
+    expect(stopped).toBeDefined();
+    // One item collected, two paths answered (the binary came back and was
+    // dropped on purpose), one path never answered. `requested - collected`
+    // would say 2 abandoned; the subprocess count says 1.
+    expect(stopped!.fields?.collected).toBe(1);
+    expect(stopped!.fields?.abandoned).toBe(1);
+    expect(stopped!.fields?.inFlight).toBe(1);
   });
 
   it('does not stop early when everything answers in time', async () => {
