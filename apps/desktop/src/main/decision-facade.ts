@@ -95,15 +95,42 @@ export class DecisionFacade {
   /**
    * Whether this build may run the engine at all.
    *
-   * 'network' is the side effect the user can authorise (Settings → 允许联网
-   * 引擎). Any other declared effect has no setting behind it yet, so it is
-   * refused: fail closed rather than run something nobody agreed to.
+   * The question is "is every effect this engine declares authorised?", and
+   * `sideEffects` is the manifest author's answer. The cases are written out
+   * one by one because the previous version asked them with two `every()`
+   * calls, and `[].every(…)` is vacuously `true` — so an empty declaration and
+   * a `['none']` declaration happened to be allowed for a reason nobody wrote
+   * down. A manifest author reading only the code could not tell what an empty
+   * array meant, and a future edit to the `every()` chain could have changed it
+   * silently. So:
+   *
+   * - **nothing declared** (`undefined` or `[]`) — the engine says it does
+   *   nothing beyond answering, so there is nothing to authorise. Allowed.
+   *   (Undeclared is not "unknown": `DecisionEngineManifest.sideEffects` is
+   *   required by the contract, so this is only the case for a manifest built
+   *   in code without the field.)
+   * - **`['none']`** — the same statement, said out loud. Allowed.
+   * - **`['network']`** — the one effect the user can authorise (Settings →
+   *   允许联网引擎). Allowed only when they have, and `allowNetworkEngines`
+   *   is read at call time so a Settings change takes effect on the next
+   *   chain rebuild.
+   * - **`['none', …]` mixed with anything** — a manifest that contradicts
+   *   itself. A contradiction is not a permission: refused, whatever the
+   *   settings say.
+   * - **anything else** (`process`, or an effect a newer build added) — there
+   *   is no setting behind it, so nobody can have agreed to it. Refused: fail
+   *   closed rather than run something nobody authorised (NFR-14).
    */
   private isAllowed(engine: DecisionEngine): boolean {
-    const effects = engine.manifest.sideEffects ?? [];
-    if (effects.every((effect) => effect === 'none')) return true;
-    if (effects.every((effect) => effect === 'network')) return this.opts.allowNetworkEngines;
-    return false;
+    const effects: readonly string[] = engine.manifest.sideEffects ?? [];
+    // Nothing declared => nothing to authorise.
+    if (effects.length === 0) return true;
+    // `none` alongside a real effect is a self-contradicting manifest; it is
+    // never allowed, not even when the real effect would have been.
+    if (effects.includes('none')) return effects.length === 1;
+    // Every effect needs a setting behind it. `network` has one; `process`
+    // does not yet, so it is refused whatever `allowNetworkEngines` says.
+    return effects.every((effect) => effect === 'network' && this.opts.allowNetworkEngines);
   }
 
   /**

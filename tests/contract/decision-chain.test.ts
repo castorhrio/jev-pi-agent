@@ -204,3 +204,119 @@ describe('the decision chain is the one that runs', () => {
     expect(facade.setChain(['jev', 'jev'])).toEqual(['jev']);
   });
 });
+
+/**
+ * What a manifest's `sideEffects` means, case by case.
+ *
+ * The gate used to be two `every()` calls in a row, and `[].every(…)` is
+ * vacuously `true` — so an empty declaration was allowed, a mixed one was not,
+ * and nothing in the code said which of those was intended. These cases are
+ * the intention written down: a manifest author can now read what their
+ * declaration will do, and a future edit that changes it fails here.
+ */
+describe('a declared side effect is a permission question, answered one case at a time', () => {
+  it('allows an engine that declares no side effects at all', () => {
+    // `[]` says "I do nothing beyond answering". Nothing to authorise.
+    const { facade } = makeFacade({ engines: [stubEngine('plain', { sideEffects: [] })] });
+
+    expect(facade.setChain(['plain'])).toEqual(['plain']);
+  });
+
+  it('allows an engine that declares `none`', () => {
+    const { facade } = makeFacade({ engines: [stubEngine('plain', { sideEffects: ['none'] })] });
+
+    expect(facade.setChain(['plain'])).toEqual(['plain']);
+  });
+
+  it('refuses a manifest that says `none` and a real effect at once', () => {
+    // A contradiction is not a permission — not even when the real effect
+    // (here `network`) is authorised. The manifest has to say one thing.
+    const confused = stubEngine('confused', { sideEffects: ['none', 'network'] });
+    const { facade } = makeFacade({ engines: [confused], allowNetworkEngines: true });
+
+    expect(facade.setChain(['confused'])).toEqual(['rule']);
+  });
+
+  it('refuses `process` even when network engines are authorised', () => {
+    // `allowNetworkEngines` is a setting about the network. It says nothing
+    // about starting a process, and a broader permission is not a substitute
+    // for a missing one.
+    const local = stubEngine('proc', { sideEffects: ['process'] });
+    const { facade } = makeFacade({ engines: [local], allowNetworkEngines: true });
+
+    expect(facade.setChain(['proc'])).toEqual(['rule']);
+  });
+
+  it('refuses a mix of an authorised and an unauthorised effect', () => {
+    // "Mostly authorised" is not authorised: the engine would still do the
+    // part nobody agreed to.
+    const mixed = stubEngine('mixed', { sideEffects: ['network', 'process'] });
+    const { facade } = makeFacade({ engines: [mixed], allowNetworkEngines: true });
+
+    expect(facade.setChain(['mixed'])).toEqual(['rule']);
+  });
+
+  it('refuses an effect this build has no setting for', () => {
+    // A manifest from a newer build naming an effect this one cannot offer a
+    // checkbox for. Fail closed: it is not run, and it does not crash the app.
+    const future = stubEngine('future', {
+      sideEffects: ['filesystem'] as unknown as DecisionEngineManifest['sideEffects'],
+    });
+    const { facade } = makeFacade({ engines: [future], allowNetworkEngines: true });
+
+    expect(facade.setChain(['future'])).toEqual(['rule']);
+  });
+});
+
+/**
+ * The chain shown is the chain that runs — for the two ids `resolveChainIds`
+ * drops, not only for the ones it keeps.
+ *
+ * `setChain` returning the resolved list is an echo; an echo can be right while
+ * the run is wrong (that is exactly what `void chain` was). So each case also
+ * asks who answered.
+ */
+describe('the chain echoed back is the chain that runs', () => {
+  it('runs a duplicated engine once', async () => {
+    const base = stubEngine('jev');
+    let calls = 0;
+    const counting: DecisionEngine = {
+      ...base,
+      decide: async (request) => {
+        calls += 1;
+        return base.decide(request);
+      },
+    };
+    const { facade } = makeFacade({ engines: [counting] });
+
+    expect(facade.setChain(['jev', 'jev'])).toEqual(['jev']);
+    const result = await facade.preview({
+      sessionId: 'sess_dup',
+      objective: 'route this',
+      kind: 'route',
+      facts: facts(),
+    });
+
+    // Not "the echo has one entry" but "one entry ran": the second copy was
+    // dropped before the chain was built, so it was never called.
+    expect(calls).toBe(1);
+    expect(result.producedBy.engineId).toBe('jev');
+  });
+
+  it('runs the fallback that the echo names when the only id is unknown', async () => {
+    const { facade } = makeFacade();
+
+    expect(facade.setChain(['nope'])).toEqual(['rule']);
+    const result = await facade.preview({
+      sessionId: 'sess_unknown',
+      objective: 'route this',
+      kind: 'route',
+      facts: facts(),
+    });
+
+    expect(result.producedBy.engineId).toBe('rule');
+    // The rule engine is the chain's last resort, so this is not a fallback
+    // trace: the unknown id never entered the chain to fall back from.
+    expect(result.fallback).toBeUndefined();
+  });
+});
