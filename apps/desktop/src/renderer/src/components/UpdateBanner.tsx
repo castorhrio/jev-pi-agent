@@ -36,7 +36,7 @@ export function UpdateBanner(): JSX.Element | null {
               .catch(() => undefined);
           }}
         >
-          {t('settings.checkUpdate')}
+          {t('settings.downloadUpdate')}
         </button>
       </div>
     );

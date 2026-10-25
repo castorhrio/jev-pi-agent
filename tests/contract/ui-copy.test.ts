@@ -37,6 +37,16 @@ function tsxFiles(dir: string): string[] {
 const files = tsxFiles(componentsDir);
 
 /**
+ * Every `.tsx` the renderer ships, not just the ones in `components/`.
+ *
+ * `App.tsx` holds the top bar, the surface tabs and the error boundary, and it
+ * was outside the copy gate's reach — which is how a button in the top bar
+ * could go unnamed while every check in this file reported the interface as
+ * clean. The unnamed-control gate below reads the whole renderer.
+ */
+const rendererFiles = tsxFiles(SRC);
+
+/**
  * Shorten a finding path to `src/components/X.tsx`. Written with `split`/`join`
  * rather than `String.replace` because `join` emits `\` on Windows, so the
  * forward-slash literal never matched and every finding printed the full path.
@@ -184,5 +194,150 @@ describe('duplicated copy is still a manual check', () => {
     // The list is documentation, not an assertion — it is here so a future
     // reader knows this gap was considered and rejected, not overlooked.
     expect(known).toHaveLength(2);
+  });
+});
+
+/**
+ * A control must say what it does.
+ *
+ * The update-download button in Settings shipped with the label `—`: an em
+ * dash standing in for a word that was never written. A sighted user saw a
+ * button they could not name — and could not tell apart from the other buttons
+ * in the row; a screen-reader user heard "dash".
+ *
+ * The checks above could not catch it, and no amount of extending them would
+ * have: an em dash is not English text, so it is neither a hardcoded string
+ * nor a bare English node. The defect is not *what* a control says but that it
+ * says *nothing*, so it needs a check of its own.
+ *
+ * The rule: a button whose visible text carries no letter or digit must name
+ * itself with `aria-label` or `title`. That is what licenses the symbol
+ * buttons in the rail (`⟳`, `+`, `✎`, `🗑`) and the stage toggles (`+`, `−`)
+ * to be symbols at all — each one already says what it is. A button that is a
+ * symbol *and* unnamed is the defect, and the em-dash button was the only one
+ * in the tree that had no name to fall back on.
+ */
+describe('every control says what it does (defect class: a button with no name)', () => {
+  /**
+   * Splits a `<button>` into its opening tag and its children.
+   *
+   * The opening tag cannot be cut at the first `>`: an inline handler such as
+   * `onClick={() => void open()}` contains one. The scan therefore tracks
+   * brace depth and string state, and only reads `>` as the end of the tag
+   * when it is neither inside an expression container nor inside a string.
+   */
+  function buttonElements(
+    source: string,
+  ): Array<{ index: number; open: string; children: string }> {
+    const found: Array<{ index: number; open: string; children: string }> = [];
+    const tag = /<button\b/g;
+    let match: RegExpExecArray | null;
+
+    while ((match = tag.exec(source)) !== null) {
+      const start = match.index;
+      let i = start + '<button'.length;
+      let braces = 0;
+      let quote: string | null = null;
+
+      for (; i < source.length; i += 1) {
+        const ch = source[i]!;
+        if (quote !== null) {
+          if (ch === quote) quote = null;
+          continue;
+        }
+        if (ch === '"' || ch === "'" || ch === '`') {
+          quote = ch;
+          continue;
+        }
+        if (ch === '{') {
+          braces += 1;
+          continue;
+        }
+        if (ch === '}') {
+          braces -= 1;
+          continue;
+        }
+        if (ch === '>' && braces === 0) break;
+      }
+      // An unterminated tag means the file is not the JSX this scanner reads.
+      if (i >= source.length) break;
+
+      const open = source.slice(start, i + 1);
+      const close = source.indexOf('</button>', i + 1);
+      if (close === -1) continue;
+      found.push({ index: start, open, children: source.slice(i + 1, close) });
+      tag.lastIndex = close;
+    }
+    return found;
+  }
+
+  /**
+   * The text a button shows, with its JavaScript expressions removed.
+   *
+   * An expression is unknown until it runs — `{t('settings.downloadUpdate')}`
+   * is any word at all — so it counts as a name, and only text that is
+   * *literally* in the source is judged. A nested element's text counts: the
+   * button shows it too.
+   */
+  function visibleText(children: string): { text: string; hasExpression: boolean } {
+    let text = '';
+    let hasExpression = false;
+    let i = 0;
+
+    while (i < children.length) {
+      const ch = children[i]!;
+      if (ch === '{') {
+        hasExpression = true;
+        let depth = 1;
+        i += 1;
+        while (i < children.length && depth > 0) {
+          const c = children[i]!;
+          if (c === '{') depth += 1;
+          else if (c === '}') depth -= 1;
+          i += 1;
+        }
+        continue;
+      }
+      if (ch === '<') {
+        // Skip the tag itself; the text it wraps is still shown.
+        const end = children.indexOf('>', i);
+        if (end === -1) break;
+        i = end + 1;
+        continue;
+      }
+      text += ch;
+      i += 1;
+    }
+    return { text, hasExpression };
+  }
+
+  const namesItself = (open: string): boolean =>
+    /\baria-label\s*=/.test(open) || /\btitle\s*=/.test(open);
+
+  it('finds no button whose visible label is a bare symbol', () => {
+    const findings: string[] = [];
+
+    for (const file of rendererFiles) {
+      const source = readFileSync(file, 'utf8');
+      for (const { index, open, children } of buttonElements(source)) {
+        const { text, hasExpression } = visibleText(children);
+        // It says something.
+        if (/[\p{L}\p{N}]/u.test(text)) continue;
+        // The name is computed at runtime.
+        if (hasExpression) continue;
+        // It is a symbol, and it names itself.
+        if (namesItself(open)) continue;
+
+        const line = source.slice(0, index).split('\n').length;
+        findings.push(
+          `${rel(file)}:${line}: <button>${text.trim() || '(no text)'}</button> has no label`,
+        );
+      }
+    }
+
+    expect(
+      findings,
+      `controls with no visible name:\n  ${findings.join('\n  ')}`,
+    ).toEqual([]);
   });
 });

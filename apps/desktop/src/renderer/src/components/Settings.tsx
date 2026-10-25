@@ -237,7 +237,8 @@ export function SettingsPanel({
                   .catch(() => undefined);
               }}
             >
-              —            </button>
+              {t('settings.downloadUpdate')}
+            </button>
           )}
           {update?.state === 'downloading' && (
             <span className="faint mono">
