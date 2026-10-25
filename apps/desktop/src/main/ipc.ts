@@ -114,10 +114,15 @@ export function registerIpc(
       });
       if (result.canceled || result.filePaths.length === 0) return null;
       const dir = result.filePaths[0] as string;
-      return ucad.sessionStore.upsertWorkspace({
+      const workspace = ucad.sessionStore.upsertWorkspace({
         path: dir,
         name: path.basename(dir),
       });
+      // Opening a project is not only a change of folder: code intelligence and
+      // skills are rooted in it, so they have to follow. Without this the new
+      // project would have no searchable code and no skills of its own.
+      await ucad.activateWorkspace(workspace.id);
+      return workspace;
     }),
   );
 
@@ -145,11 +150,16 @@ export function registerIpc(
           `找不到文件夹「${existing.path}」。它可能已被移动、重命名，或者所在的磁盘没有挂载。请重新打开项目。`,
         );
       }
-      return ucad.sessionStore.upsertWorkspace({
+      const workspace = ucad.sessionStore.upsertWorkspace({
         path: existing.path,
         name: existing.name,
         trustState: existing.trustState,
       });
+      // Switching project has to move the workspace-rooted subsystems too.
+      // Pointing the Explorer at another folder while the code intelligence
+      // still answers for the previous one is the bug this closes.
+      await ucad.activateWorkspace(workspace.id);
+      return workspace;
     }),
   );
 
@@ -157,12 +167,21 @@ export function registerIpc(
     IPC_CHANNELS.workspace.setTrust,
     ok(async (state: unknown) => {
       const parsed = trustSchema.parse(state);
-      const list = ucad.sessionStore.listWorkspaces();
-      const target = list[0];
+      // The trust decision belongs to the project that is open, not to
+      // whichever one happens to be first in the list. With two projects the
+      // old code could grant trust to one while the other was on screen.
+      const targetId = ucad.currentWorkspaceId;
+      const target = targetId
+        ? ucad.sessionStore.getWorkspace(targetId)
+        : ucad.sessionStore.listWorkspaces()[0];
       if (!target) {
         throw new Error('没有已打开的项目');
       }
-      return ucad.sessionStore.setWorkspaceTrust(target.id, parsed);
+      const updated = ucad.sessionStore.setWorkspaceTrust(target.id, parsed);
+      // Trust is part of what the workspace-rooted subsystems are initialised
+      // with, so the project is activated again to put the new state in force.
+      await ucad.activateWorkspace(updated.id);
+      return updated;
     }),
   );
 

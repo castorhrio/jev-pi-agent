@@ -1,0 +1,221 @@
+/**
+ * One workspace activation entry point (§4.5 / §4.8).
+ *
+ * ## The failure this file exists to catch
+ *
+ * Code intelligence and skills are both rooted in the project the user is
+ * working on:
+ *
+ *   - the Basic provider answers a query by scanning the workspace it was
+ *     *initialised* with, so a provider initialised for project A answers
+ *     nothing for project B — and the Context Broker reads that as "this
+ *     project has no code items", so the pack quietly loses the files;
+ *   - a skill registry still pointing at project A injects A's rules into
+ *     B's context, or none at all.
+ *
+ * Both used to be pinned once at start-up to whichever project was first in
+ * the list. Opening a second project therefore changed the folder in the
+ * Explorer and nothing else — a failure with no visible symptom, because the
+ * UI looks right and only the injected content is wrong.
+ *
+ * So this test drives the real `IntelligenceManager`, the real
+ * `BasicIntelligenceProvider` and the real `SkillRegistry` through the real
+ * activation function, over two real directories on disk. It asserts what the
+ * *product* needs to be true afterwards, not that a method was called.
+ */
+
+import { describe, expect, it, beforeAll, afterAll } from 'vitest';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
+
+import {
+  BasicIntelligenceProvider,
+  IntelligenceManager,
+} from '@ucad/code-intelligence';
+import { SkillRegistry, defaultSkillRoots } from '@ucad/skills';
+import { BlobStore, silentLogger } from '@ucad/observability';
+
+import { activateWorkspace } from '../../apps/desktop/src/main/workspace-activation';
+
+let root: string;
+let projectA: string;
+let projectB: string;
+let intelligence: IntelligenceManager;
+let skills: SkillRegistry;
+let blobs: BlobStore;
+
+/** Writes a file, refusing to escape the fixture root. */
+function write(base: string, rel: string, content: string): void {
+  const file = path.resolve(base, rel);
+  if (!file.startsWith(base + path.sep)) {
+    throw new Error(`fixture path escapes the fixture root: ${rel}`);
+  }
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, content, 'utf8');
+}
+
+/** A skill directory, in the `agentskills.io` layout UCAD documents. */
+function writeSkill(base: string, name: string, body: string): void {
+  write(
+    base,
+    path.join('.ucad', 'skills', name, 'SKILL.md'),
+    ['---', `name: ${name}`, 'description: a project rule', '---', '', body].join('\n'),
+  );
+}
+
+beforeAll(() => {
+  root = fs.mkdtempSync(path.join(os.tmpdir(), 'ucad-ws-'));
+
+  projectA = path.join(root, 'project-a');
+  projectB = path.join(root, 'project-b');
+  fs.mkdirSync(projectA, { recursive: true });
+  fs.mkdirSync(projectB, { recursive: true });
+
+  write(projectA, 'src/alpha.ts', 'export function alphaWidget() { return 1; }\n');
+  write(projectB, 'src/beta.ts', 'export function betaWidget() { return 2; }\n');
+  writeSkill(projectA, 'alpha-rules', 'Always run the alpha checks.');
+  writeSkill(projectB, 'beta-rules', 'Always run the beta checks.');
+
+  blobs = new BlobStore({ root: path.join(root, 'blobs') });
+  intelligence = new IntelligenceManager({ db: {} as never, logger: silentLogger('test') });
+  intelligence.register(new BasicIntelligenceProvider({ logger: silentLogger('test'), blobs }));
+
+  // The registry starts with no project at all — the state the product was in
+  // before a project had been opened.
+  skills = new SkillRegistry({
+    logger: silentLogger('test'),
+    roots: defaultSkillRoots(undefined, [{ path: path.join(root, 'user-skills'), scope: 'user' }]),
+  });
+});
+
+afterAll(() => {
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
+/** Searches a workspace through the manager, the way the Context Broker does. */
+async function search(workspaceId: string, query: string): Promise<{ status: string; paths: string[] }> {
+  const outcome = await intelligence.query({
+    kind: 'search',
+    providerId: 'basic',
+    input: { workspaceId, query, limit: 20 },
+  });
+  const result = outcome.result as { items?: Array<{ path?: string }> } | null;
+  return {
+    status: outcome.status,
+    paths: (result?.items ?? []).map((item) => item.path ?? ''),
+  };
+}
+
+/** The names of the skills the registry currently offers. */
+function skillNames(): string[] {
+  return skills.list().map((skill) => skill.name);
+}
+
+const deps = () => ({
+  logger: silentLogger('test'),
+  intelligence,
+  skills,
+  configDir: path.join(root, 'config'),
+  cacheDir: path.join(root, 'cache'),
+  providerId: 'basic',
+  extraSkillRoots: [{ path: path.join(root, 'user-skills'), scope: 'user' as const }],
+});
+
+describe('workspace activation', () => {
+  it('a workspace that was never activated has no searchable code', async () => {
+    // The honest starting point: the provider knows nothing about this
+    // workspace, so it cannot answer — and must say so rather than return
+    // an empty result set that reads like "this project has no code".
+    const outcome = await search('ws_unactivated', 'alphaWidget');
+    expect(outcome.status).not.toBe('ok');
+  });
+
+  it('activating a project makes its code searchable and its skills apply', async () => {
+    const result = await activateWorkspace(
+      deps(),
+      { id: 'ws_a', path: projectA, trustState: 'trusted' },
+    );
+
+    expect(result.workspaceId).toBe('ws_a');
+    expect(result.intelligence).toBe('initialized');
+
+    const found = await search('ws_a', 'alphaWidget');
+    expect(found.status).toBe('ok');
+    expect(found.paths.join('\n')).toContain('alpha.ts');
+    // The other project is not visible from here.
+    expect(found.paths.join('\n')).not.toContain('beta.ts');
+
+    expect(skillNames()).toContain('alpha-rules');
+  });
+
+  it('switching project moves the code search and the skills with it', async () => {
+    const result = await activateWorkspace(
+      deps(),
+      { id: 'ws_b', path: projectB, trustState: 'trusted' },
+    );
+    expect(result.workspaceId).toBe('ws_b');
+
+    // The new project answers for itself...
+    const beta = await search('ws_b', 'betaWidget');
+    expect(beta.status).toBe('ok');
+    expect(beta.paths.join('\n')).toContain('beta.ts');
+
+    // ...and the previous project's rules are gone, not merely outranked.
+    // A rule that survived the switch would be injected into a project the
+    // user never wrote it for.
+    expect(skillNames()).toContain('beta-rules');
+    expect(skillNames()).not.toContain('alpha-rules');
+
+    // The first project's code is no longer reachable from the second one.
+    const alpha = await search('ws_b', 'alphaWidget');
+    expect(alpha.paths.join('\n')).not.toContain('alpha.ts');
+
+    // The roots on record are the ones in force now, so the UI can show what
+    // UCAD is actually looking at.
+    expect(result.skillRoots).toContain(path.join(projectB, '.ucad', 'skills'));
+  });
+
+  it('switching back brings the first project back with it', async () => {
+    await activateWorkspace(deps(), { id: 'ws_a', path: projectA, trustState: 'trusted' });
+
+    const alpha = await search('ws_a', 'alphaWidget');
+    expect(alpha.status).toBe('ok');
+    expect(alpha.paths.join('\n')).toContain('alpha.ts');
+    expect(skillNames()).toContain('alpha-rules');
+    expect(skillNames()).not.toContain('beta-rules');
+  });
+
+  it('the user-scope roots keep working across a project switch', async () => {
+    write(
+      root,
+      path.join('user-skills', 'personal-rule', 'SKILL.md'),
+      ['---', 'name: personal-rule', 'description: a personal rule', '---', '', 'Prefer tabs.'].join('\n'),
+    );
+
+    await activateWorkspace(deps(), { id: 'ws_b', path: projectB, trustState: 'trusted' });
+
+    // A personal rule is not a project's rule: it must not be lost when the
+    // project changes.
+    expect(skillNames()).toContain('personal-rule');
+    expect(skillNames()).toContain('beta-rules');
+  });
+
+  it('a failing provider degrades the workspace instead of breaking it', async () => {
+    const brokenIntelligence = {
+      initializeProvider: async (): Promise<void> => {
+        throw new Error('provider exploded');
+      },
+    };
+
+    const result = await activateWorkspace(
+      { ...deps(), intelligence: brokenIntelligence },
+      { id: 'ws_c', path: projectA, trustState: 'trusted' },
+    );
+
+    // NFR-09: intelligence degrades, it does not take the app down — and the
+    // degradation is reported rather than swallowed.
+    expect(result.intelligence).toBe('degraded');
+    expect(skillNames()).toContain('alpha-rules');
+  });
+});

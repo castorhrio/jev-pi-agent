@@ -30,7 +30,7 @@ import {
 import { AgentRuntimeManager } from '@ucad/agent-core';
 import { AgentHostProcess, resolveHostEntry } from '@ucad/agent-host';
 import { BUILTIN_PROVIDERS, ModelRegistry, ProviderClient, getProvider } from '@ucad/providers';
-import { SkillRegistry } from '@ucad/skills';
+import { SkillRegistry, defaultSkillRoots } from '@ucad/skills';
 import {
   BlobStore,
   FileLogSink,
@@ -44,11 +44,13 @@ import type {
   ToolAvailabilityContext,
   TurnEvent,
   ProviderDescriptorDto,
+  WorkspaceDto,
 } from '@ucad/contracts';
 import { IPC_PUSH, describeError } from '@ucad/contracts';
 import type { AppPaths } from './paths';
 import { DecisionFacade } from './decision-facade';
 import { GitLikeBridge } from './git-bridge';
+import { activateWorkspace } from './workspace-activation';
 
 export interface UcadAppOptions {
   paths: AppPaths;
@@ -95,6 +97,8 @@ export class UcadApp {
   private readonly adapterModules: Record<string, string>;
   private rendererSink: ((e: TurnEvent) => void) | null = null;
   private dataSink: ((channel: string, payload: unknown) => void) | null = null;
+  /** the workspace the user is currently working in; set by `activateWorkspace` */
+  private activeWorkspaceId: string | undefined;
 
   constructor(opts: UcadAppOptions) {
     this.paths = opts.paths;
@@ -242,43 +246,91 @@ export class UcadApp {
     // resolved per agent at build time. Re-discovery only happens on
     // `invalidate()`, so an edited SKILL.md takes effect the next time the
     // workspace changes rather than on a poll.
+    //
+    // The roots are the documented convention (`<workspace>/.ucad/skills` and
+    // `~/.ucad/skills`) plus the directory next to the app's own database.
+    // The workspace half is moved by `activateWorkspace`; it is deliberately
+    // *not* pinned to whatever happened to be first at start-up.
     this.skills = new SkillRegistry({
       logger: this.logger.child('skills'),
-      workspaceRoot: this.sessionStore.listWorkspaces()[0]?.path,
-      roots: [{ path: path.join(this.paths.userData, 'skills'), scope: 'user' }],
+      roots: defaultSkillRoots(undefined, this.extraSkillRoots()),
     });
   }
 
   /**
-   * NFR-12 / §4.8: a provider is only usable once it has been initialised with
-   * a workspace root. Registering without initialising leaves every query
-   * failing with `INTELLIGENCE_UNAVAILABLE` — which is exactly the state the
-   * product was in before this call existed.
+   * The user-scope skill roots UCAD adds on top of the documented ones.
+   *
+   * The app-local directory sits next to the database, so a skill placed there
+   * keeps working across releases instead of disappearing when the documented
+   * roots move.
    */
-  async initCodeIntelligence(): Promise<void> {
-    const workspace = this.sessionStore.listWorkspaces()[0];
+  private extraSkillRoots(): { path: string; scope: 'user' }[] {
+    return [{ path: path.join(this.paths.userData, 'skills'), scope: 'user' }];
+  }
+
+  /**
+   * The one place a workspace becomes "the project we are working on".
+   *
+   * §4.8 / §4.5: code intelligence and skills are both rooted in the project.
+   * A provider that was initialised for project A answers nothing for project
+   * B, and a skill registry still pointing at A injects A's rules into B's
+   * context. Both used to be pinned once at start-up to whichever project was
+   * first in the list, so opening a second project changed the folder in the
+   * Explorer and nothing else.
+   *
+   * Opening, switching and restoring a project all come through here, so
+   * there is exactly one answer to "what is this app working on".
+   */
+  async activateWorkspace(workspaceId: string): Promise<WorkspaceDto> {
+    const workspace = this.sessionStore.getWorkspace(workspaceId);
     if (!workspace) {
-      this.logger.info('no workspace yet; code intelligence waits for one');
-      return;
+      throw new Error(`项目不存在：${workspaceId}`);
     }
-    try {
-      await this.intelligence.initializeProvider('basic', {
-        workspaceId: workspace.id,
-        workspaceRoot: workspace.path,
+    this.activeWorkspaceId = workspace.id;
+    await activateWorkspace(
+      {
+        logger: this.logger,
+        intelligence: this.intelligence,
+        skills: this.skills,
         configDir: this.paths.userData,
         cacheDir: this.paths.cacheDir,
+        providerId: 'basic',
+        extraSkillRoots: this.extraSkillRoots(),
+      },
+      {
+        id: workspace.id,
+        path: workspace.path,
         trustState: workspace.trustState,
-        logger: this.logger.child('intelligence'),
-      });
-      this.logger.info('basic code intelligence initialised', {
-        workspaceId: workspace.id,
-      });
-    } catch (error) {
-      // NFR-09: intelligence degrades, it does not take the app down.
-      this.logger.warn('basic code intelligence failed to initialise', {
-        error: describeError(error),
-      });
+      },
+    );
+    return workspace;
+  }
+
+  /**
+   * The workspace the user is working in, if there is one.
+   *
+   * Not "the most recently opened one": that inference is what put a session's
+   * file writes and permission requests on somebody else's project.
+   */
+  get currentWorkspaceId(): string | undefined {
+    return this.activeWorkspaceId;
+  }
+
+  /**
+   * Restores the project the user had open at the last exit.
+   *
+   * A provider that is registered but not initialised answers every query with
+   * `INTELLIGENCE_UNAVAILABLE`, which reads exactly like "code intelligence is
+   * broken". Restoring it here means the first turn of the new session already
+   * has the project's files.
+   */
+  async activateMostRecentWorkspace(): Promise<WorkspaceDto | null> {
+    const mostRecent = this.sessionStore.listWorkspaces()[0];
+    if (!mostRecent) {
+      this.logger.info('no workspace yet; code intelligence waits for one');
+      return null;
     }
+    return this.activateWorkspace(mostRecent.id);
   }
 
   /** The UCAD-registered catalogue, with the honesty flag resolved. */

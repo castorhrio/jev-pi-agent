@@ -35,6 +35,10 @@ agent, or a model provider. It makes the two answers checkable.
   something gets a decision recorded, with the reason, before it happens.
 - **Handoffs between agents.** A readable record of what was decided, changed,
   run and left open — the next agent reads it instead of re-asking you.
+- **Project rules that follow the project.** A repository's own instructions
+  live in `<project>/.ucad/skills/<name>/SKILL.md`. They are injected as
+  ordinary context items, so you can read them in the Context Drawer, and they
+  change with the project you have open — not with the one you opened first.
 - **Any OpenAI-compatible provider.** One protocol, many vendors; credentials
   are stored one-way in the OS keychain and never leave the main process.
 - **MCP servers.** Configure a server, see its health honestly, remove it.
@@ -162,6 +166,9 @@ UCAD 就是为这两个问题做的控制面。它不试图当编辑器、当终
 - **绕不过的权限门。** Agent 要执行操作前，先得到一个被记录的决定和它的理由。
 - **Agent 之间的交接。** 一份可读的记录：决定了什么、改了什么、跑过什么、还剩什么——
   下一个 Agent 读它，而不是再问你一遍。
+- **随项目走的项目规则。** 仓库自己的规矩放在 `<project>/.ucad/skills/<name>/SKILL.md`，
+  它们作为普通上下文项注入——在上下文面板里可以逐字核对；换个项目打开，规则也跟着换，
+  而不是留在第一次打开的那个项目上。
 - **任意 OpenAI 兼容厂商。** 一个协议覆盖多家；凭据单向存进系统钥匙串，
   永不离开主进程。
 - **MCP 服务器。** 添加、看健康状态、移除。

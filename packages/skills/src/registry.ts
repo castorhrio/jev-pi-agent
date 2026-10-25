@@ -192,7 +192,7 @@ function bindingReason(skill: Skill, agentId: string, scored: Scored, bound: boo
 
 export class SkillRegistry {
   private readonly logger: Logger;
-  private readonly roots: SkillRoot[];
+  private roots: SkillRoot[];
   private readonly maxPerTurn: number;
   private readonly db: DatabaseLike | undefined;
 
@@ -219,6 +219,25 @@ export class SkillRegistry {
    */
   invalidate(): void {
     this.cache = null;
+  }
+
+  /**
+   * Re-points the registry at another workspace and drops the cache.
+   *
+   * A skill is a project thing as often as a personal one: `<project>/.ucad/skills`
+   * is where a repository's own rules live, so the roots have to follow the
+   * project the user is in. The cache goes with them — a rule from the
+   * previous project must not survive into the new one's context, where it
+   * would be injected as if the user had written it there.
+   *
+   * The roots are the documented convention for the new workspace plus
+   * `extraUserRoots`; the constructor's `roots` are replaced. A caller that
+   * has no workspace to follow keeps the constructor's roots and never calls
+   * this.
+   */
+  useWorkspace(workspaceRoot?: string, extraUserRoots: readonly SkillRoot[] = []): void {
+    this.roots = defaultSkillRoots(workspaceRoot, extraUserRoots);
+    this.invalidate();
   }
 
   /** Every discovered skill, workspace shadowing user, sorted by name. */

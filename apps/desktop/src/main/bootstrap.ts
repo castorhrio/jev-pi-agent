@@ -317,8 +317,9 @@ async function bootstrap(): Promise<void> {
 
   // A provider that is registered but not initialised answers every query with
   // `INTELLIGENCE_UNAVAILABLE`, which reads exactly like "code intelligence is
-  // broken". Initialise it as soon as there is a workspace.
-  await ucad.initCodeIntelligence();
+  // broken". Restore the project the user had open, so the workspace-rooted
+  // subsystems are already in force for the first turn.
+  await ucad.activateMostRecentWorkspace();
 
   // §8.4: the 90-day default is only real if something enforces it. It runs
   // after crash recovery, so a session the user was halfway through is never

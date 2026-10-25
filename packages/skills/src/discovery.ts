@@ -42,13 +42,24 @@ const IGNORED_DIRECTORIES: ReadonlySet<string> = new Set(['node_modules', '.git'
 /** Defends the scan against a symlink loop. */
 const MAX_SCAN_DEPTH = 4;
 
-/** `<workspace>/.ucad/skills` and `~/.ucad/skills`, the two places to look. */
-export function defaultSkillRoots(workspaceRoot?: string): SkillRoot[] {
+/**
+ * `<workspace>/.ucad/skills` and `~/.ucad/skills`, the two places to look.
+ *
+ * `extraUserRoots` are appended as user-scope roots. The app keeps one next to
+ * its own database, and a skill placed there has to keep working: a rule that
+ * was found yesterday must not silently stop being found because the
+ * documented roots moved.
+ */
+export function defaultSkillRoots(
+  workspaceRoot?: string,
+  extraUserRoots: readonly SkillRoot[] = [],
+): SkillRoot[] {
   const roots: SkillRoot[] = [];
   if (workspaceRoot) {
     roots.push({ path: join(resolve(workspaceRoot), '.ucad', 'skills'), scope: 'workspace' });
   }
   roots.push({ path: join(homedir(), '.ucad', 'skills'), scope: 'user' });
+  roots.push(...extraUserRoots);
   return roots;
 }
 
