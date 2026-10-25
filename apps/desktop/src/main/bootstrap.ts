@@ -45,17 +45,6 @@ let tray: Tray | null = null;
 let trayUsable = false;
 /** Why the tray is unusable, when it is. */
 let trayProblem: TrayProblem | undefined;
-/**
- * What closing the window does.
- *
- * Default is **hide to tray**: a long agent run is not something a user wants to
- * kill by clicking the X, and a desktop agent that silently disappears is a
- * desktop agent that looks broken. Quitting is explicit — the tray menu, or the
- * menu bar's File → Quit.
- *
- * The default is only the default: Settings → 关闭窗口时 can change it, and the
- * setting is read when the window closes so a change takes effect at once.
- */
 let locale: Locale = negotiateLocale(app.getPreferredSystemLanguages?.() ?? ['zh-CN']);
 
 /**
@@ -69,12 +58,15 @@ interface QuittableApp {
 const appState = app as QuittableApp;
 
 /**
- * What the user chose in Settings → 关闭窗口时.
+ * What closing the window does.
  *
- * Read from the store rather than cached at startup, so a change made while
- * the app is running takes effect the next time the window is closed — a
- * preference that needs a restart to apply is a preference most people never
- * find.
+ * The default is **hide to tray**: a long agent run is not something a user
+ * wants to kill by clicking the X, and a desktop agent that silently
+ * disappears is a desktop agent that looks broken. Quitting is explicit — the
+ * tray menu, or the menu bar's File → Quit.
+ *
+ * The default is only the default: Settings → 关闭窗口时 can change it, and the
+ * setting is read when the window closes so a change takes effect at once.
  */
 function closePreference(): CloseBehaviour {
   try {
