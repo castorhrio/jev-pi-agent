@@ -13,6 +13,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { appError, codedError, describeError, toAppError } from '@ucad/contracts';
+import { scanBareThrows } from './bare-throw-scan';
 
 describe('describeError', () => {
   it('never renders the string "[object Object]"', () => {
@@ -147,6 +148,11 @@ describe('codedError', () => {
  *   - `throw appError(...)` — a thrown plain object, which stops matching every
  *     `instanceof Error` branch and does not survive Electron's serialisation.
  *
+ * The scan itself lives in `bare-throw-scan.ts` and is exercised on fixtures
+ * below. Two shapes it originally missed are pinned there: a trailing `//`
+ * comment (prose that names the pattern is not a throw) and a throw whose
+ * argument is wrapped onto the next line (still a bare throw).
+ *
  * The allowlist is a debt ledger, not a filter: it is compared for equality, so
  * it fails when a bare throw appears **and** when an entry is fixed and left
  * behind.
@@ -177,33 +183,118 @@ interface Bare {
 }
 
 /**
- * The sources with comments removed.
+ * The two facts the allowlist needs, read through the shared scanner: the file
+ * names Main throws a bare error in, and the allowlisted entry still being
+ * there.
  *
- * The comments in this code base *discuss* the anti-pattern — "the previous
- * workaround was `throw new Error(appError(…).message)`" is a sentence in three
- * files — and a scan that counted prose would be a scan nobody could keep
- * green. Strings are left alone: a bare throw hidden behind a `//` in a string
- * literal is not a thing that happens, while stripping string literals would
- * also strip the messages this test is about.
+ * `mainSrc` is scanned rather than the whole app because that is where an
+ * uncaught rejection can end up across the IPC bridge; the Renderer's own
+ * `throw` statements are caught by its own tests.
  */
-function codeOnly(text: string): string {
-  return text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+function bareThrows(): Bare[] {
+  const sources = fs
+    .readdirSync(mainSrc)
+    .filter((file) => file.endsWith('.ts') && !file.endsWith('.test.ts'))
+    .sort()
+    .map((file) => ({ file, text: fs.readFileSync(path.join(mainSrc, file), 'utf8') }));
+
+  return scanBareThrows(sources).map(({ file, line }) => ({ file, line }));
 }
 
-function bareThrows(): Bare[] {
-  const found: Bare[] = [];
-  for (const file of fs.readdirSync(mainSrc).sort()) {
-    if (!file.endsWith('.ts') || file.endsWith('.test.ts')) continue;
-    const text = codeOnly(fs.readFileSync(path.join(mainSrc, file), 'utf8'));
-    for (const raw of text.split('\n')) {
-      const line = raw.trim();
-      if (/\bthrow\s+new\s+Error\s*\(/.test(line) || /\bthrow\s+appError\s*\(/.test(line)) {
-        found.push({ file, line });
-      }
-    }
-  }
-  return found;
-}
+/**
+ * The scanner, on fixtures.
+ *
+ * A meta-test is only as good as its ability to fail. These feed it the shapes
+ * a real call site takes, including the two the first version missed, so a
+ * future "simplification" of the scan is caught here rather than by the
+ * guarantee silently disappearing.
+ */
+describe('the bare-throw scan', () => {
+  it('catches a throw written on one line', () => {
+    const found = scanBareThrows([
+      { file: 'a.ts', text: 'export function f(): never {\n  throw new Error("boom");\n}' },
+      { file: 'b.ts', text: 'throw appError("CODE", "message", "ipc");' },
+    ]);
+
+    expect(found.map((entry) => entry.file)).toEqual(['a.ts', 'b.ts']);
+    expect(found[0]?.at).toBe(2);
+    expect(found[0]?.line).toBe('throw new Error("boom");');
+  });
+
+  it('catches a throw whose argument is wrapped onto the next line', () => {
+    // The line-by-line version could not see this one: the `(` is the last
+    // thing on the line, so the sentence and the code were both legitimate.
+    const text = [
+      'export function f(): never {',
+      '  throw new Error(',
+      '    `workspace ${id} could not be activated`,',
+      '  );',
+      '}',
+    ].join('\n');
+
+    const found = scanBareThrows([{ file: 'wrapped.ts', text }]);
+
+    expect(found).toHaveLength(1);
+    // Reported where the statement starts, not where the argument ends.
+    expect(found[0]?.at).toBe(2);
+    expect(found[0]?.line).toBe('throw new Error(');
+  });
+
+  it('does not count prose in a trailing comment as a throw', () => {
+    // The exact sentence shape this code base uses to explain the fix. Scanned
+    // as code, it would make the allowlist comparison fail on every file that
+    // documents the past failure.
+    const found = scanBareThrows([
+      {
+        file: 'doc.ts',
+        text: 'const ok = 1; // used to be throw new Error(appError("C", "m", "ipc").message)',
+      },
+    ]);
+
+    expect(found).toEqual([]);
+  });
+
+  it('still counts a throw after a trailing comment on the same line', () => {
+    // The other direction of the same rule: blanking the comment must not take
+    // the code in front of it with it.
+    const found = scanBareThrows([
+      { file: 'mixed.ts', text: 'if (!ok) throw new Error("boom"); // refuse without a code' },
+    ]);
+
+    expect(found).toHaveLength(1);
+    expect(found[0]?.line).toBe('if (!ok) throw new Error("boom");');
+  });
+
+  it('ignores throws inside block comments', () => {
+    const found = scanBareThrows([
+      {
+        file: 'quiet.ts',
+        text: [
+          '/**',
+          ' * A previous version did:',
+          ' *   throw new Error("boom");',
+          ' */',
+          'export const ok = 1;',
+        ].join('\n'),
+      },
+    ]);
+
+    expect(found).toEqual([]);
+  });
+
+  it('reports a throw inside a string literal, which is the documented boundary', () => {
+    // Strings are deliberately not stripped: stripping them would also hide the
+    // message of every throw this test is about. The cost is that a literal
+    // quoting the pattern is counted, and the scan fails loudly. That direction
+    // is chosen on purpose — a false negative would make the guarantee vanish
+    // without anybody noticing.
+    const found = scanBareThrows([
+      { file: 'literal.ts', text: 'const message = "throw new Error(\\"quoted\\")";' },
+    ]);
+
+    expect(found).toHaveLength(1);
+  });
+});
 
 describe('every refusal in Main names a code (§4.11)', () => {
   it('main/*.ts throws no bare Error outside the allowlist', () => {

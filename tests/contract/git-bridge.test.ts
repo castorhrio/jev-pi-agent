@@ -56,6 +56,8 @@ function harness(options: {
   diffFor?: (path: string) => Promise<{ patch: string; binary: boolean }>;
   /** `status` throws, the way a non-repository does */
   statusFails?: boolean;
+  /** `status` never returns, the way a stale index lock does */
+  statusHangs?: boolean;
   diffConcurrency?: number;
   diffDeadlineMs?: number;
 }): Harness {
@@ -66,6 +68,7 @@ function harness(options: {
 
   const status = async () => {
     if (options.statusFails) throw new Error('fatal: not a git repository');
+    if (options.statusHangs) return new Promise<never>(() => {});
     const staged = (options.staged ?? []).map((path) => ({ path, status: 'M' }));
     const unstaged = (options.unstaged ?? []).map((path) => ({ path, status: 'M' }));
     const untracked = options.untracked ?? [];
@@ -264,6 +267,64 @@ describe('git diffSummary — the bounds', () => {
     expect(stopped!.fields?.collected).toBe(1);
     expect(stopped!.fields?.abandoned).toBe(1);
     expect(stopped!.fields?.inFlight).toBe(1);
+  });
+
+  it('reaches the deadline when `git status` is the call that hangs', async () => {
+    // `status` is the first subprocess of the summary, so it is the one a stale
+    // index lock stops. The documented budget is for the whole summary; when
+    // `status` sat outside the race the doc said "2s" and the call could hang
+    // until the app was closed.
+    const h = harness({ statusHangs: true, diffDeadlineMs: 25 });
+
+    const startedAt = Date.now();
+    const summary = await h.bridge.diffSummary({ workspaceId: 'ws_1' });
+
+    expect(Date.now() - startedAt).toBeLessThan(1_000);
+    // Nothing was listed, so there is nothing to return — and no `git diff`
+    // was spawned for a path nobody knows.
+    expect(summary).toEqual([]);
+    expect(h.diffs).toEqual([]);
+    const stopped = h.logs.find((line) => line.event === 'git diff summary stopped at its deadline');
+    expect(stopped, 'a hung `git status` returned an empty summary with no explanation').toBeDefined();
+    // The stage is named: "the summary is empty" has two very different causes
+    // (a clean worktree, a hung status) and this field tells them apart.
+    expect(stopped!.fields?.stage).toBe('status');
+    expect(stopped!.fields?.requested).toBe(0);
+  });
+
+  it('keeps the paths that answered when one `git diff` throws', async () => {
+    // One unreadable path (removed between status and diff, a corrupt index
+    // entry) used to reject the whole worker pool and hand back `[]`: a claim
+    // about every file, made because one of them failed.
+    const h = harness({
+      unstaged: ['a.ts', 'b.ts', 'goes-missing.ts', 'd.ts'],
+      diffFor: async (path) => {
+        if (path === 'goes-missing.ts') throw new Error('fatal: bad object');
+        return patch(path);
+      },
+    });
+
+    const summary = await h.bridge.diffSummary({ workspaceId: 'ws_1' });
+
+    expect(summary.map((item) => item.path)).toEqual(['a.ts', 'b.ts', 'd.ts']);
+    const skipped = h.logs.find((line) => line.event === 'git diff skipped a path that failed');
+    expect(skipped, 'a path was dropped without a log line naming it').toBeDefined();
+    expect(skipped!.fields?.path).toBe('goes-missing.ts');
+    expect(String(skipped!.fields?.error)).toContain('bad object');
+  });
+
+  it('defaults to four diffs in flight when the caller sets nothing', async () => {
+    // 4 is a product decision, not an incidental constant (see the comment on
+    // `DEFAULT_DIFF_CONCURRENCY`). Pinned here so raising it is a deliberate
+    // change with a test to update rather than a quiet edit.
+    const paths = Array.from({ length: 12 }, (_, i) => `src/f${i}.ts`);
+    const h = harness({ unstaged: paths, diffFor: async (path) => after(2, patch(path)) });
+
+    const summary = await h.bridge.diffSummary({ workspaceId: 'ws_1', limit: 12 });
+
+    expect(summary).toHaveLength(12);
+    expect(h.maxInFlight()).toBeLessThanOrEqual(4);
+    expect(h.maxInFlight()).toBeGreaterThan(1);
   });
 
   it('does not stop early when everything answers in time', async () => {

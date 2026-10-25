@@ -577,6 +577,103 @@ describe("the container's active workspace", () => {
     expect(currentWorkspaceId(app)).toBe('ws_b');
   });
 
+  /**
+   * The three answers every workspace-scoped handler can read have to agree:
+   * `currentWorkspaceId` (what IPC scopes a write or a permission request to),
+   * the skill registry's roots (what gets injected into the context pack) and
+   * the provider's root (what code search answers from). Earlier commits fixed
+   * one of them at a time, so each fix could pass on its own while the three
+   * still disagreed; this case drives all of them through one overlap.
+   */
+  it('leaves the same project in force in all three places when two activations overlap', async () => {
+    let providerRoot: string | undefined;
+    const singleRooted = {
+      initializeProvider: async (
+        providerId: string,
+        ctx: Parameters<IntelligenceManager['initializeProvider']>[1],
+      ): Promise<void> => {
+        // A holds the provider long enough that B arrives while it is still in
+        // flight — the same overlap the queue exists for, with a provider that
+        // (unlike the Basic one) remembers a single root.
+        if (ctx.workspaceId === 'ws_a') await new Promise((resolve) => setTimeout(resolve, 30));
+        providerRoot = ctx.workspaceRoot;
+        await intelligence.initializeProvider(providerId, ctx);
+      },
+    };
+    // One activator for both requests, the way the container holds one: the
+    // queue lives in the activator, so building one per call would serialise
+    // nothing and the test would pass without testing anything.
+    const queue = new WorkspaceActivator({ ...deps(), intelligence: singleRooted });
+    const { app, rows } = container((workspace) => queue.activate(workspace));
+    // Real directories, because skills and the Basic provider both read the
+    // root rather than merely recording it.
+    rows.set(rowA.id, { ...rowA, path: projectA });
+    rows.set(rowB.id, { ...rowB, path: projectB });
+
+    const first = activate(app, 'ws_a') as Promise<{
+      id: string;
+      activation: string;
+      requestedWorkspaceId?: string;
+    }>;
+    // Let A begin, so B arrives mid-initialisation rather than before it.
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    const second = activate(app, 'ws_b') as Promise<{ id: string; activation: string }>;
+    const [firstDto, secondDto] = await Promise.all([first, second]);
+
+    const rootsNow = () => skills.watchedRoots().map((root) => root.path);
+
+    // What a workspace-scoped handler reads before it writes anything.
+    expect(currentWorkspaceId(app)).toBe('ws_b');
+    // What the Context pack injects.
+    expect(rootsNow()).toContain(path.join(projectB, '.ucad', 'skills'));
+    expect(rootsNow()).not.toContain(path.join(projectA, '.ucad', 'skills'));
+    // What code search answers from.
+    expect(providerRoot).toBe(projectB);
+
+    // And the Renderer is told the same thing, including by the request that
+    // lost: it navigates on `id`, so naming A here would walk the user back to
+    // the project whose code and rules were never loaded.
+    expect(firstDto.id).toBe('ws_b');
+    expect(firstDto.activation).toBe('superseded');
+    expect(firstDto.requestedWorkspaceId).toBe('ws_a');
+    expect(secondDto.id).toBe('ws_b');
+    expect(secondDto.activation).toBe('initialized');
+  });
+
+  it('follows requests, not completions, when an older activation lands last', async () => {
+    // The field is written synchronously by the request (the case above) and by
+    // nothing else. A completion that arrives after a newer request must not
+    // vote, or the app would scope its next write to a project the user has
+    // already left — the failure the synchronous write exists to prevent, one
+    // await later.
+    const { app } = container(async (workspace) => {
+      await new Promise((resolve) => setTimeout(resolve, workspace.id === 'ws_a' ? 30 : 1));
+      return workspace.id === 'ws_a'
+        ? {
+            workspaceId: workspace.id,
+            workspaceRoot: workspace.path,
+            skillRootsAtReturn: [],
+            intelligence: 'superseded' as const,
+            supersededBy: 'ws_b',
+          }
+        : {
+            workspaceId: workspace.id,
+            workspaceRoot: workspace.path,
+            skillRootsAtReturn: [],
+            intelligence: 'initialized' as const,
+          };
+    });
+
+    const first = activate(app, 'ws_a');
+    const second = activate(app, 'ws_b');
+    // Before either settles: the requests already decided the field.
+    expect(currentWorkspaceId(app)).toBe('ws_b');
+
+    await Promise.all([first, second]);
+    // A settled last; the field still belongs to the request that came after.
+    expect(currentWorkspaceId(app)).toBe('ws_b');
+  });
+
   it('is left on the previous project when the activation throws', async () => {
     const { app } = container(async () => {
       throw new Error('激活队列故障');

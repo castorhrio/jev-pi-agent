@@ -24,7 +24,10 @@ export interface GitLikeBridgeOptions {
   maxDiffTokens?: number;
   /** how many per-file diffs may be in flight at once (default 4) */
   diffConcurrency?: number;
-  /** whole-summary budget in ms; the remainder is reported and logged (default 2000) */
+  /**
+   * whole-summary budget in ms, `git status` included; whatever has not
+   * answered by then is reported and logged (default 2000)
+   */
   diffDeadlineMs?: number;
 }
 
@@ -42,11 +45,11 @@ const DEFAULT_DIFF_CONCURRENCY = 4;
 /**
  * The whole summary's budget.
  *
- * A `git diff` that hangs (a stale index lock, a network drive) must not hold
- * the turn open until the app is closed. Two seconds is well past a normal
- * summary and short enough that a person notices nothing but the answer being
- * smaller than expected. What came back in time is used; what did not is
- * logged, not silently invented.
+ * A `git diff` — or the `git status` that starts the summary — that hangs (a
+ * stale index lock, a network drive) must not hold the turn open until the app
+ * is closed. Two seconds is well past a normal summary and short enough that a
+ * person notices nothing but the answer being smaller than expected. What came
+ * back in time is used; what did not is logged, not silently invented.
  */
 const DEFAULT_DIFF_DEADLINE_MS = 2_000;
 
@@ -84,6 +87,12 @@ export class GitLikeBridge {
    * overall deadline). The order of the result is the order `git status` listed
    * the paths, not the order they happened to finish — a diff summary that
    * reshuffled itself between turns would look like the repository changed.
+   *
+   * `diffDeadlineMs` is the budget for the *summary*, so `git status` is inside
+   * it. `status` is the first subprocess of the call and, on a stale index lock
+   * or a workspace on a network drive, the one that hangs before any per-file
+   * work even starts; leaving it outside made the documented budget a bound on
+   * the file diffs only, and a turn could still wait on git forever.
    */
   async diffSummary(input: {
     workspaceId: string;
@@ -91,12 +100,47 @@ export class GitLikeBridge {
   }): Promise<Array<{ path: string; patch: string; tokens: number }>> {
     const root = this.opts.resolveRoot(input.workspaceId);
     const limit = input.limit ?? 10;
+    const deadlineMs = this.opts.diffDeadlineMs ?? DEFAULT_DIFF_DEADLINE_MS;
+
+    // Armed before `git status`, not after it — see the doc comment above.
+    let expired = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const deadline = new Promise<void>((resolve) => {
+      timer = setTimeout(() => {
+        expired = true;
+        resolve();
+      }, deadlineMs);
+    });
+
     try {
-      const dto = await this.opts.git.status(input.workspaceId, root);
+      const status = await Promise.race([
+        this.opts.git
+          .status(input.workspaceId, root)
+          .then((dto) => ({ answered: true as const, dto })),
+        deadline.then(() => ({ answered: false as const, dto: undefined })),
+      ]);
+
+      if (!status.answered) {
+        // Nothing was listed, so there is nothing to be selective about: the
+        // summary is empty and the reason is logged, otherwise a hung workspace
+        // and a clean one read the same in a bug report.
+        this.opts.logger.debug('git diff summary stopped at its deadline', {
+          workspaceId: input.workspaceId,
+          deadlineMs,
+          stage: 'status',
+          collected: 0,
+          requested: 0,
+          abandoned: 0,
+          failed: 0,
+          inFlight: 0,
+        });
+        return [];
+      }
+
       const paths = [
-        ...dto.staged.map((e) => e.path),
-        ...dto.unstaged.map((e) => e.path),
-        ...dto.untracked,
+        ...status.dto.staged.map((e) => e.path),
+        ...status.dto.unstaged.map((e) => e.path),
+        ...status.dto.untracked,
       ].slice(0, limit);
 
       type Item = { path: string; patch: string; tokens: number };
@@ -109,10 +153,8 @@ export class GitLikeBridge {
         1,
         Math.min(this.opts.diffConcurrency ?? DEFAULT_DIFF_CONCURRENCY, paths.length),
       );
-      const deadlineMs = this.opts.diffDeadlineMs ?? DEFAULT_DIFF_DEADLINE_MS;
 
       let next = 0;
-      let expired = false;
       // How many workers are inside `git.diff` right now. At the deadline this
       // is the number of subprocesses still running, and it is the difference
       // between "the diff was short because there was little to diff" and "the
@@ -123,13 +165,10 @@ export class GitLikeBridge {
       // dropped on purpose, and calling that "abandoned" would put a hang and a
       // binary in the same bucket.
       let answered = 0;
-      let timer: ReturnType<typeof setTimeout> | undefined;
-      const deadline = new Promise<void>((resolve) => {
-        timer = setTimeout(() => {
-          expired = true;
-          resolve();
-        }, deadlineMs);
-      });
+      // Paths whose `git diff` failed outright. Counted apart from both the
+      // answered and the abandoned paths: a failure is not a hang, and one
+      // unreadable file must not be reported as "the summary was truncated".
+      let failed = 0;
 
       const worker = async (): Promise<void> => {
         // `expired` is checked before claiming a path, so the deadline stops new
@@ -148,20 +187,28 @@ export class GitLikeBridge {
               patch: diff.patch,
               tokens: this.opts.estimator.estimate(diff.patch),
             };
+          } catch (error) {
+            // One path failed: removed between `status` and `diff`, unreadable,
+            // or a corrupt index entry. Dropping the whole summary over it
+            // would turn one bad file into "this project has no diff", which is
+            // a claim about every other file too. The other paths answered, so
+            // they stay in the answer; this one is logged and left out.
+            failed += 1;
+            this.opts.logger.debug('git diff skipped a path that failed', {
+              workspaceId: input.workspaceId,
+              path,
+              error: describeError(error),
+            });
           } finally {
             inFlight -= 1;
           }
         }
       };
 
-      try {
-        await Promise.race([
-          Promise.all(Array.from({ length: concurrency }, () => worker())),
-          deadline,
-        ]);
-      } finally {
-        if (timer !== undefined) clearTimeout(timer);
-      }
+      await Promise.race([
+        Promise.all(Array.from({ length: concurrency }, () => worker())),
+        deadline,
+      ]);
 
       const out = collected.filter((item): item is Item => item !== undefined);
       if (expired) {
@@ -180,9 +227,11 @@ export class GitLikeBridge {
         this.opts.logger.debug('git diff summary stopped at its deadline', {
           workspaceId: input.workspaceId,
           deadlineMs,
+          stage: 'diff',
           collected: out.length,
           requested: paths.length,
-          abandoned: paths.length - answered,
+          abandoned: paths.length - answered - failed,
+          failed,
           inFlight,
         });
       }
@@ -195,6 +244,8 @@ export class GitLikeBridge {
         error: describeError(error),
       });
       return [];
+    } finally {
+      if (timer !== undefined) clearTimeout(timer);
     }
   }
 }
