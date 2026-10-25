@@ -23,21 +23,23 @@
  *  2. **`https://` only for remote servers.** A remote MCP server is a
  *     different trust boundary from a local process: it can hold a credential
  *     and act on the user's machine. Refusing plaintext HTTP here is a
- *     deliberate product decision, not an oversight — see `assertEndpoint`.
+ *     deliberate product decision, not an oversight — see `assertHttps`.
  *  3. **A test reports what it observed.** `mcp:test` stores the probe's real
  *     outcome, including the verbatim reason, so the panel can show a failure
  *     instead of an empty state (§12.1 honesty).
  */
 
-import { createRequire } from 'node:module';
 import * as z from 'zod';
 import { IPC_CHANNELS } from '@ucad/contracts';
 import type { McpServerDto, McpTestResult } from '@ucad/contracts';
 import { nowIso } from '@ucad/observability';
-import * as McpPackage from '@ucad/mcp';
-import type { McpScope, UpsertMcpServerInput } from '@ucad/mcp';
-// Type-only, so it is erased at compile time; the runtime lookup is `loadProbe`.
-import type { McpProbeResult, McpProbeTarget } from '@ucad/mcp/dist/probe';
+import { probeMcpServer } from '@ucad/mcp';
+import type {
+  McpProbeResult,
+  McpProbeTarget,
+  McpScope,
+  UpsertMcpServerInput,
+} from '@ucad/mcp';
 import type { BrowserWindow } from 'electron';
 import type { UcadApp } from './app-container';
 
@@ -172,46 +174,6 @@ function readSecretRefs(row: McpRow): Array<{ providerId: string; key: string }>
   } catch {
     return [];
   }
-}
-
-// ---------------------------------------------------------------------------
-// probe resolution
-// ---------------------------------------------------------------------------
-
-type ProbeFn = (target: McpProbeTarget, options?: { timeoutMs?: number }) => Promise<McpProbeResult>;
-
-let probeCache: ProbeFn | null | undefined;
-
-/**
- * Resolve `probeMcpServer` from `@ucad/mcp`.
- *
- * The probe is a sibling module of the package entry point but is not yet
- * re-exported from the barrel, and the package `exports` map blocks a deep
- * runtime import. The barrel is preferred, so this becomes a no-op the moment
- * `packages/mcp/src/index.ts` re-exports it; until then the sibling of the
- * resolved entry point is used. If neither resolves, `mcp:test` reports that
- * plainly instead of returning a fabricated result.
- */
-function loadProbe(): ProbeFn | null {
-  if (probeCache !== undefined) return probeCache;
-  const barrel = McpPackage as unknown as { probeMcpServer?: ProbeFn };
-  if (typeof barrel.probeMcpServer === 'function') {
-    probeCache = barrel.probeMcpServer;
-    return probeCache;
-  }
-  try {
-    const entry = require.resolve('@ucad/mcp');
-    // The sibling path is resolved from the installed package at runtime: a
-    // require scoped to the entry's own directory with a literal relative
-    // specifier, so nothing user-controlled can enter the resolution.
-    const sibling = createRequire(entry)('./probe.js') as {
-      probeMcpServer?: ProbeFn;
-    };
-    probeCache = typeof sibling.probeMcpServer === 'function' ? sibling.probeMcpServer : null;
-  } catch {
-    probeCache = null;
-  }
-  return probeCache;
 }
 
 // ---------------------------------------------------------------------------
@@ -364,19 +326,6 @@ export function registerMcpIpc(deps: McpIpcDeps): void {
   // -------------------------------------------------------------------- test
   handle(IPC_CHANNELS.mcp.test, async (rawId: unknown) => {
     const id = idSchema.parse(rawId);
-    const probe = loadProbe();
-    if (!probe) {
-      return recordTest(ucad, id, {
-        id,
-        ok: false,
-        toolCount: 0,
-        latencyMs: 0,
-        outcome: 'unreachable',
-        checks: [],
-        notVerified: 'nothing — the connection probe module could not be loaded',
-        reason: '连接测试模块不可用，未执行任何检查。',
-      });
-    }
 
     const row = readRow(ucad, id);
     const endpoint = readEndpoint(row);
@@ -390,7 +339,10 @@ export function registerMcpIpc(deps: McpIpcDeps): void {
         ? { id, transport: 'http', url: endpoint.url }
         : { id, transport: 'stdio', command: endpoint.command, args: endpoint.args, env };
 
-    const result = await probe(target, { timeoutMs: PROBE_TIMEOUT_MS });
+    // The probe comes from `@ucad/mcp`'s barrel, imported statically: a missing
+    // export is a build/type failure, not a runtime `null` that turns every
+    // test into 「连接测试模块不可用」 while the registry pretends it tried.
+    const result = await probeMcpServer(target, { timeoutMs: PROBE_TIMEOUT_MS });
     return recordTest(ucad, id, result);
   });
 }

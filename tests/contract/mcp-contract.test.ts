@@ -22,6 +22,13 @@
  *    values do not, and the plaintext is proven absent from every DTO the
  *    Renderer can see (NFR-01).
  *
+ * Both halves go through the package barrel, `@ucad/mcp`. The probe was once
+ * reachable only by a deep import (`@ucad/mcp/dist/probe`), and Main resolved
+ * it with a `createRequire` fallback that could quietly come back `null` — a
+ * connection test that never ran, reported as 「连接测试模块不可用」. The
+ * deep-import comment below and the IPC block at the end are what keep that
+ * closed: a probe that is not exported from the barrel now fails to import.
+ *
  * Everything here is hermetic: no network beyond a closed local port, no MCP
  * server that has to be installed, short timeouts.
  */
@@ -31,14 +38,14 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { Database } from '@ucad/storage';
-import { McpManager } from '@ucad/mcp';
+import { McpManager, probeMcpServer } from '@ucad/mcp';
+import type { McpProbeResult } from '@ucad/mcp';
+import { IPC_CHANNELS } from '@ucad/contracts';
+import type { McpServerDto } from '@ucad/contracts';
 import { MCP_ENV_MASK } from '@ucad/contracts';
 import { silentLogger } from '@ucad/observability';
-import type { McpProbeResult } from '../../packages/mcp/src/probe';
-// `packages/mcp/src/index.ts` is owned elsewhere and does not re-export the
-// probe, so the module is imported from source: the test then does not depend
-// on a build having happened first.
-import { probeMcpServer } from '../../packages/mcp/src/probe';
+import { registerMcpIpc } from '../../apps/desktop/src/main/ipc-mcp';
+import type { UcadApp } from '../../apps/desktop/src/main/app-container';
 
 /** Nothing listens here, so the connection is refused without touching a network. */
 const CLOSED_PORT = 45_999;
@@ -508,5 +515,91 @@ describe('McpManager / §10.1 round trip', () => {
 
       protectedDb.close();
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// mcp:test — the probe Main runs is the one the package exports
+// ---------------------------------------------------------------------------
+
+/**
+ * The settings panel's "test" button ends in `probeMcpServer`. Main used to
+ * find that function through a `createRequire` fallback and, when it did not
+ * resolve, answer with a fabricated `unreachable` result whose reason was
+ * 「连接测试模块不可用」. A build shipped that way looked like a probe that had
+ * run and failed, so nothing anywhere said "the probe is missing".
+ *
+ * These tests go through the registered channel with a real registry and a real
+ * stub MCP server. The only way to pass is for the statically imported probe to
+ * actually spawn it and read its `tools/list` reply.
+ */
+describe('mcp:test / the probe comes from the package barrel', () => {
+  function fakeApp(settings: { mcp: { servers: McpServerDto[] } }): UcadApp {
+    return {
+      db,
+      mcp: manager,
+      logger: silentLogger('ipc-mcp'),
+      sessionStore: {
+        getSettings: () => settings,
+        patchSettings: (patch: { mcp?: { servers?: McpServerDto[] } }) => {
+          if (patch.mcp?.servers) settings.mcp = { servers: patch.mcp.servers };
+        },
+        listWorkspaces: () => [],
+      },
+    } as unknown as UcadApp;
+  }
+
+  it('is exported from @ucad/mcp, so Main can import it statically', () => {
+    // The import at the top of this file is the assertion: if the barrel ever
+    // stops re-exporting `probeMcpServer`, this module fails to load instead of
+    // Main quietly falling back to a deep require of `dist/probe.js`.
+    expect(typeof probeMcpServer).toBe('function');
+  });
+
+  it('runs the probe and reports the handshake it observed', async () => {
+    const settings = { mcp: { servers: [] as McpServerDto[] } };
+    const handlers = new Map<string, (...args: unknown[]) => unknown>();
+    registerMcpIpc({
+      handle: (channel, fn) => handlers.set(channel, fn),
+      ucad: fakeApp(settings),
+      getWindow: () => null,
+    });
+
+    const test = handlers.get(IPC_CHANNELS.mcp.test);
+    expect(typeof test, 'mcp:test is not registered').toBe('function');
+
+    const id = manager.upsert({
+      scope: 'global',
+      name: 'stub',
+      exposure: 'ucad_internal',
+      transport: 'stdio',
+      enabled: true,
+      command: process.execPath,
+      args: [mcpStub],
+    }).id;
+
+    const result = (await test!(id)) as {
+      ok: boolean;
+      outcome: string;
+      toolCount: number;
+      checks: string[];
+      notVerified: string;
+      reason?: string;
+    };
+
+    expect(result.ok, 'the probe never reached the stub server').toBe(true);
+    expect(result.outcome).toBe('handshake');
+    // The count is the one the stub's own `tools/list` returned.
+    expect(result.toolCount).toBe(3);
+    expect(result.checks.length).toBeGreaterThan(0);
+    expect(result.notVerified).toBe('');
+    expect(result.reason).toBeUndefined();
+    // The old fallback, and the silence around it, must not come back.
+    expect(JSON.stringify(result)).not.toContain('连接测试模块不可用');
+
+    // ...and the outcome was stored where a restart can find it.
+    const stored = settings.mcp.servers.find((entry) => entry.id === id);
+    expect(stored?.toolCount).toBe(3);
+    expect(stored?.lastCheckedAt).toBeTruthy();
   });
 });
