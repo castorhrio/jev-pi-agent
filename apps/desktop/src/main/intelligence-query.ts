@@ -55,7 +55,21 @@ const QUERY_KINDS = [
 const queryInputSchema = z.object({
   workspaceId: z.string().min(1),
   kind: z.enum(QUERY_KINDS),
-  input: z.unknown(),
+  /**
+   * The payload is an object, always.
+   *
+   * It used to be `z.unknown()`, so a bare string or an array was accepted
+   * and passed straight through — which meant the provider never saw the
+   * workspace id, could not resolve the project root, and answered with an
+   * empty result. An empty result is indistinguishable from "there is
+   * nothing to find", so the query looked like it ran and found nothing.
+   *
+   * Every provider input is an object (`{ query }`, `{ symbol }`,
+   * `{ target }`) and every one of them needs the workspace id beside it. A
+   * non-object payload has no meaning to any of them, so it is refused at
+   * the boundary rather than handed on as a query that cannot work.
+   */
+  input: z.record(z.string(), z.unknown()).default({}),
   providerId: z.string().min(1).max(64).optional(),
   operationId: z.string().min(1).max(128).optional(),
 });
@@ -98,15 +112,17 @@ export interface IntelligenceQueryEnvelope {
 /**
  * Merges the caller's payload into the provider input.
  *
- * The provider needs the workspace id next to whatever the panel asked for.
- * A non-object payload (a bare string, say) is passed through untouched
- * rather than spread — spreading a string spreads its characters.
+ * The provider needs the workspace id next to whatever the panel asked for,
+ * and the *request's* workspace id is the authoritative one: the panel names
+ * the project it is looking at, and a payload carrying a different id would
+ * redirect the query at another project — or at a project that was never
+ * initialised, which answers "no results" for a reason nobody can see.
  */
-function mergeInput(workspaceId: string, payload: unknown): unknown {
-  if (typeof payload !== 'object' || payload === null || Array.isArray(payload)) {
-    return payload;
-  }
-  return { workspaceId, ...(payload as Record<string, unknown>) };
+function mergeInput(
+  workspaceId: string,
+  payload: Record<string, unknown>,
+): Record<string, unknown> {
+  return { ...payload, workspaceId };
 }
 
 /**

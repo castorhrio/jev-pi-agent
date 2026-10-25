@@ -191,6 +191,35 @@ function makeManager(): IntelligenceManager {
   return manager;
 }
 
+/**
+ * A provider that remembers what it was asked.
+ *
+ * The point of the merge is what the provider *receives*, and that is only
+ * observable from inside the provider.
+ */
+class RecordingProvider extends AnsweringProvider {
+  lastInput: unknown;
+
+  override async search(
+    input: CodeSearchInput,
+    _signal?: AbortSignal,
+  ): Promise<CodeSearchResult> {
+    this.lastInput = input;
+    return {
+      items: [],
+      truncated: false,
+      freshness: { stale: true, stalenessReason: 'unknown_revision' },
+    };
+  }
+}
+
+function makeRecordingManager(): { manager: IntelligenceManager; provider: RecordingProvider } {
+  const manager = new IntelligenceManager({ db: stubDb, logger: silentLogger('test') });
+  const provider = new RecordingProvider('basic');
+  manager.register(provider);
+  return { manager, provider };
+}
+
 describe('a query is an operation with a name', () => {
   it('names the operation instead of repeating the provider id', async () => {
     const manager = makeManager();
@@ -325,5 +354,52 @@ describe('the bridge answers with the operation, not with the provider', () => {
         input: {},
       }),
     ).rejects.toThrow();
+  });
+});
+
+describe('the payload the provider receives', () => {
+  it('refuses a payload that is not an object', async () => {
+    const manager = makeManager();
+    // A bare string or an array used to be passed through untouched, so the
+    // provider never saw the workspace id, could not resolve the project
+    // root, and answered with an empty result — indistinguishable from
+    // "there is nothing to find".
+    for (const payload of ['needle', ['needle'], 42, null, true]) {
+      await expect(
+        runIntelligenceQuery({ intelligence: manager }, {
+          workspaceId: 'ws_1',
+          kind: 'search',
+          input: payload,
+        }),
+      ).rejects.toThrow();
+    }
+  });
+
+  it('gives the provider the workspace id of the request', async () => {
+    const { manager, provider } = makeRecordingManager();
+    await runIntelligenceQuery({ intelligence: manager }, {
+      workspaceId: 'ws_1',
+      kind: 'search',
+      input: { query: 'needle' },
+    });
+
+    expect((provider.lastInput as { workspaceId?: string }).workspaceId).toBe('ws_1');
+    // The panel's own fields survive the merge.
+    expect((provider.lastInput as { query?: string }).query).toBe('needle');
+  });
+
+  it('does not let the payload redirect the query at another workspace', async () => {
+    const { manager, provider } = makeRecordingManager();
+    await runIntelligenceQuery({ intelligence: manager }, {
+      workspaceId: 'ws_1',
+      kind: 'search',
+      input: { query: 'needle', workspaceId: 'ws_other' },
+    });
+
+    // The request names the project the panel is looking at. A payload that
+    // names another one would point the query at a project that may never
+    // have been initialised — which answers "no results" for a reason
+    // nobody can see.
+    expect((provider.lastInput as { workspaceId?: string }).workspaceId).toBe('ws_1');
   });
 });
