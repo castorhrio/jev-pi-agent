@@ -29,7 +29,7 @@ import { registerStorageIpc } from '../../apps/desktop/src/main/ipc-storage';
 import type { UcadApp } from '../../apps/desktop/src/main/app-container';
 
 /** The handlers `registerStorageIpc` registers, by channel. */
-function registeredHandlers(): Map<string, (...args: unknown[]) => unknown> {
+function registeredHandlers(ucad: UcadApp = {} as UcadApp): Map<string, (...args: unknown[]) => unknown> {
   const handlers = new Map<string, (...args: unknown[]) => unknown>();
   registerStorageIpc({
     handle: (channel, fn) => {
@@ -38,7 +38,7 @@ function registeredHandlers(): Map<string, (...args: unknown[]) => unknown> {
     // Nothing here should reach the container: every case below is decided by
     // validation (or by the "no project open" rule), both of which run before
     // the retention service touches `db`, `blobs` or `sessionStore`.
-    ucad: {} as UcadApp,
+    ucad,
     getWindow: () => null,
   });
   return handlers;
@@ -121,5 +121,65 @@ describe('storage:purge refuses an unconfirmed request at the schema', () => {
     expect(error).toBeInstanceOf(Error);
     expect(isValidationFailure(error), 'a confirmed purge was rejected as malformed').toBe(false);
     expect((error as Error).message).toContain('没有已打开的项目');
+  });
+});
+
+/**
+ * There is one retention service, and it is Main's.
+ *
+ * The storage IPC layer used to build its own, lazily, on first use — a second
+ * instance of a service the container had already built, with its own view of
+ * the same database. A purge that ran in one and a retention sweep that ran in
+ * the other could each believe they had the last word about what was left on
+ * disk. The container now hands out the one instance; these tests are what
+ * keeps it that way.
+ */
+describe('storage:purge uses the one retention service', () => {
+  it('runs two purges through the same instance', async () => {
+    const purges: Array<{ scope: string; workspaceId?: string }> = [];
+    /** how many retention services were built — one is the answer */
+    let built = 0;
+
+    const instance = {
+      purge: async (scope: string, workspaceId?: string) => {
+        purges.push({ scope, workspaceId });
+        return { sessions: 0, turns: 0, events: 0, messages: 0, blobFiles: 0 };
+      },
+    };
+
+    const ucad = {
+      getRetention: () => {
+        // The container builds one instance and hands out that one.
+        if (built === 0) built += 1;
+        return instance;
+      },
+      // If the IPC layer built a service of its own it would have to read
+      // these — and building one is exactly the bug this test is about.
+      get db(): never {
+        throw new Error('the storage IPC layer must not build its own retention service');
+      },
+      get sessionStore(): never {
+        throw new Error('the storage IPC layer must not build its own retention service');
+      },
+      get blobs(): never {
+        throw new Error('the storage IPC layer must not build its own retention service');
+      },
+      get paths(): never {
+        throw new Error('the storage IPC layer must not build its own retention service');
+      },
+    } as unknown as UcadApp;
+
+    const handlers = registeredHandlers(ucad);
+    const purge = handlers.get(IPC_CHANNELS.storage.purge);
+    expect(typeof purge).toBe('function');
+
+    await purge!({ scope: 'all', confirm: true });
+    await purge!({ scope: 'expired', confirm: true });
+
+    expect(purges).toEqual([
+      { scope: 'all', workspaceId: undefined },
+      { scope: 'expired', workspaceId: undefined },
+    ]);
+    expect(built, 'the two purges did not share one retention service').toBe(1);
   });
 });

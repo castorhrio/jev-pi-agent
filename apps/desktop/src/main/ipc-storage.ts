@@ -16,7 +16,7 @@
 import type { BrowserWindow } from 'electron';
 import { z } from 'zod';
 import { IPC_CHANNELS, appError } from '@ucad/contracts';
-import { RetentionService } from '@ucad/session';
+import type { RetentionService } from '@ucad/session';
 import type { StoragePurgeScope } from '@ucad/contracts';
 import type { UcadApp } from './app-container';
 
@@ -66,25 +66,17 @@ export interface StorageIpcDeps {
 
 export function registerStorageIpc(deps: StorageIpcDeps): void {
   const { handle, ucad } = deps;
-  let retention: RetentionService | null = null;
 
   /**
-   * Built on first use, not at registration: `UcadApp` fills `db`, `blobs` and
-   * `sessionStore` in `start()`, and a service constructed earlier would hold
-   * them undefined.
+   * The retention service Main owns.
+   *
+   * This layer used to build its own, lazily, on first use — a second instance
+   * of a service that already existed, with its own view of the same
+   * database. A purge and the retention sweep could then disagree about what
+   * was left on disk. Main hands out the one instance instead, so there is a
+   * single answer to "what is still stored".
    */
-  const service = (): RetentionService => {
-    if (retention === null) {
-      retention = new RetentionService({
-        db: ucad.db,
-        sessionStore: ucad.sessionStore,
-        blobs: ucad.blobs,
-        logger: ucad.logger,
-        dbPath: ucad.paths.dbPath,
-      });
-    }
-    return retention;
-  };
+  const service = (): RetentionService => ucad.getRetention();
 
   // ------------------------------------------------------------------ usage
   handle(

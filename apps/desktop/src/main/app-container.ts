@@ -83,8 +83,11 @@ export class UcadApp {
   private ptyAvailability: PtyAvailability | undefined;
   estimator!: HeuristicTokenEstimator;
   ledger!: TurnBudgetLedger;
-  /** §8.4 retention and cleanup. */
-  retention!: RetentionService;
+  /** §8.4 retention and cleanup — one instance, see `getRetention()`. */
+  get retention(): RetentionService {
+    return this.getRetention();
+  }
+  private retentionService: RetentionService | null = null;
   renderer!: InjectionRenderer;
   broker!: ContextBroker;
   tools!: ToolContractHost;
@@ -110,6 +113,29 @@ export class UcadApp {
     return this.db.isProtected();
   }
 
+  /**
+   * The one retention service (§8.4).
+   *
+   * It used to be built twice: once here, and once inside the storage IPC
+   * layer, which lazily created its own on first use. Two instances are two
+   * views of the same database, and the two views can disagree — a purge that
+   * ran in one and a retention sweep that ran in the other would each believe
+   * they had the last word about what is left on disk. Main owns the
+   * instance; everybody else asks for it.
+   */
+  getRetention(): RetentionService {
+    if (this.retentionService === null) {
+      this.retentionService = new RetentionService({
+        db: this.db,
+        sessionStore: this.sessionStore,
+        blobs: this.blobs,
+        logger: this.logger.child('retention'),
+        dbPath: this.paths.dbPath,
+      });
+    }
+    return this.retentionService;
+  }
+
   async start(): Promise<void> {
     this.#initLogging();
     this.#initStorage();
@@ -124,13 +150,9 @@ export class UcadApp {
     });
 
     this.recoverInterruptedSessions();
-    this.retention = new RetentionService({
-      db: this.db,
-      sessionStore: this.sessionStore,
-      blobs: this.blobs,
-      logger: this.logger.child('retention'),
-      dbPath: this.paths.dbPath,
-    });
+    // Built here so the first sweep has one to use — and so it is the same
+    // instance the storage IPC layer asks for.
+    this.getRetention();
   }
 
   /**
