@@ -122,6 +122,56 @@ describe('resolving the feed', () => {
     expect(resolved.source).toBe('config');
   });
 
+  it('holds the developer override to the same https rule as the file', () => {
+    // The override used to be returned verbatim, which made an environment
+    // variable the one way to point the updater at a cleartext — or `file:`, or
+    // nonsense — feed. The rule the configuration file is held to is the rule
+    // for the whole channel, so it is checked here.
+    for (const envValue of [
+      'http://example.test/feed.json',
+      'file:///etc/passwd',
+      'example.test/feed.json',
+      'not a url',
+    ]) {
+      const resolved = resolveUpdateFeed({ envValue });
+      expect(resolved.url, `${envValue} produced a feed`).toBeNull();
+      expect(resolved.source, `${envValue} was not reported as the override`).toBe('env');
+      expect(resolved.rejected, `${envValue} was refused without saying why`).toBe('not-https');
+    }
+  });
+
+  it('does not fall back to the packaged feed when the override is refused', () => {
+    // A typo in the variable must not quietly install from the feed the operator
+    // was trying to leave. Refused means refused, and the reason is reported.
+    const configPath = join(dir, 'update-config.json');
+    writeFileSync(configPath, JSON.stringify({ feedUrl: 'https://example.test/packaged.json' }));
+
+    const resolved = resolveUpdateFeed({
+      envValue: 'http://example.test/override.json',
+      configPaths: [configPath],
+    });
+
+    expect(resolved.url).toBeNull();
+    expect(resolved.rejected).toBe('not-https');
+  });
+
+  it('treats a blank override as no override, not as a refusal', () => {
+    const configPath = join(dir, 'update-config.json');
+    writeFileSync(configPath, JSON.stringify({ feedUrl: 'https://example.test/packaged.json' }));
+
+    const resolved = resolveUpdateFeed({ envValue: '   ', configPaths: [configPath] });
+
+    expect(resolved.url).toBe('https://example.test/packaged.json');
+    expect(resolved.source).toBe('config');
+    expect(resolved.rejected).toBeUndefined();
+  });
+
+  it('tolerates the whitespace a shell variable carries', () => {
+    const resolved = resolveUpdateFeed({ envValue: '  https://example.test/override.json \n' });
+    expect(resolved.url).toBe('https://example.test/override.json');
+    expect(resolved.rejected).toBeUndefined();
+  });
+
   it('reports no feed rather than a broken one', () => {
     const notJson = join(dir, 'broken.json');
     writeFileSync(notJson, 'this is not json');

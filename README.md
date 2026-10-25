@@ -71,7 +71,10 @@ so Windows SmartScreen warns on first run.
 
 The app checks for updates on its own — the feed URL ships inside the
 installed build. `UCAD_UPDATE_FEED` overrides it for a private or
-self-hosted feed.
+self-hosted feed. The override must be an `https` URL, the same rule the
+packaged configuration is held to: an update that installs itself is code
+execution, so a cleartext override is refused and the refusal is logged
+rather than silently ignored.
 
 The feed is generated from the installer, so the digest in it is the digest
 of the file that was uploaded:
@@ -203,7 +206,9 @@ Windows 安装包发布在
 更新检查读取。安装包未签名，Windows SmartScreen 首次运行会提示。
 
 应用会自己检查更新——feed 地址随安装包一起发布，不需要用户配置。
-`UCAD_UPDATE_FEED` 可以覆盖它，指向私有或自建的 feed。
+`UCAD_UPDATE_FEED` 可以覆盖它，指向私有或自建的 feed。覆盖值必须是 `https`
+地址，与随包配置受同一条约束：应用会下载并启动这个地址给出的安装包，等于代码执行，
+所以明文 feed 一律被拒，并在日志里写明——不会静默忽略。
 
 feed 由安装包生成，里面的摘要就是上传的那个文件的摘要：
 
@@ -262,6 +267,7 @@ npm run package  # 免安装目录，不出安装包
   不需要配置。要指向别处，把 `UCAD_UPDATE_FEED` 设为
   `https://github.com/castorhrio/jev-pi-agent/releases/latest/download/update-feed.json`，
   更新检查（设置 → 检查更新）即会改读它；没有配置时应用会直说，而不是静默失败。
+  这个变量只接受 `https`：明文地址会被拒绝，不会退回随包 feed。
 - **交互式终端依赖 `node-pty`。** 它是可选依赖；缺失时终端面板会如实说不可用，
   而不是假装能跑。命令通道仍然可用。
 

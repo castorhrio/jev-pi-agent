@@ -76,6 +76,32 @@ export function normalizeSha256(value: unknown): string | null {
 }
 
 /**
+ * A feed URL the updater is willing to fetch, or null.
+ *
+ * Both sources of a feed go through this one gate — the packaged configuration
+ * file and the `UCAD_UPDATE_FEED` override. The override used to skip it, which
+ * made an environment variable the only way to point the updater at a
+ * `http://` (or `file:`, or garbage) feed: the exact surface the configuration
+ * file is not allowed to reach, reachable instead by whoever can set a variable
+ * in the environment the app is launched from. Development is not a reason to
+ * keep the hole — a private feed is a static JSON document and can be served
+ * over https; what a developer gains from cleartext is a shorter URL, and what
+ * they lose is the property that the bytes came from the place they named.
+ */
+export function parseFeedUrl(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  if (trimmed.length === 0) return null;
+
+  try {
+    const url = new URL(trimmed);
+    return url.protocol === 'https:' ? url.toString() : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * The feed URL inside a packaged configuration file, or null.
  *
  * The configuration file is not trusted input either: it is read from the
@@ -92,45 +118,58 @@ export function parseUpdateConfig(raw: string): string | null {
   }
   if (typeof parsed !== 'object' || parsed === null) return null;
 
-  const feedUrl = (parsed as { feedUrl?: unknown }).feedUrl;
-  if (typeof feedUrl !== 'string') return null;
-  const trimmed = feedUrl.trim();
-  if (trimmed.length === 0) return null;
-
-  try {
-    const url = new URL(trimmed);
-    return url.protocol === 'https:' ? url.toString() : null;
-  } catch {
-    return null;
-  }
+  return parseFeedUrl((parsed as { feedUrl?: unknown }).feedUrl);
 }
 
 type UpdateFeedSource = 'env' | 'config' | 'none';
+
+/** Why a configured feed was not used, when it was configured but refused. */
+export type UpdateFeedRejection = 'not-https';
 
 export interface ResolvedUpdateFeed {
   /** the feed URL, or null when no feed is configured */
   url: string | null;
   /** where the URL came from — for the log line that says so */
   source: UpdateFeedSource;
+  /**
+   * Set when `source` names something that *was* configured but was refused.
+   *
+   * It exists so "nothing is configured" and "what you configured is not
+   * usable" are not the same log line: the first is a development build, the
+   * second is a typo or a downgrade attempt, and only one of them needs a
+   * person.
+   */
+  rejected?: UpdateFeedRejection;
 }
 
 /**
  * The feed URL, in order of precedence:
  *
  *  1. `envValue` — `UCAD_UPDATE_FEED`, the developer's override, for a
- *     private or self-hosted feed.
+ *     private or self-hosted feed. It is held to the same https rule as the
+ *     configuration file.
  *  2. the first configuration file that names one — the file that ships with
  *     a released build, so a published app can check for updates without the
  *     user setting an environment variable.
  *  3. nothing, and the updater says "未配置更新源" instead of pretending to
  *     check.
+ *
+ * An override that is set but not usable stops here (`rejected: 'not-https'`)
+ * instead of falling through to the packaged file. Falling through would mean
+ * a typo in the variable silently reinstalls from the public feed the operator
+ * was trying to leave, which is the opposite of what an override is for.
  */
 export function resolveUpdateFeed(options: {
   envValue?: string | undefined;
   configPaths?: readonly string[];
 }): ResolvedUpdateFeed {
   const fromEnv = options.envValue?.trim();
-  if (fromEnv) return { url: fromEnv, source: 'env' };
+  if (fromEnv) {
+    const url = parseFeedUrl(fromEnv);
+    return url
+      ? { url, source: 'env' }
+      : { url: null, source: 'env', rejected: 'not-https' };
+  }
 
   for (const configPath of options.configPaths ?? []) {
     let raw: string;
