@@ -7,12 +7,13 @@
  * it lives here rather than in the plane.
  */
 
-import { DecisionService, DecisionChain, RuleDecisionEngine, buildDecisionFacts } from '@ucad/decision';
+import { DecisionService, DecisionChain, RuleDecisionEngine, RULE_ENGINE_ID, buildDecisionFacts } from '@ucad/decision';
 import type { Database } from '@ucad/storage';
 import type { Logger } from '@ucad/observability';
 import { nowIso } from '@ucad/observability';
 import type {
   AgentCatalogEntry,
+  DecisionEngine,
   DecisionEngineManifest,
   DecisionFacts,
   DecisionKind,
@@ -38,32 +39,91 @@ export interface DecisionFacadeOptions {
   chain: string[];
   timeoutMs: number;
   allowNetworkEngines: boolean;
+  /**
+   * The engines the user may put in the chain, besides the rule engine.
+   *
+   * Main decides which engines exist (it is the composition root); the facade
+   * only orders them and refuses the ones the user did not authorise.
+   */
+  engines?: readonly DecisionEngine[];
 }
 
 export class DecisionFacade {
   private readonly opts: DecisionFacadeOptions;
   private service: DecisionService;
-  private readonly registry = new Map<string, DecisionEngineManifest>();
+  /** the engines this build ships, by id */
+  private readonly registry = new Map<string, DecisionEngine>();
 
   constructor(opts: DecisionFacadeOptions) {
     this.opts = opts;
-    this.registry.set(new RuleDecisionEngine().manifest.id, new RuleDecisionEngine().manifest);
+    // The rule engine is always there: it is the chain's last resort (D-2) and
+    // the only engine that answers every kind.
+    this.register(new RuleDecisionEngine());
+    for (const engine of opts.engines ?? []) this.register(engine);
     this.service = this.buildService(opts.chain);
   }
 
+  private register(engine: DecisionEngine): void {
+    this.registry.set(engine.manifest.id, engine);
+  }
+
   /**
-   * V1 ships exactly one engine. ADR-016 leaves room for `jev` and `llm`; when
-   * one is added it must declare its side effects honestly and, if it declares
-   * `network`, the user has to have authorized it (NFR-14).
+   * The chain the user asked for, minus what may not run.
+   *
+   * - An id this build does not know is dropped. A settings file written by a
+   *   newer build, or a typo, must not be able to put a made-up engine into
+   *   the chain.
+   * - An engine that declares a side effect the user did not authorise is
+   *   dropped (NFR-14). The check lives here, in Main — the Settings UI also
+   *   hides the checkbox, but a UI check is not a permission.
+   * - A duplicate id is dropped: calling the same engine twice in one chain
+   *   would compute the same answer twice and make the trace lie.
+   * - An empty result falls back to the rule engine, which is always present.
    */
-  private buildService(chain: string[]): DecisionService {
-    const engines = [new RuleDecisionEngine()];
+  private resolveChainIds(engineIds: readonly string[]): string[] {
+    const ids: string[] = [];
+    for (const id of engineIds) {
+      const engine = this.registry.get(id);
+      if (!engine) continue;
+      if (!this.isAllowed(engine)) continue;
+      if (ids.includes(id)) continue;
+      ids.push(id);
+    }
+    return ids.length > 0 ? ids : [RULE_ENGINE_ID];
+  }
+
+  /**
+   * Whether this build may run the engine at all.
+   *
+   * 'network' is the side effect the user can authorise (Settings → 允许联网
+   * 引擎). Any other declared effect has no setting behind it yet, so it is
+   * refused: fail closed rather than run something nobody agreed to.
+   */
+  private isAllowed(engine: DecisionEngine): boolean {
+    const effects = engine.manifest.sideEffects ?? [];
+    if (effects.every((effect) => effect === 'none')) return true;
+    if (effects.every((effect) => effect === 'network')) return this.opts.allowNetworkEngines;
+    return false;
+  }
+
+  /**
+   * Builds the service around the chain the user asked for.
+   *
+   * This used to be `void chain`: the chain the user set in Settings was
+   * accepted, echoed back, saved — and never used, because the service was
+   * always built around a single rule engine. The setting was a promise the
+   * code did not keep.
+   */
+  private buildService(chain: readonly string[]): DecisionService {
+    const ids = this.resolveChainIds(chain);
+    const engines = ids
+      .map((id) => this.registry.get(id))
+      .filter((engine): engine is DecisionEngine => engine !== undefined);
     const decisionChain = new DecisionChain({
       engines,
       hardTimeoutMs: this.opts.timeoutMs,
       logger: this.opts.logger,
     });
-    void chain;
 
     return new DecisionService({
       chain: decisionChain,
@@ -82,19 +142,23 @@ export class DecisionFacade {
   }
 
   listEngines(): DecisionEngineManifest[] {
-    return [...this.registry.values()];
+    return [...this.registry.values()].map((engine) => engine.manifest);
   }
 
   get chain(): string[] {
     return this.service.engineChain.engineIds;
   }
 
-  /** Applies a settings change: only engines the user may run are accepted. */
+  /**
+   * Applies a settings change: only engines the user may run are accepted.
+   *
+   * The returned list is the chain that actually runs — not the list that was
+   * asked for. An unknown engine is dropped, so the Settings panel must show
+   * what is running, never what was requested.
+   */
   setChain(engineIds: string[]): string[] {
-    const allowed = engineIds.filter((id) => this.registry.has(id));
-    const effective = allowed.length > 0 ? allowed : ['rule'];
-    this.service = this.buildService(effective);
-    return effective;
+    this.service = this.buildService(engineIds);
+    return this.chain;
   }
 
   facts(input: {

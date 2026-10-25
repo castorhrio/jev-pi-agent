@@ -28,7 +28,9 @@ agent, or a model provider. It makes the two answers checkable.
   carries a content hash. You can read the rendered text and compare the hash —
   change one byte and it stops matching.
 - **Explainable routing.** Every decision records its rationale, its confidence
-  and the engine that produced it. A fallback is recorded as a fallback.
+  and the engine that produced it. A fallback is recorded as a fallback. The
+  engine chain is yours to set in Settings — an engine this build does not know
+  is ignored, and the chain you see is the chain that runs.
 - **Honest estimates.** Token counts say whether they came from the vendor's
   tokenizer or from a heuristic, and say so on screen.
 - **A permission gate that cannot be bypassed.** An agent asking to run
@@ -172,7 +174,8 @@ UCAD 就是为这两个问题做的控制面。它不试图当编辑器、当终
 - **注入可验证。** Context Pack 由纯函数产出并带内容哈希，
   你可以读渲染后的原文、比对哈希——改动一个字节就对不上了。
 - **决策可解释。** 每次决策都记录 `rationale`、`confidence` 和产出它的引擎；
-  回落会**作为回落被记录**。
+  回落会**作为回落被记录**。引擎链可在「设置」里调整——本版本不认识的引擎会被忽略，
+  你看到的那条链就是真正跑起来的那条。
 - **估算说实话。** token 数会标明来自厂商 tokenizer 还是启发式估算，并在界面上写明。
 - **绕不过的权限门。** Agent 要执行操作前，先得到一个被记录的决定和它的理由。
 - **Agent 之间的交接。** 一份可读的记录：决定了什么、改了什么、跑过什么、还剩什么——

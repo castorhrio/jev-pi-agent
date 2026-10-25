@@ -873,8 +873,11 @@ export function registerIpc(
     IPC_CHANNELS.decision.setChain,
     ok(async (engineIds: unknown) => {
       const parsed = z.array(z.string().min(1)).parse(engineIds);
-      const settings = ucad.sessionStore.patchSettings({ decision: { chain: parsed } });
-      ucad.decisions.setChain(parsed);
+      // What is saved is the chain that will actually run, not the one that was
+      // asked for: an engine this build does not know (or one the user did not
+      // authorise) is dropped, and the Settings panel must show what runs.
+      const effective = ucad.decisions.setChain(parsed);
+      const settings = ucad.sessionStore.patchSettings({ decision: { chain: effective } });
       return settings;
     }),
   );

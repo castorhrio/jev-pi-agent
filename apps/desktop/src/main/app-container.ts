@@ -28,6 +28,7 @@ import {
   TurnBudgetLedger,
 } from '@ucad/context';
 import { AgentRuntimeManager } from '@ucad/agent-core';
+import { JevDecisionEngine } from '@ucad/decision';
 import { AgentHostProcess, resolveHostEntry } from '@ucad/agent-host';
 import { BUILTIN_PROVIDERS, ModelRegistry, ProviderClient, getProvider } from '@ucad/providers';
 import { SkillRegistry, defaultSkillRoots } from '@ucad/skills';
@@ -430,6 +431,11 @@ export class UcadApp {
       chain: settings.decision.chain,
       timeoutMs: settings.decision.timeoutMs,
       allowNetworkEngines: settings.decision.allowNetworkEngines,
+      // The engines the user may put in the chain. The rule engine is always
+      // present (the facade adds it); `jev` is the second one ADR-016 left room
+      // for — it scores `route`/`risk` and abstains when it is not sure, so
+      // putting it in front of the rule engine is the user's call to make.
+      engines: [new JevDecisionEngine({ logger: this.logger })],
       admit: (sessionId, proposal) => this.admitLocal(sessionId, proposal),
     });
   }
