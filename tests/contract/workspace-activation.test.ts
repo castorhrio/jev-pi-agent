@@ -39,6 +39,7 @@ import { BlobStore, silentLogger } from '@ucad/observability';
 import {
   WorkspaceActivator,
   activateWorkspace,
+  toWorkspaceActivationDto,
 } from '../../apps/desktop/src/main/workspace-activation';
 
 let root: string;
@@ -251,6 +252,9 @@ describe('workspace activation', () => {
     // ...and the request that lost does not claim to be the state in force.
     expect(firstOutcome.intelligence).toBe('superseded');
     expect(firstOutcome.workspaceId).toBe('ws_a');
+    // It names the request that took over, so "which one won" is answerable
+    // from the outcome rather than by watching the provider.
+    expect(firstOutcome.supersededBy).toBe('ws_b');
 
     // Skills and intelligence agree with each other: both are B's.
     expect(skillNames()).toContain('beta-rules');
@@ -281,6 +285,7 @@ describe('workspace activation', () => {
 
     expect(events).toEqual(['ws_b']);
     expect(firstOutcome.intelligence).toBe('superseded');
+    expect(firstOutcome.supersededBy).toBe('ws_b');
     // The outcome still names the request it answers, not the winner.
     expect(firstOutcome.workspaceId).toBe('ws_a');
     expect(secondOutcome.intelligence).toBe('initialized');
@@ -303,5 +308,85 @@ describe('workspace activation', () => {
     // degradation is reported rather than swallowed.
     expect(result.intelligence).toBe('degraded');
     expect(skillNames()).toContain('alpha-rules');
+  });
+});
+
+/**
+ * What the Renderer is told, which is not the same as what was asked for.
+ *
+ * `recent.switchFailed`/`onActivated(next.name)` in the Recent Projects panel
+ * navigate on the answered DTO's `name`. Reporting the *requested* row with
+ * `activation: 'superseded'` would therefore take the user to a project whose
+ * code intelligence and skills were never moved — the same failure this whole
+ * module exists to prevent, one layer further out.
+ */
+describe('the activation answer the Renderer receives', () => {
+  const row = (id: string) => ({
+    id,
+    path: `/projects/${id}`,
+    name: id,
+    trustState: 'trusted' as const,
+  });
+
+  const supersededOutcome = (requestedId: string, winnerId: string, root: string) => ({
+    workspaceId: requestedId,
+    workspaceRoot: `/projects/${requestedId}`,
+    skillRoots: [`${root}/.ucad/skills`],
+    intelligence: 'superseded' as const,
+    supersededBy: winnerId,
+  });
+
+  it('names the project actually in force when this request lost', () => {
+    const requested = row('ws_b');
+    const dto = toWorkspaceActivationDto(
+      requested,
+      supersededOutcome('ws_b', 'ws_c', '/projects/ws_c'),
+      (id) => (id === 'ws_c' ? row('ws_c') : undefined),
+    );
+
+    expect(dto.id).toBe('ws_c');
+    expect(dto.name).toBe('ws_c');
+    expect(dto.activation).toBe('superseded');
+    // The one that was asked for is kept beside it, so the two can be told
+    // apart instead of inferred.
+    expect(dto.requestedWorkspaceId).toBe('ws_b');
+  });
+
+  it('answers with the request itself when it is in force', () => {
+    const requested = row('ws_b');
+    const dto = toWorkspaceActivationDto(
+      requested,
+      {
+        workspaceId: 'ws_b',
+        workspaceRoot: requested.path,
+        skillRoots: ['/projects/ws_b/.ucad/skills'],
+        intelligence: 'initialized',
+      },
+      () => undefined,
+    );
+
+    expect(dto.id).toBe('ws_b');
+    expect(dto.activation).toBe('initialized');
+    // Nothing to disambiguate: no second project is implied.
+    expect(dto.requestedWorkspaceId).toBeUndefined();
+  });
+
+  it('reports degraded without pretending another project is open', () => {
+    const requested = row('ws_b');
+    const dto = toWorkspaceActivationDto(
+      requested,
+      {
+        workspaceId: 'ws_b',
+        workspaceRoot: requested.path,
+        skillRoots: ['/projects/ws_b/.ucad/skills'],
+        intelligence: 'degraded',
+      },
+      () => undefined,
+    );
+
+    // The project did open; only its code intelligence did not. That is not a
+    // reason to move the user somewhere else.
+    expect(dto.id).toBe('ws_b');
+    expect(dto.activation).toBe('degraded');
   });
 });

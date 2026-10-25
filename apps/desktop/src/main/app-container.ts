@@ -45,13 +45,13 @@ import type {
   ToolAvailabilityContext,
   TurnEvent,
   ProviderDescriptorDto,
-  WorkspaceDto,
+  WorkspaceActivationDto,
 } from '@ucad/contracts';
 import { IPC_PUSH, describeError } from '@ucad/contracts';
 import type { AppPaths } from './paths';
 import { DecisionFacade } from './decision-facade';
 import { GitLikeBridge } from './git-bridge';
-import { WorkspaceActivator } from './workspace-activation';
+import { WorkspaceActivator, toWorkspaceActivationDto } from './workspace-activation';
 
 export interface UcadAppOptions {
   paths: AppPaths;
@@ -306,7 +306,7 @@ export class UcadApp {
    * Opening, switching and restoring a project all come through here, so
    * there is exactly one answer to "what is this app working on".
    */
-  async activateWorkspace(workspaceId: string): Promise<WorkspaceDto> {
+  async activateWorkspace(workspaceId: string): Promise<WorkspaceActivationDto> {
     const workspace = this.sessionStore.getWorkspace(workspaceId);
     if (!workspace) {
       throw new Error(`项目不存在：${workspaceId}`);
@@ -315,12 +315,18 @@ export class UcadApp {
     // on" is decided by the last request rather than by whichever activation
     // finishes last. Every workspace-scoped IPC handler reads this value.
     this.activeWorkspaceId = workspace.id;
-    await this.activator.activate({
+    const outcome = await this.activator.activate({
       id: workspace.id,
       path: workspace.path,
       trustState: workspace.trustState,
     });
-    return workspace;
+    // The answer is the activation's, not the request's: when a newer request
+    // took over, this call did not put its project in force, and the Renderer
+    // navigates on `id`/`name`. `toWorkspaceActivationDto` names the project
+    // that is actually loaded and keeps the requested one beside it.
+    return toWorkspaceActivationDto(workspace, outcome, (id) =>
+      this.sessionStore.getWorkspace(id),
+    );
   }
 
   /**
@@ -365,7 +371,7 @@ export class UcadApp {
    * broken". Restoring it here means the first turn of the new session already
    * has the project's files.
    */
-  async activateMostRecentWorkspace(): Promise<WorkspaceDto | null> {
+  async activateMostRecentWorkspace(): Promise<WorkspaceActivationDto | null> {
     const mostRecent = this.sessionStore.listWorkspaces()[0];
     if (!mostRecent) {
       this.logger.info('no workspace yet; code intelligence waits for one');

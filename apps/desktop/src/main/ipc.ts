@@ -122,8 +122,11 @@ export function registerIpc(
       // Opening a project is not only a change of folder: code intelligence and
       // skills are rooted in it, so they have to follow. Without this the new
       // project would have no searchable code and no skills of its own.
-      await ucad.activateWorkspace(workspace.id);
-      return workspace;
+      //
+      // The answer is the activation's, not the row's: if a newer request took
+      // over, the row we just upserted is not the project whose code is loaded,
+      // and returning it would navigate the user there anyway.
+      return ucad.activateWorkspace(workspace.id);
     }),
   );
 
@@ -159,8 +162,11 @@ export function registerIpc(
       // Switching project has to move the workspace-rooted subsystems too.
       // Pointing the Explorer at another folder while the code intelligence
       // still answers for the previous one is the bug this closes.
-      await ucad.activateWorkspace(workspace.id);
-      return workspace;
+      //
+      // `activateWorkspace` answers with the activation's outcome (`activation`
+      // and, when superseded, the project actually in force), so a request that
+      // lost does not get its row reported as the one now loaded.
+      return ucad.activateWorkspace(workspace.id);
     }),
   );
 
@@ -187,8 +193,9 @@ export function registerIpc(
       const updated = ucad.sessionStore.setWorkspaceTrust(target.id, parsed);
       // Trust is part of what the workspace-rooted subsystems are initialised
       // with, so the project is activated again to put the new state in force.
-      await ucad.activateWorkspace(updated.id);
-      return updated;
+      // The trust row is already written; the returned DTO is the activation's,
+      // which is what tells the caller whether the re-initialisation held.
+      return ucad.activateWorkspace(updated.id);
     }),
   );
 

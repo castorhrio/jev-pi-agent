@@ -25,7 +25,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { Database } from '@ucad/storage';
-import { silentLogger } from '@ucad/observability';
+import { Logger, MemoryLogSink, silentLogger } from '@ucad/observability';
 import { buildDecisionFacts } from '@ucad/decision';
 import type {
   DecisionEngine,
@@ -76,6 +76,7 @@ function makeFacade(options: {
   engines?: DecisionEngine[];
   chain?: string[];
   allowNetworkEngines?: boolean;
+  logger?: Logger;
 } = {}): { facade: DecisionFacade; dir: string } {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ucad-chain-'));
   const db = new Database({ dbPath: path.join(dir, 'ucad.db'), logger: silentLogger('chain') });
@@ -83,7 +84,7 @@ function makeFacade(options: {
 
   const facade = new DecisionFacade({
     db,
-    logger: silentLogger('chain'),
+    logger: options.logger ?? silentLogger('chain'),
     chain: options.chain ?? ['rule'],
     timeoutMs: 2000,
     allowNetworkEngines: options.allowNetworkEngines ?? false,
@@ -318,5 +319,63 @@ describe('the chain echoed back is the chain that runs', () => {
     // The rule engine is the chain's last resort, so this is not a fallback
     // trace: the unknown id never entered the chain to fall back from.
     expect(result.fallback).toBeUndefined();
+  });
+});
+
+/**
+ * Why the running chain differs from the one in Settings.
+ *
+ * Pruning is the right behaviour — an unknown id, an unauthorised effect and a
+ * duplicate must not run — but it used to be silent. The Settings panel showed
+ * one chain, the app ran another, and nothing anywhere said which entry was
+ * dropped or why, so the only way to find out was to read this file. A pruned
+ * chain now has a cause on record.
+ */
+describe('a pruned chain says what it dropped and why', () => {
+  it('records each reason an entry was dropped', () => {
+    const sink = new MemoryLogSink();
+    const logger = new Logger({ scope: 'chain', sink });
+    const { facade } = makeFacade({
+      engines: [
+        stubEngine('jev'),
+        stubEngine('proc', { sideEffects: ['process'] }),
+        stubEngine('net', { sideEffects: ['network'] }),
+      ],
+      logger,
+    });
+
+    const running = facade.setChain(['nope', 'jev', 'jev', 'proc', 'net']);
+
+    // The echo is still the running chain...
+    expect(running).toEqual(['jev']);
+    expect(facade.chain).toEqual(['jev']);
+
+    // ...and every entry that did not make it has a recorded reason.
+    const lines = sink.records.map((record) => record.msg).join('\n');
+    expect(lines).toContain('unknown engine id');
+    expect(lines).toContain('duplicate engine id');
+    expect(lines).toContain('effects are not authorised');
+    // The summary names both sides, so the difference is not something the
+    // reader has to reconstruct from the individual lines.
+    const pruned = sink.records.find((record) => record.msg === 'engine chain pruned');
+    expect(pruned?.meta?.requested).toEqual(['nope', 'jev', 'jev', 'proc', 'net']);
+    expect(pruned?.meta?.running).toEqual(['jev']);
+  });
+
+  it('records the fallback when nothing from the requested chain may run', () => {
+    const sink = new MemoryLogSink();
+    const logger = new Logger({ scope: 'chain', sink });
+    const { facade } = makeFacade({ engines: [stubEngine('jev')], logger });
+
+    expect(facade.setChain(['nope', 'jev', 'jev'])).toEqual(['jev']);
+    expect(facade.setChain(['nope'])).toEqual(['rule']);
+
+    const fallback = sink.records.find(
+      (record) => record.msg === 'engine chain: nothing may run from the requested chain; using the rule engine',
+    );
+    // "Settings shows no usable engine, the rule engine answers" is a fact the
+    // user can act on — but only if it is written down.
+    expect(fallback).toBeDefined();
+    expect(fallback?.meta?.requested).toEqual(['nope']);
   });
 });

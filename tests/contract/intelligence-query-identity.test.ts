@@ -388,18 +388,38 @@ describe('the payload the provider receives', () => {
     expect((provider.lastInput as { query?: string }).query).toBe('needle');
   });
 
-  it('does not let the payload redirect the query at another workspace', async () => {
+  it('refuses a payload that names another workspace', async () => {
+    const { manager, provider } = makeRecordingManager();
+
+    // The request names the project the panel is looking at. A payload that
+    // names another one would point the query at a project that may never
+    // have been initialised — which answers "no results" for a reason nobody
+    // can see. The old code overwrote the payload's id with the request's and
+    // ran anyway, so the caller was never told its request was contradictory.
+    //
+    // Fail closed: no query runs, and the caller gets a reason instead of an
+    // answer about a project it did not ask for.
+    await expect(
+      runIntelligenceQuery({ intelligence: manager }, {
+        workspaceId: 'ws_1',
+        kind: 'search',
+        input: { query: 'needle', workspaceId: 'ws_other' },
+      }),
+    ).rejects.toThrow(/项目/);
+
+    // Nothing reached the provider: the refusal is not "we fixed your input".
+    expect(provider.lastInput).toBeUndefined();
+  });
+
+  it('accepts a payload that repeats the request’s workspace id', async () => {
     const { manager, provider } = makeRecordingManager();
     await runIntelligenceQuery({ intelligence: manager }, {
       workspaceId: 'ws_1',
       kind: 'search',
-      input: { query: 'needle', workspaceId: 'ws_other' },
+      input: { query: 'needle', workspaceId: 'ws_1' },
     });
 
-    // The request names the project the panel is looking at. A payload that
-    // names another one would point the query at a project that may never
-    // have been initialised — which answers "no results" for a reason
-    // nobody can see.
+    // The same id is not a conflict — a caller may echo what it was given.
     expect((provider.lastInput as { workspaceId?: string }).workspaceId).toBe('ws_1');
   });
 });

@@ -117,11 +117,29 @@ export interface IntelligenceQueryEnvelope {
  * the project it is looking at, and a payload carrying a different id would
  * redirect the query at another project — or at a project that was never
  * initialised, which answers "no results" for a reason nobody can see.
+ *
+ * A conflicting id is therefore rejected, not silently replaced. Silently
+ * replacing it made the mismatch unobservable: the provider answered for the
+ * *request's* project while the caller believed it had asked for the payload's
+ * one, and nothing in the result said which project it described.
  */
 function mergeInput(
   workspaceId: string,
   payload: Record<string, unknown>,
 ): Record<string, unknown> {
+  const claimed = payload['workspaceId'];
+  // The request decides which project is queried, and a payload claiming a
+  // different one is refused rather than overwritten. Overwriting was the old
+  // behaviour: the query ran against a project the caller did not name and the
+  // caller was never told, so the answer could describe another project's code
+  // while looking like the right one. Fail closed (§4.8, NFR-14): a conflict
+  // is a caller bug, and the safe answer is "no query ran", not "here are
+  // some results".
+  if (claimed !== undefined && claimed !== workspaceId) {
+    throw new Error(
+      '查询载荷中的项目与请求不一致：一次查询只能针对一个项目，请重新发起查询。',
+    );
+  }
   return { ...payload, workspaceId };
 }
 

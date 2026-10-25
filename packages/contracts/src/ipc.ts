@@ -67,6 +67,34 @@ export interface WorkspaceDto {
   lastOpenedAt?: string;
 }
 
+/**
+ * What an activation actually achieved.
+ *
+ * `WorkspaceDto` alone could not say this, and the difference matters: the
+ * Renderer navigates to the project the answer names. When a newer activation
+ * arrives before this one finishes, the request that lost is *not* the project
+ * in force — and answering with its row would send the user to a project whose
+ * code intelligence and rules are not loaded.
+ */
+export type WorkspaceActivationState = 'initialized' | 'degraded' | 'superseded';
+
+export interface WorkspaceActivationDto extends WorkspaceDto {
+  /**
+   * - `initialized` — code intelligence and skills are on this project.
+   * - `degraded` — the project is open and its rules apply, but code
+   *   intelligence could not be initialised (NFR-09). The reason is logged.
+   * - `superseded` — a newer activation was requested first, so *this* answer
+   *   describes the project that is now in force, not the one that was asked
+   *   for. `requestedWorkspaceId` names the latter.
+   */
+  activation: WorkspaceActivationState;
+  /**
+   * The project the user asked to activate, present only when it is not the
+   * one in force (i.e. when `activation` is `superseded`).
+   */
+  requestedWorkspaceId?: string;
+}
+
 export interface SessionDto {
   id: string;
   workspaceId: string;
@@ -476,11 +504,16 @@ export interface UpdateStatus {
 /** The `window.ucad` surface (§7.1). */
 export interface UcadApi {
   workspace: {
-    open(): Promise<WorkspaceDto | null>;
+    /**
+     * Opening a folder is an activation too, so it answers with what the
+     * activation achieved — `activation` is not decoration here, it is the
+     * difference between "this project is loaded" and "a newer request won".
+     */
+    open(): Promise<WorkspaceActivationDto | null>;
     listRecent(): Promise<WorkspaceDto[]>;
     /** §12.1 Recent projects: go back to one without re-browsing the disk. */
-    activate(workspaceId: string): Promise<WorkspaceDto>;
-    setTrust(state: TrustState): Promise<WorkspaceDto>;
+    activate(workspaceId: string): Promise<WorkspaceActivationDto>;
+    setTrust(state: TrustState): Promise<WorkspaceActivationDto>;
   };
 
   sessions: {

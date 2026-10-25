@@ -84,12 +84,56 @@ export class DecisionFacade {
     const ids: string[] = [];
     for (const id of engineIds) {
       const engine = this.registry.get(id);
-      if (!engine) continue;
-      if (!this.isAllowed(engine)) continue;
-      if (ids.includes(id)) continue;
+      if (!engine) {
+        // A settings document written by another build, or a typo. The user's
+        // chain and the running chain now differ, and this is the only trace
+        // of *why* — silence here made the discrepancy unexplainable.
+        this.opts.logger.warn('engine chain: dropping an unknown engine id', {
+          engineId: id,
+          requested: engineIds,
+        });
+        continue;
+      }
+      if (!this.isAllowed(engine)) {
+        // NFR-14: no setting authorises this engine's effects, so it may not
+        // run whatever the settings file says. Recorded, not implied.
+        this.opts.logger.warn('engine chain: dropping an engine whose effects are not authorised', {
+          engineId: id,
+          sideEffects: engine.manifest.sideEffects ?? [],
+          allowNetworkEngines: this.opts.allowNetworkEngines,
+          requested: engineIds,
+        });
+        continue;
+      }
+      if (ids.includes(id)) {
+        // Running an engine twice would compute the same answer twice and make
+        // the decision trace claim two engines agreed.
+        this.opts.logger.info('engine chain: dropping a duplicate engine id', {
+          engineId: id,
+          requested: engineIds,
+        });
+        continue;
+      }
       ids.push(id);
     }
-    return ids.length > 0 ? ids : [RULE_ENGINE_ID];
+
+    if (ids.length === 0) {
+      // The chain the user set is empty *after* pruning. The rule engine is the
+      // documented last resort (D-2), and the fallback is said out loud so
+      // "Settings shows a chain, another one runs" always has a cause on record.
+      this.opts.logger.info('engine chain: nothing may run from the requested chain; using the rule engine', {
+        requested: engineIds,
+      });
+      return [RULE_ENGINE_ID];
+    }
+
+    if (ids.length !== engineIds.length) {
+      this.opts.logger.info('engine chain pruned', {
+        requested: engineIds,
+        running: ids,
+      });
+    }
+    return ids;
   }
 
   /**

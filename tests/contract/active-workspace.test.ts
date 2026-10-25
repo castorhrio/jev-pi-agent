@@ -237,6 +237,35 @@ describe('mcp:upsert scopes a workspace server to the open project', () => {
   });
 });
 
+describe('workspace:activate answers with the activation, not with the request', () => {
+  it('reports superseded and names the project that is in force', async () => {
+    const { a, b } = twoProjects();
+    const app = fakeApp();
+    app.setActive(a.id);
+
+    // The container maps a `superseded` activator outcome to the project that
+    // actually won. The handler used to return the freshly upserted row
+    // instead, so the Renderer was told "you are on A" while B's code was the
+    // one loaded — and Recent Projects navigates on exactly that answer.
+    app.activateWorkspace = async () => ({
+      ...store.getWorkspace(b.id)!,
+      activation: 'superseded',
+      requestedWorkspaceId: a.id,
+    });
+
+    const activate = ipcHandlers(app).get(IPC_CHANNELS.workspace.activate)!;
+    const answer = (await activate(null, a.id)) as {
+      id: string;
+      activation: string;
+      requestedWorkspaceId?: string;
+    };
+
+    expect(answer.id).toBe(b.id);
+    expect(answer.activation).toBe('superseded');
+    expect(answer.requestedWorkspaceId).toBe(a.id);
+  });
+});
+
 describe('reopening a project reuses its row (§8.1)', () => {
   it('activating the same path twice does not add a second recent project', async () => {
     const { a } = twoProjects();

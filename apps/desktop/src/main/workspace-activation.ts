@@ -35,7 +35,11 @@
  * `IntelligenceManager` and the real `SkillRegistry`.
  */
 
-import type { IntelligenceInitializeContext } from '@ucad/contracts';
+import type {
+  IntelligenceInitializeContext,
+  WorkspaceActivationDto,
+  WorkspaceDto,
+} from '@ucad/contracts';
 import type { Logger } from '@ucad/observability';
 import type { SkillRoot } from '@ucad/skills';
 
@@ -72,11 +76,27 @@ export interface WorkspaceActivationDeps {
   extraSkillRoots?: readonly SkillRoot[];
 }
 
-/** What activation actually did, so the caller can say it out loud. */
+/**
+ * What activation actually did, so the caller can say it out loud.
+ *
+ * `workspaceId` / `workspaceRoot` name the request; `skillRoots` names the
+ * state in force when the call returned. Those are the same thing on the
+ * success path and deliberately not the same on the `superseded` one — the
+ * fields say which is which rather than leaving the caller to guess why the id
+ * and the roots disagree. `supersededBy` names the request that took over.
+ */
 export interface WorkspaceActivationOutcome {
+  /** the workspace *this* request was for (never the winner on `superseded`) */
   workspaceId: string;
+  /** the root of the workspace this request was for */
   workspaceRoot: string;
-  /** the skill roots in force after activation */
+  /**
+   * The skill roots in force when the call returned.
+   *
+   * On `superseded` these belong to the activation that won, not to
+   * `workspaceId`: the request was skipped, so it has no roots of its own to
+   * report and claiming otherwise would invent a state that never existed.
+   */
   skillRoots: readonly string[];
   /**
    * Whether code intelligence was pointed at this workspace.
@@ -87,6 +107,8 @@ export interface WorkspaceActivationOutcome {
    * by asking the provider what it is looking at.
    */
   intelligence: 'initialized' | 'degraded' | 'superseded';
+  /** when `intelligence` is `superseded`: the workspace that took over */
+  supersededBy?: string;
 }
 
 /**
@@ -147,6 +169,36 @@ export async function activateWorkspace(
 }
 
 /**
+ * Turns an outcome into the answer the Renderer receives.
+ *
+ * The mapping exists because "the requested project" and "the project in force"
+ * stop being the same thing when an activation is superseded. Returning the
+ * requested row with `activation: 'superseded'` would make every other field —
+ * path, name, trust — describe a project whose code intelligence is not loaded,
+ * and the Recent Projects panel navigates on exactly those fields.
+ *
+ * So on `superseded` the DTO names the project that *is* in force (the newer
+ * request), and the one that was asked for is kept in `requestedWorkspaceId`
+ * so the caller can tell the two apart instead of having to infer it.
+ */
+export function toWorkspaceActivationDto(
+  requested: WorkspaceDto,
+  outcome: WorkspaceActivationOutcome,
+  lookup: (workspaceId: string) => WorkspaceDto | undefined,
+): WorkspaceActivationDto {
+  const inForce =
+    outcome.intelligence === 'superseded' && outcome.supersededBy !== undefined
+      ? lookup(outcome.supersededBy) ?? requested
+      : requested;
+
+  return {
+    ...inForce,
+    activation: outcome.intelligence,
+    ...(inForce.id === requested.id ? {} : { requestedWorkspaceId: requested.id }),
+  };
+}
+
+/**
  * Serialised, last-request-wins activation (§4.5 / §4.8).
  *
  * ## The failure this class closes
@@ -180,6 +232,8 @@ export class WorkspaceActivator {
   private readonly deps: WorkspaceActivationDeps;
   /** id of the most recent request; anything older is stale */
   private requested = 0;
+  /** the workspace named by the most recent request, for `supersededBy` */
+  private latest: ActivatableWorkspace | null = null;
   /** the tail of the queue — never rejected, so one failure cannot poison it */
   private tail: Promise<void> = Promise.resolve();
 
@@ -189,6 +243,7 @@ export class WorkspaceActivator {
 
   activate(workspace: ActivatableWorkspace): Promise<WorkspaceActivationOutcome> {
     const token = ++this.requested;
+    this.latest = workspace;
     const run = this.tail.then(() => this.#activate(token, workspace));
     this.tail = run.then(
       () => undefined,
@@ -213,6 +268,7 @@ export class WorkspaceActivator {
         workspaceRoot: workspace.path,
         skillRoots: this.#currentSkillRoots(),
         intelligence: 'superseded',
+        supersededBy: this.latest.id,
       };
     }
 
@@ -226,7 +282,15 @@ export class WorkspaceActivator {
         workspaceId: workspace.id,
         intelligence: outcome.intelligence,
       });
-      return { ...outcome, intelligence: 'superseded' };
+      return {
+        ...outcome,
+        // The roots reported are the ones the winner will leave in force, which
+        // may still be the previous project's until the queue drains — say
+        // which request took over and let the caller read the rest as
+        // "state at the moment this returned".
+        intelligence: 'superseded',
+        supersededBy: this.latest.id,
+      };
     }
 
     return outcome;

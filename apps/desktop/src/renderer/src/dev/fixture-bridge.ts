@@ -39,6 +39,7 @@
 
 import type {
   UcadApi,
+  WorkspaceActivationDto,
   WorkspaceDto,
   SessionDto,
   AgentCatalogEntry,
@@ -120,6 +121,17 @@ const workspace: WorkspaceDto = {
   trustState: 'trusted',
   lastOpenedAt: ISO,
 };
+
+/**
+ * The fixture's activation answer.
+ *
+ * Real activations report whether code intelligence actually came up; the
+ * fixture stands for the success path, and says so explicitly rather than
+ * leaving `activation` off a field the Renderer reads.
+ */
+function activated(row: WorkspaceDto): WorkspaceActivationDto {
+  return { ...row, activation: 'initialized' };
+}
 
 const sessions: SessionDto[] = [
   {
@@ -1060,15 +1072,15 @@ export function createFixtureApi(scenario: Scenario): FixtureHandle {
 
   const api: UcadApi = {
     workspace: {
-      open: () => delay(state.workspace),
+      open: () => delay(activated(state.workspace)),
       listRecent: () =>
         failCore ? boom('workspace.listRecent')() : delay(empty ? [] : [state.workspace]),
-      activate: () => delay(state.workspace),
+      activate: () => delay(activated(state.workspace)),
       setTrust: (next: TrustState) => {
         // Trust lives on the workspace DTO, not in settings, so this only
         // touches the workspace.
         state.workspace = { ...state.workspace, trustState: next };
-        return delay(state.workspace);
+        return delay(activated(state.workspace));
       },
     },
 
