@@ -144,4 +144,52 @@ describe('recent projects — the open project is a state, not an action', () =>
      */
     await waitFor(() => expect(screen.getByText(/已切换到「other-project」/)).toBeTruthy());
   });
+
+  it('says which project is open when the click was superseded by a newer request', async () => {
+    const user = userEvent.setup();
+    const { fixture } = mount();
+    await settle();
+
+    await withTwoProjects(fixture);
+
+    /*
+     * The race this covers: the user clicks `other-project` while a newer
+     * activation is already in flight. Main serialises the two and answers the
+     * older request with the project that *is* in force — a third one, here —
+     * plus `activation: 'superseded'` and `requestedWorkspaceId` naming what
+     * was dropped. That contract is pinned in
+     * `tests/contract/workspace-activation.test.ts`; what was missing was this
+     * side of it.
+     *
+     * The panel navigates on the answered DTO, so consuming it as "the project
+     * you clicked is now open" would show a confident confirmation naming the
+     * wrong project — the user clicks A, lands in B, and is told it worked.
+     */
+    const third: WorkspaceDto = {
+      ...(await fixture.api.workspace.open()),
+      id: 'ws-3',
+      name: 'winner-project',
+      path: 'C:/work/winner-project',
+    };
+    const api = fixture.api.workspace as {
+      activate: (id: string) => Promise<unknown>;
+    };
+    api.activate = (id: string) =>
+      Promise.resolve({ ...third, activation: 'superseded', requestedWorkspaceId: id });
+
+    await openRecent(user);
+    await user.click(within(rowFor('other-project')).getByRole('button', { name: '切换到这里' }));
+
+    // The notice names both projects: the one that is open and the one whose
+    // request was dropped. Without the second name the user only learns they
+    // are somewhere they did not ask for.
+    await waitFor(() =>
+      expect(screen.getByText(/你点的「other-project」没有生效/)).toBeTruthy(),
+    );
+    expect(screen.getByText(/先把「winner-project」加载了/)).toBeTruthy();
+
+    // And it is not passed off as a plain success.
+    expect(screen.queryByText('已切换到「other-project」。')).toBeNull();
+    expect(screen.queryByText('已切换到「winner-project」。')).toBeNull();
+  });
 });

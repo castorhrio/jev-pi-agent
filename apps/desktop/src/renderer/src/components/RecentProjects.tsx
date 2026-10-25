@@ -14,7 +14,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { getApi } from '../api';
 import { useT } from '../i18n-context';
-import type { WorkspaceDto } from '@ucad/contracts';
+import type { WorkspaceActivationDto, WorkspaceDto } from '@ucad/contracts';
 
 export function RecentProjects({
   currentId,
@@ -32,16 +32,19 @@ export function RecentProjects({
    */
   currentId: string | null;
   /**
-   * Called with the name of the project that is now open.
+   * Called with the activation answer and the row the user clicked.
    *
-   * The name is handed up rather than confirmed here because the confirmation
-   * cannot be shown here: a successful switch is followed immediately by
+   * Two arguments rather than one name, because on a superseded activation
+   * those are two different projects: Main answers with the one actually loaded
+   * (`next.id`) while the user asked for `requested`. This panel cannot tell
+   * the user about that itself: a successful switch is followed immediately by
    * `onActivated`, which moves the user to the conversation, which unmounts
-   * this panel. A notice rendered in this component's own state was therefore
-   * never on screen for a single frame — the user saw the page change with
-   * nothing saying why. The caller owns a toast that survives the navigation.
+   * this panel — a notice rendered in this component's own state was never on
+   * screen for a single frame. The caller owns a toast that survives the
+   * navigation, so it needs both halves to say which project it ended up in and
+   * which request was dropped.
    */
-  onActivated: (name: string) => void;
+  onActivated: (next: WorkspaceActivationDto, requested: WorkspaceDto) => void;
   onOpenFolder: () => void;
 }): JSX.Element {
   const t = useT();
@@ -62,12 +65,23 @@ export function RecentProjects({
 
   useEffect(load, [load]);
 
+  /**
+   * Asks Main to make `workspace` the project in force, and hands the answer up
+   * untouched.
+   *
+   * The answer is deliberately not assumed to be the row that was clicked. When
+   * a newer request won the race, Main loads *that* project and says so in
+   * `activation`/`requestedWorkspaceId`; navigating on the clicked row instead
+   * would take the user to a project whose code intelligence and rules were
+   * never moved — the exact failure the activation queue exists to prevent,
+   * reintroduced by the panel that displays the result.
+   */
   const activate = (workspace: WorkspaceDto): void => {
     setBusyId(workspace.id);
     setError(null);
     void getApi()
       .workspace.activate(workspace.id)
-      .then((next) => onActivated(next.name))
+      .then((next) => onActivated(next, workspace))
       .catch((e: unknown) => {
         // A folder that moved or an unmounted drive lands here. The reason is
         // the whole point — the user needs to know whether to re-pick the folder

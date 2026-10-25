@@ -646,6 +646,8 @@ const zhCN: Dictionary = {
   'recent.open': '打开文件夹',
   'recent.currentAction': '已打开',
   'recent.switched': '已切换到「{name}」。',
+  'recent.switchedSuperseded':
+    '你点的「{requested}」没有生效：一个更新的请求先把「{name}」加载了，现在打开的就是它。',
   'recent.switchFailed': '切换失败：{reason}',
   'recent.lastOpened': '上次打开',
   'recent.never': '从未',
@@ -1396,6 +1398,8 @@ const enUS: Dictionary = {
   'recent.open': 'Open folder',
   'recent.currentAction': 'Already open',
   'recent.switched': 'Switched to “{name}”.',
+  'recent.switchedSuperseded':
+    '“{requested}” did not take effect: a newer request loaded “{name}” first, and that is the project now open.',
   'recent.switchFailed': 'Could not switch: {reason}',
   'recent.lastOpened': 'Last opened',
   'recent.never': 'never',

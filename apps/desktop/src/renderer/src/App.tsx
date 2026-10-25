@@ -1006,17 +1006,36 @@ function Shell(): JSX.Element {
             <PanelBoundary label={t('tab.recent')}>
               <RecentProjects
                 currentId={data.workspace?.id ?? null}
-                onActivated={(name) => {
+                onActivated={(next, requested) => {
                   // Switching project invalidates the session list, so the
                   // selection is cleared rather than left pointing at a chat that
                   // belongs to the previous folder.
                   setSessionId(null);
                   void data.refresh();
                   setSurface('chat');
-                  // Confirmed here, not in the panel: the panel is unmounted by
-                  // the `setSurface` above, so a notice it set for itself was
-                  // never rendered. This toast outlives the navigation.
-                  flash(t('recent.switched', { name }));
+                  /*
+                   * Confirmed here, not in the panel: the panel is unmounted by
+                   * the `setSurface` above, so a notice it set for itself was
+                   * never rendered. This toast outlives the navigation.
+                   *
+                   * The message distinguishes the two cases because the answer
+                   * is not always the row that was clicked. When a newer request
+                   * took over, Main loads that project and says so
+                   * (`activation: 'superseded'` plus `requestedWorkspaceId`).
+                   * Navigating silently in that case is the failure the whole
+                   * activation queue guards against, one layer out: the user
+                   * clicks A, lands in B, and is told — by a toast naming B —
+                   * that everything went as asked.
+                   */
+                  const superseded = next.activation === 'superseded' || next.id !== requested.id;
+                  flash(
+                    superseded
+                      ? t('recent.switchedSuperseded', {
+                          requested: requested.name,
+                          name: next.name,
+                        })
+                      : t('recent.switched', { name: next.name }),
+                  );
                 }}
                 onOpenFolder={() => void openProject()}
               />
