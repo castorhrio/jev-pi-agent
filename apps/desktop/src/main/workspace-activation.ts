@@ -79,11 +79,12 @@ export interface WorkspaceActivationDeps {
 /**
  * What activation actually did, so the caller can say it out loud.
  *
- * `workspaceId` / `workspaceRoot` name the request; `skillRoots` names the
- * state in force when the call returned. Those are the same thing on the
- * success path and deliberately not the same on the `superseded` one — the
- * fields say which is which rather than leaving the caller to guess why the id
- * and the roots disagree. `supersededBy` names the request that took over.
+ * `workspaceId` / `workspaceRoot` name the request; `skillRootsAtReturn` names
+ * the roots that were on record when the call returned. Those are the same
+ * thing on the success path and deliberately not the same on the `superseded`
+ * one — the fields say which is which rather than leaving the caller to guess
+ * why the id and the roots disagree. `supersededBy` names the request that took
+ * over.
  */
 export interface WorkspaceActivationOutcome {
   /** the workspace *this* request was for (never the winner on `superseded`) */
@@ -91,13 +92,18 @@ export interface WorkspaceActivationOutcome {
   /** the root of the workspace this request was for */
   workspaceRoot: string;
   /**
-   * The skill roots in force when the call returned.
+   * The skill roots on record **at the moment this call returned**.
    *
-   * On `superseded` these belong to the activation that won, not to
-   * `workspaceId`: the request was skipped, so it has no roots of its own to
-   * report and claiming otherwise would invent a state that never existed.
+   * Not "the winner's roots": on `superseded` the activation that took over may
+   * not have run yet — a request skipped while queued returns before the winner
+   * touches the registry at all. So this is a *transition* state, and the name
+   * says so. Callers that need the roots of the project in force must ask the
+   * registry (or re-read the answer of the request that won), not read this.
+   *
+   * Naming it after the request instead — "the roots this request set" — would
+   * be just as misleading in the other direction: a skipped request sets none.
    */
-  skillRoots: readonly string[];
+  skillRootsAtReturn: readonly string[];
   /**
    * Whether code intelligence was pointed at this workspace.
    *
@@ -129,7 +135,7 @@ export async function activateWorkspace(
   // rules are already the ones in force is correct even if intelligence is
   // not available yet.
   deps.skills.useWorkspace(workspace.path, deps.extraSkillRoots ?? []);
-  const skillRoots = deps.skills.watchedRoots().map((root) => root.path);
+  const skillRootsAtReturn = deps.skills.watchedRoots().map((root) => root.path);
 
   let intelligence: WorkspaceActivationOutcome['intelligence'] = 'initialized';
   try {
@@ -156,14 +162,14 @@ export async function activateWorkspace(
     workspaceId: workspace.id,
     workspaceRoot: workspace.path,
     providerId,
-    skillRoots,
+    skillRootsAtReturn,
     intelligence,
   });
 
   return {
     workspaceId: workspace.id,
     workspaceRoot: workspace.path,
-    skillRoots,
+    skillRootsAtReturn,
     intelligence,
   };
 }
@@ -180,16 +186,24 @@ export async function activateWorkspace(
  * So on `superseded` the DTO names the project that *is* in force (the newer
  * request), and the one that was asked for is kept in `requestedWorkspaceId`
  * so the caller can tell the two apart instead of having to infer it.
+ *
+ * When the winner cannot be looked up — its row was removed while this
+ * activation was in flight — there is **no** honest DTO to build: the project
+ * that is in force has no row, and the requested one is not it. Falling back to
+ * `requested` would answer with a row that was specifically *not* put in force,
+ * which is the failure this mapping exists to prevent, one layer out. So the
+ * answer is `null` and the caller has to say "the project that took over is
+ * gone" rather than navigate the user to the wrong one.
  */
 export function toWorkspaceActivationDto(
   requested: WorkspaceDto,
   outcome: WorkspaceActivationOutcome,
   lookup: (workspaceId: string) => WorkspaceDto | undefined,
-): WorkspaceActivationDto {
-  const inForce =
-    outcome.intelligence === 'superseded' && outcome.supersededBy !== undefined
-      ? lookup(outcome.supersededBy) ?? requested
-      : requested;
+): WorkspaceActivationDto | null {
+  const winnerId =
+    outcome.intelligence === 'superseded' ? outcome.supersededBy : undefined;
+  const inForce = winnerId === undefined ? requested : lookup(winnerId);
+  if (inForce === undefined) return null;
 
   return {
     ...inForce,
@@ -259,14 +273,18 @@ export class WorkspaceActivator {
     if (token !== this.requested) {
       // A newer request arrived while this one waited its turn. Running it
       // would only be undone, so nothing is touched — and the answer says so.
+      const skillRootsAtReturn = this.#currentSkillRoots();
       this.deps.logger.info('workspace activation skipped; superseded while queued', {
         workspaceId: workspace.id,
-        skillRoots: this.#currentSkillRoots(),
+        skillRootsAtReturn,
       });
       return {
         workspaceId: workspace.id,
         workspaceRoot: workspace.path,
-        skillRoots: this.#currentSkillRoots(),
+        // The winner has not run yet, so these are still the *previous*
+        // project's roots. That is why the field is named after the moment of
+        // return: nothing here claims to describe the project now in force.
+        skillRootsAtReturn,
         intelligence: 'superseded',
         supersededBy: this.latest?.id ?? workspace.id,
       };
@@ -284,10 +302,9 @@ export class WorkspaceActivator {
       });
       return {
         ...outcome,
-        // The roots reported are the ones the winner will leave in force, which
-        // may still be the previous project's until the queue drains — say
-        // which request took over and let the caller read the rest as
-        // "state at the moment this returned".
+        // Spread first, so `skillRootsAtReturn` is this request's own roots —
+        // they were just written, and the winner has not run yet. The field
+        // name keeps that honest; `supersededBy` names who will overwrite them.
         intelligence: 'superseded',
         supersededBy: this.latest?.id ?? workspace.id,
       };

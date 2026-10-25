@@ -51,7 +51,11 @@ import { IPC_PUSH, describeError } from '@ucad/contracts';
 import type { AppPaths } from './paths';
 import { DecisionFacade } from './decision-facade';
 import { GitLikeBridge } from './git-bridge';
-import { WorkspaceActivator, toWorkspaceActivationDto } from './workspace-activation';
+import {
+  WorkspaceActivator,
+  toWorkspaceActivationDto,
+  type WorkspaceActivationOutcome,
+} from './workspace-activation';
 
 export interface UcadAppOptions {
   paths: AppPaths;
@@ -314,21 +318,50 @@ export class UcadApp {
     // Recorded synchronously, before any await, so "which project am I working
     // on" is decided by the last request rather than by whichever activation
     // finishes last. Every workspace-scoped IPC handler reads this value.
+    const previous = this.activeWorkspaceId;
     this.activeWorkspaceId = workspace.id;
-    const outcome = await this.activator.activate({
-      id: workspace.id,
-      path: workspace.path,
-      trustState: workspace.trustState,
-    });
+
+    let outcome: WorkspaceActivationOutcome;
+    try {
+      outcome = await this.activator.activate({
+        id: workspace.id,
+        path: workspace.path,
+        trustState: workspace.trustState,
+      });
+    } catch (error) {
+      // Activation threw, so this project never went into force: the skills
+      // were not moved (or the queue itself failed). Keeping
+      // `activeWorkspaceId` on it would point every workspace-scoped handler —
+      // setTrust, MCP upsert, file writes — at a project the activation never
+      // reached, which is the split between "what the app works on" and "what
+      // the UI shows" this whole path exists to prevent. The previous value is
+      // restored instead, and only if a newer request has not already claimed
+      // the field: that request is the one in force, and this failure is not
+      // its problem.
+      if (this.activeWorkspaceId === workspace.id) {
+        this.activeWorkspaceId = previous;
+      }
+      throw error;
+    }
+
     // The answer is the activation's, not the request's: when a newer request
     // took over, this call did not put its project in force, and the Renderer
     // navigates on `id`/`name`. `toWorkspaceActivationDto` names the project
     // that is actually loaded and keeps the requested one beside it.
-    return toWorkspaceActivationDto(
+    const dto = toWorkspaceActivationDto(
       workspace,
       outcome,
       (id) => this.sessionStore.getWorkspace(id) ?? undefined,
     );
+    if (dto === null) {
+      // The project that took over was removed while this activation was in
+      // flight. There is no row to answer with, and the requested project is
+      // explicitly *not* the one in force, so naming it would navigate the user
+      // to the project whose code and rules were never loaded. Say that instead
+      // of guessing.
+      throw new Error(`激活被更新的请求取代，但该项目已不存在：${outcome.supersededBy ?? workspace.id}`);
+    }
+    return dto;
   }
 
   /**
