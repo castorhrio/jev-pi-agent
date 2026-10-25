@@ -252,7 +252,12 @@ export function registerMcpIpc(deps: McpIpcDeps): void {
 
     let scopeRef: string | undefined;
     if (parsed.scope === 'workspace') {
-      const workspace = ucad.sessionStore.listWorkspaces()[0];
+      // The server must be scoped to the project that is open. The first row of
+      // `listWorkspaces()` is the most recently *touched* project, not the one
+      // on screen, so with two projects this attached the server to the other.
+      // No fallback: a workspace-scoped server with no open project is refused.
+      const workspaceId = ucad.currentWorkspaceId;
+      const workspace = workspaceId ? ucad.sessionStore.getWorkspace(workspaceId) : null;
       if (!workspace) throw new Error('请先打开一个项目，再添加本项目作用域的 MCP 服务器。');
       scopeRef = workspace.id;
     } else if (existing?.scope_ref) {

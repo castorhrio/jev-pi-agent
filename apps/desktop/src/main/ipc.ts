@@ -170,13 +170,19 @@ export function registerIpc(
       const parsed = trustSchema.parse(state);
       // The trust decision belongs to the project that is open, not to
       // whichever one happens to be first in the list. With two projects the
-      // old code could grant trust to one while the other was on screen.
+      // old code granted trust to one while the other was on screen.
+      //
+      // "First in the list" is not a fallback here: `listWorkspaces()` is
+       // ordered by `last_opened_at`, so a workspace that was merely touched by
+      // another code path can be first. If no project has been activated there
+      // is nothing to trust, and saying so is better than picking one.
       const targetId = ucad.currentWorkspaceId;
-      const target = targetId
-        ? ucad.sessionStore.getWorkspace(targetId)
-        : ucad.sessionStore.listWorkspaces()[0];
-      if (!target) {
+      if (!targetId) {
         throw new Error('没有已打开的项目');
+      }
+      const target = ucad.sessionStore.getWorkspace(targetId);
+      if (!target) {
+        throw new Error(`项目不存在：${targetId}`);
       }
       const updated = ucad.sessionStore.setWorkspaceTrust(target.id, parsed);
       // Trust is part of what the workspace-rooted subsystems are initialised
@@ -1115,7 +1121,22 @@ export function registerIpc(
 // helpers
 // ---------------------------------------------------------------------------
 
+/**
+ * The project the user is working in.
+ *
+ * Activations set `currentWorkspaceId`; reading `listWorkspaces()[0]` instead
+ * means "whichever project was last touched", which is how a git stage or a
+ * file read could land in a project that was not the one on screen. The list
+ * is only consulted before the first activation (a cold start that has not
+ * restored a project yet), where "the most recent one" is the best answer
+ * available.
+ */
 function activeWorkspace(ucad: UcadApp) {
+  const activeId = ucad.currentWorkspaceId;
+  if (activeId) {
+    const active = ucad.sessionStore.getWorkspace(activeId);
+    if (active) return active;
+  }
   return ucad.sessionStore.listWorkspaces()[0] ?? null;
 }
 
