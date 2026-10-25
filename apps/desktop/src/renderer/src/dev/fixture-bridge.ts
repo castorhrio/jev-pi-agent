@@ -1398,6 +1398,10 @@ export function createFixtureApi(scenario: Scenario): FixtureHandle {
             usedTokens: used,
             remainingTokens: contextPack.budget.limitTokens - used,
           },
+          // The fixture's pack belongs to a turn that has already ended, so
+          // there is no live ledger to charge — the pack's own budget is the
+          // authority, exactly as in the real Main.
+          budgetSource: 'pack' as const,
           dropped: [{ itemId: 'i10', why: 'budget' as const }],
           createdAt: ISO,
         });

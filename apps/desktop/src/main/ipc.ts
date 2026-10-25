@@ -819,12 +819,22 @@ export function registerIpc(
           maxItems: z.number().int().positive().optional(),
         })
         .parse(input);
-      const session = ucad.sessionStore.listSessions()[0];
-      if (!session) throw new Error('没有活动会话');
+      /*
+       * The pack knows which session and which turn it belongs to.
+       *
+       * This handler used to take `listSessions()[0]` — the most recent
+       * session anywhere — and mint a `turn_preview_<now>` id for a turn
+       * that never existed. The budget ledger has no record of that turn, so
+       * every candidate was dropped as over-budget and the drawer reported a
+       * successful extend that added nothing. The pack is the only thing here
+       * that knows the real ownership, so it is what decides.
+       */
+      const pack = ucad.broker.getPack(parsed.packId);
+      if (!pack) throw new Error('Context Pack 不存在');
       return ucad.broker.extend({
-        packId: parsed.packId,
-        sessionId: session.id,
-        turnId: `turn_preview_${Date.now()}`,
+        packId: pack.id,
+        sessionId: pack.sessionId,
+        turnId: pack.turnId,
         trigger: 'user_action',
         request: parsed.request,
         maxItems: parsed.maxItems,

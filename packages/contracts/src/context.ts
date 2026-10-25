@@ -102,6 +102,18 @@ export interface ContextPack {
   objective: string;
 }
 
+/**
+ * Which budget governed an extend.
+ *
+ *  - `turn_ledger`: the turn is still running and its ledger is the authority,
+ *    so an extend can never get around the limit `build()` already charged.
+ *  - `pack`: there is no live ledger — a preview pack, or a turn that has
+ *    already ended — so the pack's own budget is the authority. "No ledger"
+ *    must not be read as "no allowance", which is what made every candidate
+ *    drop out as `budget`.
+ */
+export type ContextBudgetSource = 'turn_ledger' | 'pack';
+
 export interface ContextPackDelta {
   packId: string;
   baseRevision: number;
@@ -109,6 +121,8 @@ export interface ContextPackDelta {
   addedItems: ContextItem[];
   removedItemIds: string[];
   budget: ContextBudgetState;
+  /** Which budget the numbers above came from. */
+  budgetSource: ContextBudgetSource;
   dropped: Array<{ itemId: string; why: ExtendDropReason }>;
   createdAt: string;
 }

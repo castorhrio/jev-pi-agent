@@ -635,7 +635,19 @@ function DeltaView({ delta }: { delta: ContextPackDelta }): JSX.Element {
             {delta.baseRevision} → {delta.revision}
           </span>
         </div>
+        <div className="def">
+          <span className="k">{t('context.budgetSource')}</span>
+          <span className="v">
+            {delta.budgetSource === 'turn_ledger'
+              ? t('context.budgetSourceTurn')
+              : t('context.budgetSourcePack')}
+          </span>
+        </div>
       </div>
+
+      {delta.budgetSource === 'pack' && (
+        <div className="faint fs-note mt-2">{t('context.budgetSourcePackNote')}</div>
+      )}
 
       {delta.addedItems.length === 0 && delta.dropped.length === 0 && (
         <div className="faint fs-note mt-2">

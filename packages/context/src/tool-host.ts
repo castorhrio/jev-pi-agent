@@ -425,6 +425,9 @@ export class ToolContractHost {
         addedItems: delta.addedItems.map((item) => this.indexEntry(item)),
         dropped: delta.dropped,
         budget: delta.budget,
+        // Which budget the numbers came from, so the agent can tell "the
+        // turn's allowance is gone" from "this pack has no live ledger".
+        budgetSource: delta.budgetSource,
       },
     });
   }

@@ -137,6 +137,15 @@ const MAX_DIFF_PATCH_CHARS = 4000;
 const MAX_SKILL_ITEM_CHARS = 3500;
 const MAX_EXTEND_ITEMS_DEFAULT = 10;
 const MAX_EXTEND_ITEMS_HARD = 50;
+
+/**
+ * How many preview packs stay extendable at once.
+ *
+ * A preview is a dry run; the user may take a few before sending a turn, and
+ * each one holds its pack in memory. Eight is far more than a person takes
+ * between two sends, and far less than a leak.
+ */
+const MAX_RETAINED_PREVIEW_PACKS = 8;
 const MIN_TERM_LENGTH = 2;
 
 /** §6.4 boundary 3 default: return a partial pack instead of hanging. */
@@ -361,6 +370,8 @@ export class ContextBroker implements ContextBrokerContract {
 
   /** Live packs and their resolved profiles: what the Drawer reads first. */
   private readonly livePacks = new Map<string, ContextPack>();
+  /** Preview packs: real, extendable, and never written to disk. */
+  private readonly previewPacks = new Map<string, ContextPack>();
   private readonly liveProfiles = new Map<string, InjectionProfile>();
   private readonly liveInjections = new Map<string, ContextInjectionPlan>();
   private readonly liveDeltas = new Map<string, ContextPackDelta>();
@@ -569,6 +580,20 @@ export class ContextBroker implements ContextBrokerContract {
       this.liveProfiles.set(pack.id, resolved.profile);
       this.liveInjections.set(pack.turnId, injection);
       this.turnToPack.set(pack.turnId, pack.id);
+    } else {
+      /*
+       * A preview pack is never written to disk, but it has to stay
+       * reachable: `context.extend` looks the pack up by id, and a preview
+       * the user cannot refine is a dry run with no way to narrow it down.
+       *
+       * It lives in a map of its own — not in `livePacks` — so the preview
+       * packs cannot crowd out the packs of real turns, and so the cap below
+       * can bound them.
+       */
+      this.previewPacks.set(pack.id, pack);
+      this.liveProfiles.set(pack.id, resolved.profile);
+      this.liveInjections.set(pack.turnId, injection);
+      this.evictOldPreviews();
     }
 
     return {
@@ -1098,6 +1123,20 @@ export class ContextBroker implements ContextBrokerContract {
     const minter = this.createMinter(pack.items.length);
     const maxItems = clampIndex(input.maxItems, MAX_EXTEND_ITEMS_DEFAULT, MAX_EXTEND_ITEMS_HARD);
 
+    /*
+     * Which budget governs this extend (§6.4).
+     *
+     * A live turn keeps its ledger, so an extend can never get around the
+     * limit `build()` already charged. A preview pack — and a turn that has
+     * already ended — have no ledger left, and "no ledger" must not read as
+     * "no allowance": there the pack's own budget governs. Reading the
+     * missing ledger as an empty allowance is what dropped every candidate
+     * as `budget` and made the drawer report a successful extend that
+     * added nothing.
+     */
+    const openLedger = this.ledger.state(input.turnId);
+    const liveLedger = openLedger !== null && openLedger.packId === pack.id;
+
     const collection = await this.collectForExtend(pack, input, {
       providerId,
       signal: effectiveSignal,
@@ -1109,6 +1148,7 @@ export class ContextBroker implements ContextBrokerContract {
 
     const added: ContextItem[] = [];
     const dropped = [...collection.dropped];
+    let addedTokens = 0;
 
     for (const candidate of collection.items) {
       if (added.length >= maxItems) {
@@ -1117,16 +1157,21 @@ export class ContextBroker implements ContextBrokerContract {
       }
       // T-4: the charge is what enforces the budget, and it is charged here —
       // extend() is not a way around build()'s limit.
-      const remaining = this.ledger.remaining(input.turnId);
+      const remaining = liveLedger
+        ? this.ledger.remaining(input.turnId)
+        : Math.max(0, pack.budget.limitTokens - pack.budget.usedTokens - addedTokens);
       if (candidate.estimatedTokens > remaining) {
         dropped.push({ itemId: candidate.id, why: 'budget' });
         continue;
       }
-      this.ledger.charge(input.turnId, candidate.estimatedTokens);
+      if (liveLedger) {
+        this.ledger.charge(input.turnId, candidate.estimatedTokens);
+      }
+      addedTokens += candidate.estimatedTokens;
       added.push(candidate);
     }
 
-    const budget = this.budgetAfterExtend(pack, input.turnId);
+    const budget = this.budgetAfterExtend(pack, this.ledger.state(input.turnId), liveLedger, addedTokens);
     const revision = pack.revision + 1;
     const profile = this.profileFor(pack);
 
@@ -1145,19 +1190,27 @@ export class ContextBroker implements ContextBrokerContract {
     // I-8: the increment an adapter appends mid-turn.
     const extendRendered = this.renderer.renderDelta(nextPack, added, profile).rendered;
 
-    this.db.transaction(() => {
-      this.store.writeItems(pack.id, revision, added);
-      this.store.updatePack({
-        id: pack.id,
-        revision,
-        limitTokens: budget.limitTokens,
-        usedTokens: budget.usedTokens,
-        truncated: budget.truncated,
-        injectionMode: profile.mode,
-        renderedHash: injection.renderedHash,
-        renderedRef: this.store.storeRendered(injection.rendered, { packId: pack.id, revision }),
+    /*
+     * A preview pack was never written to disk, and neither is its extension:
+     * there is no `context_packs` row for it, and `context_items` would fail
+     * its foreign key against it. The extended preview stays in memory, like
+     * the preview it came from.
+     */
+    if (this.store.readPackRow(pack.id) !== undefined) {
+      this.db.transaction(() => {
+        this.store.writeItems(pack.id, revision, added);
+        this.store.updatePack({
+          id: pack.id,
+          revision,
+          limitTokens: budget.limitTokens,
+          usedTokens: budget.usedTokens,
+          truncated: budget.truncated,
+          injectionMode: profile.mode,
+          renderedHash: injection.renderedHash,
+          renderedRef: this.store.storeRendered(injection.rendered, { packId: pack.id, revision }),
+        });
       });
-    });
+    }
 
     const delta: ContextPackDelta = {
       packId: pack.id,
@@ -1166,6 +1219,7 @@ export class ContextBroker implements ContextBrokerContract {
       addedItems: added,
       removedItemIds: [],
       budget,
+      budgetSource: liveLedger ? 'turn_ledger' : 'pack',
       dropped,
       createdAt: nowIso(),
     };
@@ -1186,7 +1240,13 @@ export class ContextBroker implements ContextBrokerContract {
       });
     }
 
-    this.livePacks.set(pack.id, nextPack);
+    if (this.previewPacks.has(pack.id)) {
+      // Still a preview: it goes back where it came from, so the cap on
+      // preview packs still applies to it.
+      this.previewPacks.set(pack.id, nextPack);
+    } else {
+      this.livePacks.set(pack.id, nextPack);
+    }
     this.liveInjections.set(pack.turnId, injection);
     this.liveDeltas.set(deltaKey(pack.id, revision), delta);
 
@@ -1316,6 +1376,11 @@ export class ContextBroker implements ContextBrokerContract {
     const live = this.livePacks.get(packId);
     if (live) return live;
 
+    // A preview pack is in memory only, and it is as extendable as a real
+    // one — it is the same object with a different budget authority.
+    const preview = this.previewPacks.get(packId);
+    if (preview) return preview;
+
     const row = this.store.readPackRow(packId);
     if (!row) return null;
 
@@ -1426,6 +1491,9 @@ export class ContextBroker implements ContextBrokerContract {
         estimateSource: (row.estimate_source as TokenEstimateSource) ?? 'unknown',
         truncated: row.truncated === 1,
       },
+      // Read back from storage, so no turn ledger is alive any more: the
+      // pack's own numbers are the only ones left to report.
+      budgetSource: 'pack',
       dropped: [],
       createdAt: row.created_at,
     };
@@ -1464,29 +1532,58 @@ export class ContextBroker implements ContextBrokerContract {
     return items.map((item) => ({ ...item, estimatedTokens: minter.estimate(itemBodyText(item)) }));
   }
 
+  /**
+   * Keeps the in-memory preview packs bounded.
+   *
+   * A preview is a dry run, and the user may take several before sending one
+   * turn. Each of them holds a pack in memory, and nothing else ever asks for
+   * them again, so the oldest ones are dropped once there are too many.
+   */
+  private evictOldPreviews(): void {
+    while (this.previewPacks.size > MAX_RETAINED_PREVIEW_PACKS) {
+      const oldest = this.previewPacks.keys().next();
+      if (oldest.done) return;
+      const packId = oldest.value;
+      this.previewPacks.delete(packId);
+      this.liveProfiles.delete(packId);
+    }
+  }
+
   private limitFor(maxInputTokens: number, reservedOutputTokens: number): number {
     const raw = Number.isFinite(maxInputTokens) ? maxInputTokens : 0;
     const reserved = Number.isFinite(reservedOutputTokens) ? Math.max(0, reservedOutputTokens) : 0;
     return Math.max(0, Math.round(raw - reserved));
   }
 
-  private budgetAfterExtend(pack: ContextPack, turnId: string): ContextBudgetState {
-    const state = this.ledger.state(turnId);
-    if (state && state.packId === pack.id) {
-      return { ...state, revision: pack.revision + 1 };
+  private budgetAfterExtend(
+    pack: ContextPack,
+    ledgerState: ContextBudgetState | null,
+    liveLedger: boolean,
+    addedTokens: number,
+  ): ContextBudgetState {
+    if (liveLedger && ledgerState) {
+      // The ledger has already been charged for everything this extend added,
+      // so its numbers are the ones to report.
+      return { ...ledgerState, revision: pack.revision + 1 };
     }
-    // The ledger is gone (released, or another process owns the turn): fall
-    // back to the pack's own numbers plus what was just added, so the delta
-    // still accounts for every token.
-    const used = pack.budget.usedTokens + pack.items.reduce((sum, item) => sum + item.estimatedTokens, 0);
+    /*
+     * No live ledger: the pack's own budget governs.
+     *
+     * `usedTokens` already counts the items in the pack — it is the sum of
+     * their `estimatedTokens` — so only what this extend added goes on top.
+     * Adding the pack's items a second time reported twice the tokens that
+     * were actually in the pack and squeezed the remaining allowance down to
+     * nothing.
+     */
+    const used = pack.budget.usedTokens + addedTokens;
     return {
       packId: pack.id,
       revision: pack.revision + 1,
       limitTokens: pack.budget.limitTokens,
-      usedTokens: Math.min(used, pack.budget.limitTokens),
+      usedTokens: used,
       remainingTokens: Math.max(0, pack.budget.limitTokens - used),
       estimateSource: pack.budget.estimateSource,
-      truncated: pack.budget.truncated,
+      truncated: pack.budget.truncated || used > pack.budget.limitTokens,
     };
   }
 

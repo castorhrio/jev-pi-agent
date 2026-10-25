@@ -495,6 +495,11 @@ const zhCN: Dictionary = {
   'context.omitIrrelevant': '与目标不相关',
   'context.dropNoMatch': '没有匹配项',
   'context.dropProvider': '代码理解服务不可用',
+  'context.budgetSource': '预算来源',
+  'context.budgetSourceTurn': '本轮账本',
+  'context.budgetSourcePack': 'Pack 自身',
+  'context.budgetSourcePackNote':
+    '本轮已结束或这是预览包：没有可用的回合账本，预算按 Pack 自身计算。',
 
   'decision.title': '决策',
   'decision.subtitle': '决策是独立平面：只接收状态摘要、返回类型化决策，不读代码、不执行命令。',
@@ -1234,6 +1239,11 @@ const enUS: Dictionary = {
   'context.omitIrrelevant': 'not relevant to the objective',
   'context.dropNoMatch': 'nothing matched',
   'context.dropProvider': 'intelligence provider unavailable',
+  'context.budgetSource': 'Budget source',
+  'context.budgetSourceTurn': 'this turn’s ledger',
+  'context.budgetSourcePack': 'the pack itself',
+  'context.budgetSourcePackNote':
+    'The turn has ended, or this is a preview pack: there is no live turn ledger, so the pack’s own budget governs.',
 
   'decision.title': 'Decision',
   'decision.subtitle':
