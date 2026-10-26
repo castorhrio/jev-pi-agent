@@ -152,6 +152,11 @@ that does not.
 - **The interactive terminal needs `node-pty`.** It is an optional dependency;
   without it the terminal panel reports that it is unavailable instead of
   pretending to work. The command channel still runs.
+- **Adapter resolution inside a real `.asar` archive is verified by packaging,
+  not by `npm test`.** The contract gate resolves a package from an asar-shaped
+  app root — the directory semantics Node applies — but reading modules from
+  *inside* the archive needs Electron's patched `fs`, so that last step is
+  covered by the packaged smoke run.
 
 ### Contributing
 
@@ -282,6 +287,9 @@ npm run package  # 免安装目录，不出安装包
   这个变量只接受 `https`：明文地址会被拒绝，不会退回随包 feed。
 - **交互式终端依赖 `node-pty`。** 它是可选依赖；缺失时终端面板会如实说不可用，
   而不是假装能跑。命令通道仍然可用。
+- **从真实 `.asar` 归档内解析适配器由打包冒烟验证，而不是 `npm test`。**
+  契约门禁会从 asar 形状的应用根目录解析一个包——也就是 Node 采用的目录语义——
+  但从归档*内部*读取模块需要 Electron 打过补丁的 `fs`，所以最后一步由打包冒烟覆盖。
 
 ### 参与贡献
 

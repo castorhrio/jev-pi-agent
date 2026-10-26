@@ -37,6 +37,20 @@
  *
  * Nothing here may import Electron: that is the whole point of the move, and
  * the contract gate asserts it on the source text.
+ *
+ * ## Where the packaged gate stops
+ *
+ * `tests/contract/adapter-resolution.test.ts` builds a throwaway package under
+ * an asar-shaped `appPath` (`resources/app.asar/node_modules/…`) and resolves
+ * it from `paths[0]`, with a control run that moves `appPath` away while the
+ * development hops stay put. That pins the part that actually drifts: the app
+ * root is a real search root, not a string the resolver carries and ignores.
+ *
+ * It does not open a real `.asar` archive. Node resolves a bare specifier by
+ * treating the app path as a directory root — the behaviour the test exercises
+ * — but reading modules from inside the archive needs Electron's patched `fs`.
+ * That last step is covered by the packaged smoke run, not by `npm test`; the
+ * README states the same boundary.
  */
 
 import { createRequire } from 'node:module';

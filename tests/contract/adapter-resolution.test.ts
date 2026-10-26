@@ -30,7 +30,8 @@
  */
 
 import { describe, expect, it, vi } from 'vitest';
-import { existsSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join, sep } from 'node:path';
 import { MemoryLogSink, Logger } from '@ucad/observability';
 import { ADAPTER_CANDIDATES } from '../../apps/desktop/src/main/adapter-candidates';
@@ -95,6 +96,104 @@ describe('the search paths cover the layouts that ship', () => {
 
     expect(paths).toContain(REPO_ROOT);
     expect(existsSync(join(REPO_ROOT, 'node_modules', '@ucad'))).toBe(true);
+  });
+});
+
+/**
+ * A bare package in a throwaway `node_modules`, and the directory it lives in.
+ *
+ * The specifier is scoped so it is split into `@scope` and `name` the same way
+ * a real adapter package is. `main` is written explicitly: `require.resolve`
+ * then returns the file, and the assertion can name it instead of accepting
+ * "something inside the temp directory".
+ */
+function writeFakeAdapter(root: string, specifier: string): string {
+  const packageDir = join(root, 'node_modules', ...specifier.split('/'));
+  mkdirSync(packageDir, { recursive: true });
+  writeFileSync(
+    join(packageDir, 'package.json'),
+    JSON.stringify({ name: specifier, version: '0.0.0', main: 'index.js' }),
+  );
+  writeFileSync(join(packageDir, 'index.js'), 'module.exports = {};\n');
+  return packageDir;
+}
+
+/**
+ * `appPath` is the *first* search root, not decoration.
+ *
+ * In development every path in the list points into the same checkout, so an
+ * assertion that a candidate resolved cannot tell which hop found it — and a
+ * resolver that quietly ignored `appPath` and anchored on `cwd` would pass. A
+ * packaged app is the layout where that matters: `app.getAppPath()` is the only
+ * root that exists in a release, and the asar suffix is attached to it.
+ *
+ * The two cases below put a package only under an asar-shaped `appPath` and
+ * then move `appPath` away while keeping the development hops unchanged. The
+ * package resolves in the first case and is reported missing in the second, so
+ * both directions are pinned without inventing a failure in a fixture.
+ *
+ * What this does **not** cover: opening a real `.asar` archive. Node's
+ * `require.resolve` treats the app path as a directory root, and a directory
+ * named `app.asar` exercises exactly that step; reading modules from inside
+ * the archive needs Electron's patched `fs` and is left to the packaging smoke
+ * run. The limitation is stated in `adapter-resolution.ts` and the README.
+ */
+describe('the packaged app root is a search root in its own right', () => {
+  const PACKAGED_ID = 'packaged';
+  const PACKAGED_SPECIFIER = '@ucad/adapter-resolution-fixture';
+
+  it('resolves a bare specifier from an asar-shaped `appPath`', () => {
+    const tempRoot = mkdtempSync(join(tmpdir(), 'ucad-adapter-apppath-'));
+    try {
+      // `resources/app.asar` is the shape of a packaged app root. Here it is a
+      // plain directory — which is precisely the part of asar handling Node
+      // itself provides: the path is treated as a directory that may contain
+      // `node_modules`.
+      const appPath = join(tempRoot, 'resources', 'app.asar');
+      const packageDir = writeFakeAdapter(appPath, PACKAGED_SPECIFIER);
+
+      const searchPaths = adapterSearchPaths({ appPath, mainDir: MAIN_DIR, cwd: REPO_ROOT });
+      expect(searchPaths[0]).toBe(appPath);
+
+      const resolution = resolveAdapterModules({
+        candidates: { [PACKAGED_ID]: PACKAGED_SPECIFIER },
+        searchPaths,
+        write: () => undefined,
+      });
+
+      expect(resolution.failures).toEqual([]);
+      // The file, not merely "a path": a resolver that looked somewhere else
+      // and found a package with the same name would fail here.
+      expect(resolution.modules[PACKAGED_ID]).toBe(join(packageDir, 'index.js'));
+    } finally {
+      rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('does not find the same package once `appPath` stops naming its root', () => {
+    // The control for the case above. `mainDir` and `cwd` still point at the
+    // real checkout, which is where a resolver that ignored `paths[0]` would
+    // look; the package does not exist there, so success can only have come
+    // from `appPath` in the previous test.
+    const tempRoot = mkdtempSync(join(tmpdir(), 'ucad-adapter-apppath-'));
+    try {
+      const appPath = join(tempRoot, 'resources', 'app.asar');
+      writeFakeAdapter(appPath, PACKAGED_SPECIFIER);
+      const emptyAppPath = join(tempRoot, 'no-app-here');
+      mkdirSync(emptyAppPath);
+
+      const resolution = resolveAdapterModules({
+        candidates: { [PACKAGED_ID]: PACKAGED_SPECIFIER },
+        searchPaths: adapterSearchPaths({ appPath: emptyAppPath, mainDir: MAIN_DIR, cwd: REPO_ROOT }),
+        write: () => undefined,
+      });
+
+      expect(resolution.modules).toEqual({});
+      expect(resolution.failures.map((failure) => failure.id)).toEqual([PACKAGED_ID]);
+      expect(resolution.searchPaths[0]).toBe(emptyAppPath);
+    } finally {
+      rmSync(tempRoot, { recursive: true, force: true });
+    }
   });
 });
 

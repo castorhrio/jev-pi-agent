@@ -72,6 +72,7 @@ const LIMITATIONS: readonly Limitation[] = [
   // any feed URL would do.
   { id: 'auto-update reads an `https` feed', en: ['feed', 'cleartext'], zh: ['feed', '明文'] },
   { id: 'the terminal needs `node-pty`', en: ['node-pty'], zh: ['node-pty'] },
+  { id: 'adapter resolution inside a real asar is a packaging check', en: ['asar'], zh: ['asar'] },
 ];
 
 /**
