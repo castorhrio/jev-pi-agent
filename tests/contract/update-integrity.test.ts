@@ -51,11 +51,13 @@ import {
   checkFeedUrl,
   checkStagedFileUnchanged,
   fileIdentity,
+  isUpdateChannelScheme,
   normalizeSha256,
   parseUpdateConfig,
   resolveUpdateFeed,
   verifyInstaller,
   verifyStagedInstallerForLaunch,
+  type ChannelUrlCheck,
   type ChannelUrlRejection,
 } from '../../apps/desktop/src/main/update-feed';
 import {
@@ -669,6 +671,84 @@ describe('every URL on the update channel is judged by one rule', () => {
         `checkFeedUrl and checkChannelUrl disagree about ${label}`,
       ).toEqual(verdict);
     }
+  });
+
+  /**
+   * The rule asked from the outside, on a hand-written value domain.
+   *
+   * `checkChannelUrl()` is "parse the string, then ask `isUpdateChannelScheme()`
+   * about the protocol that came out" and nothing else. Writing that sentence
+   * down as code here — `schemeOnlyVerdict()` — is what makes it checkable: if
+   * the predicate ever stopped parsing and started prefix-matching the raw
+   * input, or grew a rule of its own, the comparison below goes red on
+   * `HTTPS://x`, which is the value that tells parsing apart from prefix
+   * matching. The table above covers the shapes a release writes; this one
+   * covers the shapes a rule drifts into.
+   */
+  function schemeOnlyVerdict(input: string): ChannelUrlCheck {
+    let url: URL;
+    try {
+      url = new URL(input.trim());
+    } catch {
+      return { ok: false, reason: 'invalid-url' };
+    }
+    if (!isUpdateChannelScheme(url.protocol)) return { ok: false, reason: 'not-https' };
+    return { ok: true, url: url.toString() };
+  }
+
+  it('is exactly "parse, then ask isUpdateChannelScheme" across the value domain', () => {
+    const inputs = [
+      'https://x',
+      'HTTPS://x',
+      'https://x ',
+      'http://x',
+      'file:///x',
+      'javascript:alert(1)',
+      'data:text/html,x',
+      '',
+    ] as const;
+
+    for (const input of inputs) {
+      const label = JSON.stringify(input);
+
+      // 1. the predicate, against the rule restated from its own two parts.
+      expect(checkChannelUrl(input), `checkChannelUrl is not the rule for ${label}`).toEqual(
+        schemeOnlyVerdict(input),
+      );
+
+      // 2. the feed wrapper: identical, except that "nothing configured" is its
+      //    own answer rather than a refusal, which is the only difference the
+      //    wrapper is allowed to add.
+      if (input.trim() === '') {
+        expect(checkFeedUrl(input), 'a blank feed is "not configured", not "refused"').toEqual({
+          ok: false,
+          reason: 'empty',
+        });
+      } else {
+        expect(checkFeedUrl(input), `checkFeedUrl and checkChannelUrl disagree about ${label}`).toEqual(
+          schemeOnlyVerdict(input),
+        );
+      }
+
+      // 3. the redirect hop, for the values that carry a scheme of their own: a
+      //    `Location` is resolved against the redirecting URL first, so only
+      //    these are the same question the other two answer.
+      if (/^[A-Za-z][A-Za-z0-9+.-]*:/.test(input.trim())) {
+        const hop = resolveDownloadRedirect(input, new URL(INSTALLER_URL), 0);
+        expect(hop.ok, `the hop ${label} disagrees with the channel rule`).toBe(
+          schemeOnlyVerdict(input).ok,
+        );
+      }
+    }
+
+    // The two facts a prefix match on the raw string would get wrong, asserted
+    // on their own so the failure names the reason instead of a table row:
+    // capitals are a URL `URL` normalises rather than refuses, and a
+    // non-transport scheme parses fine and is refused by the rule instead.
+    expect(checkChannelUrl('HTTPS://x')).toEqual({ ok: true, url: 'https://x/' });
+    expect(checkChannelUrl('https://x ')).toEqual({ ok: true, url: 'https://x/' });
+    expect(schemeOnlyVerdict('javascript:alert(1)')).toEqual({ ok: false, reason: 'not-https' });
+    expect(schemeOnlyVerdict('data:text/html,x')).toEqual({ ok: false, reason: 'not-https' });
   });
 
   it('refuses an installer URL the feed names, before making a request', async () => {
@@ -1782,20 +1862,42 @@ describe('the updater itself', () => {
     expect(existsSync(join(dir, 'UCAD-setup.exe'))).toBe(false);
   });
 
-  it('refuses a download whose checked document is gone, instead of reading the feed again', async () => {
+  /**
+   * Makes the status say `available` with no check behind it.
+   *
+   * The second way into the branch below, and the one a future caller would
+   * produce: the status and the document are two fields, and only `check()`
+   * currently writes both. Written through the field on purpose — no public
+   * path produces the state today, and a gate that could only observe the
+   * reachable path would be asserting nothing about the unreachable one.
+   */
+  function pretendAvailable(instance: UpdateService): void {
+    (instance as unknown as { status: Record<string, unknown> }).status = {
+      state: 'available',
+      currentVersion: '1.0.0',
+      latestVersion: '9.9.9',
+      feedConfigured: true,
+    };
+  }
+
+  it('refuses a download whose checked document is gone, without a single request', async () => {
     // The branch `download()` keeps for a status that disagrees with itself.
     // It cannot be produced today, and what is asserted is what happens *if* it
-    // ever can: the download stops, says so, and above all does not fetch the
-    // feed a second time. An earlier build did exactly that here, which
-    // reopened the window the stored document exists to close — a second read
-    // can name a different file than the version the user was shown, and the
-    // hash that `installAndRestart()` re-checks comes from that same document.
+    // ever can: the download stops, says so, and above all does not fetch
+    // anything — not the feed a second time, and not the installer. An earlier
+    // build re-fetched the feed here, which reopened the window the stored
+    // document exists to close — a second read can name a different file than
+    // the version the user was shown, and the hash that
+    // `installAndRestart()` re-checks comes from that same document.
+    //
+    // The transport below has *no* scripted answers, so "no network request
+    // was made" is a fact about this run rather than an absence nobody
+    // checked: one attempt would overrun the script and be recorded.
     const genuine = 'the genuine installer';
-    const { instance, downloads, fetchCalls } = service({
+    const { getImpl, requests } = scriptedGet([]);
+    const { instance, fetchCalls } = service({
       feed: { version: '9.9.9', url: INSTALLER_URL, sha256: sha256Of(genuine) },
-      download: async (_url, target) => {
-        writeFileSync(target, genuine);
-      },
+      downloadGet: getImpl,
     });
 
     await instance.check();
@@ -1805,11 +1907,40 @@ describe('the updater itself', () => {
     const status = await instance.download();
 
     expect(status.state).toBe('error');
+    // The message tells the user what to do — check again — rather than
+    // reporting a download failure for a download that never started.
     expect(status.message).toContain('重新检查');
-    expect(downloads).toEqual([]);
+    expect(requests, 'the download reached the network with no document to check against').toEqual(
+      [],
+    );
     // One read of the feed — the check's. The fallback used to make this two.
     expect(fetchCalls.calls).toBe(1);
     expect(existsSync(join(dir, 'UCAD-setup.exe'))).toBe(false);
+  });
+
+  it('refuses the same download when the status was never earned by a check', async () => {
+    // The same invariant from the other end: `available` without a document,
+    // and without even a check having run. This is the shape a later caller
+    // writing `state: 'available'` — a retry queue, a restored session —
+    // would hand the download, and the refusal (plus its log line) is what
+    // keeps that caller from becoming a second feed reader.
+    const logs = new MemoryLogSink();
+    const { getImpl, requests } = scriptedGet([]);
+    const { instance, fetchCalls } = service({ logs, downloadGet: getImpl });
+
+    pretendAvailable(instance);
+    const status = await instance.download();
+
+    expect(status.state).toBe('error');
+    expect(status.message).toContain('重新检查');
+    expect(requests, 'a download with no checked document made a request').toEqual([]);
+    expect(fetchCalls.calls, 'the download read the feed to rescue itself').toBe(0);
+
+    const refusal = logs.records.find(
+      (record) => record.msg === 'update download without the document the update check read',
+    );
+    expect(refusal, 'the refusal was silent, so nobody can diagnose it').toBeDefined();
+    expect(refusal!.level, 'an update that refused to download is not a debug note').toBe('error');
   });
 
   it('writes every byte it reports as downloaded', async () => {
@@ -1939,8 +2070,21 @@ describe('the updater itself', () => {
     // in the message the *server* chose, and it is what turns "更新失败" into a
     // report a publisher can act on.
     expect(status.message).toContain('第 6 次跳转');
+    // And *where*: a loop is diagnosed from the one URL that kept answering
+    // 302, so the message carries the address of the request that redirected.
+    // The sixth request went to the fifth hop (the first is the URL the feed
+    // named), and that is the address printed — the request's own, which has
+    // already passed the channel's rule, not the `Location` text the refusal
+    // exists to reject.
+    expect(status.message).toContain('请求地址 https://example.test/hop-5');
     expect(requests).toHaveLength(6);
-    expect(existsSync(join(dir, 'UCAD-setup.exe'))).toBe(false);
+    expect(requests[5]).toBe('https://example.test/hop-5');
+    // Nothing staged, and nothing half-staged: a refusal that leaves a file
+    // behind under the name that means "pending update" is the state the next
+    // install click would find.
+    expect(readdirSync(dir), 'a refused download left a file in the staging directory').toEqual(
+      [],
+    );
 
     const installed = await instance.installAndRestart();
     expect(installed).toBe(false);
@@ -2510,18 +2654,82 @@ function constructionsIn(file: SourceFile, className: string): Construction[] {
 }
 
 /**
- * Constructions that pass the test-only launch seam.
+ * What the constructor scan found wrong with one `new UpdateService(…)`, and
+ * where.
+ *
+ * Two reasons, because two different edits land a seam in production:
+ *
+ *  - `opens-the-seam` — the options pass `beforeLaunch` outright;
+ *  - `unreadable-options` — the options are not an object literal, so the scan
+ *    cannot tell whether the seam is inside them.
+ */
+interface ConstructionProblem {
+  readonly path: string;
+  readonly line: number;
+  readonly reason: 'opens-the-seam' | 'unreadable-options';
+}
+
+/**
+ * Whether the argument text is an object literal the scan can actually read.
+ *
+ * Two things disqualify it, and both are the shapes a refactor produces:
+ *
+ *  - anything that is not `{…}` at all — `new UpdateService(options)`,
+ *    `new UpdateService(makeOptions())`, `new UpdateService()`. The seam can
+ *    be inside a value the scan never sees, so "I cannot read this" has to be
+ *    a failure rather than silence;
+ *  - an object literal that spreads: `{ ...sharedOptions, logger }`. The
+ *    braces are there and the seam is still invisible, which makes this the
+ *    one spelling a syntax-only check would wave through.
+ */
+function readableOptions(options: string): boolean {
+  const trimmed = options.trim();
+  if (!trimmed.startsWith('{') || !trimmed.endsWith('}')) return false;
+  return !/(?:^|[\s,{[])\s*\.\.\./.test(trimmed);
+}
+
+/**
+ * Everything wrong with the main-process constructions, as `file:line` plus a
+ * reason a reader can act on.
  *
  * `beforeLaunch` exists so a gate can interleave with the window between the
  * digest and `openPath`; production deliberately passes nothing (see the seam
  * in `update-service.ts`). A value reaching it in the main process would make
  * the app run code of its own between verifying and launching an installer —
  * a production backdoor that only a comment currently forbids.
+ *
+ * The second reason is the scan's own blind spot, turned into a failure. The
+ * scan used to filter on `/\bbeforeLaunch\b/` and nothing else, which is
+ * fail-open in the one direction that matters: a call site that passes
+ * `makeOptions()` — or spreads a shared bag — contains no `beforeLaunch` text
+ * and would have been *skipped*, so a refactor could move the seam behind a
+ * helper and keep this gate green. `update-service.ts` says the scan is
+ * fail-closed; this is the function that makes that true.
  */
-function beforeLaunchUses(files: readonly SourceFile[]): Construction[] {
-  return files
-    .flatMap((file) => constructionsIn(file, 'UpdateService'))
-    .filter((construction) => /\bbeforeLaunch\b/.test(construction.options));
+function constructionProblems(files: readonly SourceFile[]): ConstructionProblem[] {
+  return files.flatMap((file) =>
+    constructionsIn(file, 'UpdateService').flatMap((construction) => {
+      const problems: ConstructionProblem[] = [];
+      if (!readableOptions(construction.options)) {
+        problems.push({
+          path: construction.path,
+          line: construction.line,
+          reason: 'unreadable-options',
+        });
+      }
+      if (/\bbeforeLaunch\b/.test(construction.options)) {
+        problems.push({ path: construction.path, line: construction.line, reason: 'opens-the-seam' });
+      }
+      return problems;
+    }),
+  );
+}
+
+/** The fix a reader needs for one problem, in the words a failure should use. */
+function constructionFix(reason: ConstructionProblem['reason']): string {
+  return reason === 'opens-the-seam'
+    ? 'the seam is for tests only — remove it from the constructor call, or drive the window from update-integrity.test.ts'
+    : 'write the options as an object literal at the call site (no spread, no helper): the scan cannot see a beforeLaunch inside a value it cannot read';
 }
 
 /** Every `.ts` file under `apps/desktop/src/main`, repo-relative and read. */
@@ -2556,8 +2764,63 @@ describe('the production wiring never opens the launch-test seam', () => {
     ].join('\n');
 
     expect(
-      beforeLaunchUses([{ path: 'apps/desktop/src/main/bootstrap.ts', source }]),
-    ).toMatchObject([{ path: 'apps/desktop/src/main/bootstrap.ts', line: 3 }]);
+      constructionProblems([{ path: 'apps/desktop/src/main/bootstrap.ts', source }]),
+    ).toMatchObject([
+      { path: 'apps/desktop/src/main/bootstrap.ts', line: 3, reason: 'opens-the-seam' },
+    ]);
+  });
+
+  it('reports a call site whose options it cannot read, instead of skipping it', () => {
+    // The scan's own blind spot, which the seam's comment now promises is
+    // closed. `new UpdateService(makeOptions())` contains no `beforeLaunch`
+    // text — a scan that only looked for the identifier would report *nothing*
+    // about the one call site that could be passing anything at all, and the
+    // seam could move into a helper without a single test going red.
+    const source = [
+      "import { makeOptions } from './update-options';",
+      '',
+      'export const service = new UpdateService(makeOptions());',
+    ].join('\n');
+
+    const problems = constructionProblems([{ path: 'apps/desktop/src/main/bootstrap.ts', source }]);
+    expect(problems, 'a non-literal argument was skipped rather than reported').toEqual([
+      { path: 'apps/desktop/src/main/bootstrap.ts', line: 3, reason: 'unreadable-options' },
+    ]);
+    // The failure has to name the line *and* the fix; "something is wrong in
+    // bootstrap.ts" is a report the reader has to re-derive.
+    expect(constructionFix(problems[0]!.reason)).toContain('object literal');
+
+    // The other spellings of the same blind spot: no argument at all, an
+    // argument that is a bare identifier, and an object literal that spreads a
+    // bag the scan cannot see into. The braces are what a syntax-only check
+    // would wave through, and they are not enough.
+    for (const call of [
+      'new UpdateService()',
+      'new UpdateService(options)',
+      'new UpdateService({ ...sharedOptions, logger })',
+      'new UpdateService({ logger, ...sharedOptions })',
+    ]) {
+      expect(
+        constructionProblems([{ path: 'bootstrap.ts', source: `export const s = ${call};` }]),
+        `${call} was not reported as unreadable`,
+      ).toEqual([{ path: 'bootstrap.ts', line: 1, reason: 'unreadable-options' }]);
+    }
+
+    // And the shape the gate has to stay quiet about, or it would be red about
+    // the code it is written for: a literal with nested calls in its values.
+    expect(
+      constructionProblems([
+        {
+          path: 'bootstrap.ts',
+          source: [
+            'new UpdateService({',
+            '  logger: ucad.logger.child(\'update\'),',
+            '  getFeedUrl: () => readUpdateFeed(),',
+            '})',
+          ].join('\n'),
+        },
+      ]),
+    ).toEqual([]);
   });
 
   it('does not read a comment as a seam', () => {
@@ -2572,10 +2835,10 @@ describe('the production wiring never opens the launch-test seam', () => {
       '});',
     ].join('\n');
 
-    expect(beforeLaunchUses([{ path: 'bootstrap.ts', source }])).toEqual([]);
+    expect(constructionProblems([{ path: 'bootstrap.ts', source }])).toEqual([]);
   });
 
-  it('finds the real construction, and none of them uses the seam', () => {
+  it('finds the real construction, and reports nothing about it', () => {
     const files = mainSources();
     const constructions = files.flatMap((file) => constructionsIn(file, 'UpdateService'));
     expect(
@@ -2587,12 +2850,12 @@ describe('the production wiring never opens the launch-test seam', () => {
       'bootstrap.ts no longer constructs UpdateService; the scan is reading the wrong tree',
     ).toBe(true);
 
-    const uses = beforeLaunchUses(files);
+    const problems = constructionProblems(files);
     expect(
-      uses,
-      `production passes beforeLaunch (${uses
-        .map((use) => `${use.path}:${use.line}`)
-        .join(', ')}); the seam is for tests only — remove it from the constructor call, or drive the window from update-integrity.test.ts`,
+      problems,
+      `the production constructions have ${problems.length} problem(s): ${problems
+        .map((problem) => `${problem.path}:${problem.line} ${problem.reason} — ${constructionFix(problem.reason)}`)
+        .join('; ')}`,
     ).toEqual([]);
   });
 });

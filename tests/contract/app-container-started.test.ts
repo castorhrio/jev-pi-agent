@@ -547,6 +547,15 @@ describe('the scan that reads the container’s promises', () => {
       'class A {\n  db!: Database;\n  brandNew!: Service;\n}',
     );
     expect(promisesMissingFromChecklist(found, ['db'])).toEqual(['brandNew']);
+
+    // And against the checklist the container actually ships, so the fixture
+    // is the failure a reader would see rather than a two-element list the
+    // test made up: one field the scan finds and the real checklist does not
+    // name is one red test, by name.
+    expect(
+      promisesMissingFromChecklist(promisedFields('class A {\n  foo!: Thing;\n}'), PROMISED_FIELDS),
+      'a `field!: T` that is not on the shipped checklist has to be reported by name',
+    ).toEqual(['foo']);
   });
 
   it('reports a retention dependency the checklist does not cover', () => {

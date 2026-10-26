@@ -129,6 +129,13 @@ export interface UpdateServiceOptions {
    * gate rather than a note: `tests/contract/update-integrity.test.ts` scans
    * every main-process `new UpdateService({…})` and fails, naming the file and
    * line, if one passes this seam.
+   *
+   * **The scan is fail-closed on a non-literal argument.** A call site that
+   * passes `makeOptions()` — or `{ ...sharedOptions }` — is reported, not
+   * skipped: the seam can sit inside a value the scan cannot read, and a scan
+   * whose response to "I cannot see this" is silence would be a gate that
+   * exempts exactly the call sites a refactor produces. Object literals are
+   * read; anything else is a failure naming the line and the fix.
    */
   beforeLaunch?: (target: string) => void | Promise<void>;
 }
@@ -641,7 +648,19 @@ async function downloadTo(
           // count is the one fact in this message the server chose. `depth` is
           // the request that redirected, so the hop being judged is
           // `depth + 1` — the sixth for the sixth `Location`.
-          reject(new Error(`${REDIRECT_MESSAGE[redirect.reason]}（第 ${depth + 1} 次跳转）`));
+          //
+          // The address goes with it for the same reason. "次数过多" alone
+          // says the download gave up; it does not say *where*, and a redirect
+          // loop is diagnosed from the one URL that kept answering 302. The
+          // URL printed is the request's own — a URL that already passed the
+          // channel's rule — not the header text, which is the value the
+          // refusal exists to reject and is not something to hand to a reader
+          // as if it were an address.
+          reject(
+            new Error(
+              `${REDIRECT_MESSAGE[redirect.reason]}（第 ${depth + 1} 次跳转，请求地址 ${url.toString()}）`,
+            ),
+          );
           return;
         }
         void downloadTo(redirect.url, target, onProgress, redirect.depth, getImpl).then(
