@@ -53,8 +53,9 @@
  *  - regex literals are recognised and kept verbatim, so the `//` inside one
  *    is not a comment either. Detection is the usual operand-position
  *    heuristic: a `/` starts a regex where a value is expected — after an
- *    operator, an opening bracket, a comma, or a keyword like `return` — and
- *    is division after an identifier, a number, `)`, `]` or `}`;
+ *    operator, an opening bracket, a comma, a keyword like `return`, or the
+ *    `)` that closed a control-flow condition — and is division after an
+ *    identifier, a number, `)`, `]` or `}`;
  *  - the heuristic is biased the safe way. A `/` wrongly read as a regex keeps
  *    the following text verbatim, which can only make a gate *find* something
  *    (red on a comment that names a seam, say); it cannot hide code, because a
@@ -62,6 +63,27 @@
  *    than swallowing the rest of the file. A `/` wrongly read as division is
  *    the direction that loses text, and that is the case this module exists to
  *    remove: the fixtures in the gate files drive it.
+ *
+ * ## Statement position after a control-flow `)`
+ *
+ * `)` is a value ending — `f(x) / 2` is division — with one exception that the
+ * first version of this heuristic missed: the `)` that closes an `if (…)`,
+ * `while (…)` or `for (…)` header is followed by a *statement*, not by an
+ * operator. `if (x) /re/.test(s);` is valid code, and reading its `/` as
+ * division is the lossy direction after all: `/[//]/` then puts a `//` at the
+ * scanner, which blanks the rest of the line — source gone, silently. The
+ * fixture for it (`if (x) /[//]/.test(s); const kept = 1;`) was written as a
+ * reverse assertion, i.e. one that should have been green, and came back red.
+ *
+ * So `(` records whether the word in front of it was a control-flow keyword,
+ * and the matching `)` marks a statement position. A call's `(` records the
+ * callee's name instead, so `f(x) / 2` still divides.
+ *
+ * The remaining lossy direction is `}`: after a closing brace the walk says
+ * division, because an object literal is far more common than a block whose
+ * next statement is an expression starting with a regex. That is a deliberate
+ * refusal, pinned by a fixture, rather than an unexamined hole — and it is the
+ * reason the paragraph above is about one case and not about a guarantee.
  */
 export function blankComments(source: string): string {
   const out: string[] = [];
@@ -71,12 +93,32 @@ export function blankComments(source: string): string {
   let previous: string | null = null;
   /** `'` or `"` while inside a plain string; template literals are frames. */
   let quote: string | null = null;
+  /**
+   * One entry per open `(` in code: whether a control-flow keyword led it.
+   *
+   * `(` rather than the keyword itself, because `if (f(a)) /re/` nests — the
+   * inner `)` closes a call and the outer one closes the condition, and only a
+   * stack keeps the two apart.
+   */
+  const openParens: boolean[] = [];
+  /**
+   * Whether what was just emitted ended a control-flow header — a statement
+   * position, where a `/` opens a literal even though the character in front
+   * of it is `)`.
+   */
+  let afterControlParen = false;
 
   const emit = (text: string): void => {
     out.push(text);
     tail = (tail + text).slice(-24);
     const last = text[text.length - 1];
-    if (last !== undefined && !/\s/.test(last)) previous = last;
+    if (last !== undefined && !/\s/.test(last)) {
+      previous = last;
+      // A statement position lasts across the whitespace and newlines between
+      // the header and the statement — `if (x)\n  /re/.test(s)` is the same
+      // code wrapped — and ends at the first real byte written after it.
+      afterControlParen = false;
+    }
   };
   /** A value just ended, whatever its spelling: a `/` after it is division. */
   const emitValue = (text: string): void => {
@@ -191,6 +233,23 @@ export function blankComments(source: string): string {
       }
     }
 
+    if (ch === '(') {
+      // See "Statement position after a control-flow `)`": the word in front of
+      // the paren decides what the matching `)` will mean.
+      openParens.push(CONTROL_FLOW_PAREN_BEFORE.test(tail));
+      emit(ch);
+      i += 1;
+      continue;
+    }
+
+    if (ch === ')') {
+      const closesControlFlow = openParens.pop() === true;
+      emit(ch);
+      afterControlParen = closesControlFlow;
+      i += 1;
+      continue;
+    }
+
     if (ch === '/' && next === '*') {
       // A block comment: blank it, keep its newlines, and stop after `*/`.
       blank('  ');
@@ -218,7 +277,7 @@ export function blankComments(source: string): string {
     }
 
     if (ch === '/') {
-      if (startsRegexLiteral(previous, tail)) {
+      if (afterControlParen || startsRegexLiteral(previous, tail)) {
         const end = regexLiteralEnd(source, i);
         if (end !== -1) {
           emitValue(source.slice(i, end));
@@ -234,6 +293,16 @@ export function blankComments(source: string): string {
 
   return out.join('');
 }
+
+/**
+ * Keywords whose parenthesised header ends in a `)` that is followed by a
+ * *statement* rather than by an operand.
+ *
+ * `switch` and `catch` are here for uniformity rather than because a literal
+ * follows them in practice (`{` does, and `{` is already an operand position):
+ * a word missing from this list is a hole, a word that never matters is not.
+ */
+const CONTROL_FLOW_PAREN_BEFORE = /(?:^|[^\w$])(?:if|while|for|with|switch|catch)\s*$/;
 
 /** Keywords after which a `/` opens a regex literal rather than dividing. */
 const KEYWORDS_BEFORE_REGEX =
@@ -269,6 +338,10 @@ const OPERAND_BEFORE_REGEX = new Set([
  * regex literal just closed (recorded as `0`). Everything else in code is a
  * position where a value is expected, except that `return /re/.test(x)` and
  * friends are values *because* of the keyword, which the tail check covers.
+ *
+ * The one `)` that is not asked here is the control-flow one: the caller knows
+ * whether the paren it just closed was an `if (…)` header, and a statement
+ * position overrides this function's answer. See the module comment.
  */
 function startsRegexLiteral(previous: string | null, tail: string): boolean {
   if (previous === null) return true;

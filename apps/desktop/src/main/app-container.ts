@@ -210,6 +210,94 @@ export const STARTED_FIELDS = [
 ] as const satisfies readonly ContainerField[];
 
 /**
+ * The container's value members that are true without `start()` having run.
+ *
+ * `STARTED_FIELDS` answers "which fields does `start()` promise"; the scanner
+ * in `tests/contract/app-container-started.test.ts` answers the reverse by
+ * reading the class body for `field!: T`. This list is the third fact the
+ * *compiler* needs for that reverse direction, and the exclusion has to be
+ * written down somewhere: `ContainerField` is `keyof UcadApp` minus the
+ * methods, so it also holds everything that is already there before start-up.
+ *
+ *  - `paths` — set by the constructor, from the options the caller passed;
+ *  - `agents` — an always-present map, filled by `registerAgent()` long after
+ *    start-up;
+ *  - `retention`, `encryptionEnabled`, `currentWorkspaceId` — getters. A getter
+ *    is not a promise `start()` makes; these three *read* fields that
+ *    `start()` builds (`retentionService`, `db`, `activeWorkspaceId`), which is
+ *    the opposite relationship.
+ *
+ * **A name here is a decision, not a way to silence an error.** The guarantee
+ * below says every value member is either on `STARTED_FIELDS` or here, so a
+ * field forgotten from the checklist fails to compile — and the source scanner
+ * in the contract suite still requires every `field!: T` to be on
+ * `STARTED_FIELDS`, so a *started* field moved down here does not buy silence:
+ * that gate stays red. This list can therefore not become the place a
+ * forgotten field goes to hide; a new getter is one line of deliberate
+ * thinking instead.
+ */
+type FieldsNotBuiltByStart =
+  | 'paths'
+  | 'agents'
+  | 'retention'
+  | 'encryptionEnabled'
+  | 'currentWorkspaceId';
+
+/**
+ * The line below `npm run typecheck` refuses to compile when a name above is
+ * not a container member at all.
+ *
+ * The `satisfies readonly ContainerField[]` that guards `STARTED_FIELDS` cannot
+ * guard a type, so the same check is written as the same shape of conditional:
+ * a typo or a rename that was not carried through makes the annotation below
+ * unsatisfiable, and the failure names the offending string rather than saying
+ * only that something is wrong.
+ */
+const _fieldsNotBuiltByStartAreFields: [
+  Exclude<FieldsNotBuiltByStart, ContainerField>,
+] extends [never]
+  ? true
+  : { readonly notAContainerField: Exclude<FieldsNotBuiltByStart, ContainerField> } = true;
+
+/**
+ * A container field that is neither started nor self-made — `never` while the
+ * two lists together cover the class.
+ *
+ * `satisfies readonly ContainerField[]` on `STARTED_FIELDS` answers "is every
+ * name on the list a field"; this answers the direction a hand-written
+ * checklist actually gets wrong: "is every field on a list". Before it, a new
+ * subsystem declared as `field!: T` and forgotten here was caught only by the
+ * contract suite — a test, which runs when somebody runs it, in a project
+ * whose type-check is what CI runs on every push.
+ */
+type FieldNeitherStartedNorSelfMade = Exclude<
+  ContainerField,
+  (typeof STARTED_FIELDS)[number] | FieldsNotBuiltByStart
+>;
+
+/**
+ * The line below `npm run typecheck` refuses to compile when a field is on
+ * neither list.
+ *
+ * The mechanism is the one `_retentionDependenciesAreStarted` uses — a
+ * conditional annotation that only holds while the exclusion is empty, so the
+ * error lands on this declaration rather than at whichever use site the
+ * compiler happened to reach first. The failure branch differs on purpose:
+ *
+ * ```ts
+ * true is not assignable to type '{ readonly missingFromStartList: "brandNew"; }'
+ * ```
+ *
+ * names the field somebody forgot, while the sibling's `never` says only that
+ * something is wrong. That is worth the asymmetry: this check's whole job is to
+ * send a reader to one missing line, and a field name in the message is the
+ * difference between a one-minute fix and a search.
+ */
+const _everyFieldIsStarted: [FieldNeitherStartedNorSelfMade] extends [never]
+  ? true
+  : { readonly missingFromStartList: FieldNeitherStartedNorSelfMade } = true;
+
+/**
  * A retention dependency that is not a started field — `never` when the two
  * lists agree.
  *

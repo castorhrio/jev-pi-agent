@@ -53,6 +53,20 @@ import { blankComments } from './source-scan';
  * failure as `file:line` computed from `slice(0, index).split('\n')`. A walk
  * that dropped a byte would move every line number after it and still look
  * right in the test that only checks "the comment is gone".
+ *
+ * ## Why the third check is byte-by-byte
+ *
+ * Length and newline count are two totals, and two totals can agree while the
+ * text has moved: emit one byte too many early on and one too few later, and a
+ * shifted walk passes both. What every gate actually relies on is stronger —
+ * an index into the blanked text is the *same* index in the original — so each
+ * non-whitespace byte is compared with the source at its own index.
+ *
+ * The comparison is one-sided on purpose: blanked regions are spaces, so a
+ * whitespace byte is skipped rather than compared (comment content is
+ * *supposed* to differ there). Code, strings and regex literals must be
+ * byte-identical where they sit, and that is what a refactor which re-emits
+ * text in a different order breaks silently.
  */
 function blank(source: string): string {
   const blanked = blankComments(source);
@@ -61,6 +75,23 @@ function blank(source: string): string {
     blanked.split('\n').length,
     'blanking changed the number of lines in the source',
   ).toBe(source.split('\n').length);
+
+  const moved: string[] = [];
+  for (let index = 0; index < source.length; index += 1) {
+    const after = blanked[index]!;
+    // Blanked comment content, and the source's own whitespace, are spaces:
+    // nothing to compare, and nothing a gate could report a position from.
+    if (/\s/.test(after)) continue;
+    if (after !== source[index]) {
+      moved.push(`${index}: ${JSON.stringify(source[index])} became ${JSON.stringify(after)}`);
+    }
+  }
+  expect(
+    moved,
+    'a non-comment byte is no longer at the index it came from, so every `file:line` ' +
+      'a gate prints from this text points somewhere else',
+  ).toEqual([]);
+
   return blanked;
 }
 
@@ -189,6 +220,20 @@ describe('a slash is a division where a value already ended', () => {
       ['const q = f() / 2; // comment', 'const q = f() / 2;'],
       ['const q = 1 / 2; // comment', 'const q = 1 / 2;'],
       ['const q = true / 1; // comment', 'const q = true / 1;'],
+      // Optional chaining: the value ends at the property name, and the `?.`
+      // before it is part of the access rather than the `?` operator — a walk
+      // that keyed on the `?` would read the `/` as a literal and swallow the
+      // rest of the line.
+      ['const q = obj?.a / 2; // comment', 'const q = obj?.a / 2;'],
+      ['const q = obj?.[i] / 2; // comment', 'const q = obj?.[i] / 2;'],
+      ['const q = obj?.() / 2; // comment', 'const q = obj?.() / 2;'],
+      // A `#`-private field: the `#` is part of the name, so what ends the value
+      // is the name. Spelled out because `#` is not in either punctuation set,
+      // which makes the outcome depend on the name being emitted.
+      ['const q = this.#count / 2; // comment', 'const q = this.#count / 2;'],
+      // A TypeScript assertion: `as Foo` ends in an identifier like any other
+      // value, so the `/` divides.
+      ['const q = x as Foo / 2; // comment', 'const q = x as Foo / 2;'],
     ];
     for (const [source, code] of cases) {
       expect(compact(source), `${source} was read as a regex literal`).toBe(code);
@@ -196,6 +241,17 @@ describe('a slash is a division where a value already ended', () => {
       // past the `//` would leave it readable in the blanked text.
       expect(blank(source), `${source} left its comment readable`).not.toContain('comment');
     }
+  });
+
+  it('keeps a closed interpolation a value, even with another one right behind it', () => {
+    // `}${` adjacency: the `}` that closes one interpolation and the `$` that
+    // opens the next are two frames' business, and the backtick that finally
+    // closes the template is a value like any other. Read as an opening
+    // position, the `/` after it would start a literal attempt that runs to the
+    // end of the line and falls back — leaving the comment below readable.
+    const source = 'const s = `${a}${b}` / 2; // comment';
+    expect(compact(source)).toBe('const s = `${a}${b}` / 2;');
+    expect(blank(source)).not.toContain('comment');
   });
 
   it('reads a slash after return as a regex literal, flags and all', () => {
@@ -224,6 +280,88 @@ describe('a slash is a division where a value already ended', () => {
     const source = 'const ratio = (a + b) / c; // note';
     expect(blank(source)).not.toContain('note');
     expect(blank(source)).toContain('const ratio = (a + b) / c;');
+  });
+});
+
+/**
+ * The other half of the heuristic, and the one place the bias had it backwards.
+ *
+ * Everything above asks "is this `/` a division?". This asks the reverse — "is
+ * this `/` a literal?" — because a walk that answers "division" too eagerly is
+ * the *lossy* direction: the `//` inside `/[//]/` then reaches the scanner, the
+ * rest of the line is blanked, and the code after it is simply gone.
+ *
+ * The case is the `)` that closes a control-flow header. `if (x) /re/.test(s)`
+ * is valid code, and the character in front of the `/` is `)` — which the
+ * value-end rule reads as "a call just ended". It is not a call: an `if (…)`
+ * header is followed by a *statement*. These fixtures were written as reverse
+ * assertions, expecting to be green, and came back red.
+ */
+describe('a slash after a control-flow condition opens a regex literal', () => {
+  it('keeps the literal, and still blanks the comment that follows it', () => {
+    // The plain reading first: `/re/` is code and must survive verbatim, and
+    // `// c` after it is a comment and must not. Both halves in one assertion
+    // pair, because "the comment is gone" alone would be satisfied by a walk
+    // that blanked the literal too.
+    const source = 'if (x) /re/.test(s); // c';
+    expect(blank(source)).toContain('if (x) /re/.test(s);');
+    expect(blank(source)).not.toContain('// c');
+  });
+
+  it('keeps the two slashes inside a character class, so the rest of the line survives', () => {
+    // The discriminating shape: `/[//]/` is where a wrong "division" answer
+    // stops being cosmetic. Read as division, the two slashes in the class
+    // reach the scanner as `//`, the rest of the line is blanked, and
+    // `const kept = 1` disappears — source loss, silently, which is the whole
+    // reason this module exists.
+    const source = 'if (x) /[//]/.test(s); const kept = 1; // gone';
+    const blanked = blank(source);
+    expect(blanked).toContain('if (x) /[//]/.test(s);');
+    expect(blanked, 'the code after the literal was swallowed').toContain('const kept = 1;');
+    expect(blanked).not.toContain('gone');
+  });
+
+  it('reads while and for headers the same way', () => {
+    // The keyword list is the whole mechanism, so it is driven for each word
+    // that can end a statement header. A loop condition is the realistic
+    // spelling of "a `)` that is not a call".
+    for (const header of ['while (m = re.exec(s))', 'for (const n of xs)']) {
+      const source = `${header} /[//]/.test(n); const kept = 1; // gone`;
+      const blanked = blank(source);
+      expect(blanked, `${header} had its literal read as division`).toContain(
+        `${header} /[//]/.test(n);`,
+      );
+      expect(blanked, `${header} swallowed the code after it`).toContain('const kept = 1;');
+      expect(blanked).not.toContain('gone');
+    }
+  });
+
+  it('still reads a slash after a call or an operand as division', () => {
+    // The control for the three cases above. It is the `(`'s leading *word*
+    // that makes the difference, not the `)` itself: a call's paren records
+    // the callee's name, so `f(x) / 2` divides as it always did — and so does
+    // a `/` that comes after a value inside an `if` body, where the statement
+    // position ended at the first byte written after the header.
+    expect(compact('const q = f(x) / 2; // c')).toBe('const q = f(x) / 2;');
+    expect(compact('if (x) y / 2; // c')).toBe('if (x) y / 2;');
+    expect(compact('while (n) n / 2; // c')).toBe('while (n) n / 2;');
+    // …and the nested shape, where the inner `)` closes a call inside the
+    // header and the outer one closes the condition. Only a stack keeps the two
+    // apart: the outer `)` must not be read as the call's.
+    expect(blank('if (f(a)) /[//]/.test(s); const kept = 1; // gone')).toContain('const kept = 1;');
+  });
+
+  it('survives a newline between the header and the statement', () => {
+    // A statement position is not "the character after `)`": Prettier wraps a
+    // long condition, and the literal can be on the next line. The flag has to
+    // live across whitespace and newlines and die at the first real byte.
+    const source = ['if (x)', '  /[//]/.test(s);', 'const kept = 1; // gone'].join('\n');
+    const blanked = blank(source);
+    expect(blanked).toContain('/[//]/.test(s);');
+    expect(blanked, 'the wrapped statement lost its literal and the line after it').toContain(
+      'const kept = 1;',
+    );
+    expect(blanked).not.toContain('gone');
   });
 });
 
