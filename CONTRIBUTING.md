@@ -157,11 +157,14 @@ scanners it knows about in both directions, resolves every path in the *Lives in
 disk, requires a row for every `-scan.ts` module in `tests/contract`, and checks that each
 row's driving test still imports its scanner and keeps the fixture block named below. Adding a
 scan without a row, or renaming a file in one place only, fails there — the map is read by
-people who are already lost. The block name it looks for is a **quoted** string argument, so write
-a fixture block as `it('name', …)` or `describe("name", …)`; a backticked name reads as a missing
-block and the gate reports the block as deleted. That blind spot is asserted, not just noted:
+people who are already lost. The block name it looks for is a **quoted** string literal, first
+argument to `describe(`, `it(` or `test(` (`test` is vitest's alias for `it`) — whitespace after the
+paren is fine, so a long name wrapped onto the next line still counts. A backticked name does not:
+the gate then reports the block as deleted. That blind spot is asserted, not just noted:
 `tests/contract/scanner-registry.test.ts` pins that a template literal is *not* recognised, so
-teaching the scan about backticks fails there first.
+teaching the scan about backticks fails there first. The wrappings that *are* recognised have
+fixtures of their own, so a false "block deleted" on a wrapped or `test(`-written block would have
+shown up there rather than at whoever next wrapped a long name.
 
 **Container claims.** The rule matches `!:`, not `!: ` — `db!:Database` is the same claim
 as `db!: Database` to the compiler, so requiring the space silently skipped a field. It

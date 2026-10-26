@@ -162,16 +162,23 @@ function missingFiles(paths: readonly string[], exists: (path: string) => boolea
 /**
  * Whether a test file contains the named block.
  *
- * `describe(…)` or `it(…)`, either quote style, so the check is about the block
- * existing rather than about how it was written. A template literal is
- * deliberately not read — the blind spot is pinned in
+ * `describe(…)`, `it(…)` or `test(…)` — `test` is vitest's alias for `it`, and
+ * a fixture block written with it is the same block — either quote style, so
+ * the check is about the block existing rather than about how it was written.
+ * `\s*` after the paren covers the wrap Prettier does when a block name is long
+ * enough that the string lands on the next line: reading only the same line
+ * reported blocks that are plainly there as deleted, and a false red is what
+ * gets a gate widened.
+ *
+ * A template literal is deliberately not read — the blind spot is pinned in
  * "does not recognise a block whose name is written as a template literal"
  * below, so teaching the scan about backticks is a decision with a red test
  * attached rather than a quiet widening of the map.
  */
 function hasBlock(source: string, block: string): boolean {
-  return new RegExp(`(?:describe|it)\\((['"])${block.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\1`)
-    .test(source);
+  return new RegExp(
+    `(?:describe|it|test)\\(\\s*(['"])${block.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\1`,
+  ).test(source);
 }
 
 /** Files under `tests/contract` that are scanner modules rather than gates. */
@@ -334,6 +341,25 @@ describe('the helpers that read the table', () => {
     expect(hasBlock(source, 'the bare throw scan')).toBe(false);
     // A block name with regex characters in it must be matched literally.
     expect(hasBlock("it('reports a (weird) name', () => {})", 'reports a (weird) name')).toBe(true);
+  });
+
+  it('recognises a block whose name is on the next line, and the `test` alias', () => {
+    // Prettier breaks a long block header after the paren, not before it, so
+    // the string can sit on the line below the call. The first rule matched
+    // only `describe('name'` on one line; a wrapped block was then reported as
+    // deleted — a red test naming the wrong cause, which is how a gate gets
+    // widened by whoever is unlucky enough to wrap a long name.
+    expect(
+      hasBlock("describe(\n  'the bare-throw scan',\n  () => {},", 'the bare-throw scan'),
+    ).toBe(true);
+    // `test` is vitest's alias for `it`; a fixture block written with it exists
+    // just the same, and must not read as a retired block.
+    expect(hasBlock("test('the bare-throw scan', () => {});", 'the bare-throw scan')).toBe(true);
+    // What still does *not* count: the name mentioned without a call, which is
+    // what a comment or a doc reference looks like.
+    expect(hasBlock('// extend the bare-throw scan when you add a spelling', 'the bare-throw scan')).toBe(
+      false,
+    );
   });
 
   it('does not recognise a block whose name is written as a template literal', () => {
