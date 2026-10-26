@@ -72,14 +72,17 @@ const LIMITATIONS: readonly Limitation[] = [
   // any feed URL would do.
   { id: 'auto-update reads an `https` feed', en: ['feed', 'cleartext'], zh: ['feed', '明文'] },
   { id: 'the terminal needs `node-pty`', en: ['node-pty'], zh: ['node-pty'] },
-  // Two keywords, because "verified somehow" is not the claim that matters: the
-  // asar step has no CI job at all, so the bullet has to say so. A README that
-  // drifted back to "covered by the packaged smoke run" would promise a gate
-  // that does not exist — the one thing this row exists to prevent.
+  // Four keywords, because "verified somehow" is not the claim that matters.
+  // The bullet has to say (a) there is no CI job, and (b) how a reader closes
+  // the gap themselves: a limitation that only admits the gap is a disclaimer;
+  // the manual command and the line to read are what make it actionable. A
+  // README that drifted back to "covered by the packaged smoke run" would
+  // promise a gate that does not exist, and one that dropped the steps would
+  // leave the reader with no way to check it.
   {
     id: 'adapter resolution inside a real asar is verified by hand, not by CI',
-    en: ['asar', 'ci does not cover'],
-    zh: ['asar', 'ci 不覆盖'],
+    en: ['asar', 'ci does not cover', 'npm run package', 'adapters resolved'],
+    zh: ['asar', 'ci 不覆盖', 'npm run package', 'adapters resolved'],
   },
 ];
 

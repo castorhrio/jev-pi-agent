@@ -332,10 +332,7 @@ describe('resolution reports what it found and what it did not', () => {
     // asked" quietly stopped being true — and the caller was told
     // `adapters resolved: (none)`, as if the adapters were at fault.
     const { log, sink } = recordingLogger();
-    // `write` is left at its default (`console.error`) on purpose: the channel
-    // the person at a terminal watches is the one that must stay quiet, and
-    // injecting a `write` here would test the injection instead of the default.
-    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const written: string[] = [];
 
     let caught: unknown;
     try {
@@ -345,25 +342,82 @@ describe('resolution reports what it found and what it did not', () => {
         searchPaths: [] as unknown as readonly [string, ...string[]],
         candidates: { ghost: '@ucad/adapter-ghost' },
         log,
+        write: (line) => written.push(line),
       });
     } catch (error) {
       caught = error;
+    }
+
+    expect(caught, 'the empty list was accepted').toBeInstanceOf(Error);
+    // §4.11: a refusal names a code and a component. A bare `Error` here would
+    // reach the log as `UNKNOWN`, which is indistinguishable from a crash — and
+    // this is the one failure that must read as "the caller is broken", not
+    // "an adapter is". The code/component pair is checked rather than the
+    // message text, so a wording edit cannot silently drop the classification.
+    expect((caught as { code?: unknown }).code).toBe('INVALID_INPUT');
+    expect((caught as { component?: unknown }).component).toBe('container');
+
+    // It fails before it resolves anything and before it says anything, on
+    // either channel: a half-walked table reported as `(none)` would look like
+    // a successful run that found no adapters, and a `warn` would blame the
+    // adapter for the caller's list.
+    expect(sink.records, 'the refusal was also written to the log').toEqual([]);
+    expect(written, 'the refusal was also written to the console channel').toEqual([]);
+  });
+
+  it('treats a non-empty list that resolves nothing as a failed adapter, not a broken caller', () => {
+    // The control for the case above. An empty list is a caller error; a list
+    // that names no package is the ordinary "this vendor is not installed"
+    // state, which must stay non-fatal and visible. Without this pairing, a
+    // guard that rejected every list it could not resolve against would still
+    // pass the test above.
+    const { log, sink } = recordingLogger();
+    const written: string[] = [];
+
+    const resolution = resolveAdapterModules({
+      candidates: { ghost: '@ucad/adapter-ghost' },
+      searchPaths: ['/nonexistent'] as const,
+      log,
+      write: (line) => written.push(line),
+    });
+
+    expect(resolution.failures.map((failure) => failure.id)).toEqual(['ghost']);
+    expect(sink.records.filter((record) => record.level === 'warn')).toHaveLength(1);
+    expect(written).toEqual([
+      '[ucad] adapter "ghost" could not be resolved @ucad/adapter-ghost',
+      '[ucad] adapters resolved: (none)',
+    ]);
+  });
+
+  it('defaults the diagnostic channel to console.error, not to the injected log', () => {
+    // `bootstrap.ts` deliberately omits `write` (the source gate below keeps it
+    // that way). This is what that omission buys: with no `write`, both the
+    // per-failure line and the summary reach `console.error`, while the log
+    // still receives the structured warning. Swapping the default to `log`
+    // would leave an app that starts with no adapter silent at the terminal.
+    const { log, sink } = recordingLogger();
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    let written: string[] = [];
+    try {
+      const resolution = resolveAdapterModules({
+        candidates: { ghost: '@ucad/adapter-ghost' },
+        searchPaths: adapterSearchPaths({ appPath: REPO_ROOT, mainDir: MAIN_DIR, cwd: REPO_ROOT }),
+        log,
+        // no `write`: the production call shape from `bootstrap.ts`.
+      });
+      expect(resolution.failures.map((failure) => failure.id)).toEqual(['ghost']);
+      written = consoleError.mock.calls.map((call) => String(call[0]));
     } finally {
       consoleError.mockRestore();
     }
 
-    expect(caught, 'the empty list was accepted').toBeInstanceOf(Error);
-    // §4.11: a refusal names a code. A bare `Error` here would reach the log as
-    // `UNKNOWN`, which is indistinguishable from a crash — and this is the one
-    // failure that must read as "the caller is broken", not "an adapter is".
-    expect((caught as { code?: unknown }).code).toBe('INVALID_INPUT');
-    expect((caught as Error).message).toMatch(/at least one search path/u);
-
-    // It fails before it resolves anything and before it says anything: a
-    // half-walked table reported as `(none)` would look like a successful run
-    // that found no adapters.
-    expect(consoleError).not.toHaveBeenCalled();
-    expect(sink.records).toEqual([]);
+    expect(written).toEqual([
+      '[ucad] adapter "ghost" could not be resolved @ucad/adapter-ghost',
+      '[ucad] adapters resolved: (none)',
+    ]);
+    // The log file is not the only outlet: the failure is also a `warn` record.
+    expect(sink.records.filter((record) => record.level === 'warn')).toHaveLength(1);
   });
 
   it('uses Node resolution when no resolver is injected, and finds a real package', () => {
@@ -585,7 +639,18 @@ describe('bootstrap.ts names the real search roots and stays off the `write` cha
  * agreeing, not about how the packaging is done.
  */
 
-/** What a packaging step looks like in the workflow: the two commands that build one. */
+/**
+ * What a packaging step looks like in the workflow: the two commands that build one.
+ *
+ * Known blind spot, deliberately textual: this matches the *commands* in
+ * `ci.yml`, not the job graph. A refactor into a composite action, a renamed
+ * step, or a packaging command moved to another workflow could make this
+ * report "not covered" while a real package job exists (or the reverse if a
+ * commented-out line keeps the word). Keeping the regex about the commands is
+ * still better than matching a step name: the claim is "the app is packaged",
+ * not "a step is called Package". If that refactor lands, update this constant
+ * with the new workflow rather than deleting the assertion.
+ */
 const CI_PACKAGING = /\bnpm run package\b|\belectron-builder\b/u;
 
 /** "CI does not cover it", as the README bullet states it. */
