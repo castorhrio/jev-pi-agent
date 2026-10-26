@@ -40,8 +40,10 @@ import * as http from 'node:http';
 import { describeError } from '@ucad/contracts';
 import type { Logger } from '@ucad/observability';
 import {
+  checkChannelUrl,
   checkFeedUrl,
   checkStagedFileUnchanged,
+  isUpdateChannelScheme,
   normalizeSha256,
   verifyInstaller,
   verifyStagedInstallerForLaunch,
@@ -195,13 +197,19 @@ export class UpdateService {
    * Feeds that are not plain HTTPS are refused: an update channel is a
    * remote-code-execution surface and must not be downgradeable to cleartext.
    *
-   * The rule itself is `checkFeedUrl()`'s, not a copy of it. This service is
-   * handed its feed by a caller (`getFeedUrl`) and used to re-implement the
-   * protocol check here — the third implementation of one rule, next to the
-   * packaged file's and the override's. Two copies of a security rule drift
-   * quietly, so the second gate a caller can reach is now the same function,
-   * and `tests/contract/update-integrity.test.ts` asserts all three entry
-   * points accept and refuse the same values.
+   * The rule itself is `checkFeedUrl()`'s — and underneath it
+   * `checkChannelUrl()`'s — not a copy of it. This service is handed its feed
+   * by a caller (`getFeedUrl`) and used to re-implement the protocol check
+   * here, which made the third implementation of one rule: next to the packaged
+   * file's and the override's. Two copies of a security rule drift quietly, so
+   * the second gate a caller can reach is now the same function, and
+   * `tests/contract/update-integrity.test.ts` asserts every entry point accepts
+   * and refuses the same values.
+   *
+   * This covers the feed address only. The other two URLs on the channel — the
+   * installer the feed names, and each redirect hop — are judged by the same
+   * rule at their own sites, so no place in this file writes a scheme
+   * comparison down.
    */
   private resolveFeed(): string | null {
     const verdict = checkFeedUrl(this.opts.getFeedUrl());
@@ -350,15 +358,24 @@ export class UpdateService {
       });
     }
 
-    let url: URL;
-    try {
-      url = new URL(info.url);
-    } catch {
-      return this.set({ state: 'error', message: '下载地址无效' });
+    // The installer URL is the second of the channel's three URLs, and it is
+    // judged by the channel's one rule rather than by a copy of it. The hash
+    // proves the bytes match what the feed named; it does not make a cleartext
+    // transfer acceptable, so a feed that names `http://` is refused before a
+    // request is made — the same refusal the feed address and every redirect
+    // hop get, in the words this screen uses for it.
+    const installer = checkChannelUrl(info.url);
+    if (!installer.ok) {
+      return this.set({
+        state: 'error',
+        message:
+          installer.reason === 'not-https' ? '下载地址必须使用 https' : '下载地址无效',
+      });
     }
-    if (url.protocol !== 'https:') {
-      return this.set({ state: 'error', message: '下载地址必须使用 https' });
-    }
+    // `checkChannelUrl()` parsed this exact string a line ago, so this cannot
+    // throw; taking the parsed form is what the downloader needs, not a second
+    // judgement.
+    const url = new URL(installer.url);
 
     // The feed never names the file. An earlier build joined the feed's
     // `version` and the URL's extension into the staged path; a version like
@@ -582,15 +599,29 @@ export function resolveDownloadRedirect(
     return { ok: false, reason: 'invalid-location' };
   }
   // Same rule as the feed itself: the bytes being downloaded are the RCE
-  // surface, so no hop may downgrade to cleartext.
-  if (next.protocol !== 'https:') {
+  // surface, so no hop may downgrade to cleartext. The rule is the channel's
+  // one implementation, not a copy of it — a hop is the third URL on the
+  // channel, and the copy that used to sit here is exactly the kind of drift
+  // `checkChannelUrl()` exists to prevent.
+  if (!isUpdateChannelScheme(next.protocol)) {
     return { ok: false, reason: 'not-https' };
   }
   return { ok: true, url: next, depth: depth + 1 };
 }
 
+/**
+ * The transport behind the default downloader: the https agent for an https
+ * URL, and the http agent otherwise.
+ *
+ * The `http` branch is not a policy: every URL that reaches the downloader has
+ * already been through `checkChannelUrl()` (the installer) or
+ * `resolveDownloadRedirect()` (each hop), both of which refuse anything but
+ * https. It stays a choice of module rather than an assertion so a test that
+ * drives this seam with a plain-http URL exercises the download path instead of
+ * throwing here — the refusal belongs to the rule, not to the socket.
+ */
 const defaultDownloadGet: DownloadGet = (url, options, onResponse) =>
-  (url.protocol === 'https:' ? https : http).get(url, options, onResponse);
+  (isUpdateChannelScheme(url.protocol) ? https : http).get(url, options, onResponse);
 
 async function downloadTo(
   url: URL,

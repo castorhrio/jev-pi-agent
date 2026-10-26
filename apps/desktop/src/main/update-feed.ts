@@ -84,13 +84,77 @@ export function normalizeSha256(value: unknown): string | null {
 }
 
 /**
- * Why a configured feed URL is not usable.
+ * Why a URL cannot be part of the update channel.
  *
  * `invalid-url` and `not-https` are different values because they are
  * different fixes: a typo in a variable versus a channel somebody tried to
  * downgrade. One is a person to tell, the other is a decision to refuse.
  */
-type FeedUrlRejection = 'invalid-url' | 'not-https';
+export type ChannelUrlRejection = 'invalid-url' | 'not-https';
+
+/**
+ * Whether a parsed URL is on the one protocol the update channel allows.
+ *
+ * This is the single place the channel writes the scheme down. Everything else
+ * asks it: `checkChannelUrl()` below, the installer URL `UpdateService`
+ * downloads, and every redirect hop that download follows. A second copy of
+ * this comparison is a second rule waiting to disagree with this one, and
+ * `tests/contract/update-integrity.test.ts` fails, naming file and line, when
+ * one appears in the channel's two sources.
+ */
+export function isUpdateChannelScheme(protocol: string): boolean {
+  return protocol === 'https:';
+}
+
+/** What a URL on the update channel is, or why it cannot be used. */
+export type ChannelUrlCheck =
+  | { readonly ok: true; readonly url: string }
+  | { readonly ok: false; readonly reason: ChannelUrlRejection };
+
+/**
+ * The one rule every URL on the update channel is held to: it parses, and it
+ * is https.
+ *
+ * Three different inputs are URLs on this channel, and each of them used to
+ * carry its own copy of the rule:
+ *
+ *  - the feed address, reachable three ways — the packaged
+ *    `update-config.json`, the `UCAD_UPDATE_FEED` override, and whatever
+ *    `getFeedUrl()` hands `UpdateService` (`checkFeedUrl()`, below);
+ *  - the installer URL the feed names, which `UpdateService.download()`
+ *    re-judged inline;
+ *  - every redirect hop the download follows, which
+ *    `resolveDownloadRedirect()` re-judged inline.
+ *
+ * Copies of a security rule drift quietly — a scheme, a normalisation, a
+ * whitespace rule added to one and not the other — and the drift is invisible,
+ * because each copy passes the tests written for it. All three ask this
+ * function now, and `tests/contract/update-integrity.test.ts` holds both
+ * halves of that: it asks every entry point the same values, and it scans the
+ * channel's two sources for a scheme comparison written out a second time.
+ *
+ * `value` is `unknown` because every caller is holding untrusted input: a JSON
+ * field from a feed, a header from a redirect, an environment variable. A
+ * value that is not a non-blank string is `invalid-url` — the same answer as a
+ * string that does not parse, because the caller's next move is the same.
+ */
+export function checkChannelUrl(value: unknown): ChannelUrlCheck {
+  if (typeof value !== 'string') return { ok: false, reason: 'invalid-url' };
+  const trimmed = value.trim();
+  if (trimmed.length === 0) return { ok: false, reason: 'invalid-url' };
+
+  let url: URL;
+  try {
+    url = new URL(trimmed);
+  } catch {
+    return { ok: false, reason: 'invalid-url' };
+  }
+  // The whole channel is https-only, and this is the one place that decides
+  // it: the feed, the installer URL the feed names, and every redirect hop the
+  // download follows.
+  if (!isUpdateChannelScheme(url.protocol)) return { ok: false, reason: 'not-https' };
+  return { ok: true, url: url.toString() };
+}
 
 /**
  * What a configured feed URL is, or why it cannot be used.
@@ -100,7 +164,7 @@ type FeedUrlRejection = 'invalid-url' | 'not-https';
  */
 export type FeedUrlCheck =
   | { readonly ok: true; readonly url: string }
-  | { readonly ok: false; readonly reason: FeedUrlRejection | 'empty' };
+  | { readonly ok: false; readonly reason: ChannelUrlRejection | 'empty' };
 
 /**
  * A feed URL the updater is willing to fetch, judged once for the whole
@@ -120,29 +184,22 @@ export type FeedUrlCheck =
  * place they named.
  *
  * **One implementation, deliberately.** The service used to carry its own copy
- * of the protocol check. Two copies of one security rule drift — a scheme, a
- * normalisation, a whitespace rule added to one and not the other — and the
- * drift is invisible, because each copy passes the tests written for it.
- * `tests/contract/update-integrity.test.ts` asserts the three entry points
- * accept and refuse the same values, so a fourth copy would have to disagree
- * with this function on purpose to be red.
+ * of the protocol check, and so did the download's redirect handling. Two
+ * copies of one security rule drift — a scheme, a normalisation, a whitespace
+ * rule added to one and not the other — and the drift is invisible, because
+ * each copy passes the tests written for it. The rule now lives in
+ * `checkChannelUrl()` / `isUpdateChannelScheme()`, and this function adds only
+ * the distinction a *feed* needs: nothing configured (`empty`) is a development
+ * build, while nothing usable is a refusal. `tests/contract/update-integrity.test.ts`
+ * asserts the entry points accept and refuse the same values, so a further copy
+ * would have to disagree with this file on purpose to be red.
  */
 export function checkFeedUrl(value: unknown): FeedUrlCheck {
   if (typeof value !== 'string') return { ok: false, reason: 'empty' };
-  const trimmed = value.trim();
-  if (trimmed.length === 0) return { ok: false, reason: 'empty' };
-
-  let url: URL;
-  try {
-    url = new URL(trimmed);
-  } catch {
-    return { ok: false, reason: 'invalid-url' };
-  }
-  // The whole channel is https-only, and this is the one place that decides it:
-  // the feed, the installer URL the feed names, and every redirect hop the
-  // download follows.
-  if (url.protocol !== 'https:') return { ok: false, reason: 'not-https' };
-  return { ok: true, url: url.toString() };
+  // A blank variable is the shape a shell script leaves behind, not a URL
+  // somebody chose — see `resolveUpdateFeed()` for why it falls through.
+  if (value.trim().length === 0) return { ok: false, reason: 'empty' };
+  return checkChannelUrl(value);
 }
 
 /**
@@ -169,7 +226,7 @@ export function parseUpdateConfig(raw: string): string | null {
 type UpdateFeedSource = 'env' | 'config' | 'none';
 
 /** Why a configured feed was not used, when it was configured but refused. */
-type UpdateFeedRejection = FeedUrlRejection;
+type UpdateFeedRejection = ChannelUrlRejection;
 
 export interface ResolvedUpdateFeed {
   /** the feed URL, or null when no feed is configured */

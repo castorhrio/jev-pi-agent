@@ -46,6 +46,7 @@ import { Readable } from 'node:stream';
 import type * as http from 'node:http';
 import { Logger, MemoryLogSink, silentLogger } from '@ucad/observability';
 import {
+  checkChannelUrl,
   checkFeedUrl,
   checkStagedFileUnchanged,
   fileIdentity,
@@ -54,6 +55,7 @@ import {
   resolveUpdateFeed,
   verifyInstaller,
   verifyStagedInstallerForLaunch,
+  type ChannelUrlRejection,
 } from '../../apps/desktop/src/main/update-feed';
 import {
   UpdateService,
@@ -508,6 +510,266 @@ describe('the feed rule has one implementation', () => {
         expect(fromConfig.url).toBe(fromEnv.url);
       }
     }
+  });
+});
+
+/**
+ * Three URLs on the channel, one rule — and a gate that asks all three the same
+ * questions.
+ *
+ * The feed address is the one this file used to be about. The other two are the
+ * installer URL the feed names and every redirect hop the download follows, and
+ * each of them *had* a test: "refuses an installer URL that is not https" and
+ * "refuses a hop that downgrades to cleartext". Both were green against three
+ * independent copies of the same comparison, which is the failure mode this
+ * repository keeps finding: a test written for a copy can only ever say the
+ * copy is self-consistent. What nothing did was hand the three the *same*
+ * values and compare the answers.
+ *
+ * So the table below is shared, and each entry point is driven through it. The
+ * scan at the bottom closes the remaining hole — a fourth copy that happens to
+ * agree today — by counting the comparison in the source, which is the one
+ * thing behaviour tests cannot see.
+ */
+describe('every URL on the update channel is judged by one rule', () => {
+  let dir: string;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'ucad-channel-url-'));
+  });
+
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  /**
+   * One URL, and what every entry point must answer for it.
+   *
+   * `absolute` marks the values that carry their own scheme. A redirect hop is
+   * resolved against the URL that redirected, so a scheme-less `Location`
+   * inherits the https origin and cannot downgrade anything — those values are
+   * therefore only fed to the redirect site, and `resolves a relative Location
+   * against the redirecting URL` pins that behaviour on its own.
+   */
+  interface UrlCase {
+    readonly input: string;
+    readonly accepted: boolean;
+    readonly reason?: ChannelUrlRejection;
+    readonly absolute: boolean;
+  }
+
+  const CASES: readonly UrlCase[] = [
+    // Accepted: the shapes a release writes, including one in capitals, which
+    // `URL` normalises rather than refuses.
+    { input: 'https://example.test/UCAD-Setup-9.9.9.exe', accepted: true, absolute: true },
+    { input: '  https://example.test/UCAD-Setup-9.9.9.exe\n', accepted: true, absolute: true },
+    { input: 'HTTPS://Example.TEST/UCAD-Setup-9.9.9.exe', accepted: true, absolute: true },
+    // Refused: cleartext, two other schemes, two relative references, and two
+    // not-a-URL spellings the parser answers differently (one has a scheme the
+    // parser rejects, the other has no scheme at all).
+    {
+      input: 'http://example.test/UCAD-Setup-9.9.9.exe',
+      accepted: false,
+      reason: 'not-https',
+      absolute: true,
+    },
+    { input: 'file:///etc/passwd', accepted: false, reason: 'not-https', absolute: true },
+    {
+      input: 'ftp://example.test/UCAD-Setup-9.9.9.exe',
+      accepted: false,
+      reason: 'not-https',
+      absolute: true,
+    },
+    {
+      input: 'example.test/UCAD-Setup-9.9.9.exe',
+      accepted: false,
+      reason: 'invalid-url',
+      absolute: false,
+    },
+    { input: 'not a url', accepted: false, reason: 'invalid-url', absolute: false },
+    { input: 'https://[broken', accepted: false, reason: 'invalid-url', absolute: true },
+  ];
+
+  it('parses and refuses the same values in the shared predicate', () => {
+    for (const { input, accepted, reason } of CASES) {
+      const label = JSON.stringify(input);
+
+      const verdict = checkChannelUrl(input);
+      expect(verdict.ok, `checkChannelUrl accepted ${label} it should refuse`).toBe(accepted);
+      if (!verdict.ok && reason !== undefined) {
+        expect(verdict.reason, `checkChannelUrl gave ${label} the wrong reason`).toBe(reason);
+      }
+
+      // The feed wrapper adds one thing to this rule — `empty`, for "nothing was
+      // configured" — and changes nothing else. A blank value is the only input
+      // where the two may disagree, and it is not in this table.
+      expect(
+        checkFeedUrl(input),
+        `checkFeedUrl and checkChannelUrl disagree about ${label}`,
+      ).toEqual(verdict);
+    }
+  });
+
+  it('refuses an installer URL the feed names, before making a request', async () => {
+    for (const { input, accepted, reason } of CASES) {
+      const label = JSON.stringify(input);
+
+      const fetched = feedFetchSteps([
+        { status: 200, document: { version: '9.9.9', url: input, sha256: sha256Of('installer') } },
+      ]);
+      const downloads: string[] = [];
+      const instance = new UpdateService({
+        logger: silentLogger('test'),
+        getFeedUrl: () => FEED_URL,
+        downloadDir: dir,
+        currentVersion: '1.0.0',
+        fetchImpl: fetched.fetchImpl,
+        // The bytes are irrelevant to this question — did the gate let the
+        // download start at all — so the seam records the attempt and writes
+        // nothing. The accepted case still ends in an `error` afterwards (a file
+        // that was never written cannot be verified), which is why the assertion
+        // is on the attempt, not on the state.
+        downloadImpl: async (url: URL) => {
+          downloads.push(url.toString());
+        },
+      });
+
+      await instance.check();
+      expect(
+        instance.current.state,
+        `the feed's version was not reported as available for ${label}`,
+      ).toBe('available');
+
+      const status = await instance.download();
+
+      expect(downloads.length, `the downloader was given ${label}`).toBe(accepted ? 1 : 0);
+      if (!accepted) {
+        expect(status.state, `${label} did not fail the download`).toBe('error');
+        // The words matter: `not-https` is a downgrade attempt ("must use
+        // https"), `invalid-url` is a typo ("invalid"). They send a reader to
+        // different fixes, and flattening them would hide which one happened.
+        expect(status.message, `${label} was refused with the wrong message`).toContain(
+          reason === 'not-https' ? 'https' : '无效',
+        );
+      }
+    }
+  });
+
+  it('refuses a redirect hop to the same values, with the same reason', () => {
+    const base = new URL('https://example.test/UCAD-Setup-9.9.9.exe');
+    const absolute = CASES.filter((entry) => entry.absolute);
+    expect(absolute.length, 'the redirect cases are empty, so this proves nothing').toBeGreaterThan(
+      0,
+    );
+
+    for (const { input, accepted, reason } of absolute) {
+      const label = JSON.stringify(input);
+
+      const hop = resolveDownloadRedirect(input, base, 0);
+      expect(hop.ok, `the redirect rule accepted ${label} it should refuse`).toBe(accepted);
+      if (!hop.ok && reason !== undefined) {
+        // Different words, one decision: the listener reports `invalid-location`
+        // where the shared rule says `invalid-url`, because for a hop the fix is
+        // a header the server wrote.
+        expect(hop.reason, `the redirect rule gave ${label} the wrong reason`).toBe(
+          reason === 'not-https' ? 'not-https' : 'invalid-location',
+        );
+      }
+      // An accepted hop is the parsed URL, not the raw header: the download
+      // follows `hop.url`, so a rule that agreed on the decision but handed on
+      // the header text would still be a second implementation of parsing.
+      if (hop.ok && accepted) {
+        expect(hop.url.toString(), `the redirect rule kept ${label} unparsed`).toBe(
+          new URL(input.trim()).toString(),
+        );
+      }
+    }
+  });
+
+  /**
+   * Every place the channel's two sources write the scheme down, as
+   * `file:line`.
+   *
+   * A `'https:'` literal is what the rule looks like in code, so it is what can
+   * be counted. Comments are blanked (see `blankComments`) because both files
+   * discuss https at length, and a scan that counted prose would be a scan
+   * nobody could keep green — the same reason the seam gate further down blanks
+   * them.
+   */
+  function schemeSites(files: readonly SourceFile[]): string[] {
+    return files.flatMap((file) => {
+      const code = blankComments(file.source);
+      return [...code.matchAll(/['"]https:['"]/g)].map(
+        (match) => `${file.path}:${code.slice(0, match.index).split('\n').length}`,
+      );
+    });
+  }
+
+  /** The update channel's sources: the feed's rules and the service that uses them. */
+  const CHANNEL_SOURCES = ['update-feed.ts', 'update-service.ts'] as const;
+
+  it('writes the scheme down once, inside the predicate that owns it', () => {
+    const sites = schemeSites(
+      CHANNEL_SOURCES.map((name) => ({
+        path: name,
+        source: readFileSync(join(MAIN_SOURCE, name), 'utf8'),
+      })),
+    );
+
+    expect(
+      sites.length,
+      `the update channel compares the https scheme in ${sites.length} places (${sites.join(
+        ', ',
+      )}); call isUpdateChannelScheme() instead of writing the comparison again`,
+    ).toBe(1);
+    expect(
+      sites[0],
+      "the channel's one https comparison is not in update-feed.ts, where the rule lives",
+    ).toMatch(/^update-feed\.ts:\d+$/);
+
+    // Not merely "one literal, somewhere in the right file": it has to be the
+    // predicate's own line, or the allowed copy could sit in dead code while a
+    // live one hides in the service.
+    const line = Number(sites[0]!.split(':')[1]);
+    const lines = readFileSync(UPDATE_FEED_SOURCE, 'utf8').split('\n');
+    const predicateStart = lines.findIndex((text) =>
+      text.includes('function isUpdateChannelScheme('),
+    );
+    expect(
+      predicateStart,
+      'isUpdateChannelScheme() is gone, so the one allowed comparison has no home',
+    ).toBeGreaterThanOrEqual(0);
+    const predicateEnd = lines.findIndex((text, index) => index > predicateStart && text === '}');
+    expect(
+      line - 1,
+      `the https comparison at update-feed.ts:${line} is outside isUpdateChannelScheme()`,
+    ).toBeGreaterThan(predicateStart);
+    expect(line - 1).toBeLessThan(predicateEnd);
+  });
+
+  it('counts a second copy of the comparison and ignores the prose about it', () => {
+    // The fixture is the edit this gate exists for: the protocol decided again
+    // at the download site, which is exactly what `download()` used to do.
+    const secondCopy = [
+      "import { checkChannelUrl } from './update-feed';",
+      '',
+      'export function fetchInstaller(url: URL) {',
+      "  if (url.protocol !== 'https:') return null;",
+      '  return url;',
+      '}',
+    ].join('\n');
+    expect(schemeSites([{ path: 'update-service.ts', source: secondCopy }])).toEqual([
+      'update-service.ts:4',
+    ]);
+
+    // The other direction, which is what keeps this gate usable: a doc comment
+    // naming the scheme is not a second implementation, so it is not counted.
+    const prose = [
+      "/** The feed must be 'https:' and nothing else. */",
+      "// A second 'https:' in prose is still prose.",
+      'export const ok = true;',
+    ].join('\n');
+    expect(schemeSites([{ path: 'update-feed.ts', source: prose }])).toEqual([]);
   });
 });
 
