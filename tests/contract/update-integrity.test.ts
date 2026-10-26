@@ -34,6 +34,7 @@ import {
   existsSync,
   mkdtempSync,
   readFileSync,
+  mkdirSync,
   readdirSync,
   renameSync,
   rmSync,
@@ -71,6 +72,58 @@ function sha256Of(text: string): string {
   return createHash('sha256').update(text).digest('hex');
 }
 
+/**
+ * The script overruns recorded by the two transports below.
+ *
+ * See `assertNoScriptOverruns()`: the record exists because both products paths
+ * catch what their transport raises, so an assertion raised inside a transport
+ * is an assertion the product owns.
+ */
+const scriptOverruns: string[] = [];
+
+/**
+ * Records a script overrun and fails the current expectation.
+ *
+ * Both call sites used to be a bare `expect.fail()`, which is enough to make a
+ * test that awaits the transport directly go red — and not enough for the tests
+ * that await it *through* `UpdateService`: `check()` catches whatever the fetch
+ * rejects with and turns it into an `error` status, and `download()` does the
+ * same with the downloader's rejection. A test that scripted one answer too few
+ * therefore ended with a product-shaped `error` status and passed, which is the
+ * "gate that exempts itself" this file keeps finding: the gate reported the app
+ * as broken rather than the fixture as under-scripted.
+ *
+ * So the overrun is also written down, and the guard below reads the record from
+ * `afterEach`, where no product code can swallow it.
+ */
+function overrun(message: string): never {
+  scriptOverruns.push(message);
+  expect.fail(message);
+}
+
+/**
+ * Fails when a test outran its script.
+ *
+ * Runs after every test in this file (`afterEach` at the bottom of the helpers
+ * section). It is the half of the overrun that survives the product's `catch`,
+ * and `the scripted helpers fail the test that outruns them` drives it on
+ * purpose so the guard is not merely a function nobody has seen answer.
+ */
+function assertNoScriptOverruns(): void {
+  // Drained before the assertion: a guard that left the record behind would
+  // fail every later test in the file as well, and the reader would be sent to
+  // the wrong one.
+  const overruns = scriptOverruns.splice(0);
+  expect(
+    overruns,
+    `a scripted transport was asked for an answer the test did not script (${overruns.join(
+      '; ',
+    )}); the product catches that assertion and reports it as its own error, so it is asserted here instead`,
+  ).toEqual([]);
+}
+
+afterEach(assertNoScriptOverruns);
+
 /** One scripted answer to a feed request. */
 interface FetchStep {
   readonly status: number;
@@ -102,14 +155,11 @@ function feedFetchSteps(steps: readonly FetchStep[]): {
     state.calls += 1;
     const step = queue.shift();
     if (step === undefined) {
-      // An assertion, not a throw: `check()` catches whatever the fetch
-      // rejects with and turns it into an `error` status, so a bare `throw`
+      // `overrun()` rather than a bare throw: `check()` catches whatever the
+      // fetch rejects with and turns it into an `error` status, so a `throw`
       // here arrived at the reader as "更新检查失败: the feed was fetched more
-      // times…" — a product-looking failure whose cause was the test. Failing
-      // the expectation names the overrun and the count instead, and
-      // `the scripted helpers fail the test that outruns them` proves this
-      // branch is a red test rather than a stack trace.
-      expect.fail(
+      // times…" — a product-looking failure whose cause was the test.
+      overrun(
         `the feed was fetched more times than the test scripted ` +
           `(${steps.length} scripted, request ${state.calls})`,
       );
@@ -156,10 +206,11 @@ function scriptedGet(script: readonly ScriptedResponse[]): {
     requests.push(url.toString());
     const step = steps.shift();
     if (step === undefined) {
-      // Same rule as `feedFetchSteps`: the downloader's own `catch` would turn
-      // a bare throw into a failed download, so the overrun is reported as a
-      // failed expectation naming the count and the URL that was not scripted.
-      expect.fail(
+      // Same rule as `feedFetchSteps`: the downloader's own `catch` turns a
+      // throw into a failed download, so the overrun is reported as a failed
+      // expectation *and* recorded for the after-test guard, naming the count
+      // and the URL that was not scripted.
+      overrun(
         `the downloader made more requests than the test scripted ` +
           `(${script.length} scripted, request ${requests.length}: ${url.toString()})`,
       );
@@ -199,20 +250,26 @@ describe('the scripted helpers fail the test that outruns them', () => {
     const scripted = feedFetchSteps([{ status: 200, document: { version: '9.9.9' } }]);
     await scripted.fetchImpl(FEED_URL, {});
 
-    const overrun: unknown = await scripted.fetchImpl(FEED_URL, {}).then(
+    const failure: unknown = await scripted.fetchImpl(FEED_URL, {}).then(
       () => null,
       (error: unknown) => error,
     );
 
-    expect(overrun, 'a request beyond the script was answered instead of refused').toBeInstanceOf(
+    expect(failure, 'a request beyond the script was answered instead of refused').toBeInstanceOf(
       Error,
     );
-    expect((overrun as Error).message).toContain('1 scripted, request 2');
+    expect((failure as Error).message).toContain('1 scripted, request 2');
     // An `AssertionError` is what makes vitest print "expected … to be …" and
     // point at the test; anything else prints as an unhandled rejection in the
     // middle of the service's own error path.
-    expect((overrun as Error).name).toBe('AssertionError');
+    expect((failure as Error).name).toBe('AssertionError');
     expect(scripted.calls).toBe(2);
+
+    // And the overrun is on the record the file's `afterEach` reads, which is
+    // the half that survives `check()`'s `catch` — see `assertNoScriptOverruns`.
+    // Asserting it here is also what drains the record, so this deliberate
+    // overrun does not fail the guard it is testing.
+    expect(() => assertNoScriptOverruns()).toThrow(/1 scripted, request 2/);
   });
 
   it('turns a download that makes one request too many into a failed expectation', () => {
@@ -228,6 +285,10 @@ describe('the scripted helpers fail the test that outruns them', () => {
     // The refused request is still recorded, so "how many requests were made"
     // answers with the count the downloader actually attempted.
     expect(requests).toEqual([INSTALLER_URL, `${INSTALLER_URL}.again`]);
+
+    // The recorded overrun is the one the after-test guard fails on, and saying
+    // so here is also what drains it.
+    expect(() => assertNoScriptOverruns()).toThrow(/1 scripted, request 2/);
   });
 });
 
@@ -687,25 +748,51 @@ describe('every URL on the update channel is judged by one rule', () => {
   });
 
   /**
-   * Every place the channel's two sources write the scheme down, as
-   * `file:line`.
+   * The scheme written down as a string literal, in any of the spellings a
+   * second implementation would use.
    *
-   * A `'https:'` literal is what the rule looks like in code, so it is what can
-   * be counted. Comments are blanked (see `blankComments`) because both files
-   * discuss https at length, and a scan that counted prose would be a scan
-   * nobody could keep green — the same reason the seam gate further down blanks
-   * them.
+   * `'https:'` is how the predicate says it; `'https'` and `'https://'` are how
+   * a copy says it — `startsWith('https')`, `startsWith('https://')`,
+   * `new Set(['https:'])`, and a template literal that compares the scheme.
+   * Counting only the exact spelling the predicate uses left the other four
+   * shapes invisible, which is the gap the table below closes: the fixture runs
+   * every one of them through this same scan.
+   *
+   * The quote immediately before `https` is required on purpose. The channel's
+   * own vocabulary — `reason: 'not-https'`, `'下载地址必须使用 https'` — is not a
+   * comparison, and a scan that counted it would be red about the words it
+   * explains itself with.
+   */
+  const SCHEME_LITERAL = /['"`]https:?(?:\/\/)?['"`]/g;
+
+  /**
+   * Every place the channel's sources write the scheme down, as `file:line`.
+   *
+   * Comments are blanked (see `blankComments`) because both files discuss https
+   * at length, and a scan that counted prose would be a scan nobody could keep
+   * green — the same reason the seam gate further down blanks them.
    */
   function schemeSites(files: readonly SourceFile[]): string[] {
     return files.flatMap((file) => {
       const code = blankComments(file.source);
-      return [...code.matchAll(/['"]https:['"]/g)].map(
+      return [...code.matchAll(SCHEME_LITERAL)].map(
         (match) => `${file.path}:${code.slice(0, match.index).split('\n').length}`,
       );
     });
   }
 
-  /** The update channel's sources: the feed's rules and the service that uses them. */
+  /**
+   * The update channel's sources: the feed's rules, and the service that uses
+   * them. Two `.ts` files under `apps/desktop/src/main`, and nothing else.
+   *
+   * That scope is a choice, and the choice has a blind spot: a *fourth* copy
+   * written in a file this list does not name would not be counted. The scope is
+   * therefore not left to memory — `scans every main-process file that uses the
+   * channel rule` derives it from the code, so a new file that starts using the
+   * rule has to be added here. The renderer and the shared packages are outside
+   * the scan because nothing there takes part in a download: the URLs it would
+   * judge never leave the main process.
+   */
   const CHANNEL_SOURCES = ['update-feed.ts', 'update-service.ts'] as const;
 
   it('writes the scheme down once, inside the predicate that owns it', () => {
@@ -749,18 +836,30 @@ describe('every URL on the update channel is judged by one rule', () => {
 
   it('counts a second copy of the comparison and ignores the prose about it', () => {
     // The fixture is the edit this gate exists for: the protocol decided again
-    // at the download site, which is exactly what `download()` used to do.
-    const secondCopy = [
-      "import { checkChannelUrl } from './update-feed';",
-      '',
-      'export function fetchInstaller(url: URL) {',
-      "  if (url.protocol !== 'https:') return null;",
-      '  return url;',
-      '}',
-    ].join('\n');
-    expect(schemeSites([{ path: 'update-service.ts', source: secondCopy }])).toEqual([
-      'update-service.ts:4',
-    ]);
+    // at the download site, which is exactly what `download()` used to do. One
+    // body per spelling, because a scan that only knows `=== 'https:'` is a scan
+    // a copy can walk around in one keystroke.
+    const copies: ReadonlyArray<readonly [string, string]> = [
+      ['an equality test', "  if (url.protocol === 'https:') return url;"],
+      ['an inequality test', "  if (url.protocol !== 'https:') return null;"],
+      ['an allow-list of one', "  if (!new Set(['https:']).has(url.protocol)) return null;"],
+      ['a prefix test on the scheme', "  if (!url.protocol.startsWith('https')) return null;"],
+      ['a prefix test on the href', "  if (!url.href.startsWith('https://')) return null;"],
+      ['a template literal', '  if (`https:` === url.protocol) return url;'],
+    ];
+    for (const [spelling, body] of copies) {
+      const source = [
+        "import { checkChannelUrl } from './update-feed';",
+        '',
+        'export function fetchInstaller(url: URL) {',
+        body,
+        '}',
+      ].join('\n');
+      expect(
+        schemeSites([{ path: 'update-service.ts', source }]),
+        `a copy written as ${spelling} was not counted`,
+      ).toEqual(['update-service.ts:4']);
+    }
 
     // The other direction, which is what keeps this gate usable: a doc comment
     // naming the scheme is not a second implementation, so it is not counted.
@@ -770,6 +869,53 @@ describe('every URL on the update channel is judged by one rule', () => {
       'export const ok = true;',
     ].join('\n');
     expect(schemeSites([{ path: 'update-feed.ts', source: prose }])).toEqual([]);
+
+    // And the channel's own vocabulary, which the real files are full of: a
+    // refusal *reason* and a sentence the user reads are neither of them a
+    // comparison, and counting them would make the gate red about its subject.
+    const vocabulary = [
+      "export const reason = 'not-https';",
+      "export const sentence = '下载地址必须使用 https';",
+      "export const log = 'update feed must be https; ignoring';",
+    ].join('\n');
+    expect(schemeSites([{ path: 'update-service.ts', source: vocabulary }])).toEqual([]);
+  });
+
+  /**
+   * The main-process files that mention the channel rule, by file name.
+   *
+   * A pure function of its input, so the scope guard below can be shown
+   * answering with a file it was given rather than only with the tree it reads.
+   */
+  function channelRuleUsers(files: readonly SourceFile[]): string[] {
+    const rule =
+      /\b(?:isUpdateChannelScheme|checkChannelUrl|checkFeedUrl|resolveDownloadRedirect)\b/;
+    return files
+      .filter((file) => rule.test(blankComments(file.source)))
+      .map((file) => file.path.slice(file.path.lastIndexOf('/') + 1))
+      .sort();
+  }
+
+  it('scans every main-process file that uses the channel rule', () => {
+    // The scan above takes an explicit list, which is also its limit: a copy
+    // written in a file the list does not name is invisible, and the gate keeps
+    // passing while the rule grows a second home. So the scope is derived from
+    // the code instead of remembered — every main-process file that mentions the
+    // rule belongs in the scan — and this is the test that fails when one is
+    // added without being added to `CHANNEL_SOURCES`.
+    const stranger: SourceFile = {
+      path: 'apps/desktop/src/main/downloader.ts',
+      source: "export const ok = checkChannelUrl('https://example.test/x');",
+    };
+    expect(
+      channelRuleUsers([...mainSources(), stranger]),
+      'the scope check cannot see a new file that uses the rule, so it proves nothing',
+    ).toContain('downloader.ts');
+
+    expect(
+      channelRuleUsers(mainSources()),
+      'a main-process file uses the channel rule and is not in CHANNEL_SOURCES, so the scheme scan does not read it',
+    ).toEqual([...CHANNEL_SOURCES].sort());
   });
 });
 
@@ -1789,12 +1935,77 @@ describe('the updater itself', () => {
 
     expect(status.state).toBe('error');
     expect(status.message).toContain('重定向次数过多');
+    // Which hop was refused, not just that one was: the count is the only fact
+    // in the message the *server* chose, and it is what turns "更新失败" into a
+    // report a publisher can act on.
+    expect(status.message).toContain('第 6 次跳转');
     expect(requests).toHaveLength(6);
     expect(existsSync(join(dir, 'UCAD-setup.exe'))).toBe(false);
 
     const installed = await instance.installAndRestart();
     expect(installed).toBe(false);
     expect(launched).toEqual([]);
+  });
+
+  /**
+   * The overrun, through the product path.
+   *
+   * The two fixtures at the top of this file outrun a script by calling the
+   * transport directly, and a bare `expect.fail()` is enough there: nothing
+   * catches the assertion, so the test goes red. That is *not* true one layer
+   * up — `download()` and `check()` both wrap the transport call in a `catch`
+   * that turns any rejection into an `error` status, so an under-scripted test
+   * awaited through the service used to finish green with a product-shaped
+   * status on screen. The status is asserted below (it is what the user sees),
+   * and then the test's own failure is asserted, because that is the one the
+   * reader needs: "1 scripted, request 2" names the fixture, while "下载失败"
+   * names an app that is working correctly.
+   */
+  it('fails the test, not the download, when the download script runs out half way', async () => {
+    const genuine = 'the genuine installer';
+    // One redirect is scripted and the download needs two answers: the hop it
+    // follows, and the bytes at the end of it.
+    const { getImpl, requests } = scriptedGet([
+      { status: 302, location: 'https://example.test/hop-1' },
+    ]);
+    const { instance } = service({
+      feed: {
+        version: '9.9.9',
+        url: INSTALLER_URL,
+        sha256: sha256Of(genuine),
+        size: genuine.length,
+      },
+      downloadGet: getImpl,
+    });
+
+    await instance.check();
+    const status = await instance.download();
+
+    // What the product did with it: a failed download, no staged file, and the
+    // second request attempted (and refused) rather than skipped.
+    expect(status.state).toBe('error');
+    expect(requests).toEqual([INSTALLER_URL, 'https://example.test/hop-1']);
+    expect(existsSync(join(dir, 'UCAD-setup.exe'))).toBe(false);
+
+    // What the test did: outran its script. `afterEach` runs this same guard,
+    // so the run would be red even if this assertion were deleted — the
+    // assertion is here to prove the guard answers, and to drain the record.
+    expect(() => assertNoScriptOverruns()).toThrow(/1 scripted, request 2/);
+  });
+
+  it('fails the test, not the check, when the feed script is empty', async () => {
+    // The feed half of the same hole: `check()` catches the assertion and
+    // reports "更新检查失败: …", which is a sentence about the app. The script
+    // was empty, and the guard says so.
+    const { instance } = service({ steps: [] });
+
+    const status = await instance.check();
+
+    expect(status.state).toBe('error');
+    expect(status.message, 'the assertion was masked as a product failure').toContain(
+      '0 scripted, request 1',
+    );
+    expect(() => assertNoScriptOverruns()).toThrow(/0 scripted, request 1/);
   });
 });
 
@@ -1847,6 +2058,204 @@ describe('a download redirect is a second URL the feed did not name', () => {
   });
 });
 
+/**
+ * The shapes a `Location` header can take — including the two that carry no
+ * scheme of their own.
+ *
+ * A hop is judged *after* it is resolved against the URL that redirected, which
+ * is what makes these four cases one question: a rule that read the header text
+ * would refuse both relative shapes (no scheme to compare), and a rule that
+ * compared the header's host would not see `//evil.test/x` at all. Resolved
+ * first, all four are the same question the feed and the installer URL answer —
+ * `checkChannelUrl()` on the URL that will actually be requested.
+ *
+ * So each case is asserted twice: against the shared rule, on the URL the header
+ * resolves to, and through `download()`, which is the path the app uses. The
+ * refused cases also assert that nothing was written: a refusal that leaves a
+ * half-staged file behind is the state the next `installAndRestart()` would find
+ * under the name that means "pending update".
+ */
+describe('every Location a redirect carries is judged after it is resolved', () => {
+  let dir: string;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'ucad-location-'));
+  });
+
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  /** The URL the download starts from; every case below redirects away from it. */
+  const REDIRECTING = 'https://example.test/releases/UCAD-Setup-9.9.9.exe';
+
+  interface LocationCase {
+    readonly location: string;
+    /** what the header resolves to, or null when it does not parse at all */
+    readonly resolved: string | null;
+    readonly accepted: boolean;
+    /** the words in the message the user ends up reading */
+    readonly message?: string;
+  }
+
+  const CASES: readonly LocationCase[] = [
+    {
+      // Absolute https: the shape a release mirror sends.
+      location: 'https://cdn.test/UCAD-Setup-9.9.9.exe',
+      resolved: 'https://cdn.test/UCAD-Setup-9.9.9.exe',
+      accepted: true,
+    },
+    {
+      // Protocol-relative: no scheme of its own, so it inherits the redirecting
+      // URL's — https, which is why it is allowed to be followed. The *origin*
+      // it names is not what this rule judges; a hop may point at another host,
+      // and what may not happen is a hop pointing at another protocol.
+      location: '//evil.test/UCAD-Setup-9.9.9.exe',
+      resolved: 'https://evil.test/UCAD-Setup-9.9.9.exe',
+      accepted: true,
+    },
+    {
+      // Path-relative: inherits origin, scheme and all.
+      location: '/mirror/UCAD-Setup-9.9.9.exe',
+      resolved: 'https://example.test/mirror/UCAD-Setup-9.9.9.exe',
+      accepted: true,
+    },
+    {
+      // Absolute cleartext: the downgrade the rule exists for, and the one a
+      // hashed feed cannot catch — the bytes would still verify, they would just
+      // have travelled in the clear.
+      location: 'http://evil.test/UCAD-Setup-9.9.9.exe',
+      resolved: 'http://evil.test/UCAD-Setup-9.9.9.exe',
+      accepted: false,
+      message: '重定向必须使用 https',
+    },
+    {
+      // A scheme that is not a transport at all. The parser accepts the string,
+      // so this is not `invalid-location`: the rule is what refuses it.
+      location: 'javascript:alert(1)',
+      resolved: 'javascript:alert(1)',
+      accepted: false,
+      message: '重定向必须使用 https',
+    },
+    {
+      // Not a URL even after resolution, and the case that used to throw out of
+      // the response listener instead of failing the download.
+      location: 'https://[',
+      resolved: null,
+      accepted: false,
+      message: '重定向地址无效',
+    },
+    {
+      // A `Location` with no scheme and no path — an origin only. Resolved onto
+      // https, so it is the accepted shape that carries nothing else.
+      location: '//cdn.test',
+      resolved: 'https://cdn.test/',
+      accepted: true,
+    },
+  ];
+
+  it('answers each hop the way the shared rule answers the URL it resolved to', () => {
+    const base = new URL(REDIRECTING);
+
+    for (const { location, resolved, accepted } of CASES) {
+      const label = JSON.stringify(location);
+      const hop = resolveDownloadRedirect(location, base, 0);
+
+      expect(hop.ok, `the hop ${label} was decided the wrong way`).toBe(accepted);
+
+      if (resolved === null) {
+        expect(hop, `${label} did not parse, so it is not a protocol question`).toEqual({
+          ok: false,
+          reason: 'invalid-location',
+        });
+        continue;
+      }
+
+      // The channel's one rule, asked of the URL the download would request. A
+      // hop that disagreed with it here would be the second implementation this
+      // whole file is arranged against.
+      const verdict = checkChannelUrl(resolved);
+      expect(hop.ok, `the hop ${label} and checkChannelUrl(${resolved}) disagree`).toBe(
+        verdict.ok,
+      );
+      if (hop.ok && verdict.ok) {
+        expect(hop.url.toString(), `the hop ${label} handed on a different URL`).toBe(verdict.url);
+      }
+      if (!hop.ok && !verdict.ok) {
+        // Same decision, different vocabulary: for a hop the fix is a header a
+        // server wrote, which the user cannot edit, so `invalid-location` says
+        // where to look.
+        expect(hop.reason, `the hop ${label} was refused for the wrong reason`).toBe(
+          verdict.reason === 'not-https' ? 'not-https' : 'invalid-location',
+        );
+      }
+    }
+  });
+
+  it('makes exactly the requests the rule allows, and stages bytes only when it does', async () => {
+    const genuine = 'the genuine installer';
+
+    for (const { location, resolved, accepted, message } of CASES) {
+      const label = JSON.stringify(location);
+      const fetched = feedFetchSteps([
+        {
+          status: 200,
+          document: {
+            version: '9.9.9',
+            url: REDIRECTING,
+            sha256: sha256Of(genuine),
+            size: genuine.length,
+          },
+        },
+      ]);
+      const { getImpl, requests } = scriptedGet([
+        { status: 302, location },
+        { status: 200, body: genuine },
+      ]);
+      const instance = new UpdateService({
+        logger: silentLogger('test'),
+        getFeedUrl: () => FEED_URL,
+        downloadDir: dir,
+        currentVersion: '1.0.0',
+        fetchImpl: fetched.fetchImpl,
+        downloadGet: getImpl,
+      });
+
+      await instance.check();
+      const status = await instance.download();
+
+      if (accepted) {
+        expect(status.state, `${label} was refused (${status.message})`).toBe('ready');
+        // Two requests: the one the feed named, and the hop — at the URL the
+        // header resolved to, not the header text.
+        expect(requests, `${label} was not requested as the hop it resolved to`).toEqual([
+          REDIRECTING,
+          resolved,
+        ]);
+        expect(readFileSync(join(dir, 'UCAD-setup.exe'), 'utf8'), label).toBe(genuine);
+      } else {
+        expect(status.state, `${label} was followed to the end`).toBe('error');
+        expect(status.message, `${label} was refused without saying why`).toContain(message);
+        // Which hop, by number: the count the server chose. A refusal that says
+        // only "更新失败" leaves a publisher with nothing to look at.
+        expect(status.message, `${label} did not name the hop`).toContain('第 1 次跳转');
+        // One request — the one the feed named. A second would mean the hop was
+        // requested before it was judged.
+        expect(requests, `${label} was requested before the rule answered`).toEqual([REDIRECTING]);
+        expect(
+          existsSync(join(dir, 'UCAD-setup.exe')),
+          `${label} left a staged file behind under the name that means "pending update"`,
+        ).toBe(false);
+      }
+
+      // Each case gets its own staging directory, so one accepted case cannot
+      // leave the file that makes a later refused case look like it wrote one.
+      rmSync(dir, { recursive: true, force: true });
+      mkdirSync(dir, { recursive: true });
+    }
+  });
+});
+
 describe('the release feed a publisher uploads', () => {
   it('carries the hash and the size of the file it names', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'ucad-release-'));
@@ -1863,6 +2272,91 @@ describe('the release feed a publisher uploads', () => {
       expect(document.version).toBe('9.9.9');
       expect(document.sha256).toBe(sha256Of(bytes));
       expect(document.size).toBe(bytes.length);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  /**
+   * The feed is the root of the verification chain.
+   *
+   * `verifyInstaller()` compares the staged bytes against the document, so a
+   * feed whose `sha256` was computed over something other than the bytes it
+   * points at makes *every* download fail — and a feed whose `size` came from a
+   * different file makes the size check refuse a file the hash would have
+   * accepted. Both figures are therefore recomputed here from the file on disk,
+   * by a deliberately naive second implementation (one `createHash` over the
+   * whole buffer), and the document the script produced is then handed to the
+   * verifier the app uses. A field that the script and the app disagree about
+   * is what this pair of cases is for; neither is a re-run of the script.
+   */
+  function installerFixture(dir: string): { installer: string; bytes: Buffer } {
+    // Larger than one stream chunk, so the script's streamed hash is exercised
+    // as a stream rather than as a single read.
+    const bytes = Buffer.alloc(200_000);
+    for (let i = 0; i < bytes.length; i += 1) bytes[i] = (i * 7) % 251;
+    const installer = join(dir, 'UCAD-Setup-9.9.9.exe');
+    writeFileSync(installer, bytes);
+    return { installer, bytes };
+  }
+
+  it('hashes and sizes the exact bytes it names, and the app verifies them', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'ucad-feed-script-'));
+    try {
+      const { installer, bytes } = installerFixture(dir);
+      const document = await buildFeedDocument({ version: '9.9.9', installerPath: installer });
+
+      const independent = createHash('sha256').update(bytes).digest('hex');
+      expect(document.sha256, 'the feed published a digest of something else').toBe(independent);
+      expect(document.size, 'the feed published the wrong size').toBe(bytes.length);
+      expect(statSync(installer).size, 'the file changed while it was being hashed').toBe(
+        document.size,
+      );
+      // The digest the script writes has to be one the app's normaliser accepts;
+      // an uppercase or prefixed spelling would reach the download path as
+      // `no-hash` and refuse an update the publisher thought was fine.
+      expect(normalizeSha256(document.sha256)).toBe(independent);
+
+      // End to end: the document the script produced, against the file it
+      // describes, through the verifier the download uses.
+      expect(
+        await verifyInstaller(installer, { sha256: document.sha256, size: document.size }),
+      ).toEqual({ ok: true, sha256: independent, bytes: bytes.length });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('goes red when one byte of the published file changes, at the same length', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'ucad-feed-tamper-'));
+    try {
+      const { installer, bytes } = installerFixture(dir);
+      const document = await buildFeedDocument({ version: '9.9.9', installerPath: installer });
+
+      // One flipped byte in the middle: the length is untouched, so the size
+      // check cannot be the thing that notices, and the file is not replaced —
+      // it is the same path the feed's digest was taken from.
+      const tampered = Buffer.from(bytes);
+      tampered[Math.floor(tampered.length / 2)] ^= 0xff;
+      writeFileSync(installer, tampered);
+
+      const tamperedDigest = createHash('sha256').update(tampered).digest('hex');
+      expect(document.sha256, 'the feed digest of the original matches the tampered bytes').not.toBe(
+        tamperedDigest,
+      );
+      expect(statSync(installer).size, 'the fixture changed the length, not just a byte').toBe(
+        document.size,
+      );
+
+      expect(
+        await verifyInstaller(installer, { sha256: document.sha256, size: document.size }),
+      ).toEqual({
+        ok: false,
+        reason: 'hash-mismatch',
+        expected: document.sha256,
+        actual: tamperedDigest,
+        bytes: bytes.length,
+      });
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

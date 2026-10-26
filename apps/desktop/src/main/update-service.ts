@@ -636,7 +636,12 @@ async function downloadTo(
         response.resume();
         const redirect = resolveDownloadRedirect(response.headers.location, url, depth);
         if (!redirect.ok) {
-          reject(new Error(REDIRECT_MESSAGE[redirect.reason]));
+          // The hop number travels with the refusal: "which redirect" is what
+          // turns "更新失败" into a report a publisher can act on, and the
+          // count is the one fact in this message the server chose. `depth` is
+          // the request that redirected, so the hop being judged is
+          // `depth + 1` — the sixth for the sixth `Location`.
+          reject(new Error(`${REDIRECT_MESSAGE[redirect.reason]}（第 ${depth + 1} 次跳转）`));
           return;
         }
         void downloadTo(redirect.url, target, onProgress, redirect.depth, getImpl).then(

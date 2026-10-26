@@ -48,6 +48,17 @@
  *
  * Deliberately **not** asserted: that the two sentences mean the same thing,
  * that they are the same length, or anything else about how they read.
+ *
+ * ## The numbers
+ *
+ * The same document states two figures a build decides: the Node.js floor
+ * ("Requires Node.js 22.12 or newer" / "需要 Node.js 22.12 或更高版本") and the
+ * Electron major the packaging toolchain brings. Both are written twice, in two
+ * languages, and both are copied from `package.json` — so a Node upgrade that
+ * edits `engines.node` and forgets the prose leaves the README telling readers
+ * to install a version the toolchain no longer accepts, in one language only.
+ * The second half of this file compares every such number with `package.json`,
+ * per language and then in every other place the document mentions it.
  */
 
 import { describe, expect, it } from 'vitest';
@@ -361,5 +372,216 @@ describe('README limitations, English and Chinese', () => {
     expect(problems[0]).toContain('zh: limitation 1 does not state "the installer is unsigned"');
     expect(problems[0]).toContain('交互式终端依赖 `node-pty`'); // the bullet it found instead
     expect(problems[1]).toContain('zh: limitation 2 does not state "the terminal needs `node-pty`"');
+  });
+});
+
+/**
+ * `package.json`, read for the two numbers the README states.
+ *
+ * Anchored at the repository for the same reason `README_PATH` is: the runner's
+ * cwd is not a fact this gate should depend on.
+ */
+const PACKAGE_PATH = join(import.meta.dirname, '..', '..', 'package.json');
+const pkg = existsSync(PACKAGE_PATH)
+  ? (JSON.parse(readFileSync(PACKAGE_PATH, 'utf8')) as {
+      engines?: { node?: string };
+      devDependencies?: Record<string, string>;
+    })
+  : null;
+
+/** The first `parts` dotted components of a version range, as the README spells them. */
+function declaredNumber(declared: string | undefined, parts: 1 | 2): string | null {
+  if (typeof declared !== 'string') return null;
+  const match = declared.match(/^[^\d]*(\d+(?:\.\d+)?)/);
+  if (match === null) return null;
+  const components = match[1]!.split('.');
+  if (components.length < parts) return null;
+  return components.slice(0, parts).join('.');
+}
+
+/**
+ * One number the README states in both languages, and the field that decides it.
+ *
+ * `stated` is matched against the whole document rather than one section: the
+ * sentences that carry these numbers sit in the "Getting started" prose, not in
+ * the limitations sections above, and the language is identified by the wording
+ * of the sentence ("or newer" versus "或更高版本") because the two languages do
+ * not otherwise mark their boundaries.
+ *
+ * `mention` is the same tool named with any number anywhere in the document. It
+ * exists because fixing the sentence in one place is exactly how a second,
+ * stale mention survives: a reader who scrolls to the upgrade paragraph must not
+ * find a different figure there.
+ */
+interface NumberClaim {
+  readonly id: string;
+  /** the `package.json` field, for the failure message */
+  readonly source: string;
+  /** what that field says, verbatim */
+  readonly declared: string | undefined;
+  /** the number it means, as the README writes it; null when the field states none */
+  readonly number: string | null;
+  readonly stated: Record<Lang, RegExp>;
+  readonly mention: RegExp;
+}
+
+const NUMBER_CLAIMS: readonly NumberClaim[] = [
+  {
+    id: 'the Node.js floor',
+    source: 'engines.node',
+    declared: pkg?.engines?.node,
+    number: declaredNumber(pkg?.engines?.node, 2),
+    stated: {
+      en: /Node\.js (\d+\.\d+) or newer/,
+      zh: /Node\.js (\d+\.\d+) 或更高版本/,
+    },
+    mention: /Node\.js (\d+\.\d+)/g,
+  },
+  {
+    id: 'the Electron major',
+    source: 'devDependencies.electron',
+    declared: pkg?.devDependencies?.electron,
+    number: declaredNumber(pkg?.devDependencies?.electron, 1),
+    // The toolchain sentence, in the two languages' own words — the same reason
+    // `stated` is per language above: `Electron 44` alone appears in both and
+    // would not say which sentence was found.
+    stated: {
+      en: /Electron (\d+) packaging toolchain/,
+      zh: /Electron (\d+) 打包工具链/,
+    },
+    mention: /Electron (\d+)/g,
+  },
+];
+
+/**
+ * Every way one claimed number and the document can disagree.
+ *
+ * A pure function of its inputs, so the cases below can show it answering
+ * something other than `[]` — see `parityProblems` above for the same rule.
+ */
+function numberParityProblems(claim: NumberClaim, markdown: string): string[] {
+  if (claim.number === null) {
+    return [
+      `package.json ${claim.source} is ${JSON.stringify(
+        claim.declared,
+      )}, which states no number for the README to match`,
+    ];
+  }
+
+  const problems: string[] = [];
+  for (const lang of LANGS) {
+    const match = markdown.match(claim.stated[lang]);
+    if (match === null) {
+      problems.push(
+        `${lang}: the README no longer states ${claim.id} (looked for ${claim.stated[lang]})`,
+      );
+    } else if (match[1] !== claim.number) {
+      problems.push(
+        `${lang}: the README says ${claim.id} is ${match[1]}, and package.json ${claim.source} says ${claim.declared}`,
+      );
+    }
+  }
+
+  // A stale figure elsewhere in the document, which the per-language sentences
+  // above cannot see: the sentence can be correct while a later paragraph still
+  // names the version the upgrade replaced.
+  const mentioned = [...markdown.matchAll(claim.mention)].map((match) => match[1]!);
+  if (mentioned.length === 0) {
+    problems.push(`${claim.id}: the README names no number at all (looked for ${claim.mention})`);
+  }
+  const stale = [...new Set(mentioned.filter((number) => number !== claim.number))];
+  if (stale.length > 0) {
+    problems.push(
+      `${claim.id}: the README mentions ${stale.join(
+        ', ',
+      )} somewhere, and package.json ${claim.source} says ${claim.declared}`,
+    );
+  }
+
+  return problems;
+}
+
+describe('the numbers the README states, and package.json', () => {
+  it('finds package.json and a number for every claim', () => {
+    // Unconditional, for the same reason the limitations section above is: a
+    // claim whose `number` is null would make every comparison below trivially
+    // green, and a missing `package.json` would do it to every claim at once.
+    expect(existsSync(PACKAGE_PATH), `package.json is missing (${PACKAGE_PATH})`).toBe(true);
+    const numberless = NUMBER_CLAIMS.filter((claim) => claim.number === null).map(
+      (claim) => `${claim.source} = ${JSON.stringify(claim.declared)}`,
+    );
+    expect(
+      numberless,
+      `these package.json fields state no number the README could be compared with: ${numberless.join(
+        ', ',
+      )}`,
+    ).toEqual([]);
+  });
+
+  it('states the same numbers as package.json, in both languages', () => {
+    const problems = NUMBER_CLAIMS.flatMap((claim) => numberParityProblems(claim, readme));
+    expect(
+      problems,
+      `the README and package.json disagree about a version:\n  ${problems.join('\n  ')}`,
+    ).toEqual([]);
+  });
+
+  it('reports a language left behind by a version upgrade', () => {
+    // The edit this gate exists for: `engines.node` is raised, the English
+    // sentence is updated, and the Chinese one still tells readers the old
+    // floor. Both sentences are grammatically fine and the document looks
+    // maintained.
+    const node = NUMBER_CLAIMS[0]!;
+    const upgraded: NumberClaim = { ...node, declared: '>=24.1.0', number: '24.1' };
+
+    const problems = numberParityProblems(
+      upgraded,
+      [
+        'Requires Node.js 24.1 or newer (the Electron 44 packaging toolchain).',
+        '需要 Node.js 22.12 或更高版本（Electron 44 打包工具链）。',
+      ].join('\n'),
+    );
+
+    expect(problems).toEqual([
+      'zh: the README says the Node.js floor is 22.12, and package.json engines.node says >=24.1.0',
+      'the Node.js floor: the README mentions 22.12 somewhere, and package.json engines.node says >=24.1.0',
+    ]);
+  });
+
+  it('reports a stale figure in a second paragraph', () => {
+    // The sentence can be right while a later mention is wrong. Nothing about a
+    // per-language sentence comparison sees this one, which is why the mention
+    // scan is separate.
+    const electron = NUMBER_CLAIMS[1]!;
+    expect(
+      numberParityProblems(
+        electron,
+        [
+          'Requires Node.js 22.12 or newer (the Electron 44 packaging toolchain).',
+          '需要 Node.js 22.12 或更高版本（Electron 44 打包工具链）。',
+          '',
+          'The Electron 42 build is not supported.',
+        ].join('\n'),
+      ),
+    ).toEqual([
+      'the Electron major: the README mentions 42 somewhere, and package.json devDependencies.electron says ^44.5.1',
+    ]);
+  });
+
+  it('reports a field that states no number at all', () => {
+    const node: NumberClaim = { ...NUMBER_CLAIMS[0]!, declared: '*', number: null };
+    expect(numberParityProblems(node, readme)).toEqual([
+      'package.json engines.node is "*", which states no number for the README to match',
+    ]);
+  });
+
+  it('reports a document that stopped stating the number', () => {
+    // A README that dropped the sentence entirely: the failure has to name the
+    // claim and the pattern, or the reader is told "the README is wrong" about a
+    // document they cannot diff against a regex.
+    const zhMissing = ['Requires Node.js 22.12 or newer.', ''].join('\n');
+    const problems = numberParityProblems(NUMBER_CLAIMS[0]!, zhMissing);
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toContain('zh: the README no longer states the Node.js floor');
   });
 });
