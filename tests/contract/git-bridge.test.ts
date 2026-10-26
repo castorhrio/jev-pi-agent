@@ -58,6 +58,12 @@ function harness(options: {
   diffFor?: (path: string) => Promise<{ patch: string; binary: boolean }>;
   /** `status` throws, the way a non-repository does */
   statusFails?: boolean;
+  /**
+   * `status` throws *synchronously*, before returning a promise — the shape a
+   * service that validates its input has, and the one path where a subprocess
+   * was never spawned at all.
+   */
+  statusThrowsSynchronously?: boolean;
   /** `status` never returns, the way a stale index lock does */
   statusHangs?: boolean;
   /** `status` returns, but only after this many ms — the deadline may beat it */
@@ -73,6 +79,7 @@ function harness(options: {
 
   const status = async () => {
     statusCalls += 1;
+    if (options.statusThrowsSynchronously) throw new Error('status called before resolveRoot');
     if (options.statusFails) throw new Error('fatal: not a git repository');
     if (options.statusHangs) return new Promise<never>(() => {});
     const staged = (options.staged ?? []).map((path) => ({ path, status: 'M' }));
@@ -94,7 +101,12 @@ function harness(options: {
   };
 
   const git = {
-    status,
+    status: options.statusThrowsSynchronously
+      ? () => {
+          statusCalls += 1;
+          throw new Error('status called before resolveRoot');
+        }
+      : status,
     diff: async (input: { path?: string }) => {
       const path = input.path ?? '';
       const startedAt = Date.now();
@@ -276,8 +288,18 @@ describe('git diffSummary — the bounds', () => {
     // dropped on purpose), one path never answered. `requested - collected`
     // would say 2 abandoned; the subprocess count says 1.
     expect(stopped!.fields?.collected).toBe(1);
+    expect(stopped!.fields?.answered).toBe(2);
     expect(stopped!.fields?.abandoned).toBe(1);
     expect(stopped!.fields?.inFlight).toBe(1);
+    // The difference between "answered" and "collected" is named rather than
+    // left for the reader to subtract. Here it is exactly the binary: it
+    // answered in time and was dropped for a reason that is not a hang.
+    expect(stopped!.fields?.droppedEmptyOrBinary).toBe(1);
+    // And the closed form holds with the new field in it:
+    // answered = collected + droppedEmptyOrBinary.
+    expect(
+      (stopped!.fields?.collected as number) + (stopped!.fields?.droppedEmptyOrBinary as number),
+    ).toBe(stopped!.fields?.answered);
   });
 
   it('reaches the deadline when `git status` is the call that hangs', async () => {
@@ -405,6 +427,10 @@ describe('git diffSummary — the bounds', () => {
     const neverStarted = stopped!.fields?.neverStarted as number;
     const inFlight = stopped!.fields?.inFlight as number;
 
+    const answered = stopped!.fields?.answered as number;
+    const failed = stopped!.fields?.failed as number;
+    const droppedEmptyOrBinary = stopped!.fields?.droppedEmptyOrBinary as number;
+
     expect(requested).toBe(6);
     // Two workers, two subprocesses out there...
     expect(inFlight).toBe(2);
@@ -414,6 +440,15 @@ describe('git diffSummary — the bounds', () => {
     // for "two subprocesses are hanging" would be wrong.
     expect(abandoned).toBe(6);
     expect(neverStarted + inFlight).toBe(abandoned);
+    // The whole sum in one line, which is the claim the log makes: every
+    // requested path is in exactly one bucket, and none of the buckets is
+    // negative. Nothing answered here, so nothing was dropped either.
+    expect(answered + failed + inFlight + neverStarted).toBe(requested);
+    expect(droppedEmptyOrBinary).toBe(0);
+    // The never-started bucket can only be counted if the deadline stopped the
+    // workers from claiming paths — otherwise this test would pass with
+    // `neverStarted: 0` and prove nothing.
+    expect(neverStarted).toBeGreaterThan(0);
   });
 
   it('keeps the paths that answered when one `git diff` throws', async () => {
@@ -435,6 +470,66 @@ describe('git diffSummary — the bounds', () => {
     expect(skipped, 'a path was dropped without a log line naming it').toBeDefined();
     expect(skipped!.fields?.path).toBe('goes-missing.ts');
     expect(String(skipped!.fields?.error)).toContain('bad object');
+  });
+
+  it('spawns no new `git diff` after the deadline has fired', async () => {
+    // The deadline stops the waiting, not only the claiming: once it fires, a
+    // worker that finishes its current subprocess must not pick up the next
+    // path. Otherwise a hung workspace would keep turning into a queue of git
+    // processes after the turn had already moved on — the bound would be on
+    // what the caller waits for, not on what git is asked to do.
+    const paths = Array.from({ length: 8 }, (_, i) => `src/f${i}.ts`);
+    let spawns = 0;
+    const h = harness({
+      unstaged: paths,
+      // The first diff outlives the deadline; every later one would return at
+      // once. That asymmetry is the point: a worker that keeps looping after
+      // the deadline would drain the remaining seven paths instantly, so the
+      // call count alone tells whether the guard is still there.
+      diffFor: async (path) => {
+        spawns += 1;
+        return spawns === 1 ? after(120, patch(path)) : patch(path);
+      },
+      diffConcurrency: 1,
+      diffDeadlineMs: 20,
+    });
+
+    const startedAt = Date.now();
+    await h.bridge.diffSummary({ workspaceId: 'ws_1', limit: 8 });
+    expect(Date.now() - startedAt).toBeLessThan(500);
+
+    // One worker was already inside a subprocess when the deadline fired; at
+    // most one more could have been claimed if the guard ran a hair late.
+    // Anything beyond that means the loop kept spawning.
+    expect(h.diffs.length, 'the deadline did not stop new subprocesses').toBeLessThanOrEqual(2);
+
+    // Let the outstanding diff land and prove the worker retired rather than
+    // claiming the next path once it returned. With the guard removed this
+    // line sees all eight paths diffed.
+    await after(150, undefined);
+    expect(h.diffs.length, 'the worker kept spawning after the deadline').toBe(1);
+    const started = new Set(h.diffs.map((call) => call.path));
+    expect(started.size, 'the same path was diffed twice').toBe(h.diffs.length);
+  });
+
+  it('does not report an in-flight status when `git status` threw synchronously', async () => {
+    // A `status` that throws before it returns never spawned a subprocess, so
+    // there is nothing out there to account for. That path goes to the
+    // "unavailable" log and must not carry an `inFlight` claim at all — the
+    // field would be either a lie (1) or a reassurance nobody measured (0).
+    const h = harness({ statusThrowsSynchronously: true });
+
+    const summary = await h.bridge.diffSummary({ workspaceId: 'ws_1' });
+
+    expect(summary).toEqual([]);
+    expect(h.diffs).toEqual([]);
+    // No deadline line: the failure was immediate, not a timeout.
+    expect(h.logs.filter((line) => line.event.includes('deadline'))).toEqual([]);
+    const unavailable = h.logs.find((line) => line.event === 'git diff summary unavailable');
+    expect(unavailable, 'a synchronous `status` failure was swallowed').toBeDefined();
+    expect(String(unavailable!.fields?.error)).toContain('resolveRoot');
+    expect(unavailable!.fields).not.toHaveProperty('inFlight');
+    expect(unavailable!.fields).not.toHaveProperty('statusInFlight');
   });
 
   it('defaults to four diffs in flight when the caller sets nothing', async () => {

@@ -122,6 +122,13 @@ export class GitLikeBridge {
     let statusInFlight = false;
 
     try {
+      // The flag is set from the call's *return value*, not from its
+      // resolution: a `status` that rejects still left a subprocess behind,
+      // and waiting to set it inside `.then()` would have missed exactly the
+      // hang this field exists for. A synchronous throw never returns here at
+      // all — it lands in the `catch` below with no deadline log, which is the
+      // one path where reporting `inFlight` would be a claim about a git
+      // process that was never spawned.
       const statusCall = this.opts.git.status(input.workspaceId, root);
       statusInFlight = true;
       const status = await Promise.race([
@@ -251,11 +258,21 @@ export class GitLikeBridge {
         // empty patches are not abandoned: they answered, and were dropped for
         // a reason the other two fields already tell.
         //
-        // The fields are arithmetic, not adjectives: every requested path is
-        // in exactly one of `answered`, `failed` and `abandoned`, and the
-        // abandoned ones split into the ones that never became a subprocess
-        // (`neverStarted`) and the ones that are still running (`inFlight`).
-        // A reader can add them up instead of taking them on trust.
+        // The fields are arithmetic, not adjectives, and they now close without
+        // the reader doing the subtraction:
+        //
+        //   requested = answered + failed + abandoned
+        //   abandoned = neverStarted + inFlight
+        //   answered  = collected + droppedEmptyOrBinary
+        //
+        // `droppedEmptyOrBinary` is its own field because it was the one gap a
+        // reader could only fill by computing `answered - collected`: a summary
+        // of three items out of five answered paths is either "two were binary"
+        // or "two came back empty", and both are fine — but they are not
+        // `abandoned`, so leaving the difference implicit invited exactly that
+        // misreading. `neverStarted` is clamped at zero so a future change to
+        // the worker pool cannot make the log print a negative path count.
+        const droppedEmptyOrBinary = answered - out.length;
         this.opts.logger.debug('git diff summary stopped at its deadline', {
           workspaceId: input.workspaceId,
           deadlineMs,
@@ -263,9 +280,10 @@ export class GitLikeBridge {
           collected: out.length,
           requested: paths.length,
           answered,
-          abandoned: paths.length - answered - failed,
+          droppedEmptyOrBinary,
+          abandoned: Math.max(0, paths.length - answered - failed),
           failed,
-          neverStarted: paths.length - answered - failed - inFlight,
+          neverStarted: Math.max(0, paths.length - answered - failed - inFlight),
           inFlight,
         });
       }

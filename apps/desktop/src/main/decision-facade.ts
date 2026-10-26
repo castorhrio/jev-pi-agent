@@ -172,12 +172,19 @@ export class DecisionFacade {
     const effects: readonly string[] = engine.manifest.sideEffects ?? [];
     // Nothing declared => nothing to authorise.
     if (effects.length === 0) return true;
-    // `none` alongside a real effect is a self-contradicting manifest; it is
-    // never allowed, not even when the real effect would have been. `none`
+    // `none` on its own is the out-loud way of declaring what the empty array
+    // says silently. Written as an explicit enumeration of the one allowed
+    // shape rather than `includes('none') && length === 1`: the previous form
+    // read as "contains none, and happens to be a single element", which let a
+    // future edit to the predicate or to the array handling change what the
+    // rule means without changing its shape.
+    if (effects.length === 1 && effects[0] === 'none') return true;
+    // `none` alongside anything else is a self-contradicting manifest; it is
+    // never allowed, not even when the other effect would have been. `none`
     // twice is refused for the same reason the case list gives: the manifest
     // must state one thing, and "no effects, declared twice" is not a second
     // kind of statement.
-    if (effects.includes('none')) return effects.length === 1;
+    if (effects.includes('none')) return false;
     // Every effect needs a setting behind it. `network` has one; `process`
     // does not yet, so it is refused whatever `allowNetworkEngines` says.
     return effects.every((effect) => effect === 'network' && this.opts.allowNetworkEngines);
