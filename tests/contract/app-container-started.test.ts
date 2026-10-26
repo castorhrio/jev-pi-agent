@@ -84,6 +84,31 @@ function promisedFields(source: string): string[] {
 }
 
 /**
+ * The two ways the scan and the checklist can disagree.
+ *
+ * Kept as pure functions so both directions can be tested on fixtures. The
+ * real-container test used to assert the two sorted arrays were equal, which
+ * is correct but says only "something differs" — and its failure mode is
+ * exactly the one this file exists to catch, so it should be pinned rather
+ * than trusted.
+ */
+function promisesMissingFromChecklist(
+  found: readonly string[],
+  checklist: readonly string[],
+): string[] {
+  const allowed = new Set(checklist);
+  return found.filter((field) => !allowed.has(field));
+}
+
+function checklistEntriesNotPromised(
+  found: readonly string[],
+  checklist: readonly string[],
+): string[] {
+  const promised = new Set(found);
+  return checklist.filter((field) => !promised.has(field));
+}
+
+/**
  * The claims, written out.
  *
  * The scan above finds whatever the container currently declares; this list
@@ -181,15 +206,40 @@ describe('the scan that reads the container’s promises', () => {
     const found = promisedFields(fs.readFileSync(CONTAINER_SOURCE, 'utf8'));
     expect(found.length, 'the scan found no promises in the container at all').toBeGreaterThan(10);
   });
+
+  it('reports a new promise the checklist does not cover', () => {
+    // A negative fixture, because the guarantee is "a new `field!: T` must be
+    // a red test until somebody adds it to the checklist". If this helper
+    // ever started returning `[]` for an unlisted field, the real-container
+    // test below would keep passing while the guarantee disappeared.
+    const found = promisedFields(
+      'class A {\n  db!: Database;\n  brandNew!: Service;\n}',
+    );
+    expect(promisesMissingFromChecklist(found, ['db'])).toEqual(['brandNew']);
+  });
+
+  it('reports a checklist entry the class no longer declares', () => {
+    // The other direction: a renamed or deleted field must not leave a stale
+    // checklist entry behind, or the `has every one of them after start()`
+    // test would keep asserting a field nobody promises any more.
+    expect(checklistEntriesNotPromised(['db'], ['db', 'removed'])).toEqual(['removed']);
+  });
 });
 
 describe('the container keeps every promise start() made', () => {
   it('declares exactly the fields the checklist names', () => {
     const found = promisedFields(fs.readFileSync(CONTAINER_SOURCE, 'utf8'));
+    // Split into the two directions so the failure names what to fix: an
+    // unlisted declaration means "add it to PROMISED_FIELDS (and make it real
+    // in start())", a stale entry means "the field was renamed or removed".
     expect(
-      [...found].sort(),
-      'the container declares a field the checklist does not name, or a promise was dropped',
-    ).toEqual([...PROMISED_FIELDS].sort());
+      promisesMissingFromChecklist(found, PROMISED_FIELDS),
+      'the container declares a `field!: T` the checklist does not name',
+    ).toEqual([]);
+    expect(
+      checklistEntriesNotPromised(found, PROMISED_FIELDS),
+      'the checklist names a field the container no longer declares',
+    ).toEqual([]);
   });
 
   it('has every one of them after start()', async () => {

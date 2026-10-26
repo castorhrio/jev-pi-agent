@@ -21,7 +21,7 @@ test that does nothing.
 | Permissions | Deterministic risk, scoped rules, audit trail written on every outcome |
 | Credentials | A write that cannot be persisted must not report itself as saved; an unreadable vault is never overwritten |
 | Retention | One retention service: the figures the Storage pane reports are measured on the instance that purges, the start-up sweep is that same instance, and a container that has not started refuses to build one over `undefined` — over a dependency list `tsc` checks, not a comment |
-| Container | Every subsystem the container promises (`field!: T`) is on a checklist and is really there after `start()`: a step that forgets to assign one is a failing test, and a dependency that skips the start-up guard does not compile |
+| Container | Every subsystem the container promises (`field!: T`) is on a checklist and is really there after `start()`: a step that forgets to assign one is a failing test. The lazy retention service's dependency bag also goes through a compile-time start-up guard — scoped to that bag, not to the whole container |
 | Build graph | Every `@ucad/*` dependency is a project reference, and the solution lists each package once |
 | Copy and a11y | No hard-coded UI strings, locale parity, contrast, focus indicators |
 | Menu | Every command Main registers has a renderer handler |

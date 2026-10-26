@@ -882,6 +882,192 @@ describe('git diffSummary — a directory that is not a repository', () => {
 });
 
 /**
+ * The three flags, as a table.
+ *
+ * `git-bridge.ts` used to describe this state machine in prose (and the prose
+ * kept growing). The observable contract is small: given whether the deadline
+ * fired, whether `status` settled before the snapshot, and whether a diff
+ * settled before the snapshot, which late lines appear and with what outcome?
+ *
+ * Two combinations cannot happen and the table says so by construction:
+ * without a deadline, `Promise.all` settles before the snapshot, so nothing
+ * can be late; and if status settles before the snapshot, no `status-late`
+ * line can exist. A status-stage deadline takes no snapshot at all, which is
+ * why a hung status writes two deadline-side facts and zero late lines.
+ */
+describe('git diffSummary — the three flags, as a table', () => {
+  const statusLate = (h: Harness): unknown[] =>
+    h.logs
+      .filter((line) => line.event === 'git diff summary discarded a late status answer')
+      .map((line) => line.fields?.outcome);
+  const diffLate = (h: Harness): unknown[] =>
+    h.logs
+      .filter((line) => line.event === 'git diff summary discarded a late diff answer')
+      .map((line) => line.fields?.outcome);
+
+  interface Row {
+    name: string;
+    deadlineFired: boolean;
+    statusSettledBeforeSnapshot: boolean;
+    diffSettledBeforeSnapshot: boolean;
+    expected: {
+      items: string[];
+      statusLate: Array<'answered' | 'failed'>;
+      diffLate: Array<'answered' | 'failed'>;
+    };
+    run: () => Promise<{ h: Harness; items: string[] }>;
+  }
+
+  /** Runs one summary, then optionally lets the late answer land. */
+  const runWith = async (
+    options: Parameters<typeof harness>[0],
+    finishLate?: () => Promise<void>,
+  ): Promise<{ h: Harness; items: string[] }> => {
+    const h = harness(options);
+    const summary = await h.bridge.diffSummary({ workspaceId: 'ws_1' });
+    if (finishLate) await finishLate();
+    return { h, items: summary.map((item) => item.path) };
+  };
+
+  /** A diff held open by a gate the test releases by hand. */
+  const gatedDiff = (settle: 'resolve' | 'reject') => {
+    let open!: () => void;
+    let fail!: (error: Error) => void;
+    const gate = new Promise<void>((resolve, reject) => {
+      open = resolve;
+      fail = reject;
+    });
+    return {
+      gate,
+      finish: async (): Promise<void> => {
+        if (settle === 'resolve') open();
+        else fail(new Error('fatal: bad object'));
+        await after(10, undefined);
+      },
+    };
+  };
+
+  const rows: Row[] = [
+    {
+      name: 'inside the budget: no late lines, and the deadline does not imply a snapshot',
+      deadlineFired: false,
+      statusSettledBeforeSnapshot: true,
+      diffSettledBeforeSnapshot: true,
+      expected: { items: ['a.ts'], statusLate: [], diffLate: [] },
+      run: () => runWith({ unstaged: ['a.ts'], diffDeadlineMs: 100 }),
+    },
+    {
+      name: 'status hangs: the deadline returns early, so there is no answer to record late',
+      deadlineFired: true,
+      statusSettledBeforeSnapshot: false,
+      diffSettledBeforeSnapshot: false,
+      expected: { items: [], statusLate: [], diffLate: [] },
+      run: () => runWith({ statusHangs: true, diffDeadlineMs: 20 }),
+    },
+    {
+      name: 'status answered after the deadline: one status-late line, and no diff was spawned',
+      deadlineFired: true,
+      statusSettledBeforeSnapshot: false,
+      diffSettledBeforeSnapshot: false,
+      expected: { items: [], statusLate: ['answered'], diffLate: [] },
+      run: () =>
+        runWith({ statusSlowMs: 60, diffDeadlineMs: 20 }, () => after(100, undefined)),
+    },
+    {
+      name: 'status failed after the deadline: the same line, with outcome failed',
+      deadlineFired: true,
+      statusSettledBeforeSnapshot: false,
+      diffSettledBeforeSnapshot: false,
+      expected: { items: [], statusLate: ['failed'], diffLate: [] },
+      run: () =>
+        runWith({ statusSlowFailsMs: 60, diffDeadlineMs: 20 }, () => after(100, undefined)),
+    },
+    {
+      name: 'diff answered after the snapshot: a diff-late line naming the dropped answer',
+      deadlineFired: true,
+      statusSettledBeforeSnapshot: true,
+      diffSettledBeforeSnapshot: false,
+      expected: { items: [], statusLate: [], diffLate: ['answered'] },
+      run: () => {
+        const held = gatedDiff('resolve');
+        return runWith(
+          {
+            unstaged: ['late.ts'],
+            diffFor: async (path) => {
+              await held.gate;
+              return patch(path);
+            },
+            diffConcurrency: 1,
+            diffDeadlineMs: 20,
+          },
+          held.finish,
+        );
+      },
+    },
+    {
+      name: 'diff failed after the snapshot: the same line, with outcome failed',
+      deadlineFired: true,
+      statusSettledBeforeSnapshot: true,
+      diffSettledBeforeSnapshot: false,
+      expected: { items: [], statusLate: [], diffLate: ['failed'] },
+      run: () => {
+        const held = gatedDiff('reject');
+        return runWith(
+          {
+            unstaged: ['late.ts'],
+            diffFor: async () => held.gate,
+            diffConcurrency: 1,
+            diffDeadlineMs: 20,
+          },
+          held.finish,
+        );
+      },
+    },
+    {
+      name: 'diff settled before the snapshot: no late line, even though the deadline fired for another path',
+      deadlineFired: true,
+      statusSettledBeforeSnapshot: true,
+      diffSettledBeforeSnapshot: true,
+      expected: { items: ['fast.ts'], statusLate: [], diffLate: [] },
+      run: () =>
+        runWith({
+          unstaged: ['fast.ts', 'hang.ts'],
+          diffFor: async (path) =>
+            path === 'hang.ts' ? new Promise<never>(() => {}) : patch(path),
+          diffConcurrency: 2,
+          diffDeadlineMs: 20,
+        }),
+    },
+  ];
+
+  it.each(rows)('$name', async (row) => {
+    const { h, items } = await row.run();
+
+    expect(items, 'the answer the caller received').toEqual(row.expected.items);
+    expect(statusLate(h), 'status-late outcomes').toEqual(row.expected.statusLate);
+    expect(diffLate(h), 'diff-late outcomes').toEqual(row.expected.diffLate);
+
+    // The table's own invariants, independent of the expected values:
+    if (!row.deadlineFired) {
+      expect(statusLate(h), 'a late line without a deadline').toEqual([]);
+      expect(diffLate(h), 'a late line without a deadline').toEqual([]);
+    }
+    if (row.statusSettledBeforeSnapshot) {
+      expect(statusLate(h), 'a status that settled before the snapshot cannot be late').toEqual([]);
+    }
+    if (row.diffSettledBeforeSnapshot) {
+      expect(diffLate(h), 'a diff that settled before the snapshot cannot be late').toEqual([]);
+    }
+    // Both late lines can share a log, but never one call: a late status means
+    // no path was listed, so that call spawned no diff.
+    expect(
+      statusLate(h).length + diffLate(h).length,
+      'a single call wrote both late lines',
+    ).toBeLessThanOrEqual(1);
+  });
+});
+
+/**
  * One turn's late answer is not the next turn's answer.
  *
  * ## Why this file exists

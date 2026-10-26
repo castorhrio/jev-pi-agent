@@ -74,8 +74,16 @@ export interface UcadAppOptions {
  * `eventLog: this.requireStarted('eventLog', this.eventLog)` does.
  *
  * The mark is a fiction the type system believes — at runtime the field is
- * the same object it always was. That is the point: the difference is
- * invisible to a caller and visible to the compiler.
+ * the same object it always was.
+ *
+ * **Scope.** The guard protects the dependencies of lazily built services
+ * (today only `retentionDeps()`). It is deliberately not a blanket wrapper
+ * around every `!` field: callers of the other subsystems only exist after
+ * `start()`. Those fields are covered at runtime instead: the scanner in
+ * `tests/contract/app-container-started.test.ts` requires every `field!: T`
+ * to be on its checklist and to be non-null after a real `start()`. Adding a
+ * field to the guard's scope therefore means widening `retentionDeps()`, not
+ * assuming this mark already reaches it.
  */
 const STARTED = Symbol('ucad.container.started');
 
@@ -225,6 +233,11 @@ export class UcadApp {
   /**
    * A field `start()` is responsible for, refused rather than passed on as
    * `undefined`.
+   *
+   * Only the dependencies that pass through `retentionDeps()` reach this
+   * function. That is intentional — see the scope note on `STARTED` — so this
+   * is not the container's general start-up check; the remaining `!` fields
+   * are checked by the scan-and-run contract test.
    *
    * The container declares its subsystems as `field!: T` because they are
    * built in order by `start()`; the `!` is a claim, not a guarantee, and any

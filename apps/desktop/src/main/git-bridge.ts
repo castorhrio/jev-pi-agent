@@ -56,34 +56,24 @@ const DEFAULT_DIFF_DEADLINE_MS = 2_000;
 /**
  * The three flags that decide what a late answer may claim.
  *
- * `diffSummary` has two asynchronous stages and one deadline, and its logs are
- * easier to read than its state — which is why the state is written down once,
- * here, instead of being inferred from the guards below:
- *
- *  - `expired` — the deadline timer fired. Monotonic, set only by the timer,
- *    and the single answer to "is this too late": the workers stop claiming
- *    paths on it and `logLateStatus` decides with it.
+ *  - `expired` — the deadline timer fired. Monotonic, and the only test for
+ *    "too late"; the diff workers stop claiming paths on it.
  *  - `statusInFlight` — `git status` was called and has not settled. True on
- *    the deadline line when status is the call that hung (the process cannot
- *    be cancelled), false on every `status-late` line (the answer is that
- *    process returning).
- *  - `snapshotTaken` — the returned array has been built from `collected`.
- *    Set once, after the diff race; a diff that lands later can only be
- *    evidence about a subprocess, so `logLateDiff` gates on this. It is *not*
- *    set on the early return for a status-stage deadline: no path was listed,
- *    so no diff exists to report.
+ *    the deadline line when status is the call that hung, false on every
+ *    `status-late` line.
+ *  - `snapshotTaken` — the returned array was built from `collected`. A diff
+ *    that lands after this is only evidence about a subprocess, never part of
+ *    the answer. Not set on the status-stage early return: no path was
+ *    listed, so no diff exists to report.
  *
- * `snapshotTaken` does **not** imply `expired`: every summary that finishes
- * inside its budget sets `snapshotTaken` with `expired` still false. The
- * converse is not an invariant at every instant either — the timer fires while
- * the race is still being awaited — and is false after the status-stage early
- * return. What holds is why each line has its own guard: a late *status* is
- * defined by `expired`, a late *diff* by `snapshotTaken`.
+ * `snapshotTaken` does not imply `expired`: a summary that finishes inside its
+ * budget takes the snapshot with `expired` still false. A status-stage
+ * deadline returns before either flag is settled. So each late line has its
+ * own guard: a late status is defined by `expired`, a late diff by
+ * `snapshotTaken`.
  *
- * Both late lines can appear in one log, but never for the same call: a status
- * that missed the deadline lists no paths, so that call spawned no diff; a diff
- * that missed it means `status` answered in time. They are independent endings
- * of two different calls, which the cross-call test pins.
+ * The combinations, including the impossible ones, are pinned as a table in
+ * `tests/contract/git-bridge.test.ts` ("the three flags, as a table").
  */
 export class GitLikeBridge {
   private readonly opts: GitLikeBridgeOptions;
@@ -161,30 +151,15 @@ export class GitLikeBridge {
     /**
      * Records a `git status` that answered after the deadline.
      *
-     * The deadline log below says `statusInFlight: true`, and that is true
-     * *at that moment*: the subprocess is still out there and cannot be
-     * cancelled. It is a snapshot, and a snapshot has no ending — so without
-     * this line a reader could not tell whether the git process finished a
-     * moment later or is still hanging, and the two call for different
-     * reactions (wait it out vs. go and kill the workspace).
+     * The deadline line said `statusInFlight: true`; that was a snapshot, and
+     * a snapshot has no ending. This line is the ending, and it changes
+     * nothing else: the summary was already returned empty and no diff was
+     * spawned for a path nobody listed. `expired` is the test for "too late" —
+     * one clock, one answer.
      *
-     * The answer itself changes nothing: the summary was already returned
-     * empty, and no `git diff` is spawned for a path nobody listed. What
-     * changes is that the answer is now *on the record* as dropped, rather
-     * than landing on nothing and disappearing.
-     *
-     * `expired` is the test for "too late" rather than a separate timer: it
-     * is already the flag the workers stop on, so there is one clock and one
-     * answer to "is it still in time".
-     *
-     * The `stage` is `'status-late'`, not `'status'`. Both lines are about the
-     * same subprocess, and sharing the stage name made them the same *kind* of
-     * line as far as anything machine-readable is concerned: a support report
-     * could only tell them apart by the event string, and a report that counts
-     * `stage: 'status'` occurrences counted one hung `git status` twice. The
-     * deadline line is the snapshot of a summary that gave up; this one is the
-     * same subprocess arriving afterwards, and the two call for different
-     * readings.
+     * `stage: 'status-late'` (not `'status'`) keeps a report from counting one
+     * hung `git status` twice; the deadline line is the giving-up snapshot,
+     * this one is the same subprocess arriving afterwards.
      */
     const logLateStatus = (outcome: 'answered' | 'failed', error?: unknown): void => {
       if (!expired) return;
@@ -214,28 +189,18 @@ export class GitLikeBridge {
     /**
      * Records a `git diff` that answered after the summary was built.
      *
-     * The deadline line is a snapshot: `abandoned` counts this path because
-     * the summary had not heard from it when it gave up. A snapshot has no
-     * ending, so afterwards "the subprocess came back a moment later" and
-     * "it is still hanging" read the same in a support report. This line is
-     * the ending, and — unlike a count — it names the path the answer
-     * belonged to.
+     * `snapshotTaken`, not `expired`, decides this: a diff can cross the
+     * finish line while the deadline timer fires, just before `out` is built.
+     * That answer is in the summary the caller receives, and calling it late
+     * would contradict the answer. Only a diff that finishes after the
+     * snapshot is guaranteed to be dropped.
      *
-     * `snapshotTaken`, not `expired`, decides whether the answer was actually
-     * discarded: a diff can cross the finish line while the deadline timer
-     * fires, just before `out` is built. That answer is in the summary the
-     * caller receives, and calling it late would contradict the answer. Only
-     * a diff that finishes after the snapshot is guaranteed to be dropped.
-     *
-     * The stage is `'diff-late'`, for the same reason `logLateStatus` uses
-     * `'status-late'`: the giving-up line and the arrival are different
-     * events, and a report counting `stage: 'diff'` must not count one slow
-     * file twice.
-     *
-     * A late failure gets the same line with `outcome: 'failed'` and its
-     * error, instead of the in-time "skipped a path" line: by the time this
-     * runs the summary is already gone, so "skipped" would describe work
-     * nobody was waiting for.
+     * The line names the path the answer belonged to — the deadline line only
+     * counted it as abandoned, and a count cannot tell a slow file from a hung
+     * one once the summary has returned. `stage: 'diff-late'` keeps a report
+     * counting `stage: 'diff'` from counting one slow file twice. A late
+     * failure gets `outcome: 'failed'` and its error instead of the in-time
+     * "skipped" line, which would describe work nobody is waiting for.
      */
     const logLateDiff = (
       path: string,
