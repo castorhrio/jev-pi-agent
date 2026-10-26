@@ -26,7 +26,7 @@ test that does nothing.
 | Copy and a11y | No hard-coded UI strings, locale parity, contrast, focus indicators |
 | Menu | Every command Main registers has a renderer handler |
 | Versions | Shipped manifests pin exact versions; the installed engine matches what is declared |
-| Updates | The shipped feed is `https`; an override that is not `https` is refused without falling back; every feed URL — override, packaged file and the service's own wiring — is judged by one function, and the three entry points are asserted to accept and refuse the same values with the same reason; a download is made against the document the check read, never a second read of the feed, so a feed that changes between the check and the download cannot point at a different file than the one the user was shown, and a download whose checked document is gone is refused rather than re-fetched; a feed with no `sha256` installs nothing; a mismatch deletes the staged file instead of launching it; every download redirect must stay `https`; and a download follows at most five redirects — the fifth succeeds, the sixth is refused before a seventh request |
+| Updates | The shipped feed is `https`; an override that is not `https` is refused without falling back; every feed URL — override, packaged file and the service's own wiring — is judged by one function, and the three entry points are asserted to accept and refuse the same values with the same reason; a download is made against the document the check read, never a second read of the feed, so a feed that changes between the check and the download cannot point at a different file than the one the user was shown, and a download whose checked document is gone is refused rather than re-fetched; an unusable configuration candidate is skipped while a refused override stops the search, and the asymmetry is a contract rather than an accident; a feed with no `sha256` installs nothing; a mismatch deletes the staged file instead of launching it; every download redirect must stay `https`; a download follows at most five redirects — the fifth succeeds, the sixth is refused before a seventh request; the production wiring is scanned to prove it never passes the launch test seam (`beforeLaunch`), which exists only for the post-verify window; and the residual `stat` window in the staged-file check stays written down, so a bounded claim cannot be mistaken for a closed one |
 
 **Interface** — `tests/e2e`, run by `npm run test:e2e`: the real `App` in a DOM
 against the real fixture bridge, covering the conversation, navigation, the
@@ -121,6 +121,13 @@ test rather than leaving it to skip forever. It looks like coverage and protects
 
 **Prove a gate can go red.** A test you have never seen fail is indistinguishable from a
 test that does nothing. Break the thing on purpose, watch it fail, put it back.
+
+**A scripted test double that runs out fails the expectation, not a throw.** When a
+stand-in such as `feedFetchSteps` or `scriptedGet` receives a request the test did not
+script, it calls `expect.fail(…)` with the count and the request. A bare `throw` is caught
+by the product code under test and surfaces as a plausible product error — the test's own
+bug wearing the app's clothes. Any new scripted double follows the same rule, and
+`the scripted helpers fail the test that outruns them` keeps the rule red-able.
 
 **Prefer a mechanism to a reminder.** A rule in a document is skipped. A check in the suite
 is not. If a mistake has been made twice, the answer is a gate, not a better note.

@@ -206,6 +206,15 @@ export interface ResolvedUpdateFeed {
  * of what an override is for. A blank variable is not an override at all — it
  * is the shape a shell script leaves behind — so it falls through like an
  * unset one.
+ *
+ * A configuration file that cannot be used — absent, unparseable, or naming a
+ * non-https feed — is *skipped*, and the next candidate is tried. That is the
+ * opposite of the override, on purpose: the override is one decision a person
+ * made, while the candidates are the places a build may have installed its
+ * feed, and one bad copy must not hide the good one beside it. A skipped file
+ * is not reported as `rejected` either: that field names a configured override
+ * that was refused, and a packaging defect belongs to the build, not to a log
+ * line about somebody's variable.
  */
 export function resolveUpdateFeed(options: {
   envValue?: string | undefined;
@@ -341,6 +350,9 @@ export async function verifyInstaller(
  * the user already waited on. The claim this type makes is therefore precise:
  * *the file about to be launched is the file object that was hashed*, which
  * is the strongest statement a path-based launch allows.
+ *
+ * `tests/contract/update-integrity.test.ts` keeps this paragraph present, so a
+ * later edit cannot quietly turn the admission into a claim of completeness.
  */
 export interface FileIdentity {
   readonly dev: number;
@@ -362,7 +374,7 @@ export function fileIdentity(stats: Stats): FileIdentity {
 }
 
 /** Whether two identity readings describe the same file in the same state. */
-export function sameFileIdentity(a: FileIdentity, b: FileIdentity): boolean {
+function sameFileIdentity(a: FileIdentity, b: FileIdentity): boolean {
   return a.dev === b.dev && a.ino === b.ino && a.size === b.size && a.mtimeMs === b.mtimeMs;
 }
 

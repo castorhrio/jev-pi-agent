@@ -34,13 +34,14 @@ import {
   existsSync,
   mkdtempSync,
   readFileSync,
+  readdirSync,
   renameSync,
   rmSync,
   statSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, relative, sep } from 'node:path';
 import { Readable } from 'node:stream';
 import type * as http from 'node:http';
 import { Logger, MemoryLogSink, silentLogger } from '@ucad/observability';
@@ -355,6 +356,55 @@ describe('resolving the feed', () => {
       expect(resolved.url, `${configPath} produced a feed`).toBeNull();
       expect(resolved.source).toBe('none');
     }
+    // A list of unusable candidates is still "nothing configured", not a
+    // refusal: `rejected` is the override's field, and these files were never
+    // an override the user typed.
+    expect(
+      resolveUpdateFeed({ configPaths: [notJson, cleartext, empty, join(dir, 'absent.json')] }),
+    ).toEqual({ url: null, source: 'none' });
+  });
+
+  it('skips a configuration file it cannot use and tries the next candidate', () => {
+    // The configuration list is a search, not a single path: a build may put
+    // its feed in one of several places, and an unreadable or malformed one is
+    // a development build / packaging defect rather than a reason to stop.
+    // Without this, a malformed first candidate would hide a usable file
+    // behind it and the app would report "未配置更新源" while a feed was there.
+    const broken = join(dir, 'first.json');
+    writeFileSync(broken, '{ this is not json');
+    const cleartext = join(dir, 'second.json');
+    writeFileSync(cleartext, JSON.stringify({ feedUrl: 'http://example.test/cleartext.json' }));
+    const usable = join(dir, 'third.json');
+    writeFileSync(usable, JSON.stringify({ feedUrl: 'https://example.test/third.json' }));
+
+    const resolved = resolveUpdateFeed({
+      configPaths: [join(dir, 'absent.json'), broken, cleartext, usable],
+    });
+
+    expect(resolved.url).toBe('https://example.test/third.json');
+    expect(resolved.source).toBe('config');
+    expect(resolved.rejected, 'an unusable file is not a refused override').toBeUndefined();
+  });
+
+  it('stops at a refused override but keeps looking past a refused file', () => {
+    // Deliberate asymmetry, not an accident. A refused override is one
+    // decision a person made: falling through to the packaged feed would
+    // silently reinstall from the channel they were trying to leave, so the
+    // search ends and the reason is reported. A refused file is one candidate
+    // in a list, and the next candidate may be the one the build actually
+    // wrote — so it is skipped, and no `rejected` is reported.
+    const cleartext = join(dir, 'cleartext.json');
+    writeFileSync(cleartext, JSON.stringify({ feedUrl: 'http://example.test/feed.json' }));
+    const usable = join(dir, 'usable.json');
+    writeFileSync(usable, JSON.stringify({ feedUrl: 'https://example.test/usable.json' }));
+
+    expect(
+      resolveUpdateFeed({ envValue: 'http://example.test/override.json', configPaths: [usable] }),
+    ).toEqual({ url: null, source: 'env', rejected: 'not-https' });
+    expect(resolveUpdateFeed({ configPaths: [cleartext, usable] })).toEqual({
+      url: 'https://example.test/usable.json',
+      source: 'config',
+    });
   });
 });
 
@@ -1526,5 +1576,350 @@ describe('the release feed a publisher uploads', () => {
     const url = installerUrlFor('1.1.0', 'UCAD-Setup-1.1.0.exe');
     expect(url).toContain('/releases/download/v1.1.0/');
     expect(url).not.toContain('/latest/');
+  });
+});
+
+const REPO_ROOT = join(import.meta.dirname, '..', '..');
+const MAIN_SOURCE = join(REPO_ROOT, 'apps', 'desktop', 'src', 'main');
+const UPDATE_FEED_SOURCE = join(MAIN_SOURCE, 'update-feed.ts');
+
+/**
+ * Source text with every comment blanked, byte positions preserved.
+ *
+ * The scans below ask questions about *code* — is this seam passed, does this
+ * call site exist — and the files they read explain themselves in long doc
+ * comments that name the very identifiers being searched for. Blanking
+ * comments instead of deleting them keeps every index (and therefore every
+ * line number in a failure message) pointing at the original source. Strings
+ * and template literals are kept: a seam hidden in a string is still a source
+ * fact worth seeing, and the product code uses them for paths and log lines.
+ *
+ * The `//` inside a string is not a comment (a URL in a log line is the common
+ * case), which is why this walks characters rather than running a regex.
+ * Regex literals are not parsed; a regex containing `//` would be read as a
+ * comment. Hiding a seam that way would require the literal to sit immediately
+ * before it on the same line, and the gate would then be silent — a blind spot
+ * stated here rather than discovered later.
+ */
+function blankComments(source: string): string {
+  const out: string[] = [];
+  let quote: string | null = null;
+  for (let i = 0; i < source.length; i += 1) {
+    const ch = source[i]!;
+    const next = source[i + 1];
+    if (quote !== null) {
+      out.push(ch);
+      if (ch === '\\') {
+        out.push(next ?? '');
+        i += 1;
+      } else if (ch === quote) {
+        quote = null;
+      }
+      continue;
+    }
+    if (ch === '"' || ch === "'" || ch === '`') {
+      quote = ch;
+      out.push(ch);
+      continue;
+    }
+    if (ch === '/' && next === '/') {
+      while (i < source.length && source[i] !== '\n') {
+        out.push(' ');
+        i += 1;
+      }
+      out.push('\n');
+      continue;
+    }
+    if (ch === '/' && next === '*') {
+      out.push('  ');
+      i += 2;
+      while (i < source.length && !(source[i] === '*' && source[i + 1] === '/')) {
+        out.push(source[i] === '\n' ? '\n' : ' ');
+        i += 1;
+      }
+      if (i < source.length) {
+        out.push('  ');
+        i += 1;
+      }
+      continue;
+    }
+    out.push(ch);
+  }
+  return out.join('');
+}
+
+/** One source file the production-wiring scan reads. */
+interface SourceFile {
+  readonly path: string;
+  readonly source: string;
+}
+
+/** One constructor call, with the line it starts on and its argument text. */
+interface Construction {
+  readonly path: string;
+  readonly line: number;
+  readonly options: string;
+}
+
+/**
+ * Every `new <ClassName>(…)` in a source file, with its argument text.
+ *
+ * The argument is sliced by matching parentheses rather than by taking the
+ * rest of the line, because the option object is written across several lines
+ * and a one-line rule would read only its first line. Quotes are skipped so a
+ * `)` in a string does not end the call early.
+ *
+ * A call whose parentheses never close is reported with the rest of the file
+ * as its argument — a malformed call site is a source defect the gate should
+ * surface, not a reason to read nothing.
+ */
+function constructionsIn(file: SourceFile, className: string): Construction[] {
+  const code = blankComments(file.source);
+  const needle = `new ${className}(`;
+  const found: Construction[] = [];
+  let from = 0;
+  for (;;) {
+    const start = code.indexOf(needle, from);
+    if (start === -1) return found;
+
+    const open = start + needle.length - 1;
+    let depth = 0;
+    let quote: string | null = null;
+    let end = -1;
+    for (let i = open; i < code.length; i += 1) {
+      const ch = code[i]!;
+      if (quote !== null) {
+        if (ch === '\\') i += 1;
+        else if (ch === quote) quote = null;
+        continue;
+      }
+      if (ch === '"' || ch === "'" || ch === '`') {
+        quote = ch;
+        continue;
+      }
+      if (ch === '(') depth += 1;
+      else if (ch === ')') {
+        depth -= 1;
+        if (depth === 0) {
+          end = i;
+          break;
+        }
+      }
+    }
+
+    found.push({
+      path: file.path,
+      line: code.slice(0, start).split('\n').length,
+      options: code.slice(open + 1, end === -1 ? code.length : end),
+    });
+    from = end === -1 ? code.length : end + 1;
+  }
+}
+
+/**
+ * Constructions that pass the test-only launch seam.
+ *
+ * `beforeLaunch` exists so a gate can interleave with the window between the
+ * digest and `openPath`; production deliberately passes nothing (see the seam
+ * in `update-service.ts`). A value reaching it in the main process would make
+ * the app run code of its own between verifying and launching an installer —
+ * a production backdoor that only a comment currently forbids.
+ */
+function beforeLaunchUses(files: readonly SourceFile[]): Construction[] {
+  return files
+    .flatMap((file) => constructionsIn(file, 'UpdateService'))
+    .filter((construction) => /\bbeforeLaunch\b/.test(construction.options));
+}
+
+/** Every `.ts` file under `apps/desktop/src/main`, repo-relative and read. */
+function mainSources(dir: string = MAIN_SOURCE): SourceFile[] {
+  return readdirSync(dir, { withFileTypes: true })
+    .sort((a, b) => a.name.localeCompare(b.name))
+    .flatMap((entry) => {
+      const full = join(dir, entry.name);
+      if (entry.isDirectory()) return mainSources(full);
+      if (!entry.name.endsWith('.ts')) return [];
+      return [
+        {
+          path: relative(REPO_ROOT, full).split(sep).join('/'),
+          source: readFileSync(full, 'utf8'),
+        },
+      ];
+    });
+}
+
+describe('the production wiring never opens the launch-test seam', () => {
+  it('reports a construction that passes beforeLaunch, with file and line', () => {
+    // The concrete edit the gate exists for: a value reaches the seam where
+    // production used to pass none. The file and line are in the failure so
+    // the reader is sent to the call site, not to the seam's definition.
+    const source = [
+      "import { UpdateService } from './update-service';",
+      '',
+      'export const service = new UpdateService({',
+      '  logger,',
+      '  beforeLaunch: () => {},',
+      '});',
+    ].join('\n');
+
+    expect(
+      beforeLaunchUses([{ path: 'apps/desktop/src/main/bootstrap.ts', source }]),
+    ).toMatchObject([{ path: 'apps/desktop/src/main/bootstrap.ts', line: 3 }]);
+  });
+
+  it('does not read a comment as a seam', () => {
+    // The seam is named in the comments that explain it, including one right
+    // above the production construction. Counting raw text would make the gate
+    // red about its own prose; blanking comments is what keeps it about code.
+    const source = [
+      'new UpdateService({',
+      '  /* beforeLaunch is a test seam; */',
+      '  // production passes nothing here',
+      '  logger,',
+      '});',
+    ].join('\n');
+
+    expect(beforeLaunchUses([{ path: 'bootstrap.ts', source }])).toEqual([]);
+  });
+
+  it('finds the real construction, and none of them uses the seam', () => {
+    const files = mainSources();
+    const constructions = files.flatMap((file) => constructionsIn(file, 'UpdateService'));
+    expect(
+      constructions.length,
+      'no production UpdateService construction was found, so this gate proves nothing',
+    ).toBeGreaterThan(0);
+    expect(
+      constructions.some((construction) => construction.path.endsWith('/bootstrap.ts')),
+      'bootstrap.ts no longer constructs UpdateService; the scan is reading the wrong tree',
+    ).toBe(true);
+
+    const uses = beforeLaunchUses(files);
+    expect(
+      uses,
+      `production passes beforeLaunch (${uses
+        .map((use) => `${use.path}:${use.line}`)
+        .join(', ')}); the seam is for tests only — remove it from the constructor call, or drive the window from update-integrity.test.ts`,
+    ).toEqual([]);
+  });
+});
+
+/**
+ * Claims the `FileIdentity` doc comment has to keep making.
+ *
+ * The type cannot close the window it describes — an in-place rewrite that
+ * preserves the inode, the length and the timestamp is indistinguishable from
+ * the original to any `stat` — and it says so on purpose instead of implying
+ * completeness. That paragraph is the only place a reader learns the claim is
+ * bounded. Deleting it (or rewriting it into "fully closed") would leave every
+ * behavioural test green and a future reader believing the updater cannot be
+ * raced at all.
+ *
+ * This is a documentation gate, not a security gate: it keeps the *admission*
+ * in the file. The matching is by concept, not by sentence, so editing the
+ * wording is fine; removing the fact is not.
+ */
+const FILE_IDENTITY_CAVEATS: ReadonlyArray<{
+  readonly claim: string;
+  readonly pattern: RegExp;
+}> = [
+  {
+    claim: 'an in-place rewrite that keeps the inode is a residual window',
+    pattern: /in-place rewrite[\s\S]{0,160}?inode/i,
+  },
+  {
+    claim: 'the window needs the length and the timestamp unchanged, not just the inode',
+    pattern: /(?:length|size)[\s\S]{0,160}?timestamp/i,
+  },
+  {
+    claim: 'a `stat` cannot distinguish that rewrite from the original file',
+    pattern: /\bstat\b/i,
+  },
+  {
+    claim: 're-hashing would move the window rather than close it',
+    pattern: /re-?hash[\s\S]{0,240}?(?:not close|moves? the window)/i,
+  },
+];
+
+/** The doc comment immediately above `export interface FileIdentity`, or `''`. */
+function identityCaveat(source: string): string {
+  const declaration = source.indexOf('export interface FileIdentity');
+  if (declaration === -1) return '';
+  const start = source.lastIndexOf('/**', declaration);
+  if (start === -1) return '';
+  // The comment has to *end* immediately above the declaration; otherwise this
+  // would read an earlier function's doc and call it the interface's caveat.
+  const candidate = source.slice(start, declaration).trimEnd();
+  return candidate.endsWith('*/') ? candidate : '';
+}
+
+/** Which documented limits are no longer in the caveat, in the words to restore. */
+function missingIdentityCaveats(source: string): string[] {
+  const caveat = identityCaveat(source);
+  if (caveat === '') {
+    return ['the doc comment above `export interface FileIdentity`'];
+  }
+  return FILE_IDENTITY_CAVEATS.filter(({ pattern }) => !pattern.test(caveat)).map(
+    ({ claim }) => claim,
+  );
+}
+
+describe('the residual identity window is still written down', () => {
+  const updateFeed = existsSync(UPDATE_FEED_SOURCE)
+    ? readFileSync(UPDATE_FEED_SOURCE, 'utf8')
+    : '';
+
+  it('finds the FileIdentity declaration and its caveat', () => {
+    // Non-vacuous: a renamed interface or a vanished doc comment would
+    // otherwise make the assertions below compare two empty strings.
+    expect(updateFeed, `update-feed.ts is missing (${UPDATE_FEED_SOURCE})`).not.toBe('');
+    expect(
+      identityCaveat(updateFeed),
+      'FileIdentity no longer has a doc comment above it, so its limits are no longer stated',
+    ).not.toBe('');
+  });
+
+  it('keeps every limitation the caveat admits', () => {
+    const missing = missingIdentityCaveats(updateFeed);
+    expect(
+      missing,
+      `the FileIdentity caveat no longer says: ${missing.join(
+        '; ',
+      )}. Restore the paragraph in update-feed.ts, or explain in this gate why the limit no longer applies`,
+    ).toEqual([]);
+  });
+
+  it('is what deleting a limitation would break', () => {
+    // A fixture must show the gate answering something other than `[]`, or
+    // "the caveat is complete" would be indistinguishable from a reader that
+    // found nothing to complain about.
+    const partial = [
+      '/**',
+      ' * What this does not promise: an in-place rewrite that keeps the inode,',
+      ' * the length and the timestamp is the same file as far as any `stat` can tell.',
+      ' */',
+      'export interface FileIdentity {',
+      '  readonly ino: number;',
+      '}',
+    ].join('\n');
+    expect(missingIdentityCaveats(partial)).toEqual([
+      're-hashing would move the window rather than close it',
+    ]);
+
+    const complete = [
+      '/**',
+      ' * What this does not promise: an in-place rewrite that keeps the inode,',
+      ' * the length and the timestamp is the same file as far as any `stat` can tell.',
+      ' * Re-hashing would not close it; it would move the window instead.',
+      ' */',
+      'export interface FileIdentity {',
+      '  readonly ino: number;',
+      '}',
+    ].join('\n');
+    expect(missingIdentityCaveats(complete)).toEqual([]);
+
+    expect(missingIdentityCaveats('export interface FileIdentity {}')).toEqual([
+      'the doc comment above `export interface FileIdentity`',
+    ]);
   });
 });

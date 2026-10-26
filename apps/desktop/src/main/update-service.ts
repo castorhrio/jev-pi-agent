@@ -123,7 +123,10 @@ export interface UpdateServiceOptions {
    * `openPath` with nothing in between. A promise about a window that no gate
    * can open is the shape this repository keeps finding and deleting, so the
    * window is openable on purpose. Production passes nothing; the check that
-   * follows it runs either way.
+   * follows it runs either way. The "production passes nothing" half is a
+   * gate rather than a note: `tests/contract/update-integrity.test.ts` scans
+   * every main-process `new UpdateService({…})` and fails, naming the file and
+   * line, if one passes this seam.
    */
   beforeLaunch?: (target: string) => void | Promise<void>;
 }
