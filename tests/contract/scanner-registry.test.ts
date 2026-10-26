@@ -19,6 +19,10 @@
  *
  * ## What this file does
  *
+ *  - **The document is there at all.** A missing `CONTRIBUTING.md`, or a
+ *    heading reworded out from under the parser, fails here. It used to
+ *    *skip* — which left every other check below passing over an empty table,
+ *    the exact "gate that cannot fail" shape this suite exists to remove.
  *  - **Both directions of the table.** The scanners this file knows about and
  *    the rows in the document must be the same set: a row without a rule here
  *    is unchecked prose, and a rule without a row is a scanner CI gates but
@@ -199,14 +203,30 @@ const rows = tableRows(contributing, TABLE_HEADING);
 const documentedPaths = rows.flatMap((row) => citedFiles(row[1] ?? ''));
 
 describe('CONTRIBUTING’s table of source scanners', () => {
-  it.skipIf(contributing === '')('is present and parseable, so the checks below are not vacuous', () => {
-    // Every assertion here reads this table. If the heading is reworded or the
-    // table becomes prose, the parse returns `[]` and the checks pass over
-    // nothing — the shape of a gate that has stopped gating.
+  it('is present and parseable, so the checks below are not vacuous', () => {
+    // Every assertion in this file reads this table, and this test used to be
+    // `it.skipIf(contributing === '')`. A missing CONTRIBUTING.md — or a heading
+    // reworded so the parse found no table — therefore *skipped* the one test
+    // that says the map exists, and the remaining checks happily passed over an
+    // empty collection. That is the failure mode this file was written to
+    // catch, reproduced on the gate itself: a door that only opens outward.
+    expect(
+      existsSync(CONTRIBUTING),
+      `${CONTRIBUTING} is missing, so the scanner table it documents is unchecked`,
+    ).toBe(true);
+    // The heading has to be a line of its own, exactly as `tableRows` looks for
+    // it: "rewritten to say something similar" is the case that used to pass
+    // here because the old heading survived as a prefix of the new one.
+    expect(
+      contributing.split('\n').some((line) => line.trim() === TABLE_HEADING),
+      `${CONTRIBUTING} no longer contains the heading "${TABLE_HEADING}"; the table moved or was reworded`,
+    ).toBe(true);
+    // And the parse has to have produced something, or "exactly these
+    // scanners" below is comparing the document against itself.
     expect(rows.length, `no table was found under "${TABLE_HEADING}" in CONTRIBUTING.md`).toBeGreaterThan(
-      SCANNERS.length - 1,
+      0,
     );
-    expect(documentedPaths.length).toBeGreaterThan(SCANNERS.length - 1);
+    expect(documentedPaths.length).toBeGreaterThan(0);
   });
 
   it('documents exactly the scanners this file knows about', () => {
