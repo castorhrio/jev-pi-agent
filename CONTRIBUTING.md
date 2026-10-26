@@ -82,6 +82,7 @@ something else. These are the gates that decide the upgrade for you.
 | Gate | What it decides |
 |---|---|
 | `tests/contract/ipc-errors.test.ts` | Every issue code the *new* Zod can raise has a Chinese reason of its own. The list is taken from the running Zod's own enum, so a new code fails here rather than silently answering 「不符合要求」. |
+| `tests/contract/ipc-errors.test.ts` — wordings | `ZOD_OWN_OPENINGS` is the list of sentences Zod writes *itself*, and the only thing that tells a library message from one this app wrote. That test makes the installed Zod raise one issue per code and checks every message it wrote starts with an entry, so a reworded message fails there and names the message. Without it a Zod upgrade silently turns a library sentence into an "app sentence" and shows it to a person in English. |
 | `tests/contract/ipc-error-bridge.test.ts` | The exact set of codes that answer with the generic reason, the sentence that crosses the bridge, and the `reasonSource` that says whether the reason came from the schema or from the table — so a schema whose own message was swallowed cannot pass as a wording change. |
 | `npm run typecheck` | The reason table is `Record<z.ZodIssueCode, string>`, so a new code fails the build before the app can ship a generic sentence for it. |
 

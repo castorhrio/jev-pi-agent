@@ -86,17 +86,46 @@ export function schemaFailureFields(error: ZodError): string[] {
  * This is a heuristic, and a heuristic is the weakest thing in this file: the
  * cases that matter are an English sentence (overridden), a Zod default that
  * happens to contain CJK (still Zod's, so overridden) and a sentence this app
- * wrote (kept). It stays module-private and is exercised through
- * {@link zodReason} and {@link zodReasonSource} — the wording a person sees
- * is the thing worth asserting, and it is asserted through the registered
- * handlers in `tests/contract/ipc-error-bridge.test.ts`.
+ * wrote (kept). It is exercised through {@link zodReason} and
+ * {@link zodReasonSource} — the wording a person sees is the thing worth
+ * asserting, and it is asserted through the registered handlers in
+ * `tests/contract/ipc-error-bridge.test.ts`.
+ *
+ * The opening list is exported because it is the part that rots. Zod writes
+ * these sentences, so a bump can reword one, and the only symptom would be a
+ * library sentence in English reaching a person through the branch that keeps
+ * CJK. A test cannot read Zod's *future* wordings, but it can make this
+ * build's Zod raise one issue per code and check that every message it wrote
+ * is recognised here — see `tests/contract/ipc-errors.test.ts`. Without that
+ * test the list is a reminder; with it, an upgrade that rewords a message is
+ * a red test that names the message.
  */
-const ZOD_OWN_OPENING =
-  /^(Expected|Invalid|Required|Unrecognized key|String must|Number must|Array must|Date must|Set must|Value must|Too small|Too big|Not )/;
+export const ZOD_OWN_OPENINGS: readonly string[] = [
+  'Expected',
+  'Invalid',
+  'Required',
+  'Unrecognized key',
+  'String must',
+  'Number must',
+  'Array must',
+  'Date must',
+  'Set must',
+  'Value must',
+  'Too small',
+  'Too big',
+  // `Intersection results could not be merged` — raised by `.and()` when two
+  // branches produce values that cannot be combined. Found by the test below
+  // rather than by reading Zod's source, which is the point of the test.
+  'Intersection',
+  // `Not a number`-shaped messages. The trailing space is load-bearing: it
+  // keeps `Nothing` — a word this app could plausibly start a sentence with —
+  // out of the match.
+  'Not ',
+];
 
 function isZodOwnText(message: string): boolean {
   if (!/[\u4e00-\u9fff]/.test(message)) return true;
-  return ZOD_OWN_OPENING.test(message);
+  return ZOD_OWN_OPENINGS.some((opening) => message.startsWith(opening));
 }
 
 /**

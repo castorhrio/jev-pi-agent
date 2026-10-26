@@ -32,6 +32,7 @@ import { describe, it, expect } from 'vitest';
 import { ZodError, z } from 'zod';
 import {
   ZOD_ISSUE_CODES,
+  ZOD_OWN_OPENINGS,
   ZOD_REASON_BY_CODE,
   ZOD_REASON_GENERIC,
   schemaFailureFields,
@@ -316,26 +317,31 @@ describe('zodReasonSource — where the reason in the sentence came from', () =>
     expect(zodReasonSource(quoted)).toBe('table');
   });
 
-  it('never disagrees with the sentence it explains', () => {
+  it('says "schema" exactly when the sentence kept is the schema’s own', () => {
     // The point of the field: it is the same decision the wording makes, and
     // not a second one that could drift. A `schema` source means the schema's
-    // own words reached the person; a `table` source means they did not.
-    const issues = [
-      issue({ code: 'custom', message: '请先确认要清空的项目' }),
-      issue({ code: 'invalid_type', received: 'number' }),
-      issue({ code: 'unrecognized_keys', message: '有未知的字段' }),
-      issue({
-        code: 'invalid_enum_value',
-        message: "Invalid enum value. Expected 'a', received '红色'",
-      }),
+    // own words reached the person; a `table` source means they did not — so
+    // the two questions must answer `⟺` and not merely "usually agree".
+    //
+    // Asked of every code this build of Zod can raise, and of both kinds of
+    // message, because a rule that holds for `custom` and `invalid_type` can
+    // still be wrong for the eleven codes nobody writes by hand.
+    const sentences = [
+      '请先确认要清空的项目',
+      '有未知的字段',
+      'Expected string, received number',
+      "Invalid enum value. Expected 'a', received '红色'",
     ];
 
-    for (const one of issues) {
-      const source = zodReasonSource(one);
-      if (source === 'schema') {
-        expect(zodReason(one)).toBe(one.message);
-      } else {
-        expect(zodReason(one)).not.toBe(one.message);
+    for (const code of ZOD_ISSUE_CODES) {
+      for (const message of sentences) {
+        const one = issue({ code, message });
+        const keptTheSchema = zodReason(one) === one.message;
+
+        expect(
+          zodReasonSource(one) === 'schema',
+          `${code} / ${JSON.stringify(message)}: the source and the sentence disagree`,
+        ).toBe(keptTheSchema);
       }
     }
   });
@@ -368,5 +374,177 @@ describe('zodFailureSource — the source of the sentence that actually crosses'
     // The one case where there is no sentence to explain: `toUserError` says
     // 「输入无效」 alone, so there is no reason, and none may be invented.
     expect(zodFailureSource(new ZodError([]))).toBeUndefined();
+  });
+});
+
+describe('the sentence and its `reasonSource` describe the same issue', () => {
+  /**
+   * The two issues whose answers differ, so that a crossed wire is visible.
+   *
+   * One carries a sentence the app wrote (`schema`), the other Zod's English
+   * that the table replaces (`table`). Built per test rather than shared,
+   * because a `ZodError` holds these by identity and a reused issue would let
+   * an ordering mistake pass as the right one.
+   */
+  function appSentence(): z.ZodIssue {
+    return issue({ code: 'custom', message: '请先确认要清空的项目', path: ['confirm'] });
+  }
+
+  function zodSentence(): z.ZodIssue {
+    return issue({ code: 'invalid_type', received: 'number', path: ['cols'] });
+  }
+
+  it('follows the first issue whichever way round the two are, both answers together', () => {
+    // This is the pair the comment in `ipc-errors.ts` promises and nothing
+    // asserted: `zodFailureSource` and `toUserError` each pick an issue, they
+    // are separate code paths, and "both take the first one" is currently a
+    // coincidence of two `issues[0]` lines. Reversing the order has to flip
+    // the source *and* the sentence's field and reason together — so a future
+    // "prefer the first issue with a path" in `toUserError` fails here rather
+    // than quietly logging a source the person's sentence never had.
+    const cases = [
+      {
+        issues: [appSentence(), zodSentence()],
+        source: 'schema' as const,
+        field: 'confirm',
+      },
+      {
+        issues: [zodSentence(), appSentence()],
+        source: 'table' as const,
+        field: 'cols',
+      },
+    ];
+
+    for (const { issues, source, field } of cases) {
+      const error = new ZodError(issues);
+      const [first, second] = issues as [z.ZodIssue, z.ZodIssue];
+      const message = toUserError(error).message;
+
+      expect(zodFailureSource(error), `${field}: source`).toBe(source);
+      expect(message).toBe(`输入无效 (${field})：${zodReason(first)}`);
+      // The other issue's reason is not in the sentence, which is what makes
+      // the check above about *this* issue rather than about either of them.
+      expect(message, `${field}: the sentence used the other issue`).not.toContain(
+        zodReason(second),
+      );
+      // And the reason quoted is the one the source claims: a kept sentence is
+      // the schema's own words, a replaced one is not.
+      expect(message.includes(first.message), `${field}: source vs sentence`).toBe(
+        source === 'schema',
+      );
+    }
+  });
+});
+
+describe('ZOD_OWN_OPENINGS — the list of wordings Zod writes itself', () => {
+  /**
+   * One real schema failure per issue code, run against the *installed* Zod.
+   *
+   * The list in `ipc-errors.ts` decides which messages the app may show, and
+   * it is a transcription of what one version of Zod happens to say. A bump
+   * that rewords a message would leave the list silently stale — every symptom
+   * of that is a library sentence in English reaching a person — so the check
+   * is made against the library rather than against a comment. `custom` is
+   * absent on purpose: its message is the schema's own, which is the one case
+   * the list must *not* claim (asserted below).
+   */
+  const ZOD_DEFAULT_FAILURES: Record<Exclude<z.ZodIssueCode, 'custom'>, () => unknown> = {
+    invalid_type: () => z.object({ cols: z.number() }).safeParse({ cols: 'red' }),
+    invalid_literal: () => z.literal('a').safeParse('b'),
+    // A Chinese value on purpose: this is also the case where a Zod message
+    // contains CJK and must still be read as Zod's.
+    invalid_enum_value: () => z.enum(['a', 'b']).safeParse('红色'),
+    invalid_union: () => z.union([z.string(), z.number()]).safeParse(true),
+    invalid_union_discriminator: () =>
+      z
+        .discriminatedUnion('kind', [z.object({ kind: z.literal('a') })])
+        .safeParse({ kind: 'b' }),
+    unrecognized_keys: () =>
+      z.object({ cols: z.number() }).strict().safeParse({ cols: 1, extra: 2 }),
+    invalid_string: () => z.string().email().safeParse('not-an-address'),
+    invalid_date: () => z.date().safeParse(new Date('nonsense')),
+    too_small: () => z.string().min(5).safeParse('ab'),
+    too_big: () => z.string().max(1).safeParse('abc'),
+    not_finite: () => z.number().finite().safeParse(Number.POSITIVE_INFINITY),
+    not_multiple_of: () => z.number().multipleOf(3).safeParse(4),
+    // These three only exist as thrown `ZodError`s from a called function or a
+    // merged intersection, which is why they are the codes nobody translates
+    // and everybody assumes are unreachable.
+    invalid_arguments: () =>
+      (z.function().args(z.string()).implement((value: string) => value) as (
+        value: unknown,
+      ) => unknown)(1),
+    invalid_return_type: () =>
+      z
+        .function()
+        .args()
+        .returns(z.string())
+        .implement((() => 1) as () => string)(),
+    invalid_intersection_types: () =>
+      z
+        .object({ n: z.number().transform(() => 'x') })
+        .and(z.object({ n: z.number().transform(() => 1) }))
+        .parse({ n: 1 }),
+  };
+
+  /** The issues a sample raised, whether it returned a failure or threw one. */
+  function issuesFrom(run: () => unknown): z.ZodIssue[] {
+    try {
+      const result = run() as { success?: boolean; error?: unknown };
+      if (result?.success === false && result.error instanceof ZodError) {
+        return result.error.issues;
+      }
+    } catch (error) {
+      if (error instanceof ZodError) return error.issues;
+      throw error;
+    }
+    // A sample that passes proves nothing about wording, and would leave the
+    // loop below checking an empty list — a gate that cannot fail.
+    throw new Error('this sample no longer fails to parse, so it says nothing about the wording');
+  }
+
+  it('recognises every message this build of Zod writes, for every code', () => {
+    const covered = new Set<z.ZodIssueCode>();
+
+    for (const [code, run] of Object.entries(ZOD_DEFAULT_FAILURES)) {
+      const issues = issuesFrom(run);
+
+      expect(issues.length, `${code}: the sample raised no issue`).toBeGreaterThan(0);
+      for (const one of issues) {
+        expect(one.code, `${code}: the sample raised ${one.code}`).toBe(code);
+        // The failure this guards: Zod says something new, the list does not
+        // know it, and `isZodOwnText` reads the English as the app's sentence.
+        expect(
+          ZOD_OWN_OPENINGS.some((opening) => one.message.startsWith(opening)),
+          `${code} now says ${JSON.stringify(one.message)}, which no ZOD_OWN_OPENINGS entry starts — add the new opening (and this failure is what an upgrade looks like)`,
+        ).toBe(true);
+        expect(zodReasonSource(one), `${code}: Zod's own wording was kept as a schema's`).toBe(
+          'table',
+        );
+      }
+      covered.add(code as z.ZodIssueCode);
+    }
+
+    // Every code but `custom` has a sample, so a code added by an upgrade
+    // fails here as well as in the reason-table test — and the failure says
+    // "write a sample", which is what makes the list above stay true.
+    expect([...covered].sort()).toEqual(
+      ZOD_ISSUE_CODES.filter((code) => code !== 'custom').sort(),
+    );
+  });
+
+  it('keeps a Chinese sentence this app wrote out of the list', () => {
+    // The other half of the rule, and the reason it is not just "starts with a
+    // known word but always": 「请先确认要清空的项目」 is a schema's own
+    // instruction and replacing it would remove the only sentence that says
+    // what to do. Both of this app's own messages are checked against the list
+    // itself, not only through the judgement that uses it.
+    for (const message of ['请先确认要清空的项目', '有未知的字段']) {
+      expect(
+        ZOD_OWN_OPENINGS.some((opening) => message.startsWith(opening)),
+        `${JSON.stringify(message)} looks like Zod's wording`,
+      ).toBe(false);
+      expect(zodReasonSource(issue({ code: 'custom', message }))).toBe('schema');
+    }
   });
 });
