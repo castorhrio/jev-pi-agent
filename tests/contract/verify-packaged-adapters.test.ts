@@ -30,6 +30,15 @@
  * is left running as an orphan. What remains manual is running the real
  * artifact; the last cases keep THAT statement discoverable, since CONTRIBUTING
  * has to name the command or the reader is back to "read the line yourself".
+ *
+ * The stop is pinned on the *tree*, because that is what the orphan was. The
+ * old code signalled the app's own process and asked "is the app still alive?"
+ * before escalating — so an app that died on `SIGTERM` while a Chromium child
+ * it had started kept running was never cleaned up. The build now leads its own
+ * process group, the group is what gets signalled, and the question the
+ * escalation asks is "is the group still there?". The group signal is a seam
+ * too: a test that signalled whatever group happened to carry that id on the
+ * machine could hit something else entirely.
  */
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -40,6 +49,7 @@ import { join, resolve } from 'node:path';
 import {
   RELEASE_DIR,
   findPackagedExecutable,
+  interruptRun,
   launch,
   packagedExecutables,
   parseArgs,
@@ -184,6 +194,44 @@ class FakeChild extends EventEmitter {
   }
 }
 
+/**
+ * A stand-in for the process group `stop()` signals.
+ *
+ * The real thing is `process.kill(-pid, …)`, which needs a real process group
+ * to exist. A test that signalled whatever group happened to carry that id on
+ * the machine could hit something else, so the group is faked instead: this
+ * records what was sent and answers whether the group still has a member.
+ */
+class FakeGroup {
+  /** Every signal sent to the group, in order. */
+  signals: Array<{ pid: number; signal: string | number }> = [];
+  /** Whether the group still has a member in it. */
+  alive = true;
+
+  kill = vi.fn((pid: number, signal: string | number) => {
+    if (!this.alive) {
+      const error = new Error('kill ESRCH');
+      (error as NodeJS.ErrnoException).code = 'ESRCH';
+      throw error;
+    }
+    this.signals.push({ pid, signal });
+    return true;
+  });
+
+  /** The signals sent, without the existence probe (signal 0). */
+  get sent(): Array<{ pid: number; signal: string | number }> {
+    return this.signals.filter((entry) => entry.signal !== 0);
+  }
+}
+
+/** The state `interruptRun` reads and writes. */
+interface RunState {
+  child: FakeChild | null;
+  interrupted: boolean;
+  signal: string | null;
+  exitCode: number;
+}
+
 describe('the flags the command reads', () => {
   it('takes the value that follows a flag', () => {
     expect(parseArgs(['--require', 'universal,mock'])).toEqual({ require: 'universal,mock' });
@@ -234,8 +282,9 @@ describe('the launch, driven through an injected spawn', () => {
     // recognised this fails in a second with `reason: 'timeout'`, instead of
     // hanging until the 30s test timeout and saying nothing useful.
     const child = new FakeChild();
+    const group = new FakeGroup();
     const spawnFn = vi.fn(() => child);
-    const pending = launch('/opt/ucad', { spawnFn, timeoutMs: 1000 });
+    const pending = launch('/opt/ucad', { spawnFn, killFn: group.kill, timeoutMs: 1000 });
 
     child.say('Checking for update\n[ucad] adapters resolv');
     // Split mid-line: a run that judged each chunk would miss the line entirely.
@@ -252,13 +301,75 @@ describe('the launch, driven through an injected spawn', () => {
       [],
       expect.objectContaining({ stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true }),
     );
-    expect(child.signals).toEqual(['SIGTERM']);
+    // The build is stopped through its group, so its Chromium children go too.
+    expect(group.sent).toEqual([{ pid: -4242, signal: 'SIGTERM' }]);
+  });
+
+  it('gives the build its own process group, so the tree can be signalled', async () => {
+    // Without this there is no group to signal: the build would sit in the
+    // script's own group, where `kill(-pid)` means something else entirely.
+    const child = new FakeChild();
+    const group = new FakeGroup();
+    const spawnFn = vi.fn(() => child);
+    const pending = launch('/opt/ucad', { spawnFn, killFn: group.kill, timeoutMs: 1000 });
+
+    expect(spawnFn).toHaveBeenCalledWith(
+      '/opt/ucad',
+      [],
+      expect.objectContaining({ detached: true }),
+    );
+    child.say('[ucad] adapters resolved: universal\n');
+    await pending;
+  });
+
+  it('does not detach on Windows, where a detached build would get its own console', async () => {
+    const child = new FakeChild();
+    const group = new FakeGroup();
+    const taskkill = new EventEmitter();
+    const spawnFn = vi.fn((command: string) => (command === 'taskkill' ? taskkill : child));
+    const pending = launch('/opt/ucad', {
+      spawnFn,
+      killFn: group.kill,
+      platform: 'win32',
+      timeoutMs: 1000,
+    });
+
+    expect(spawnFn).toHaveBeenCalledWith(
+      '/opt/ucad',
+      [],
+      expect.objectContaining({ detached: false }),
+    );
+    child.say('[ucad] adapters resolved: universal\n');
+    await pending;
+  });
+
+  it('reports the child while the build is still running', async () => {
+    // A caller that may be interrupted needs the handle before the launch
+    // settles: the promise only resolves once the build is on its way out.
+    const child = new FakeChild();
+    const group = new FakeGroup();
+    const seen: unknown[] = [];
+    const pending = launch('/opt/ucad', {
+      spawnFn: () => child,
+      killFn: group.kill,
+      timeoutMs: 1000,
+      onChild: (handle) => seen.push(handle),
+    });
+
+    expect(seen).toEqual([child]);
+    child.say('[ucad] adapters resolved: universal\n');
+    await pending;
   });
 
   it('gives up at the timeout, so a build that never prints the line is a failure', async () => {
     vi.useFakeTimers();
     const child = new FakeChild();
-    const pending = launch('/opt/ucad', { spawnFn: () => child, timeoutMs: 1000 });
+    const group = new FakeGroup();
+    const pending = launch('/opt/ucad', {
+      spawnFn: () => child,
+      killFn: group.kill,
+      timeoutMs: 1000,
+    });
 
     child.say('Error: Cannot open display\n');
     await vi.advanceTimersByTimeAsync(999);
@@ -269,12 +380,17 @@ describe('the launch, driven through an injected spawn', () => {
     expect(reason).toBe('timeout');
     // The output is kept for the tail in the failure message.
     expect(output).toContain('Cannot open display');
-    expect(child.signals).toEqual(['SIGTERM']);
+    expect(group.sent).toEqual([{ pid: -4242, signal: 'SIGTERM' }]);
   });
 
   it('reports a launch that could not start at all, with the reason', async () => {
     const child = new FakeChild();
-    const pending = launch('/opt/ucad', { spawnFn: () => child, timeoutMs: 10_000 });
+    const group = new FakeGroup();
+    const pending = launch('/opt/ucad', {
+      spawnFn: () => child,
+      killFn: group.kill,
+      timeoutMs: 10_000,
+    });
     child.emit('error', new Error('ENOENT: no such file'));
 
     const { output, reason } = await pending;
@@ -285,20 +401,33 @@ describe('the launch, driven through an injected spawn', () => {
 
   it('reports a build that exited before printing the line as exited, not as resolved', async () => {
     const child = new FakeChild();
-    const pending = launch('/opt/ucad', { spawnFn: () => child, timeoutMs: 10_000 });
+    const group = new FakeGroup();
+    const pending = launch('/opt/ucad', {
+      spawnFn: () => child,
+      killFn: group.kill,
+      timeoutMs: 10_000,
+    });
     child.exitCode = 1;
     child.emit('exit', 1);
 
     const { reason } = await pending;
     expect(reason).toBe('exited');
+    // It is already gone, so there is nothing left to stop.
+    expect(group.kill).not.toHaveBeenCalled();
   });
 
   it('stops a timed-out run through the process tree on Windows', async () => {
     vi.useFakeTimers();
     const child = new FakeChild();
+    const group = new FakeGroup();
     const taskkill = new EventEmitter();
     const spawnFn = vi.fn((command: string) => (command === 'taskkill' ? taskkill : child));
-    const pending = launch('/opt/ucad', { spawnFn, platform: 'win32', timeoutMs: 10 });
+    const pending = launch('/opt/ucad', {
+      spawnFn,
+      killFn: group.kill,
+      platform: 'win32',
+      timeoutMs: 10,
+    });
 
     await vi.advanceTimersByTimeAsync(10);
     const { reason } = await pending;
@@ -310,6 +439,8 @@ describe('the launch, driven through an injected spawn', () => {
       expect.objectContaining({ windowsHide: true }),
     );
     expect(child.kill).not.toHaveBeenCalled();
+    // Windows has no process groups; `taskkill /T` is what walks the tree.
+    expect(group.kill).not.toHaveBeenCalled();
   });
 });
 
@@ -318,26 +449,94 @@ describe('the stop that keeps a failed run from leaving an orphan', () => {
     vi.useRealTimers();
   });
 
+  it('signals the whole tree, not just the app', () => {
+    // `child.kill()` reaches the build's own process; the Chromium children it
+    // started are a group of their own, and a check that leaves them running
+    // has not cleaned up after itself. So the group is what gets the signal —
+    // a negative pid is "every process in that group".
+    const child = new FakeChild();
+    const group = new FakeGroup();
+    stop(child, { platform: 'linux', graceMs: 200, killFn: group.kill });
+
+    expect(group.sent).toEqual([{ pid: -4242, signal: 'SIGTERM' }]);
+    // The app itself is not signalled twice: the group already covers it.
+    expect(child.kill).not.toHaveBeenCalled();
+  });
+
   it('escalates to SIGKILL when the app ignores SIGTERM', async () => {
     // `kill()` returning true means the signal was delivered, not that the app
     // died. A wedged Electron build ignores SIGTERM and would stay in the tray.
     vi.useFakeTimers();
     const child = new FakeChild();
-    stop(child, { platform: 'linux', graceMs: 200 });
-    expect(child.signals).toEqual(['SIGTERM']);
+    const group = new FakeGroup();
+    stop(child, { platform: 'linux', graceMs: 200, killFn: group.kill });
+    expect(group.sent).toEqual([{ pid: -4242, signal: 'SIGTERM' }]);
 
     await vi.advanceTimersByTimeAsync(200);
-    expect(child.signals).toEqual(['SIGTERM', 'SIGKILL']);
+    expect(group.sent).toEqual([
+      { pid: -4242, signal: 'SIGTERM' },
+      { pid: -4242, signal: 'SIGKILL' },
+    ]);
+  });
+
+  it('kills the tree even when the app itself is already gone', async () => {
+    // The case the old code missed. It asked "is the app still alive?" and
+    // stopped asking once the app was dead — while a child the app had started
+    // was still running. The group is what says whether anything is left.
+    vi.useFakeTimers();
+    const child = new FakeChild();
+    const group = new FakeGroup();
+    stop(child, { platform: 'linux', graceMs: 200, killFn: group.kill });
+    child.exitCode = 0; // the app is gone; its child is not
+
+    await vi.advanceTimersByTimeAsync(200);
+    expect(group.sent).toEqual([
+      { pid: -4242, signal: 'SIGTERM' },
+      { pid: -4242, signal: 'SIGKILL' },
+    ]);
   });
 
   it('does not SIGKILL an app that honoured SIGTERM', async () => {
     vi.useFakeTimers();
     const child = new FakeChild();
-    stop(child, { platform: 'linux', graceMs: 200 });
+    const group = new FakeGroup();
+    stop(child, { platform: 'linux', graceMs: 200, killFn: group.kill });
     child.exitCode = 143;
+    group.alive = false; // the whole tree is gone
 
     await vi.advanceTimersByTimeAsync(200);
+    expect(group.sent).toEqual([{ pid: -4242, signal: 'SIGTERM' }]);
+  });
+
+  it('falls back to the app itself when there is no group to signal', async () => {
+    // A build that was not spawned detached has no group of its own, and the
+    // app itself is then all there is to reach.
+    vi.useFakeTimers();
+    const child = new FakeChild();
+    const group = new FakeGroup();
+    group.alive = false;
+    stop(child, { platform: 'linux', graceMs: 200, killFn: group.kill });
     expect(child.signals).toEqual(['SIGTERM']);
+
+    // And the escalation still reaches it, or a wedged app stays in the tray.
+    await vi.advanceTimersByTimeAsync(200);
+    expect(child.signals).toEqual(['SIGTERM', 'SIGKILL']);
+  });
+
+  it('walks the tree with taskkill on Windows, where there are no process groups', () => {
+    const child = new FakeChild();
+    const group = new FakeGroup();
+    const taskkill = new EventEmitter();
+    const spawnFn = vi.fn(() => taskkill);
+
+    stop(child, { platform: 'win32', spawnFn, killFn: group.kill });
+
+    expect(spawnFn).toHaveBeenCalledWith(
+      'taskkill',
+      ['/pid', '4242', '/T', '/F'],
+      expect.objectContaining({ windowsHide: true }),
+    );
+    expect(group.kill).not.toHaveBeenCalled();
   });
 
   it('falls back to kill() when taskkill cannot be started', () => {
@@ -352,10 +551,44 @@ describe('the stop that keeps a failed run from leaving an orphan', () => {
 
   it('leaves an app that already exited alone', () => {
     const child = new FakeChild();
+    const group = new FakeGroup();
     child.exitCode = 0;
 
-    stop(child, { platform: 'linux' });
+    stop(child, { platform: 'linux', killFn: group.kill });
     expect(child.kill).not.toHaveBeenCalled();
+    expect(group.kill).not.toHaveBeenCalled();
+  });
+});
+
+describe('the operator who changes their mind', () => {
+  it('stops the build and ends the run as an interruption', () => {
+    // The build leads its own process group, so it no longer receives the
+    // terminal's own SIGINT: the script has to stop it, and the run has to end
+    // as an interruption rather than as a verdict on the build.
+    const child = new FakeChild();
+    const group = new FakeGroup();
+    const state: RunState = { child, interrupted: false, signal: null, exitCode: 0 };
+
+    interruptRun(state, 'SIGINT', { platform: 'linux', killFn: group.kill });
+
+    expect(state.interrupted).toBe(true);
+    expect(state.exitCode).toBe(130);
+    expect(group.sent).toEqual([{ pid: -4242, signal: 'SIGTERM' }]);
+  });
+
+  it('remembers the interruption for a build that only appears afterwards', () => {
+    // Ctrl+C can land before the build is even spawned. The run still has to
+    // end as an interruption, and the build still has to be stopped.
+    const state: RunState = { child: null, interrupted: false, signal: null, exitCode: 0 };
+    interruptRun(state, 'SIGTERM', { platform: 'linux' });
+    expect(state.interrupted).toBe(true);
+    expect(state.exitCode).toBe(143);
+
+    const child = new FakeChild();
+    const group = new FakeGroup();
+    state.child = child;
+    interruptRun(state, state.signal as string, { platform: 'linux', killFn: group.kill });
+    expect(group.sent).toEqual([{ pid: -4242, signal: 'SIGTERM' }]);
   });
 });
 

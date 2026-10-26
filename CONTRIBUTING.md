@@ -282,6 +282,11 @@ that never printed the line (prints the tail of what the app said), and a launch
 nothing or the wrong adapters (`adapters resolved: (none)` fails — it looks like success and is
 not). On a headless machine: `xvfb-run node scripts/verify-packaged-adapters.mjs`.
 
+The build is stopped again once the line appears, and what is stopped is the whole tree rather
+than the app alone — a packaged UCAD runs Chromium children, and leaving those behind would
+mean every smoke run leaves a process behind. `Ctrl+C` stops it the same way and exits 130, so
+an interrupted check is not reported as a broken build.
+
 Reading a module from *inside* the asar needs Electron's patched `fs`, so it is the one
 adapter-resolution step `npm test` cannot reach — the README states the same boundary, and
 `tests/contract/adapter-resolution.test.ts` keeps that statement true of `ci.yml`. The script's

@@ -54,6 +54,21 @@
  * by injecting the `spawn` it would otherwise call: the tests drive a fake
  * child through the resolved-line, timeout, error, exit and stop paths, so the
  * only thing left manual is running a real packaged app.
+ *
+ * ## Leaving nothing behind
+ *
+ * A check that starts a tray app has to stop it, and "stopped" has to mean
+ * the whole app: a packaged UCAD runs Chromium children, and a signal to the
+ * app alone leaves them running — the orphan this script is supposed to
+ * prevent. So the build is spawned as the leader of its own process group and
+ * the *group* is signalled, which is the same move
+ * `packages/terminal/src/process-tree.ts` makes for the same reason (§11.1:
+ * killing a process must kill what it started). Windows has no process
+ * groups, so `taskkill /T /F` walks the tree there instead.
+ *
+ * Leading a group has one consequence worth naming: the build no longer
+ * receives the terminal's own `SIGINT`, so the script stops it itself when
+ * the operator interrupts the check.
  */
 
 import { spawn } from 'node:child_process';
@@ -205,8 +220,9 @@ export function tailOf(output, lines = 25) {
  *
  * Resolves with the captured output — the caller judges it — and never waits for
  * the app to exit: a packaged UCAD is a tray app that would sit there until
- * killed. The process is stopped as soon as the line is seen, with the tree
- * killed on Windows where `kill()` alone can leave the Chromium children.
+ * killed. The process is stopped as soon as the line is seen, and what is
+ * stopped is the whole tree, not just the app: `kill()` alone can leave the
+ * Chromium children running.
  *
  * `timeoutMs` is a real bound rather than decoration: a build that fails to
  * start (no display, a missing DLL, a sandbox refusal as root) prints an error
@@ -215,10 +231,21 @@ export function tailOf(output, lines = 25) {
  * `spawnFn` and `platform` are seams, defaulted to the real ones: they let the
  * tests drive a fake child through the resolved-line, timeout, launch-error,
  * exit and stop paths, so this is not the one I/O function nobody can fail.
+ *
+ * `onChild` is handed the child as soon as it exists, before the launch
+ * settles: a caller that may be interrupted needs the handle while the build
+ * is still running, and the promise does not resolve until then.
  */
 export function launch(
   executable,
-  { timeoutMs = 45_000, spawnFn = spawn, platform = process.platform, killGraceMs } = {},
+  {
+    timeoutMs = 45_000,
+    spawnFn = spawn,
+    platform = process.platform,
+    killGraceMs,
+    killFn,
+    onChild,
+  } = {},
 ) {
   return new Promise((resolvePromise) => {
     let output = '';
@@ -228,15 +255,26 @@ export function launch(
     const child = spawnFn(executable, [], {
       // `ignore` for stdin: the app must not inherit a terminal and wait on it.
       stdio: ['ignore', 'pipe', 'pipe'],
+      // The environment is inherited on purpose: `ELECTRON_DISABLE_SANDBOX=1`
+      // and the display variables `xvfb-run` sets only reach the build this
+      // way. No credential travels here — the README promises the key is handed
+      // to the Agent Host when a request needs it, never through an
+      // environment variable.
       env: process.env,
       windowsHide: true,
+      // POSIX only: the build leads its own process group, which is what lets
+      // `stop()` signal the tree and not just the app. On Windows `detached`
+      // would mean a new console instead, and `taskkill /T /F` walks the tree
+      // there anyway.
+      detached: platform !== 'win32',
     });
+    onChild?.(child);
 
     const finish = (reason) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      stop(child, { spawnFn, platform, graceMs: killGraceMs });
+      stop(child, { spawnFn, platform, graceMs: killGraceMs, killFn });
       resolvePromise({ output, reason });
     };
 
@@ -261,6 +299,41 @@ export function launch(
 const KILL_GRACE_MS = 5_000;
 
 /**
+ * `process.kill`, wrapped so it can be handed around as a plain function.
+ *
+ * The seam is called as `killFn(pid, signal)`; wrapping keeps the receiver
+ * attached to `process` rather than depending on how the caller invokes it.
+ */
+const defaultKill = (pid, signal) => process.kill(pid, signal);
+
+/**
+ * Signal a whole process group, and say whether the signal was delivered.
+ *
+ * A negative pid means "every process in that group" to `kill(2)`, and that
+ * group is the only way to reach the Chromium children a packaged build
+ * starts: they are not in the app's own group otherwise, so a signal to the
+ * app alone leaves them running.
+ *
+ * Signal 0 is the existence probe — `kill(2)` reads it as "may I signal
+ * this?", which answers "is the group still there?" without sending
+ * anything. That is the question the escalation needs, because the app can be
+ * gone while a child of its tree is not.
+ *
+ * `killFn` is the seam the tests use: a real group signal needs a real
+ * process group, and a test that signals whatever group happens to carry that
+ * id on the machine is a test that can hit something else.
+ */
+function signalGroup(killFn, pid, signal) {
+  try {
+    killFn(-pid, signal);
+    return true;
+  } catch {
+    // ESRCH: nothing is there. EPERM: it is there, and not ours to signal.
+    return false;
+  }
+}
+
+/**
  * Stop the launched app, and its children on the platforms that need it.
  *
  * `SIGTERM` on its own is not enough. `kill()` returning `true` says the signal
@@ -270,11 +343,30 @@ const KILL_GRACE_MS = 5_000;
  * So the non-Windows path escalates to `SIGKILL` after a grace period — long
  * enough for a healthy app to shut down cleanly, short enough to be invisible in
  * a run that already failed.
+ *
+ * And what is signalled is the *tree*, on every platform. `child.kill()`
+ * reaches the build's own process; the Chromium children it started are
+ * another process group, and a check that leaves them behind has not cleaned
+ * up after itself. The build is therefore spawned as the leader of its own
+ * group (see `launch`), and that group is what gets `SIGTERM` and, if it is
+ * still there, `SIGKILL`. `packages/terminal/src/process-tree.ts` makes the
+ * same move for the same reason (§11.1: killing a process must kill what it
+ * started). Windows has no process groups, so `taskkill /T /F` walks the tree
+ * there instead.
  */
 export function stop(
   child,
-  { spawnFn = spawn, platform = process.platform, graceMs = KILL_GRACE_MS } = {},
+  {
+    spawnFn = spawn,
+    platform = process.platform,
+    graceMs = KILL_GRACE_MS,
+    killFn = defaultKill,
+  } = {},
 ) {
+  // The app is already gone — its pid may have been reaped and handed to
+  // another process by now, and a group signal aimed at a recycled pid would
+  // hit a stranger — so nothing is signalled. The escalation below is the
+  // deliberate exception, and it runs inside the grace period.
   if (child.exitCode !== null) return;
   if (platform === 'win32' && typeof child.pid === 'number') {
     spawnFn('taskkill', ['/pid', String(child.pid), '/T', '/F'], { windowsHide: true }).on(
@@ -283,12 +375,46 @@ export function stop(
     );
     return;
   }
-  child.kill('SIGTERM');
+  const pid = typeof child.pid === 'number' ? child.pid : null;
+  const groupSignalled = pid === null ? false : signalGroup(killFn, pid, 'SIGTERM');
+  if (!groupSignalled) {
+    // There is no group to signal — the build was not spawned detached, or it
+    // is already gone. The app itself is all there is to reach.
+    child.kill('SIGTERM');
+  }
   const escalate = setTimeout(() => {
+    // "Is the app still alive?" is the wrong question: the app can be gone
+    // while a child of its tree is not, and that child is the orphan this
+    // function exists to prevent. So the group is probed instead — inside the
+    // grace period, while the pid is still the one this check started.
+    if (pid !== null && signalGroup(killFn, pid, 0)) {
+      if (!signalGroup(killFn, pid, 'SIGKILL')) child.kill('SIGKILL');
+      return;
+    }
     if (child.exitCode === null) child.kill('SIGKILL');
   }, graceMs);
   // A safety net, not work: it must never be the reason the script stays alive.
+  // It still fires when the build ignores `SIGTERM`, because a spawned child
+  // keeps the event loop alive on its own — the timer does not have to.
   escalate.unref?.();
+}
+
+/**
+ * What an interrupt means for the run.
+ *
+ * The check is started by a person who may change their mind, and the build
+ * leads its own process group: it no longer receives the terminal's own
+ * `SIGINT`, so the script has to stop it. The run also has to end as an
+ * interruption rather than as a verdict on the build — exit code 130 says "the
+ * operator stopped this", not "the build is broken", and a reader who is told
+ * the build failed when they pressed Ctrl+C looks in the wrong place.
+ */
+export function interruptRun(state, signal, { platform = process.platform, killFn } = {}) {
+  state.interrupted = true;
+  state.signal = signal;
+  state.exitCode = signal === 'SIGINT' ? 130 : 143;
+  if (state.child !== null) stop(state.child, { platform, killFn });
+  return state;
 }
 
 const USAGE = `usage: node scripts/verify-packaged-adapters.mjs [options]
@@ -331,7 +457,31 @@ async function main(argv) {
   }
 
   process.stdout.write(`launching ${executable}\n`);
-  const { output, reason } = await launch(executable, { timeoutMs });
+
+  // The build leads its own process group, so the terminal's `SIGINT` no
+  // longer reaches it: the script has to stop it itself, and the run has to
+  // end as an interruption rather than as a verdict on the build.
+  const state = { child: null, interrupted: false, signal: null, exitCode: 0 };
+  const onSignal = (signal) => {
+    interruptRun(state, signal, { platform: process.platform });
+    process.exitCode = state.exitCode;
+  };
+  process.once('SIGINT', onSignal);
+  process.once('SIGTERM', onSignal);
+
+  const { output, reason } = await launch(executable, {
+    timeoutMs,
+    onChild: (child) => {
+      state.child = child;
+      // Interrupted before the build even existed: stop it as it appears.
+      if (state.interrupted) interruptRun(state, state.signal, { platform: process.platform });
+    },
+  });
+
+  if (state.interrupted) {
+    process.stderr.write('\n[verify-packaged-adapters] interrupted; the build was stopped.\n');
+    return;
+  }
 
   if (reason === 'timeout') {
     throw new Error(
