@@ -57,30 +57,92 @@ vi.mock('electron', () => ({
 
 import { RetentionService } from '@ucad/session';
 
-import { RETENTION_DEPENDENCIES, UcadApp } from '../../apps/desktop/src/main/app-container';
+import {
+  RETENTION_DEPENDENCIES,
+  UcadApp,
+  type ContainerField,
+} from '../../apps/desktop/src/main/app-container';
 import type { AppPaths } from '../../apps/desktop/src/main/paths';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const CONTAINER_SOURCE = path.join(here, '../../apps/desktop/src/main/app-container.ts');
 
 /**
- * The fields the container promises: `field!: T` declarations.
+ * The scan that reads the container's promises.
  *
  * A line-based scan, on purpose. The claims are one per line in the class
  * body, and a scan that needed a parser would be a scan whose own bugs
  * would be indistinguishable from the defects it looks for.
  */
-function promisedFields(source: string): string[] {
-  const out: string[] = [];
+interface Claim {
+  readonly name: string;
+  /** whatever was written in front of the name: `private`, `readonly`, … */
+  readonly modifiers: readonly string[];
+}
+
+/**
+ * Every definite-assignment claim in a class body, with its modifiers.
+ *
+ * The trailing space the first version of this rule required is gone on
+ * purpose. Prettier writes `db!: Database`, but `db!:Database` is the same
+ * claim to the compiler and `!:` is what makes it one — the whitespace was
+ * incidental. A field declared without the space was invisible to the scan,
+ * which meant invisible to the checklist, which meant the one gate that says
+ * "`start()` sets this" quietly did not cover it.
+ *
+ * The modifiers are kept rather than dropped so the claims the scan
+ * *deliberately* skips can be named and asserted absent, instead of
+ * disappearing (see `skippedClaims`).
+ */
+function claims(source: string): Claim[] {
+  const out: Claim[] = [];
   for (const line of source.split('\n')) {
-    // `private`/`readonly` are allowed in front of the name: the claim is the
-    // `!`, not the visibility.
-    const match = /^\s*(?:(?:public|private|protected|readonly)\s+)*([A-Za-z_$][\w$]*)\s*!:\s/.exec(
-      line,
-    );
-    if (match?.[1] !== undefined) out.push(match[1]);
+    const match = /^\s*((?:[A-Za-z_$][\w$]*\s+)*)([A-Za-z_$][\w$]*)\s*!:/.exec(line);
+    const name = match?.[2];
+    if (name === undefined) continue;
+    out.push({
+      name,
+      modifiers: (match?.[1] ?? '').split(/\s+/).filter((modifier) => modifier !== ''),
+    });
   }
   return out;
+}
+
+/**
+ * The modifiers that leave the claim on the *instance*, where the run half
+ * below can ask `start()` whether it kept its word. `private`/`readonly` are
+ * allowed in front of the name: the claim is the `!`, not the visibility.
+ */
+const INSTANCE_MODIFIERS = new Set(['public', 'private', 'protected', 'readonly']);
+
+/** The fields the container promises: `field!: T` declarations on the instance. */
+function promisedFields(source: string): string[] {
+  return claims(source)
+    .filter((claim) => claim.modifiers.every((modifier) => INSTANCE_MODIFIERS.has(modifier)))
+    .map((claim) => claim.name);
+}
+
+/**
+ * The claims this scan leaves alone, as `modifier name` pairs.
+ *
+ * Two spellings are not container promises, and saying so here is the
+ * difference between a decision and a blind spot:
+ *
+ *  - `static` — not reachable through an instance, so the run half (which
+ *    reads `app[field]`) could never tell whether `start()` kept it. Counting
+ *    it would only produce a checklist entry that can never pass;
+ *  - `declare` — a type-only declaration with no runtime slot at all: there is
+ *    nothing for `start()` to assign, so a "promise" would be about a property
+ *    that never exists.
+ *
+ * Both are skipped, and the real container is then checked to declare neither.
+ * That combination is what keeps this from being a hole: a field written this
+ * way is a red test, not an unchecked field.
+ */
+function skippedClaims(source: string): string[] {
+  return claims(source)
+    .filter((claim) => claim.modifiers.some((modifier) => !INSTANCE_MODIFIERS.has(modifier)))
+    .map((claim) => [...claim.modifiers, claim.name].join(' '));
 }
 
 /**
@@ -129,13 +191,44 @@ function dependenciesOutsideTheChecklist(
 }
 
 /**
+ * Fields the guard was asked for more than once.
+ *
+ * The sorted comparison below is exact — a duplicate makes the two arrays
+ * different lengths — but it reports that as "a different set of fields",
+ * which points at the wrong fix: the bag has the right *names*, it just visits
+ * one of them twice. Two visits is either a second dependency bag or a second
+ * build of the service, and both are the duplicate-instance defect this
+ * container already fixed once. A pure function, so a fixture can show it
+ * answering something other than `[]`.
+ */
+function overCheckedFields(calls: readonly string[]): string[] {
+  const counts = new Map<string, number>();
+  for (const field of calls) counts.set(field, (counts.get(field) ?? 0) + 1);
+  return [...counts]
+    .filter(([, count]) => count > 1)
+    .map(([field]) => field)
+    .sort();
+}
+
+/**
  * The claims, written out.
  *
  * The scan above finds whatever the container currently declares; this list
- * is what it is *allowed* to declare. A new subsystem has to be added here
- * on purpose, and a renamed one has to be renamed in both places — which is
- * the point: the promise is a decision, not a side effect of editing a class
+ * is what it is *allowed* to declare. A new subsystem has to be added here on
+ * purpose, and a renamed one has to be renamed in both places — which is the
+ * point: the promise is a decision, not a side effect of editing a class
  * body.
+ *
+ * `satisfies readonly ContainerField[]` puts the same rule on these names as
+ * `RETENTION_DEPENDENCIES` has: an entry that is not a field of the container
+ * — a rename carried through the class only, a typo — is reported at the line
+ * instead of as a mismatch between two lists. Be precise about which gate that
+ * is, though: `tests/` belongs to no tsc project (the contract suite carries
+ * pre-existing type errors), so the `satisfies` is an editor / on-demand `tsc`
+ * check. CI still catches the same mistake at runtime — a name the class does
+ * not declare is reported by `checklistEntriesNotPromised`, and a name that is
+ * not a field reads `undefined` after `start()` — later, and less directly
+ * than the type would.
  */
 const PROMISED_FIELDS = [
   'logger',
@@ -165,7 +258,7 @@ const PROMISED_FIELDS = [
   'providerClient',
   'modelRegistry',
   'skills',
-] as const;
+] as const satisfies readonly ContainerField[];
 
 let dir: string;
 let app: UcadApp | undefined;
@@ -222,6 +315,36 @@ describe('the scan that reads the container’s promises', () => {
     expect(promisedFields('class A {\n  agents = new Map<string, Host>();\n}')).toEqual([]);
   });
 
+  it('counts a claim written without a space after the colon', () => {
+    // `db!:Database` is the same claim as `db!: Database` to the compiler. The
+    // first version of this rule required the space, so a field written this
+    // way was found by nobody and therefore checked by nobody — the exact
+    // failure mode a scan is supposed to make impossible.
+    expect(promisedFields('class A {\n  db!:Database;\n}')).toEqual(['db']);
+    expect(promisedFields('class A {\n  private pty!:PtyHost;\n}')).toEqual(['pty']);
+  });
+
+  it('ignores a static claim, which no instance can answer for', () => {
+    // A static field is not reachable through `app`, so the run half below —
+    // `app[field]` — could not tell whether it was ever assigned. Counting it
+    // would add a checklist entry that can never pass; skipping it quietly
+    // would be a hole. It is skipped *and* reported, and the real container
+    // is asserted to declare none (see `skippedClaims`).
+    expect(promisedFields('class A {\n  static db!: Database;\n}')).toEqual([]);
+    expect(skippedClaims('class A {\n  static db!: Database;\n}')).toEqual(['static db']);
+    expect(skippedClaims('class A {\n  static readonly db!:Database;\n}')).toEqual([
+      'static readonly db',
+    ]);
+  });
+
+  it('ignores a declare claim, which has no runtime slot at all', () => {
+    // `declare db!: Database` is a type-only declaration: nothing is assigned
+    // at runtime, so there is no promise for `start()` to keep. Same treatment
+    // as `static` — skipped, reported, and absent from the real container.
+    expect(promisedFields('class A {\n  declare db!: Database;\n}')).toEqual([]);
+    expect(skippedClaims('class A {\n  declare db!: Database;\n}')).toEqual(['declare db']);
+  });
+
   it('is not vacuous on the real container', () => {
     const found = promisedFields(fs.readFileSync(CONTAINER_SOURCE, 'utf8'));
     expect(found.length, 'the scan found no promises in the container at all').toBeGreaterThan(10);
@@ -247,6 +370,14 @@ describe('the scan that reads the container’s promises', () => {
     expect(dependenciesOutsideTheChecklist(['db'], ['db', 'logger'])).toEqual([]);
   });
 
+  it('reports a field the guard was asked for twice', () => {
+    // `guards exactly the retention dependencies, once each` claims the bag
+    // visits every field exactly once; this is the half of that claim the
+    // sorted comparison cannot name.
+    expect(overCheckedFields(['db', 'blobs', 'db'])).toEqual(['db']);
+    expect(overCheckedFields(['db', 'blobs'])).toEqual([]);
+  });
+
   it('reports a checklist entry the class no longer declares', () => {
     // The other direction: a renamed or deleted field must not leave a stale
     // checklist entry behind, or the `has every one of them after start()`
@@ -268,6 +399,19 @@ describe('the container keeps every promise start() made', () => {
     expect(
       checklistEntriesNotPromised(found, PROMISED_FIELDS),
       'the checklist names a field the container no longer declares',
+    ).toEqual([]);
+  });
+
+  it('declares no claim the scan deliberately skips', () => {
+    // The blind spot the fixture tests above make explicit. `static` and
+    // `declare` claims are not on the checklist because the run half cannot
+    // check them; if the container ever grew one, every gate here would stay
+    // green while that field went unverified. Naming it as a failing test is
+    // what turns "the scan skips these" into "the container may not use them".
+    const skipped = skippedClaims(fs.readFileSync(CONTAINER_SOURCE, 'utf8'));
+    expect(
+      skipped,
+      'the container declares a `static`/`declare` definite-assignment claim, which the scan-and-run gate cannot verify',
     ).toEqual([]);
   });
 
@@ -312,6 +456,14 @@ describe('the container keeps every promise start() made', () => {
       guard.mockRestore();
     }
 
+    // Two assertions, because the two ways this can be wrong have different
+    // fixes: a field visited twice is a second bag / second build (named by
+    // `overCheckedFields`), a different set is the bag having grown a field
+    // `RETENTION_DEPENDENCIES` does not name.
+    expect(
+      overCheckedFields(guarded),
+      'retentionDeps() asked the guard for the same field more than once',
+    ).toEqual([]);
     expect(
       [...guarded].sort(),
       'retentionDeps() asked the guard for a different set of fields than RETENTION_DEPENDENCIES names',

@@ -91,6 +91,25 @@ const STARTED = Symbol('ucad.container.started');
 type Started<T> = T & { readonly [STARTED]: true };
 
 /**
+ * The container's field names, as a type.
+ *
+ * Every list of container fields is written against this, so a name that is
+ * not a field — a rename that was not carried through, a typo — does not
+ * compile instead of being discovered at runtime. `RETENTION_DEPENDENCIES`
+ * below is one such list; the scan-and-run contract test's checklist is the
+ * other, declared `satisfies readonly ContainerField[]`.
+ *
+ * The two lists are not enforced by the same gate, and that is worth knowing
+ * when reading the test. This file is part of
+ * `apps/desktop/tsconfig.main.json`, so a bad name on
+ * `RETENTION_DEPENDENCIES` fails `npm run typecheck`. `tests/` belongs to no
+ * tsc project (the contract suite carries pre-existing type errors), so for
+ * the test's checklist the `satisfies` is an editor/on-demand check and the
+ * runtime assertions are what CI actually runs.
+ */
+export type ContainerField = keyof UcadApp;
+
+/**
  * The container fields the retention service is built from (§8.4).
  *
  * The list is the contract, and it is deliberately the *only* place the names
@@ -108,7 +127,7 @@ export const RETENTION_DEPENDENCIES = [
   'sessionStore',
   'blobs',
   'logger',
-] as const satisfies readonly (keyof UcadApp)[];
+] as const satisfies readonly ContainerField[];
 
 /**
  * The bag the retention service is built from: one *checked* field per name
