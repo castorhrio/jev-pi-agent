@@ -24,7 +24,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { GitLikeBridge } from '../../apps/desktop/src/main/git-bridge';
+import { GIT_DIFF_STAGE, GitLikeBridge } from '../../apps/desktop/src/main/git-bridge';
 import type { GitService } from '@ucad/git';
 import type { HeuristicTokenEstimator } from '@ucad/context';
 import type { Logger } from '@ucad/observability';
@@ -1064,6 +1064,81 @@ describe('git diffSummary — the three flags, as a table', () => {
       statusLate(h).length + diffLate(h).length,
       'a single call wrote both late lines',
     ).toBeLessThanOrEqual(1);
+  });
+});
+
+/**
+ * The `stage` field, as a table.
+ *
+ * `git-bridge.ts` writes four stage names, and a support report groups lines by
+ * that field. The four used to be bare string literals at four log sites: a
+ * typo or a new spelling was invisible to `tsc` and to every test, and a report
+ * counting `stage: 'status-late'` would silently miss a line that said
+ * `'status_late'`. The table is typed; this is the runtime half, because the
+ * contract suite transpiles without typechecking.
+ */
+describe('git diffSummary — the stage table', () => {
+  it('names exactly the stages a log line can carry', () => {
+    // Both directions, so the table cannot lose a stage or grow one the union
+    // does not have. The `satisfies` in the product file catches the second
+    // under `tsc`; this catches both under `npm test`. Key and value are the
+    // same spelling (the `Record<…>` shape), so one expected list covers both.
+    expect(Object.values(GIT_DIFF_STAGE).sort(), 'the table has a stage the log cannot write').toEqual(
+      ['diff', 'diff-late', 'status', 'status-late'],
+    );
+    expect(Object.keys(GIT_DIFF_STAGE).sort(), 'the table has a key with no stage').toEqual([
+      'diff',
+      'diff-late',
+      'status',
+      'status-late',
+    ]);
+  });
+
+  it('writes every stage the table names on some log path', async () => {
+    // A table value nobody writes is a name a report can filter on forever and
+    // never see. Each scenario below is the shortest path to one of the four;
+    // if a log site stops writing its stage, the set here loses a member.
+    const seen = new Set<unknown>();
+    const collect = (h: Harness): void => {
+      for (const line of h.logs) {
+        if (line.fields?.stage !== undefined) seen.add(line.fields.stage);
+      }
+    };
+
+    // `status`: the deadline fires while `git status` is still running.
+    const status = harness({ statusHangs: true, diffDeadlineMs: 10 });
+    await status.bridge.diffSummary({ workspaceId: 'ws_1' });
+    collect(status);
+
+    // `status-late`: that same status answers after the summary gave up.
+    const statusLate = harness({ statusSlowMs: 40, diffDeadlineMs: 10 });
+    await statusLate.bridge.diffSummary({ workspaceId: 'ws_1' });
+    await after(80, undefined);
+    collect(statusLate);
+
+    // `diff`: status answered, but a diff outlives the deadline.
+    const diff = harness({
+      unstaged: ['hang.ts'],
+      diffFor: async () => new Promise<never>(() => {}),
+      diffDeadlineMs: 10,
+    });
+    await diff.bridge.diffSummary({ workspaceId: 'ws_1' });
+    collect(diff);
+
+    // `diff-late`: that diff answers after the snapshot was taken.
+    const diffLate = harness({
+      unstaged: ['late.ts'],
+      diffFor: async (path) => after(40, patch(path)),
+      diffDeadlineMs: 10,
+    });
+    await diffLate.bridge.diffSummary({ workspaceId: 'ws_1' });
+    await after(80, undefined);
+    collect(diffLate);
+
+    expect(
+      [...seen].sort(),
+      'a stage in the table is never written, or a log path writes one outside it',
+    ).toEqual(Object.values(GIT_DIFF_STAGE).sort());
   });
 });
 

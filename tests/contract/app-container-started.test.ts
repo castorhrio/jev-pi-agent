@@ -36,7 +36,10 @@
  * The scan is tested on fixtures first. A scanner that only ever runs over a
  * code base that passes is a scanner whose failure mode is unknown: if it
  * stopped recognising `!:` tomorrow, every source file would keep passing
- * and the guarantee would quietly disappear.
+ * and the guarantee would quietly disappear. The same is true of the scope
+ * check: a call in a helper method and a call in another file are both red,
+ * and the fixtures below pin which message each one produces, so a failure
+ * names the fix rather than merely reporting that two lists differ.
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
@@ -219,6 +222,8 @@ function overCheckedFields(calls: readonly string[]): string[] {
 const MAIN_SOURCE = path.join(here, '../../apps/desktop/src/main');
 /** Repo root, so the paths in a failure message are the ones a reader types. */
 const REPO_ROOT = path.join(here, '../..');
+/** The container's path in the shape `mainSources()` returns. */
+const CONTAINER_REL = path.relative(REPO_ROOT, CONTAINER_SOURCE).split(path.sep).join('/');
 
 /**
  * Source with comments removed, string literals kept.
@@ -280,9 +285,15 @@ function stripComments(source: string): string {
  * prose is gone by the time this runs (`stripComments`). Every receiver counts,
  * not only `this`: the claim being checked is "nothing outside `retentionDeps()`
  * asks the guard", and a call through a parameter or a destructured value
- * (`app.requireStarted(…)`) is exactly the shape a `this`-only rule would miss.
- * Both quotes and a wrapped call are read, because Prettier wraps a long call
- * and the field name then lands on the next line.
+ * (`app.requireStarted(…)`, `app?.requireStarted(…)`) is exactly the shape a
+ * `this`-only rule would miss. Both quotes and a wrapped call are read, because
+ * Prettier wraps a long call and the field name then lands on the next line.
+ *
+ * Two spellings are deliberately outside the rule, and both are pinned below:
+ * a regex literal containing two adjacent slashes (read as the start of a
+ * comment), and a space between the receiver and the dot (`this . requireStarted`,
+ * valid TypeScript, not a match). They are blind spots, not claims that the
+ * shapes do not occur.
  */
 function guardCalls(source: string): string[] {
   return [...stripComments(source).matchAll(/\.requireStarted\(\s*(['"])([^'"]+)\1/g)].map(
@@ -303,6 +314,60 @@ function methodBody(source: string, name: string): string {
   if (start === -1) return '';
   const end = source.indexOf('\n  }\n', start);
   return end === -1 ? '' : source.slice(start, end);
+}
+
+/** One source the guard's scope is read from: a repo-relative path and its text. */
+interface GuardSource {
+  readonly path: string;
+  readonly source: string;
+}
+
+/**
+ * The first thing wrong with the guard's scope, in the words the failure
+ * should use, or `null` when it is exactly the retention bag and nothing else.
+ *
+ * A pure function so each way the sources can drift has a fixture that pins
+ * the *message* it produces. The order is deliberate:
+ *
+ *  - a call in another file is named before any arithmetic, because "which
+ *    file" is the fix;
+ *  - a second call in the container is reported as a count mismatch, not as
+ *    "a different set of fields": the bag still names the right fields, it
+ *    just visits one of them more than once, and the two need different fixes
+ *    (a second dependency bag versus a field added to the bag);
+ *  - a bag that delegates to a helper passes the count but not the set, which
+ *    is why the set check is not redundant with the count check.
+ */
+function scopeViolation(
+  files: readonly GuardSource[],
+  containerPath: string,
+  dependencies: readonly string[],
+): string | null {
+  const container = files.find((file) => file.path === containerPath);
+  if (container === undefined) return 'the container source is missing from the scan';
+  const body = methodBody(container.source, 'retentionDeps');
+  if (body === '') {
+    return 'retentionDeps() is gone or is no longer a `private` method at class-member indent, so the scope cannot be read';
+  }
+
+  const callers = files
+    .map((file) => ({ path: file.path, fields: guardCalls(file.source) }))
+    .filter((caller) => caller.fields.length > 0);
+  if (callers.some((caller) => caller.path !== containerPath)) {
+    return 'requireStarted() has a caller outside the container';
+  }
+
+  const total = callers.reduce((sum, caller) => sum + caller.fields.length, 0);
+  if (total !== dependencies.length) {
+    return 'the number of guarded fields is not the number of retention dependencies';
+  }
+
+  const expected = [...dependencies].sort();
+  const bag = [...guardCalls(body)].sort();
+  if (bag.length !== expected.length || bag.some((field, index) => field !== expected[index])) {
+    return 'retentionDeps() asks the guard for a different set of fields than RETENTION_DEPENDENCIES names';
+  }
+  return null;
 }
 
 /** Every `.ts` file under `apps/desktop/src/main`, as repo-relative path + source. */
@@ -527,6 +592,19 @@ describe('the guard’s scope, as the sources write it', () => {
     // has no receiver, is the only `.requireStarted(` that is not one.
     expect(guardCalls("other.requireStarted('db', other.db);")).toEqual(['db']);
     expect(guardCalls('private requireStarted<K extends keyof UcadApp>(')).toEqual([]);
+    // Optional chaining still ends in `.requireStarted(`: the receiver is a
+    // parameter here, and a rule keyed to `this.` would miss it. Pinned so
+    // that narrowing the receiver later is a red test rather than a quiet
+    // loss of coverage.
+    expect(guardCalls("app?.requireStarted('db', app.db);")).toEqual(['db']);
+  });
+
+  it('does not read a receiver split from the method name', () => {
+    // `this . requireStarted(…)` is valid TypeScript and not a match: the
+    // regex has no whitespace between the dot and the name. The blind spot is
+    // pinned rather than left to be discovered when somebody formats a call
+    // this way; the fixture above shows the spellings that *are* read.
+    expect(guardCalls("this . requireStarted('db', this.db);")).toEqual([]);
   });
 
   it('slices a method body, and reports one it cannot find', () => {
@@ -555,38 +633,157 @@ describe('the guard’s scope, as the sources write it', () => {
     // anywhere else in the class — or in another main-process file — kept the
     // comment true-looking while the scope had quietly grown.
     const container = fs.readFileSync(CONTAINER_SOURCE, 'utf8');
-    const body = methodBody(container, 'retentionDeps');
     expect(
-      body,
-      'retentionDeps() is gone or is no longer a `private` method at class-member indent, so the scope below cannot be read',
-    ).not.toBe('');
-
-    const guarded = guardCalls(body);
-    expect(
-      [...guarded].sort(),
-      'retentionDeps() asks the guard for a different set of fields than RETENTION_DEPENDENCIES names',
-    ).toEqual([...RETENTION_DEPENDENCIES].sort());
-    expect(
-      guardCalls(container),
-      'the container calls requireStarted() outside retentionDeps(); the STARTED scope note says that cannot happen',
-    ).toEqual(guarded);
+      scopeViolation([{ path: CONTAINER_REL, source: container }], CONTAINER_REL, RETENTION_DEPENDENCIES),
+      'the container calls requireStarted() outside retentionDeps(), or for a different set of fields than RETENTION_DEPENDENCIES names',
+    ).toBeNull();
   });
 
   it('is called from no other file under src/main', () => {
     // The other half of the scope note: the guard is the retention bag's, not
     // the container's general start-up check. A second caller in another file
     // would be a second dependency path nobody's scan covers.
-    const callers = mainSources()
-      .map((file) => ({ path: file.path, fields: guardCalls(file.source) }))
-      .filter((caller) => caller.fields.length > 0);
+    const files = mainSources();
+    // Non-vacuous: a walk that found no container would report no callers,
+    // and "no callers outside the container" would be true for the wrong
+    // reason.
+    const container = files.find((file) => file.path === CONTAINER_REL);
+    expect(container, 'the container is not in the main-process scan').toBeDefined();
     expect(
-      callers.map((caller) => caller.path),
-      'requireStarted() has a caller outside the container',
-    ).toEqual(['apps/desktop/src/main/app-container.ts']);
+      guardCalls(container!.source).length,
+      'the main-process scan found no guarded field in the container at all',
+    ).toBeGreaterThan(0);
     expect(
-      callers.reduce((total, caller) => total + caller.fields.length, 0),
-      'the number of guarded fields is not the number of retention dependencies',
-    ).toBe(RETENTION_DEPENDENCIES.length);
+      scopeViolation(files, CONTAINER_REL, RETENTION_DEPENDENCIES),
+      'a file outside the container asks the guard, or the call count differs from the retention dependencies',
+    ).toBeNull();
+  });
+});
+
+/**
+ * The scope check's failure modes, on fixtures.
+ *
+ * Each shape that has broken this gate — or could break it silently — gets a
+ * source string and the message a real failure should print. A check whose
+ * failure messages have never been read outside production is a check whose
+ * next red test may name the wrong fix.
+ */
+describe('the guard’s scope check, on fixtures', () => {
+  const CONTAINER_PATH = 'apps/desktop/src/main/app-container.ts';
+
+  /** The shape the scan is meant to find: one call inside the bag. */
+  const inTheBag = [
+    'class A {',
+    '  private retentionDeps(): Deps {',
+    "    return { db: this.requireStarted('db', this.db) };",
+    '  }',
+    '}',
+  ].join('\n');
+
+  it('accepts a bag that holds exactly the dependencies', () => {
+    // The positive fixture: without it every negative below could be passing
+    // for an unrelated reason.
+    expect(
+      scopeViolation([{ path: CONTAINER_PATH, source: inTheBag }], CONTAINER_PATH, ['db']),
+    ).toBeNull();
+  });
+
+  it('reports a call in another file by name', () => {
+    // The failure that commit 5f5be1c claims to have measured: a second entry
+    // point in `src/main`. The other file has to be the one named — a count
+    // mismatch would send the reader looking in the container, where nothing
+    // changed.
+    const other = 'apps/desktop/src/main/helper.ts';
+    expect(
+      scopeViolation(
+        [
+          { path: CONTAINER_PATH, source: inTheBag },
+          {
+            path: other,
+            source: "export const remember = (app: UcadApp) => app.requireStarted('db', app.db);",
+          },
+        ],
+        CONTAINER_PATH,
+        ['db'],
+      ),
+      'a second file calling the guard must be named as the caller',
+    ).toBe('requireStarted() has a caller outside the container');
+  });
+
+  it('reports a helper method that asks the guard again as a count mismatch', () => {
+    // The bag still names exactly the dependency list, so the *set* check
+    // passes — but the container now visits `db` twice. That is a second
+    // dependency bag (or a second build of the service), a different defect
+    // from a field added to the bag, and the message has to say "count".
+    const split = [
+      'class A {',
+      '  private retentionDeps(): Deps {',
+      "    return { db: this.requireStarted('db', this.db) };",
+      '  }',
+      '',
+      '  private buildDeps(): Deps {',
+      "    return { db: this.requireStarted('db', this.db) };",
+      '  }',
+      '}',
+    ].join('\n');
+
+    expect([...guardCalls(methodBody(split, 'retentionDeps'))].sort()).toEqual(['db']);
+    expect(
+      scopeViolation([{ path: CONTAINER_PATH, source: split }], CONTAINER_PATH, ['db']),
+      'a second call site in the same file must be reported as a count mismatch',
+    ).toBe('the number of guarded fields is not the number of retention dependencies');
+  });
+
+  it('reports a bag that delegates to a helper as a different set of fields', () => {
+    // The other shape of "moved into a helper": `retentionDeps()` keeps its
+    // name but no longer contains the calls, so the count is still one and
+    // only the set check can see that the bag is empty. This is why the two
+    // checks are both needed rather than one being an implication of the
+    // other.
+    const delegated = [
+      'class A {',
+      '  private retentionDeps(): Deps {',
+      '    return this.buildDeps();',
+      '  }',
+      '',
+      '  private buildDeps(): Deps {',
+      "    return { db: this.requireStarted('db', this.db) };",
+      '  }',
+      '}',
+    ].join('\n');
+
+    expect(
+      scopeViolation([{ path: CONTAINER_PATH, source: delegated }], CONTAINER_PATH, ['db']),
+      'a bag that delegates must be reported as a field-set mismatch',
+    ).toBe(
+      'retentionDeps() asks the guard for a different set of fields than RETENTION_DEPENDENCIES names',
+    );
+  });
+
+  it('walks every file under the scanned root, not just the container', () => {
+    // `mainSources()` is what makes the "no other file" claim cover the
+    // directory rather than one path. A walk that skipped a subdirectory
+    // would leave the second caller invisible, so the walk itself is fed a
+    // tree with a call one level down.
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ucad-main-scan-'));
+    try {
+      fs.mkdirSync(path.join(root, 'nested'));
+      fs.writeFileSync(path.join(root, 'container.ts'), "a.requireStarted('db', a.db);");
+      fs.writeFileSync(path.join(root, 'nested', 'helper.ts'), "b.requireStarted('blobs', b.blobs);");
+      fs.writeFileSync(path.join(root, 'notes.md'), "not-scanned.requireStarted('ignored', x);");
+
+      const found = mainSources(root);
+      const walked = found.map((file) =>
+        path.relative(root, path.resolve(REPO_ROOT, file.path)).split(path.sep).join('/'),
+      );
+      expect(walked, 'the walk skipped a nested source or read a non-source file').toEqual([
+        'container.ts',
+        'nested/helper.ts',
+      ]);
+      expect(found.flatMap((file) => guardCalls(file.source))).toEqual(['db', 'blobs']);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
   });
 });
 

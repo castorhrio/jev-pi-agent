@@ -54,6 +54,30 @@ const DEFAULT_DIFF_CONCURRENCY = 4;
 const DEFAULT_DIFF_DEADLINE_MS = 2_000;
 
 /**
+ * The stages a summary's log lines can be in.
+ *
+ * Exported so the contract suite can enumerate them: the suite transpiles
+ * without typechecking, and a test cannot read a union type.
+ */
+export type GitDiffStage = 'status' | 'status-late' | 'diff' | 'diff-late';
+
+/**
+ * The stage names, as the log writes them.
+ *
+ * A table rather than bare literals at the four log sites, following
+ * `DROP_REASON` in `decision-facade.ts`: `satisfies Record<…>` makes a new
+ * stage a `tsc` error here, where the name and the log field are written
+ * together. The other half of the check — that every stage in the table is
+ * actually written by a log path — is in `tests/contract/git-bridge.test.ts`.
+ */
+export const GIT_DIFF_STAGE = {
+  'status': 'status',
+  'status-late': 'status-late',
+  'diff': 'diff',
+  'diff-late': 'diff-late',
+} as const satisfies Record<GitDiffStage, GitDiffStage>;
+
+/**
  * The three flags that decide what a late answer may claim.
  *
  *  - `expired` — the deadline timer fired. Monotonic, and the only test for
@@ -165,7 +189,7 @@ export class GitLikeBridge {
       if (!expired) return;
       this.opts.logger.debug('git diff summary discarded a late status answer', {
         workspaceId: input.workspaceId,
-        stage: 'status-late',
+        stage: GIT_DIFF_STAGE['status-late'],
         // The subprocess has returned — that is the only reason the answer is
         // here at all — so nothing of it is still out there.
         statusInFlight: false,
@@ -210,7 +234,7 @@ export class GitLikeBridge {
       if (!snapshotTaken) return;
       this.opts.logger.debug('git diff summary discarded a late diff answer', {
         workspaceId: input.workspaceId,
-        stage: 'diff-late',
+        stage: GIT_DIFF_STAGE['diff-late'],
         path,
         outcome,
         ...(error !== undefined ? { error: describeError(error) } : {}),
@@ -276,7 +300,7 @@ export class GitLikeBridge {
         this.opts.logger.debug('git diff summary stopped at its deadline', {
           workspaceId: input.workspaceId,
           deadlineMs,
-          stage: 'status',
+          stage: GIT_DIFF_STAGE.status,
           collected: 0,
           requested: 0,
           abandoned: 0,
@@ -423,7 +447,7 @@ export class GitLikeBridge {
         this.opts.logger.debug('git diff summary stopped at its deadline', {
           workspaceId: input.workspaceId,
           deadlineMs,
-          stage: 'diff',
+          stage: GIT_DIFF_STAGE.diff,
           collected: out.length,
           requested: paths.length,
           answered,
