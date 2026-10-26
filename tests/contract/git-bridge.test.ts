@@ -769,6 +769,44 @@ describe('git diffSummary — the bounds', () => {
     expect(started.size, 'the same path was diffed twice').toBe(h.diffs.length);
   });
 
+  it('records a `git diff` that failed after the deadline, with the path and the error', async () => {
+    // The other ending of the same story. A slow diff that comes back late
+    // and *fails* (a path removed between status and diff, a corrupt index
+    // entry) used to be written as an in-time "skipped a path" line, which
+    // described work somebody was still waiting for. The summary had already
+    // returned, so this is an ending for a path the deadline counted as
+    // abandoned — and the error is the part a report needs to find out why.
+    let failLate: ((error: Error) => void) | undefined;
+    const late = new Promise<never>((_resolve, reject) => {
+      failLate = reject;
+    });
+    const h = harness({
+      unstaged: ['late.ts'],
+      diffFor: async () => late,
+      diffConcurrency: 1,
+      diffDeadlineMs: 25,
+    });
+
+    await expect(h.bridge.diffSummary({ workspaceId: 'ws_1' })).resolves.toEqual([]);
+
+    failLate!(new Error('fatal: bad object'));
+    await after(60, undefined);
+
+    const recorded = h.logs.find(
+      (line) => line.event === 'git diff summary discarded a late diff answer',
+    );
+    expect(recorded, 'a late failure left no trace of which path it was').toBeDefined();
+    expect(recorded!.fields?.stage).toBe('diff-late');
+    expect(recorded!.fields?.path).toBe('late.ts');
+    expect(recorded!.fields?.outcome).toBe('failed');
+    expect(String(recorded!.fields?.error)).toContain('bad object');
+    // One ending, not two: the in-time "skipped" line belongs to summaries
+    // that still had a caller.
+    expect(
+      h.logs.some((line) => line.event === 'git diff skipped a path that failed'),
+    ).toBe(false);
+  });
+
   it('does not report an in-flight status when `git status` threw synchronously', async () => {
     // A `status` that throws before it returns never spawned a subprocess, so
     // there is nothing out there to account for. That path goes to the
@@ -852,11 +890,12 @@ describe('git diffSummary — a directory that is not a repository', () => {
  *
  * The two things this file asserts are the ones a reader cannot check by
  * reading the code: the second answer is built from the second call's own
- * subprocesses, and the late answer changes nothing at all — not the answer
- * that was already returned, and not the log.
+ * subprocesses, and the late answer changes neither answer. It does leave one
+ * line naming the path it belonged to — a dropped result must not read the
+ * same as a subprocess that never returned.
  */
 describe('git diffSummary — one call does not answer for the next', () => {
-  it('keeps a late diff out of the next call, and writes no log for it', async () => {
+  it('keeps a late diff out of the next call, and names the path when it lands', async () => {
     // The first turn's `late.ts` diff is held open by a gate this test
     // releases by hand, so the late answer lands at a moment the test
     // chooses: after the second turn has already answered. No sleeping, no
@@ -907,10 +946,20 @@ describe('git diffSummary — one call does not answer for the next', () => {
     releaseLate!();
     await after(60, undefined);
 
-    // It writes no log line: a diff that arrives late is already accounted
-    // for in the deadline line's arithmetic (`requested = answered + failed +
-    // abandoned`), and a second line would only restate it.
-    expect(h.logs.length, 'the late answer wrote a log line').toBe(logsBefore);
+    // It writes exactly one line, and that line names the path. The deadline
+    // line already counted `late.ts` as abandoned, but a count cannot tell a
+    // slow file from a hung one once the summary has returned; without this
+    // line the two endings were indistinguishable.
+    const late = h.logs
+      .slice(logsBefore)
+      .filter((line) => line.event === 'git diff summary discarded a late diff answer');
+    expect(late, 'the late answer left no trace of which path it was').toHaveLength(1);
+    expect(late[0]!.fields?.stage).toBe('diff-late');
+    expect(late[0]!.fields?.path).toBe('late.ts');
+    expect(late[0]!.fields?.outcome).toBe('answered');
+    // A deadline, not a fault: there is no `error` on an answer that was
+    // merely too slow.
+    expect(late[0]!.fields && 'error' in late[0]!.fields).toBe(false);
     // And it changes nothing: not the answer the second turn already
     // returned...
     expect(second.map((item) => item.path)).toEqual(['late.ts', 'quick.ts']);

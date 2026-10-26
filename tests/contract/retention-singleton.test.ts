@@ -153,8 +153,10 @@ describe('the container owns one retention service (§8.4)', () => {
 
     expect(thrown, 'an unstarted container handed out a retention service').toBeInstanceOf(Error);
     // The code is the one a support report filters on; without it the refusal
-    // is `UNKNOWN`, which is indistinguishable from a crash.
-    expect((thrown as { code?: string }).code).toBe('STORAGE_ERROR');
+    // is `UNKNOWN`, which is indistinguishable from a crash. It also names the
+    // lifecycle rather than storage: the old `STORAGE_ERROR` sent a report to
+    // SQLite when the container had simply never been started.
+    expect((thrown as { code?: string }).code).toBe('CONTAINER_NOT_STARTED');
     // The message names *which* field was missing, so "call start() first" is
     // actionable rather than a guess about the container's whole state.
     expect((thrown as Error).message).toContain('db');
@@ -205,9 +207,10 @@ describe('the container owns one retention service (§8.4)', () => {
 
       expect(thrown, `a container missing only ${field} handed out a retention service`)
         .toBeInstanceOf(Error);
-      // The same code as the blanket refusal: what the caller would have
-      // failed on anyway.
-      expect((thrown as { code?: string }).code).toBe('STORAGE_ERROR');
+      // The same code as the blanket refusal, and the same distinction from a
+      // storage fault: the missing field is the symptom, the unstarted
+      // container is the cause.
+      expect((thrown as { code?: string }).code).toBe('CONTAINER_NOT_STARTED');
       // And the field itself, so the message is actionable.
       expect((thrown as Error).message, `the refusal did not name ${field}`).toContain(field);
     }

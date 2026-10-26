@@ -12,6 +12,10 @@ export type AppErrorCode =
   | 'RATE_LIMITED'
   | 'NETWORK_ERROR'
   | 'STORAGE_ERROR'
+  // A subsystem was read from the composition root before `start()` built it.
+  // This was reported as `STORAGE_ERROR`, which pointed a support report at
+  // SQLite when the fault was the container's lifecycle.
+  | 'CONTAINER_NOT_STARTED'
   | 'MIGRATION_FAILED'
   | 'BUDGET_EXCEEDED'
   | 'INJECTION_UNSUPPORTED'

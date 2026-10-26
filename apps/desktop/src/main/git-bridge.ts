@@ -121,6 +121,11 @@ export class GitLikeBridge {
     // for, so the state is measured rather than assumed.
     let statusInFlight = false;
 
+    // Whether the caller's answer has been built from `collected`. A `git
+    // diff` that finishes after this point cannot contribute to it any more;
+    // see `logLateDiff`.
+    let snapshotTaken = false;
+
     /**
      * Records a `git status` that answered after the deadline.
      *
@@ -169,6 +174,47 @@ export class GitLikeBridge {
         requested: 0,
         abandoned: 0,
         failed: 0,
+        outcome,
+        ...(error !== undefined ? { error: describeError(error) } : {}),
+      });
+    };
+
+    /**
+     * Records a `git diff` that answered after the summary was built.
+     *
+     * The deadline line is a snapshot: `abandoned` counts this path because
+     * the summary had not heard from it when it gave up. A snapshot has no
+     * ending, so afterwards "the subprocess came back a moment later" and
+     * "it is still hanging" read the same in a support report. This line is
+     * the ending, and — unlike a count — it names the path the answer
+     * belonged to.
+     *
+     * `snapshotTaken`, not `expired`, decides whether the answer was actually
+     * discarded: a diff can cross the finish line while the deadline timer
+     * fires, just before `out` is built. That answer is in the summary the
+     * caller receives, and calling it late would contradict the answer. Only
+     * a diff that finishes after the snapshot is guaranteed to be dropped.
+     *
+     * The stage is `'diff-late'`, for the same reason `logLateStatus` uses
+     * `'status-late'`: the giving-up line and the arrival are different
+     * events, and a report counting `stage: 'diff'` must not count one slow
+     * file twice.
+     *
+     * A late failure gets the same line with `outcome: 'failed'` and its
+     * error, instead of the in-time "skipped a path" line: by the time this
+     * runs the summary is already gone, so "skipped" would describe work
+     * nobody was waiting for.
+     */
+    const logLateDiff = (
+      path: string,
+      outcome: 'answered' | 'failed',
+      error?: unknown,
+    ): void => {
+      if (!snapshotTaken) return;
+      this.opts.logger.debug('git diff summary discarded a late diff answer', {
+        workspaceId: input.workspaceId,
+        stage: 'diff-late',
+        path,
         outcome,
         ...(error !== undefined ? { error: describeError(error) } : {}),
       });
@@ -294,19 +340,14 @@ export class GitLikeBridge {
           inFlight += 1;
           try {
             const diff = await this.opts.git.diff({ workspaceRoot: root, path });
-            // A diff that lands after the deadline is counted here and dropped
-            // there. The deadline line is a snapshot taken at the deadline, and
-            // it already accounts for this path — as `inFlight` while it was
-            // running, as `abandoned` afterwards. No second line is written
-            // for it: the arithmetic (`requested = answered + failed +
-            // abandoned`) already says what became of every path, and a
-            // per-path line would only restate it.
-            //
-            // The one late answer that does get a line of its own is
-            // `git status` (see `logLateStatus`), because there the deadline
-            // line carries a *subprocess* count and the reader cannot tell
-            // from it whether that process is still hanging.
+            // A diff that lands after the summary was built is dropped: `out`
+            // is already a copy of `collected`, so the assignment below lands
+            // on a list nobody reads. The deadline line counted this path as
+            // abandoned, but a count cannot tell a slow file from a hung one
+            // once the summary has returned; `logLateDiff` writes the ending
+            // and names the path.
             answered += 1;
+            logLateDiff(path, 'answered');
             if (diff.binary || diff.patch.trim() === '') continue;
             collected[index] = {
               path,
@@ -320,11 +361,18 @@ export class GitLikeBridge {
             // a claim about every other file too. The other paths answered, so
             // they stay in the answer; this one is logged and left out.
             failed += 1;
-            this.opts.logger.debug('git diff skipped a path that failed', {
-              workspaceId: input.workspaceId,
-              path,
-              error: describeError(error),
-            });
+            if (snapshotTaken) {
+              // The summary was already answered, so this failure is not a
+              // path that was skipped from it — it is an ending for a path
+              // the deadline line counted as abandoned.
+              logLateDiff(path, 'failed', error);
+            } else {
+              this.opts.logger.debug('git diff skipped a path that failed', {
+                workspaceId: input.workspaceId,
+                path,
+                error: describeError(error),
+              });
+            }
           } finally {
             inFlight -= 1;
           }
@@ -335,6 +383,11 @@ export class GitLikeBridge {
         Promise.all(Array.from({ length: concurrency }, () => worker())),
         deadline,
       ]);
+
+      // The answer is frozen here. A worker still inside `git diff` can no
+      // longer join it; from now on its result is evidence about a subprocess,
+      // not part of the summary, and `logLateDiff` says so when it lands.
+      snapshotTaken = true;
 
       const out = collected.filter((item): item is Item => item !== undefined);
       if (expired) {
@@ -350,6 +403,10 @@ export class GitLikeBridge {
         // `inFlight` names how many subprocesses are still out there. Binary and
         // empty patches are not abandoned: they answered, and were dropped for
         // a reason the other two fields already tell.
+        //
+        // This line is a snapshot and cannot name the paths that answer after
+        // it. Their endings are written by `logLateDiff`, with a stage of their
+        // own, so `abandoned` here remains what it was measured to be.
         //
         // The fields are arithmetic, not adjectives, and they now close without
         // the reader doing the subtraction:
