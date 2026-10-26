@@ -28,6 +28,52 @@ interface AdmittedDecision {
   ts: string;
 }
 
+/**
+ * Why an engine was dropped from the chain the user asked for.
+ *
+ * The chain is pruned for three different reasons, and a log line that does not
+ * say which one left the reader guessing: "an engine was dropped" cannot tell
+ * a person whether to fix a typo, to remove a duplicated entry, or to change a
+ * setting they never gave. The event string already separated the branches,
+ * but two of them shared a branch — a manifest that contradicts itself and a
+ * manifest asking for an effect nobody authorised both arrived as "an engine
+ * whose effects are not authorised", which is false of the first one: its
+ * effects were not unauthorised, they were unreadable.
+ *
+ * So the reason is a field of its own, and every drop line carries one:
+ *
+ * - `unknown` — this build does not know the id at all;
+ * - `duplicate` — the chain named the same engine twice;
+ * - `contradiction` — the manifest says two things at once (NFR-14);
+ * - `unauthorized` — it declares an effect no setting permits.
+ */
+export type EngineChainDropReason = 'unknown' | 'duplicate' | 'contradiction' | 'unauthorized';
+
+/**
+ * Why an engine's declared side effects may not run.
+ *
+ * The two refusals that are about the manifest rather than about the chain:
+ * a declaration that contradicts itself, and one that asks for an effect no
+ * setting permits. They need different fixes — a manifest to correct and a
+ * setting to switch — so they are told apart.
+ */
+export type SideEffectRefusal = 'contradiction' | 'unauthorized';
+
+/**
+ * The reasons, as the log writes them.
+ *
+ * A map rather than bare literals so that `tsc` checks every one of them
+ * against {@link EngineChainDropReason}: a misspelled reason in a log field is
+ * the kind of drift a support report cannot see — the line looks right and the
+ * reason is wrong.
+ */
+const DROP_REASON = {
+  unknown: 'unknown',
+  duplicate: 'duplicate',
+  contradiction: 'contradiction',
+  unauthorized: 'unauthorized',
+} as const satisfies Record<EngineChainDropReason, EngineChainDropReason>;
+
 export interface DecisionFacadeOptions {
   db: Database;
   logger: Logger;
@@ -74,11 +120,17 @@ export class DecisionFacade {
    *   newer build, or a typo, must not be able to put a made-up engine into
    *   the chain.
    * - An engine that declares a side effect the user did not authorise is
-   *   dropped (NFR-14). The check lives here, in Main — the Settings UI also
-   *   hides the checkbox, but a UI check is not a permission.
+   *   dropped, and so is one whose manifest contradicts itself (NFR-14). The
+   *   check lives here, in Main — the Settings UI also hides the checkbox, but
+   *   a UI check is not a permission.
    * - A duplicate id is dropped: calling the same engine twice in one chain
    *   would compute the same answer twice and make the trace lie.
    * - An empty result falls back to the rule engine, which is always present.
+   *
+   * Every drop is logged with the reason it happened, in a field of its own
+   * rather than only in the event string: a report counts the reasons without
+   * matching on the messages, and the two refusals that used to share one
+   * line are told apart.
    */
   private resolveChainIds(engineIds: readonly string[]): string[] {
     const ids: string[] = [];
@@ -89,15 +141,21 @@ export class DecisionFacade {
         // chain and the running chain now differ, and this is the only trace
         // of *why* — silence here made the discrepancy unexplainable.
         this.opts.logger.warn('engine chain: dropping an unknown engine id', {
+          reason: DROP_REASON.unknown,
           engineId: id,
           requested: engineIds,
         });
         continue;
       }
-      if (!this.isAllowed(engine)) {
-        // NFR-14: no setting authorises this engine's effects, so it may not
-        // run whatever the settings file says. Recorded, not implied.
-        this.opts.logger.warn('engine chain: dropping an engine whose effects are not authorised', {
+      const refusal = this.refusalReason(engine);
+      if (refusal !== undefined) {
+        // NFR-14: no setting authorises this engine's effects, or the manifest
+        // contradicts itself, so it may not run whatever the settings file
+        // says. Recorded, not implied — and the `reason` says which of the two
+        // it was, because the two need different fixes: a manifest to correct
+        // and a setting to switch.
+        this.opts.logger.warn('engine chain: dropping an engine whose effects may not run', {
+          reason: refusal,
           engineId: id,
           sideEffects: engine.manifest.sideEffects ?? [],
           allowNetworkEngines: this.opts.allowNetworkEngines,
@@ -109,6 +167,7 @@ export class DecisionFacade {
         // Running an engine twice would compute the same answer twice and make
         // the decision trace claim two engines agreed.
         this.opts.logger.info('engine chain: dropping a duplicate engine id', {
+          reason: DROP_REASON.duplicate,
           engineId: id,
           requested: engineIds,
         });
@@ -137,7 +196,7 @@ export class DecisionFacade {
   }
 
   /**
-   * Whether this build may run the engine at all.
+   * Whether this build may run the engine at all — and if not, why.
    *
    * The question is "is every effect this engine declares authorised?", and
    * `sideEffects` is the manifest author's answer. The cases are written out
@@ -173,33 +232,47 @@ export class DecisionFacade {
    * - **anything else** (`process`, or an effect a newer build added) — there
    *   is no setting behind it, so nobody can have agreed to it. Refused: fail
    *   closed rather than run something nobody authorised (NFR-14).
+   *
+   * The return value is the *reason*, not a boolean, because the two refusals
+   * above are not the same event: a manifest that contradicts itself and one
+   * that asks for an effect nobody authorised both arrive as "this engine may
+   * not run", and the person who has to fix it needs to know which — a
+   * manifest to correct, or a setting to switch. A boolean could not say it,
+   * which is why the log line said "not authorised" about a manifest whose
+   * effects nobody had ever been asked about.
    */
-  private isAllowed(engine: DecisionEngine): boolean {
+  private refusalReason(engine: DecisionEngine): SideEffectRefusal | undefined {
     const effects: readonly string[] = engine.manifest.sideEffects ?? [];
     // Nothing declared => nothing to authorise.
-    if (effects.length === 0) return true;
+    if (effects.length === 0) return undefined;
     // `none` on its own is the out-loud way of declaring what the empty array
     // says silently. Written as an explicit enumeration of the one allowed
     // shape rather than `includes('none') && length === 1`: the previous form
     // read as "contains none, and happens to be a single element", which let a
     // future edit to the predicate or to the array handling change what the
     // rule means without changing its shape.
-    if (effects.length === 1 && effects[0] === 'none') return true;
+    if (effects.length === 1 && effects[0] === 'none') return undefined;
     // `none` alongside anything else is a self-contradicting manifest; it is
     // never allowed, not even when the other effect would have been. `none`
     // twice is refused for the same reason the case list gives: the manifest
     // must state one thing, and "no effects, declared twice" is not a second
     // kind of statement.
-    if (effects.includes('none')) return false;
+    if (effects.includes('none')) return DROP_REASON.contradiction;
     // A declaration says one thing, once. Repeating an effect is not a wider
     // permission, it is a manifest that does not match the shape the case list
     // describes — the same reason `['none', 'none']` is refused two lines up.
     // Checked before the `every()` below, which asks per element and so cannot
     // tell `['network']` from `['network', 'network']`.
-    if (new Set(effects).size !== effects.length) return false;
+    if (new Set(effects).size !== effects.length) return DROP_REASON.contradiction;
     // Every effect needs a setting behind it. `network` has one; `process`
     // does not yet, so it is refused whatever `allowNetworkEngines` says.
-    return effects.every((effect) => effect === 'network' && this.opts.allowNetworkEngines);
+    // A declaration that asks for an effect nobody authorised is not
+    // self-contradicting — it is a plain request the user never agreed to,
+    // which is a different thing to fix.
+    if (effects.every((effect) => effect === 'network' && this.opts.allowNetworkEngines)) {
+      return undefined;
+    }
+    return DROP_REASON.unauthorized;
   }
 
   /**

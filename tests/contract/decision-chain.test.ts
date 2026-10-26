@@ -36,6 +36,7 @@ import type {
   DecisionResult,
 } from '@ucad/contracts';
 import { DecisionFacade } from '../../apps/desktop/src/main/decision-facade';
+import type { EngineChainDropReason } from '../../apps/desktop/src/main/decision-facade';
 
 /**
  * An engine that answers with its own id, so a decision says which engine
@@ -321,7 +322,7 @@ describe('a declared side effect is a permission question, answered one case at 
     expect(facade.setChain(shapes.map((shape) => shape.id))).toEqual(['rule']);
 
     const refusals = sink.records.filter(
-      (record) => record.msg === 'engine chain: dropping an engine whose effects are not authorised',
+      (record) => record.msg === 'engine chain: dropping an engine whose effects may not run',
     );
     // One line per engine, in the order the chain asked for them, and none for
     // a shape that was allowed — the count is how a reader knows nothing was
@@ -347,6 +348,63 @@ describe('a declared side effect is a permission question, answered one case at 
       (record) => record.msg === 'engine chain: nothing may run from the requested chain; using the rule engine',
     );
     expect(fallback?.meta?.['requested']).toEqual(['confused', 'mixed', 'proc']);
+  });
+
+  /**
+   * The two refusals are not the same event.
+   *
+   * They used to share one line — "an engine whose effects are not authorised"
+   * — and that sentence is false of one of them. `['none', 'network']` was not
+   * refused because the network was unauthorised: it was refused because the
+   * manifest says two contradictory things, and no setting could have made it
+   * runnable. The person who has to fix it needs to know which they are
+   * looking at — a manifest to correct, or a setting to switch — and the two
+   * need different fixes.
+   *
+   * The reason is therefore a field of its own, and it is the same field on
+   * every drop line, so a report can count the reasons without reading the
+   * event strings.
+   */
+  it('says which kind of refusal it was, so the two are not one event', () => {
+    const sink = new MemoryLogSink();
+    const logger = new Logger({ scope: 'chain', sink });
+    const { facade } = makeFacade({
+      engines: [
+        // Says "no effects" and "network" at once: it contradicts itself, and
+        // no setting can make that declaration true.
+        stubEngine('confused', { sideEffects: ['none', 'network'] }),
+        // Says the same effect twice: the same contradiction, one element on.
+        stubEngine('repeated', { sideEffects: ['network', 'network'] }),
+        // Asks for an effect no setting permits. Not a contradiction — a plain
+        // request the user never agreed to.
+        stubEngine('proc', { sideEffects: ['process'] }),
+        // The network, with the network authorised: allowed, so not on the
+        // list at all.
+        stubEngine('net', { sideEffects: ['network'] }),
+      ],
+      logger,
+      allowNetworkEngines: true,
+    });
+
+    expect(facade.setChain(['confused', 'repeated', 'proc', 'net'])).toEqual(['net']);
+
+    const refusals = sink.records.filter(
+      (record) => record.msg === 'engine chain: dropping an engine whose effects may not run',
+    );
+
+    // The reason, per engine. A repeated element is a contradiction and not a
+    // wider permission — the contract says so, and the log now says it too.
+    // The list is typed, so a reason misspelled here fails `npm run typecheck`
+    // rather than quietly failing to match the log.
+    const expected: EngineChainDropReason[] = ['contradiction', 'contradiction', 'unauthorized'];
+    expect(refusals.map((record) => record.meta?.['reason'])).toEqual(expected);
+    // The engine that was allowed produced no line at all: a reason that is
+    // written for an engine nobody refused would be a claim about the chain.
+    expect(refusals.map((record) => record.meta?.['engineId'])).toEqual([
+      'confused',
+      'repeated',
+      'proc',
+    ]);
   });
 
   it('refuses an effect this build has no setting for', () => {
@@ -515,7 +573,7 @@ describe('a pruned chain says what it dropped and why', () => {
     const lines = sink.records.map((record) => record.msg).join('\n');
     expect(lines).toContain('unknown engine id');
     expect(lines).toContain('duplicate engine id');
-    expect(lines).toContain('effects are not authorised');
+    expect(lines).toContain('effects may not run');
     // The summary names both sides, so the difference is not something the
     // reader has to reconstruct from the individual lines.
     const pruned = sink.records.find((record) => record.msg === 'engine chain pruned');
@@ -592,7 +650,7 @@ describe('a combination chain: every entry, its reason, and the order', () => {
     expect(sink.records.map((record) => record.msg)).toEqual([
       'engine chain: dropping an unknown engine id',
       'engine chain: dropping a duplicate engine id',
-      'engine chain: dropping an engine whose effects are not authorised',
+      'engine chain: dropping an engine whose effects may not run',
       'engine chain pruned',
     ]);
 
@@ -602,6 +660,11 @@ describe('a combination chain: every entry, its reason, and the order', () => {
     expect(unknown?.meta?.engineId).toBe('unknown');
     expect(duplicate?.meta?.engineId).toBe('dup');
     expect(unauthorised?.meta?.engineId).toBe('process-only');
+    // And the same field says *why*, on every one of the three lines — so a
+    // report can count the reasons without matching on the event strings.
+    expect(unknown?.meta?.reason).toBe('unknown');
+    expect(duplicate?.meta?.reason).toBe('duplicate');
+    expect(unauthorised?.meta?.reason).toBe('unauthorized');
     // A refusal is a warning; a duplicate is a tidiness problem, and the
     // level says so.
     expect(unknown?.level).toBe('warn');
@@ -637,7 +700,7 @@ describe('a combination chain: every entry, its reason, and the order', () => {
       'engine chain: dropping an unknown engine id',
       'engine chain: dropping an unknown engine id',
       'engine chain: dropping an unknown engine id',
-      'engine chain: dropping an engine whose effects are not authorised',
+      'engine chain: dropping an engine whose effects may not run',
       'engine chain: nothing may run from the requested chain; using the rule engine',
     ]);
 

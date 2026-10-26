@@ -16,7 +16,25 @@ export interface DecisionEngineManifest {
   id: string;
   displayName: string;
   version?: string;
-  /** NFR-14: side effects must be declared truthfully. 'network' is off by default. */
+  /**
+   * NFR-14: side effects must be declared truthfully. 'network' is off by default.
+   *
+   * The declaration has a *shape*, and the shape is part of the contract rather
+   * than a convention the engine author happens to follow:
+   *
+   * - **at most one element.** A declaration states one effect, or none.
+   * - **`'none'` must not appear beside a real side effect.** 「no effects」 and
+   *   「network」 are not two halves of one statement; the manifest contradicts
+   *   itself.
+   * - **a repeated element is a contradiction, not a wider permission.**
+   *   `['none', 'none']` and `['network', 'network']` are malformed
+   *   declarations, not the effect twice.
+   *
+   * A declaration that breaks those rules is refused however the effects have
+   * been configured: a contradiction is not a permission. Main enforces this
+   * (`apps/desktop/src/main/decision-facade.ts`) — the Settings UI only hides
+   * the checkbox, and a UI check is not a permission.
+   */
   sideEffects: Array<'none' | 'network' | 'process'>;
   supportedKinds: DecisionKind[];
   /** suggested; Main enforces a hard upper bound */
