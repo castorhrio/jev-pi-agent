@@ -19,14 +19,19 @@
  *
  * ## What this file does about it
  *
- * Two gates, because either one alone has a hole:
+ * Three gates, because either of the first two alone has a hole:
  *
  *  - the *scan* reads the source and finds the claims — every `field!: T`
  *    declaration — so a field that is added to the container is a field this
  *    file knows about. A list written by hand would go stale silently, and a
  *    field nobody lists is a field nobody checks;
  *  - the *run* starts a real container in a temporary directory and asks
- *    whether each of those claims is true afterwards.
+ *    whether each of those claims is true afterwards;
+ *  - the *guard's scope* is read from the sources rather than from the comment
+ *    that describes it: `requireStarted()` is asked for `retentionDeps()`'s
+ *    fields and nothing else, in the container and under all of `src/main`.
+ *    `STARTED`'s note says widening the guard means widening `retentionDeps()`;
+ *    a comment cannot be wrong, so the note has a failing test behind it.
  *
  * The scan is tested on fixtures first. A scanner that only ever runs over a
  * code base that passes is a scanner whose failure mode is unknown: if it
@@ -210,6 +215,114 @@ function overCheckedFields(calls: readonly string[]): string[] {
     .sort();
 }
 
+/** The main-process sources the guard's scope is read from. */
+const MAIN_SOURCE = path.join(here, '../../apps/desktop/src/main');
+/** Repo root, so the paths in a failure message are the ones a reader types. */
+const REPO_ROOT = path.join(here, '../..');
+
+/**
+ * Source with comments removed, string literals kept.
+ *
+ * `requireStarted` is named in a dozen doc comments in `app-container.ts` —
+ * "the guard's scope" is explained by quoting a call site. Counting raw text
+ * would count those quotes, and the numbers would be wrong in the one file
+ * that matters. A small character walk rather than a regex, because `//`
+ * inside a string is not a comment (a URL in a log line is the common case)
+ * and that is pinned by a fixture below.
+ *
+ * Not parsed: regex literals. A regex containing two adjacent slashes would be
+ * read as the start of a comment. Such a literal would have to sit immediately
+ * before a call to hide one, and a hidden call is reported by the count
+ * assertion, so the blind spot fails loudly rather than silently.
+ */
+function stripComments(source: string): string {
+  let out = '';
+  let quote: string | null = null;
+  for (let i = 0; i < source.length; i += 1) {
+    const ch = source[i]!;
+    const next = source[i + 1];
+    if (quote !== null) {
+      out += ch;
+      if (ch === '\\') {
+        out += next ?? '';
+        i += 1;
+        continue;
+      }
+      if (ch === quote) quote = null;
+      continue;
+    }
+    if (ch === '"' || ch === "'" || ch === '`') {
+      quote = ch;
+      out += ch;
+      continue;
+    }
+    if (ch === '/' && next === '/') {
+      while (i < source.length && source[i] !== '\n') i += 1;
+      out += '\n';
+      continue;
+    }
+    if (ch === '/' && next === '*') {
+      const end = source.indexOf('*/', i + 2);
+      i = end === -1 ? source.length : end + 1;
+      out += ' ';
+      continue;
+    }
+    out += ch;
+  }
+  return out;
+}
+
+/**
+ * The fields a file asks the guard for, in source order.
+ *
+ * A *call* is what counts — `x.requireStarted('field', …)`. The declaration is
+ * `private requireStarted<K …>(` and has no receiver, so it is not matched, and
+ * prose is gone by the time this runs (`stripComments`). Every receiver counts,
+ * not only `this`: the claim being checked is "nothing outside `retentionDeps()`
+ * asks the guard", and a call through a parameter or a destructured value
+ * (`app.requireStarted(…)`) is exactly the shape a `this`-only rule would miss.
+ * Both quotes and a wrapped call are read, because Prettier wraps a long call
+ * and the field name then lands on the next line.
+ */
+function guardCalls(source: string): string[] {
+  return [...stripComments(source).matchAll(/\.requireStarted\(\s*(['"])([^'"]+)\1/g)].map(
+    (match) => match[2]!,
+  );
+}
+
+/**
+ * The body of a method declared at class-member indent, or `''`.
+ *
+ * Deliberately a text slice, not a parser (the same call the file makes
+ * everywhere else): the end of a method is the next `\n  }\n`, which is what
+ * this codebase writes for every method. A method written with a different
+ * indent reads as missing, and the test using it says so by name.
+ */
+function methodBody(source: string, name: string): string {
+  const start = source.indexOf(`\n  private ${name}(`);
+  if (start === -1) return '';
+  const end = source.indexOf('\n  }\n', start);
+  return end === -1 ? '' : source.slice(start, end);
+}
+
+/** Every `.ts` file under `apps/desktop/src/main`, as repo-relative path + source. */
+function mainSources(dir: string = MAIN_SOURCE): { path: string; source: string }[] {
+  return fs
+    .readdirSync(dir, { withFileTypes: true })
+    .sort((a, b) => a.name.localeCompare(b.name))
+    .flatMap((entry) => {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) return mainSources(full);
+      if (!entry.name.endsWith('.ts')) return [];
+      return [
+        {
+          path: path.relative(REPO_ROOT, full).split(path.sep).join('/'),
+          source: fs.readFileSync(full, 'utf8'),
+        },
+      ];
+    });
+}
+
 /**
  * The claims, written out.
  *
@@ -383,6 +496,97 @@ describe('the scan that reads the container’s promises', () => {
     // checklist entry behind, or the `has every one of them after start()`
     // test would keep asserting a field nobody promises any more.
     expect(checklistEntriesNotPromised(['db'], ['db', 'removed'])).toEqual(['removed']);
+  });
+});
+
+describe('the guard’s scope, as the sources write it', () => {
+  it('drops comments but keeps a slash inside a string', () => {
+    // The doc comments in `app-container.ts` quote the guard by name, so a
+    // scan over raw text counts prose as call sites. And `//` in a string is
+    // not a comment — a log line with a URL is the shape that would otherwise
+    // eat the rest of its line, including a call.
+    const source = [
+      '// this.requireStarted(\'db\', this.db) in a comment',
+      '/* and a block one */',
+      "logger.info('see https://example.com/docs'); this.requireStarted('db', this.db);",
+    ].join('\n');
+    expect(guardCalls(source)).toEqual(['db']);
+    expect(stripComments('a // b'), 'a \n');
+  });
+
+  it('reads a wrapped call and a double-quoted field name', () => {
+    // Prettier wraps a long call rather than the argument, so the field name
+    // can sit on the next line; a rule anchored to one line misses it and the
+    // count below then reports a call that is plainly in the source as gone.
+    expect(guardCalls("this.requireStarted(\n        'db',\n        this.db,\n      );")).toEqual([
+      'db',
+    ]);
+    expect(guardCalls('this.requireStarted("logger", this.logger);')).toEqual(['logger']);
+    // A call through another receiver is still a call — that is the shape
+    // "nothing outside retentionDeps()" has to catch. The declaration, which
+    // has no receiver, is the only `.requireStarted(` that is not one.
+    expect(guardCalls("other.requireStarted('db', other.db);")).toEqual(['db']);
+    expect(guardCalls('private requireStarted<K extends keyof UcadApp>(')).toEqual([]);
+  });
+
+  it('slices a method body, and reports one it cannot find', () => {
+    const source = [
+      'class A {',
+      '  private retentionDeps(): X {',
+      "    return { db: this.requireStarted('db', this.db) };",
+      '  }',
+      '',
+      '  other() {}',
+      '}',
+    ].join('\n');
+    expect(methodBody(source, 'retentionDeps')).toContain("this.requireStarted('db'");
+    expect(methodBody(source, 'retentionDeps')).not.toContain('other()');
+    // A method written at another indent is not found; the test that uses this
+    // says so instead of comparing two empty lists.
+    expect(methodBody('class A {\n    private retentionDeps(): X {\n    }\n}', 'retentionDeps')).toBe(
+      '',
+    );
+  });
+
+  it('guards nothing outside retentionDeps()', () => {
+    // `STARTED`'s scope note says the guard is not a blanket wrapper and that
+    // "adding a field to the guard's scope means widening `retentionDeps()`".
+    // That is a claim about the source, and nothing checked it: a call added
+    // anywhere else in the class — or in another main-process file — kept the
+    // comment true-looking while the scope had quietly grown.
+    const container = fs.readFileSync(CONTAINER_SOURCE, 'utf8');
+    const body = methodBody(container, 'retentionDeps');
+    expect(
+      body,
+      'retentionDeps() is gone or is no longer a `private` method at class-member indent, so the scope below cannot be read',
+    ).not.toBe('');
+
+    const guarded = guardCalls(body);
+    expect(
+      [...guarded].sort(),
+      'retentionDeps() asks the guard for a different set of fields than RETENTION_DEPENDENCIES names',
+    ).toEqual([...RETENTION_DEPENDENCIES].sort());
+    expect(
+      guardCalls(container),
+      'the container calls requireStarted() outside retentionDeps(); the STARTED scope note says that cannot happen',
+    ).toEqual(guarded);
+  });
+
+  it('is called from no other file under src/main', () => {
+    // The other half of the scope note: the guard is the retention bag's, not
+    // the container's general start-up check. A second caller in another file
+    // would be a second dependency path nobody's scan covers.
+    const callers = mainSources()
+      .map((file) => ({ path: file.path, fields: guardCalls(file.source) }))
+      .filter((caller) => caller.fields.length > 0);
+    expect(
+      callers.map((caller) => caller.path),
+      'requireStarted() has a caller outside the container',
+    ).toEqual(['apps/desktop/src/main/app-container.ts']);
+    expect(
+      callers.reduce((total, caller) => total + caller.fields.length, 0),
+      'the number of guarded fields is not the number of retention dependencies',
+    ).toBe(RETENTION_DEPENDENCIES.length);
   });
 });
 

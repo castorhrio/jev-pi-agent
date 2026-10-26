@@ -84,6 +84,12 @@ export interface UcadAppOptions {
  * to be on its checklist and to be non-null after a real `start()`. Adding a
  * field to the guard's scope therefore means widening `retentionDeps()`, not
  * assuming this mark already reaches it.
+ *
+ * That scope is a test, not a promise: `tests/contract/app-container-started.test.ts`
+ * reads the sources and fails when the guard is asked for a field outside
+ * `retentionDeps()`, for a field the retention list does not name, or from any
+ * other file under `src/main`. A wider guard is therefore a red test with this
+ * paragraph named in it, rather than a sentence that quietly stopped being true.
  */
 const STARTED = Symbol('ucad.container.started');
 
