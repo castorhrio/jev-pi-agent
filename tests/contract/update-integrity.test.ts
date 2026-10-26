@@ -35,7 +35,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Readable } from 'node:stream';
 import type * as http from 'node:http';
-import { silentLogger } from '@ucad/observability';
+import { Logger, MemoryLogSink, silentLogger } from '@ucad/observability';
 import {
   checkFeedUrl,
   normalizeSha256,
@@ -72,10 +72,15 @@ interface FetchStep {
  * test: "the check said 9.9.9 is available, then a second check failed" is a
  * sequence, not a document. A test that scripted one response could only ever
  * describe the first half.
+ *
+ * Running out of scripted answers is a **failed expectation**, not a throw —
+ * see the branch below for why the difference decides whether the test's
+ * failure is readable, and `the scripted helpers fail the test that outruns
+ * them` for the fixture that keeps this branch red-able.
  */
 function feedFetchSteps(steps: readonly FetchStep[]): {
-  fetchImpl: typeof fetch;
-  calls: number;
+  readonly fetchImpl: typeof fetch;
+  readonly calls: number;
 } {
   const state = { calls: 0 };
   const queue = [...steps];
@@ -83,14 +88,29 @@ function feedFetchSteps(steps: readonly FetchStep[]): {
     state.calls += 1;
     const step = queue.shift();
     if (step === undefined) {
-      throw new Error('the feed was fetched more times than the test scripted');
+      // An assertion, not a throw: `check()` catches whatever the fetch
+      // rejects with and turns it into an `error` status, so a bare `throw`
+      // here arrived at the reader as "更新检查失败: the feed was fetched more
+      // times…" — a product-looking failure whose cause was the test. Failing
+      // the expectation names the overrun and the count instead, and
+      // `the scripted helpers fail the test that outruns them` proves this
+      // branch is a red test rather than a stack trace.
+      expect.fail(
+        `the feed was fetched more times than the test scripted ` +
+          `(${steps.length} scripted, request ${state.calls})`,
+      );
     }
     return new Response(step.document === undefined ? '' : JSON.stringify(step.document), {
       status: step.status,
       headers: { 'content-type': 'application/json' },
     });
   }) as unknown as typeof fetch;
-  return { fetchImpl, get calls() { return state.calls; } } as { fetchImpl: typeof fetch; calls: number };
+  return {
+    fetchImpl,
+    get calls() {
+      return state.calls;
+    },
+  };
 }
 
 /** One scripted HTTP response, and the request that produced it. */
@@ -107,6 +127,10 @@ interface ScriptedResponse {
  * `resolveDownloadRedirect` alone. A gate that only calls the helper proves
  * what the rule says; this drives the real listener, so "a 302 to `http:`
  * writes nothing" is a statement about the download, not about a predicate.
+ *
+ * Like `feedFetchSteps`, an unscripted request fails an expectation instead of
+ * throwing: the downloader catches everything its transport throws and reports
+ * it as a download failure, which reads as a product defect.
  */
 function scriptedGet(script: readonly ScriptedResponse[]): {
   getImpl: DownloadGet;
@@ -117,7 +141,15 @@ function scriptedGet(script: readonly ScriptedResponse[]): {
   const getImpl: DownloadGet = (url, _options, onResponse) => {
     requests.push(url.toString());
     const step = steps.shift();
-    if (step === undefined) throw new Error(`unexpected request for ${url}`);
+    if (step === undefined) {
+      // Same rule as `feedFetchSteps`: the downloader's own `catch` would turn
+      // a bare throw into a failed download, so the overrun is reported as a
+      // failed expectation naming the count and the URL that was not scripted.
+      expect.fail(
+        `the downloader made more requests than the test scripted ` +
+          `(${script.length} scripted, request ${requests.length}: ${url.toString()})`,
+      );
+    }
     const response = Object.assign(
       Readable.from(step.body === undefined ? [] : [Buffer.from(step.body)]),
       {
@@ -137,6 +169,53 @@ function scriptedGet(script: readonly ScriptedResponse[]): {
   };
   return { getImpl, requests };
 }
+
+/**
+ * The two scripted stand-ins, judged by taking one answer more than they hold.
+ *
+ * CONTRIBUTING's rule is "prove a gate can go red", and it applies to the test
+ * doubles too: a helper whose exhaustion branch has never run is a helper
+ * whose exhaustion behaviour is whatever the day's code happens to do. Both
+ * fixtures below run that branch on purpose and assert what the reader sees —
+ * an assertion naming the overrun, not a stack from inside a promise, and not
+ * a product status that says the update check failed.
+ */
+describe('the scripted helpers fail the test that outruns them', () => {
+  it('turns a feed fetched once too often into a failed expectation', async () => {
+    const scripted = feedFetchSteps([{ status: 200, document: { version: '9.9.9' } }]);
+    await scripted.fetchImpl(FEED_URL, {});
+
+    const overrun: unknown = await scripted.fetchImpl(FEED_URL, {}).then(
+      () => null,
+      (error: unknown) => error,
+    );
+
+    expect(overrun, 'a request beyond the script was answered instead of refused').toBeInstanceOf(
+      Error,
+    );
+    expect((overrun as Error).message).toContain('1 scripted, request 2');
+    // An `AssertionError` is what makes vitest print "expected … to be …" and
+    // point at the test; anything else prints as an unhandled rejection in the
+    // middle of the service's own error path.
+    expect((overrun as Error).name).toBe('AssertionError');
+    expect(scripted.calls).toBe(2);
+  });
+
+  it('turns a download that makes one request too many into a failed expectation', () => {
+    const { getImpl, requests } = scriptedGet([{ status: 200, body: 'the genuine installer' }]);
+
+    getImpl(new URL(INSTALLER_URL), { timeout: 1 }, () => {});
+    // The transport is called synchronously from inside the downloader's
+    // promise executor, so the failure surfaces as this throw; the downloader's
+    // own catch is what would otherwise bury it in an `error` status.
+    expect(() => getImpl(new URL(`${INSTALLER_URL}.again`), { timeout: 1 }, () => {})).toThrow(
+      /1 scripted, request 2: https:\/\/example\.test\/UCAD-Setup-9\.9\.9\.exe\.again/,
+    );
+    // The refused request is still recorded, so "how many requests were made"
+    // answers with the count the downloader actually attempted.
+    expect(requests).toEqual([INSTALLER_URL, `${INSTALLER_URL}.again`]);
+  });
+});
 
 describe('the feed a released build ships with', () => {
   it('is configured in a file that the packaging step copies into the app', () => {
@@ -389,6 +468,21 @@ describe('a hash is a hash', () => {
   });
 });
 
+/**
+ * The four ways `verifyInstaller()` can answer "no".
+ *
+ * Each case asserts the *whole* answer — reason plus `expected`/`actual` — with
+ * `toEqual`, and each is built so the neighbouring branch cannot be the one
+ * that fired: the size case carries a correct digest, the digest case carries a
+ * correct size, and the file swapped in the digest case is the same length as
+ * the original. Asserting only `ok === false` (which is what this block used to
+ * do) cannot tell a body was ever checked from a body that was refused for some
+ * other reason — a failure that looks like a fact, which is the defect this
+ * repository keeps paying for. The distinction matters to the user too: "the
+ * feed published no hash", "this is not the file", "this is not the file the
+ * size says" and "this file cannot be read" send a person to three different
+ * places.
+ */
 describe('proving a downloaded file is the one the feed named', () => {
   let dir: string;
   let file: string;
@@ -402,43 +496,90 @@ describe('proving a downloaded file is the one the feed named', () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
-  it('accepts a file that matches', async () => {
+  it('accepts a file that matches, and reports the digest it computed', async () => {
     const bytes = 'the genuine installer';
     writeFileSync(file, bytes);
+    const digest = sha256Of(bytes);
 
-    const result = await verifyInstaller(file, { sha256: sha256Of(bytes), size: bytes.length });
+    // The feed's digest is written in the case a release tool chose, which the
+    // check normalises: the answer reports the digest as it was computed, not
+    // as it arrived.
+    const result = await verifyInstaller(file, { sha256: digest.toUpperCase(), size: bytes.length });
 
-    expect(result.ok).toBe(true);
+    expect(result).toEqual({ ok: true, sha256: digest, bytes: bytes.length });
   });
 
-  it('rejects a file that was swapped in flight', async () => {
-    writeFileSync(file, 'the genuine installer');
-    const expected = sha256Of('the genuine installer');
+  it('refuses a file whose digest differs, and names both digests', async () => {
+    const genuine = 'the genuine installer';
+    const swapped = 'the evil installer!!!';
+    // Same length on purpose: the size check must not be able to take the
+    // credit for this refusal. The hash is the defence, and this is the case
+    // that proves the defence is the hash.
+    expect(swapped.length).toBe(genuine.length);
+    writeFileSync(file, swapped);
 
-    // The bytes on disk are no longer the bytes the feed described.
-    writeFileSync(file, 'a different installer with the same name');
+    const result = await verifyInstaller(file, { sha256: sha256Of(genuine), size: genuine.length });
 
-    const result = await verifyInstaller(file, { sha256: expected });
-
-    expect(result.ok).toBe(false);
-    expect(result.ok === false && result.reason).toBe('hash-mismatch');
+    expect(result).toEqual({
+      ok: false,
+      reason: 'hash-mismatch',
+      expected: sha256Of(genuine),
+      actual: sha256Of(swapped),
+      bytes: genuine.length,
+    });
   });
 
-  it('rejects a file whose size does not match', async () => {
-    writeFileSync(file, 'short');
-    const result = await verifyInstaller(file, { sha256: sha256Of('short'), size: 999 });
-    expect(result.ok === false && result.reason).toBe('size-mismatch');
+  it('refuses a file whose size differs, even when the digest matches', async () => {
+    const bytes = 'short';
+    writeFileSync(file, bytes);
+
+    const result = await verifyInstaller(file, { sha256: sha256Of(bytes), size: 999 });
+
+    // The digest is the file's own, so a size-mismatch here cannot be the hash
+    // branch in disguise. Both figures are carried: "expected 999, got 5" is
+    // what tells a truncated download from a wrong file.
+    expect(result).toEqual({
+      ok: false,
+      reason: 'size-mismatch',
+      expected: '999',
+      actual: String(bytes.length),
+      bytes: bytes.length,
+    });
   });
 
   it('says "not checked" rather than "checked" when the feed has no hash', async () => {
     writeFileSync(file, 'anything');
-    const result = await verifyInstaller(file, {});
-    expect(result.ok === false && result.reason).toBe('no-hash');
+
+    // Three spellings of "the feed did not say what this file is": absent, a
+    // string that is not a digest, and a truncated digest. None of them is a
+    // mismatch — nothing was compared — and none of them carries an
+    // `expected`/`actual` pair that could be read as a comparison result.
+    for (const hash of [undefined, 'not a hash', sha256Of('anything').slice(0, 63)]) {
+      expect(await verifyInstaller(file, { sha256: hash }), String(hash)).toEqual({
+        ok: false,
+        reason: 'no-hash',
+      });
+    }
+    // A feed that announces a size is not a substitute: an unchecked file is
+    // unchecked whatever else the document carries.
+    expect(await verifyInstaller(file, { size: 8 })).toEqual({ ok: false, reason: 'no-hash' });
   });
 
-  it('reports a file it cannot read as unreadable', async () => {
-    const result = await verifyInstaller(join(dir, 'absent.exe'), { sha256: sha256Of('x') });
-    expect(result.ok === false && result.reason).toBe('unreadable');
+  it('reports a file it cannot read as unreadable, whichever read fails', async () => {
+    // Two reads, two ways to fail, one reason: the caller's remedy is the same
+    // ("download it again"), and "cannot read" must never be reported as
+    // "does not match" — that would be a failure posing as a fact.
+    const absent = await verifyInstaller(join(dir, 'absent.exe'), { sha256: sha256Of('x') });
+    expect(absent, 'a file that is not there').toEqual({ ok: false, reason: 'unreadable' });
+
+    // The stat succeeds on a directory and the stream read is what fails
+    // (EISDIR), so this reaches the second `unreadable` branch rather than the
+    // first.
+    const notAFile = await verifyInstaller(dir, { sha256: sha256Of('x') });
+    expect(notAFile, 'a path that cannot be read as a file').toEqual({
+      ok: false,
+      reason: 'unreadable',
+    });
   });
 });
 
@@ -462,13 +603,18 @@ describe('the updater itself', () => {
     /** drive the real downloader through a scripted transport instead */
     downloadGet?: DownloadGet;
     open?: (target: string) => Promise<string>;
+    /** a sink the test can read, for asserting what was *said* was refused */
+    logs?: MemoryLogSink;
   }) {
     const fetched = feedFetchSteps(options.steps ?? [{ status: 200, document: options.feed ?? {} }]);
     const downloads: string[] = [];
     const launched: string[] = [];
     const download = options.download;
+    const logger = options.logs
+      ? new Logger({ scope: 'test', sink: options.logs })
+      : silentLogger('test');
     const instance = new UpdateService({
-      logger: silentLogger('test'),
+      logger,
       getFeedUrl: options.getFeedUrl ?? (() => FEED_URL),
       downloadDir: dir,
       currentVersion: '1.0.0',
@@ -520,6 +666,49 @@ describe('the updater itself', () => {
     expect(status.state).toBe('unsupported');
     expect(status.feedConfigured).toBe(false);
     expect(fetchCalls.calls).toBe(0);
+  });
+
+  it('says in the log why a feed was refused, not just that it was', async () => {
+    // The refusal is the security-relevant half of `resolveFeed()`, and it was
+    // the half with no gate: what the user sees is "未配置更新源" in both
+    // cases, and a cleartext channel refused without a line in `app.log` is a
+    // refusal nobody can diagnose. Both refusal reasons are asserted, because
+    // "you typed a URL wrong" and "you tried to downgrade the channel" send a
+    // person to two different fixes and must not be flattened into one line.
+    const refused: ReadonlyArray<readonly [string, string, 'invalid-url' | 'not-https']> = [
+      ['http://example.test/feed.json', 'must be https', 'not-https'],
+      ['file:///etc/passwd', 'must be https', 'not-https'],
+      ['example.test/feed.json', 'not a valid URL', 'invalid-url'],
+    ];
+
+    for (const [feedUrl, message, reason] of refused) {
+      const logs = new MemoryLogSink();
+      const { instance, fetchCalls } = service({ logs, getFeedUrl: () => feedUrl });
+
+      const status = await instance.check();
+
+      expect(status.state, `${feedUrl} was not reported as unsupported`).toBe('unsupported');
+      expect(status.feedConfigured).toBe(false);
+      expect(fetchCalls.calls, `${feedUrl} was fetched anyway`).toBe(0);
+
+      const warning = logs.records.find((record) => record.msg.includes(message));
+      expect(warning, `${feedUrl} was refused with no log line saying why`).toBeDefined();
+      expect(warning!.level).toBe('warn');
+      expect(warning!.meta).toMatchObject({ reason });
+    }
+  });
+
+  it('stays quiet about a feed nobody configured', async () => {
+    // The other half of the same rule: "nothing is configured" is a
+    // development build, not a mistake, so it must not produce the warning
+    // above — a log that cries wolf on every dev start is a log people stop
+    // reading.
+    const logs = new MemoryLogSink();
+    const { instance } = service({ logs, getFeedUrl: () => null });
+
+    await instance.check();
+
+    expect(logs.records.filter((record) => record.level === 'warn')).toEqual([]);
   });
 
   it('refuses an installer URL that is not https before fetching it', async () => {
@@ -648,13 +837,94 @@ describe('the updater itself', () => {
     expect(launched[0]).toBe(join(dir, 'UCAD-setup.exe'));
   });
 
-  it('refuses to launch a file that was replaced after the download', async () => {
+  /**
+   * The gap between "verified" and "launched".
+   *
+   * `download()` proves the bytes it wrote are the bytes the feed named, and
+   * that proof was a fact about one moment. The staged file then sits in the
+   * user's own profile directory until they click 立即重启 — minutes, or days —
+   * and the promise made at download time says nothing about the file that is
+   * there now. So `installAndRestart()` verifies again, against the document
+   * the update check read, and everything below is asserted because "it
+   * returns false" alone would pass for an updater that refused for an
+   * unrelated reason and left an executable sitting under the name that means
+   * "pending update".
+   */
+  it('refuses a file that was replaced between the download and the click, and deletes it', async () => {
+    const genuine = 'the genuine installer';
+    // Same length as the genuine file, so the size check cannot be the one
+    // that refuses it and the staging name is the only thing that is right.
+    const swapped = 'the evil installer!!!';
+    expect(swapped.length).toBe(genuine.length);
+
+    const logs = new MemoryLogSink();
+    const { instance, launched } = service({
+      logs,
+      feed: {
+        version: '9.9.9',
+        url: INSTALLER_URL,
+        sha256: sha256Of(genuine),
+        size: genuine.length,
+      },
+      download: async (_url, target) => {
+        writeFileSync(target, genuine);
+      },
+    });
+
+    await instance.check();
+    const downloaded = await instance.download();
+    expect(downloaded.state).toBe('ready');
+    expect(downloaded.verified).toBe(true);
+
+    // What a user's machine sees: the interval between the download finishing
+    // and the restart button being pressed.
+    writeFileSync(join(dir, 'UCAD-setup.exe'), swapped);
+
+    const installed = await instance.installAndRestart();
+
+    expect(installed, 'the updater reported a launch it must not have made').toBe(false);
+    expect(launched, 'a file that no longer matches the feed was launched').toEqual([]);
+    expect(
+      existsSync(join(dir, 'UCAD-setup.exe')),
+      'the tampered file was left on disk under the name that means "pending update"',
+    ).toBe(false);
+
+    const status = instance.current;
+    expect(status.state).toBe('error');
+    // `verified: true` would be the worst possible answer here: it is the
+    // field the settings screen reads as "this file was checked".
+    expect(status.verified).toBe(false);
+    expect(status.message).toContain('SHA-256');
+    // The status must not keep pointing at a file that is gone — the download
+    // button's replacement (安装) would otherwise offer a path that cannot be
+    // opened.
+    expect(status.downloadedPath, 'the status still points at a deleted file').toBeUndefined();
+
+    // And the refusal is in the log with the two figures, not just a boolean:
+    // the numbers are what tells a tampered download from a feed that changed
+    // its mind.
+    const refusal = logs.records.find((record) => record.msg === 'refusing to install an unverified update');
+    expect(refusal, 'the refusal was not logged at all').toBeDefined();
+    expect(refusal!.level, 'an installation that was refused is not a debug note').toBe('error');
+    expect(refusal!.meta).toMatchObject({
+      reason: 'hash-mismatch',
+      expected: sha256Of(genuine),
+      actual: sha256Of(swapped),
+    });
+  });
+
+  it('asks for a fresh download when the staged file is gone', async () => {
+    // The other way the install click can find nothing to verify: the file was
+    // cleaned up, or the user cleared the folder. "安装包不存在，请重新下载" is
+    // a different message from a verification failure, and it is the one that
+    // tells the person what to do next.
     const genuine = 'the genuine installer';
     const { instance, launched } = service({
       feed: {
         version: '9.9.9',
         url: INSTALLER_URL,
         sha256: sha256Of(genuine),
+        size: genuine.length,
       },
       download: async (_url, target) => {
         writeFileSync(target, genuine);
@@ -663,16 +933,14 @@ describe('the updater itself', () => {
 
     await instance.check();
     await instance.download();
-
-    // The staged file lives in the user's own profile directory, between the
-    // download and the click that launches it.
-    writeFileSync(join(dir, 'UCAD-setup.exe'), 'replaced after the check');
+    rmSync(join(dir, 'UCAD-setup.exe'), { force: true });
 
     const installed = await instance.installAndRestart();
 
     expect(installed).toBe(false);
     expect(launched).toEqual([]);
     expect(instance.current.state).toBe('error');
+    expect(instance.current.message).toContain('请重新下载');
   });
 
   /**
