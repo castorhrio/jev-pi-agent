@@ -940,11 +940,13 @@ describe('the manual step is discoverable as a command', () => {
 
   it('is not claimed to run in CI, which still has no packaging job', () => {
     // The same claim `adapter-resolution.test.ts` keeps for the README bullets,
-    // and the same vocabulary: `workflowsPackageTheApp` names `npm run
-    // package`, `npm run dist` and `electron-builder`, so a release job added
-    // under any of them turns this red. If a packaging job appears, the honest
-    // sentence changes with it — this case exists so the change is made on
-    // purpose.
+    // and the same vocabulary: `workflowsPackageTheApp` matches every entry in
+    // `PACKAGING_COMMANDS` (electron-builder, electron-forge, electron-packager
+    // and their `npm run` scripts), so a release job added under any of them
+    // turns this red. The list is *not* repeated here on purpose — it grew once
+    // already, and a second copy is a sentence that goes stale silently. If a
+    // packaging job appears, the honest sentence changes with it — this case
+    // exists so the change is made on purpose.
     //
     // The whole directory is read, not `ci.yml`: "the script does not run in
     // CI" is a claim about every workflow GitHub runs, so a `release.yml` that

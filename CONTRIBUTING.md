@@ -251,8 +251,19 @@ will meet, and where each is written down:
   pattern to remove the false alarm.
 - **Symlinked workflow files are not read**, for the same reason: `isFile()` is false for a link.
   The module doc says what to extend if that ever matters.
-- **Composite actions and reusable workflows are not read at all** — they are not files in
-  `.github/workflows/`, so the gate cannot see a packaging step that lives there.
+- **Composite actions, and reusable workflows in *other* repositories, are not read** — they are
+  not files in `.github/workflows/`, so a packaging step that lives there is invisible. The gap
+  is asserted twice in `tests/contract/ci-shape.test.ts` (*what this reader deliberately does not
+  see*): once with a fixture showing the `npm run dist` present in an action and the reader
+  answering `[]`, and once with an assertion that this repository installs neither shape — so the
+  commit that moves a step into `.github/actions/` or calls a remote reusable workflow is a red
+  test whose message names the reader to extend, not a paragraph nobody reads. A reusable
+  workflow in *this* repository is a file here and is read, which is why the bullet says "other
+  repositories".
+- **A command hidden behind a script is not recognised** — `run: ./scripts/package.sh` names a
+  file, and no text match can read what that file does. `ci-shape.test.ts` pins that boundary
+  (*cannot see a command hidden behind a script*); the fix if it ever matters is to make the step
+  call a named command, not to trust the gate.
 - **Template-literal block names are not recognised** by `tests/contract/scanner-registry.test.ts`,
   and that miss is itself asserted.
 - **String literals are not stripped** by the bare-throw scan, so a quoted example fails loudly

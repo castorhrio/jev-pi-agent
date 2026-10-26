@@ -11,10 +11,17 @@
  * A `npm run dist` job would have been missed by both, leaving the documents
  * promising "CI does not cover it" beside a CI run that did.
  *
- * So the definition lives once, names every command that produces a package,
- * and is consumed by the gates that compare the claim with the workflows. The
- * matching is deliberately textual: it reads the *commands* in the workflow
- * files, not the job graph.
+ * So the definition lives once, names every entry point an Electron packaging
+ * step is written as, and is consumed by the gates that compare the claim with
+ * the workflows. The matching is deliberately textual: it reads the *commands*
+ * in the workflow files, not the job graph.
+ *
+ * "Every entry point" is not "every command that produces a package" — that
+ * claim was in this paragraph and no test could hold it. A step that hides the
+ * command behind a script (`run: ./scripts/package.sh`) is outside any text
+ * match, and `tests/contract/ci-shape.test.ts` pins that boundary (see *cannot
+ * see a command hidden behind a script*) instead of leaving the stronger
+ * sentence in a comment.
  *
  * ## Why the directory, not `ci.yml`
  *
@@ -27,13 +34,34 @@
  * readers below therefore take the *directory*, and a failure names the file
  * the command was found in.
  *
- * What is still a blind spot, stated rather than implied: a packaging step
- * hidden inside a composite action (`.github/actions/**`) or a reusable
- * workflow invoked with `uses: owner/repo/.github/workflows/x.yml@ref`. Neither
- * is a file in this directory, so neither is read here — and a *symlinked*
- * workflow file is skipped by {@link readWorkflowFiles}, which is the third
- * declared gap. If that refactor lands, extend the readers — do not narrow
- * this list.
+ * ## What is still a blind spot, and where it is pinned
+ *
+ * Two shapes are not read here:
+ *
+ *  - a packaging step hidden inside a **composite action**
+ *    (`.github/actions/<name>/action.yml`);
+ *  - a **reusable workflow in another repository**, invoked with
+ *    `uses: owner/repo/.github/workflows/x.yml@ref`.
+ *
+ * Neither is a file in this directory. Stating that in a paragraph was the
+ * whole treatment until now, and a paragraph cannot fail: the next reader who
+ * moves a step into an action would leave the gate green and the documents
+ * promising CI packages nothing. `tests/contract/ci-shape.test.ts` therefore
+ * asserts the gap — *does not read a composite action* and *cannot see a
+ * reusable workflow in another repository* show the command present and the
+ * reader answering `[]` — and a third case asserts that this repository
+ * installs neither shape today, so extending the readers is a red test with
+ * these names in it rather than a comment somebody may notice.
+ *
+ * One narrowing worth knowing, because it makes the second gap smaller than it
+ * sounds: a reusable workflow **in this repository** is a top-level file under
+ * `.github/workflows/`, so it *is* read, and a packaging step inside it is
+ * caught. Only the remote case is invisible. *does read a reusable workflow
+ * that lives in this directory* pins that half.
+ *
+ * A *symlinked* workflow file is the third declared gap — see
+ * {@link readWorkflowFiles}. If any of these lands, extend the readers and the
+ * cases together; do not narrow this list.
  *
  * ## What the matching cannot tell apart, and why it does not need to
  *
@@ -85,7 +113,7 @@ interface PackagingCommand {
 }
 
 /**
- * The commands that build a release artifact.
+ * The entry points a packaging step is written as.
  *
  * Each pattern ends in `\b` and is not anchored to the end of the command, so
  * the variants a prefix match would otherwise slip through — `npm run
@@ -93,11 +121,29 @@ interface PackagingCommand {
  * recognised as packaging. `npm run build` is deliberately absent: it is what
  * the gates themselves run, and treating it as packaging would make the
  * assertion vacuous.
+ *
+ * This repository packages with electron-builder (`npm run package`, `npm run
+ * dist`), and the list also names the entry points of the other two toolchains
+ * an Electron project reaches for: electron-forge (`npm run make`,
+ * `electron-forge`) and `electron-packager`. They are here because the module's
+ * asymmetry argues for it — a false alarm is reworded in a minute, while a
+ * packaging step nobody recognised is the failure this module exists to
+ * prevent. `tests/contract/ci-shape.test.ts` asserts each entry is matched
+ * (*recognises the other ways an Electron packaging step is written*), so
+ * adding a toolchain is a line here plus a case there.
+ *
+ * What the list still cannot see is a step whose command is in a file:
+ * `run: ./scripts/package.sh`. No pattern can, and the case *cannot see a
+ * command hidden behind a script* pins that boundary rather than leaving it
+ * implied by an absent line.
  */
 export const PACKAGING_COMMANDS: readonly PackagingCommand[] = [
   { command: 'npm run package', pattern: /\bnpm run package\b/u },
   { command: 'npm run dist', pattern: /\bnpm run dist\b/u },
   { command: 'electron-builder', pattern: /\belectron-builder\b/u },
+  { command: 'npm run make', pattern: /\bnpm run make\b/u },
+  { command: 'electron-forge', pattern: /\belectron-forge\b/u },
+  { command: 'electron-packager', pattern: /\belectron-packager\b/u },
 ];
 
 /**

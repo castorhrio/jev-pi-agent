@@ -973,11 +973,13 @@ describe('bootstrap.ts names the real search roots and stays off the `write` cha
  * "CI does not cover it", as the README bullet states it.
  *
  * "Does CI package the app" is answered by `workflowsPackageTheApp` in
- * `ci-shape.ts`, which names all three commands that build an artifact. This
- * file used to answer it with a narrower private regex, so a `npm run dist`
- * step would have passed here while the README went on saying CI does not cover
- * the packaged check. `ci-shape.test.ts` pins the shared vocabulary against the
- * real workflows.
+ * `ci-shape.ts`, which matches every entry in `PACKAGING_COMMANDS` (the three
+ * Electron packaging toolchains and their `npm run` scripts) — named there once
+ * rather than copied here, because the copy that used to live in this file was
+ * narrower than the other one. This file used to answer it with a private regex
+ * of its own, so a `npm run dist` step would have passed here while the README
+ * went on saying CI does not cover the packaged check. `ci-shape.test.ts` pins
+ * the shared vocabulary against the real workflows.
  *
  * It takes the *set* of workflow files, not one file's text — the shared
  * reader was widened because the claim is about CI, and CI is everything under

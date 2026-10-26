@@ -30,20 +30,39 @@
  * a failure names the file the command was found in. The fixture below proves
  * it: a clean `ci.yml` beside a packaging `release.yaml` is reported.
  *
- * ## What it deliberately does not check
+ * ## What it deliberately does not check — and how that is pinned
  *
- * The job graph, and packaging steps that are not in this directory: a step
- * inside a composite action (`.github/actions/**`) or a reusable workflow
- * invoked with `uses: …/workflows/x.yml@ref` is a known blind spot, and
- * `ci-shape.ts` says so where the reader lives. If that refactor lands, extend
- * the readers rather than deleting the assertion — the sentence in the
- * documents would be wrong either way. The subdirectory case is not a blind
- * spot but a rule: GitHub does not read workflows from a subdirectory, so a
- * `nested/ci.yml` is not run by anyone.
+ * The job graph, and packaging steps that are not files in this directory: a
+ * step inside a composite action (`.github/actions/<name>/action.yml`) or inside a
+ * reusable workflow in *another* repository (`uses: owner/repo/.github/
+ * workflows/x.yml@ref`). Both used to be a paragraph in `ci-shape.ts` and a
+ * paragraph in this header, which is a gap nobody can fail: moving a step into
+ * an action would leave the gate green and the documents lying. The cases in
+ * *what this reader deliberately does not see* now assert the gap with a
+ * fixture that shows the command there and the reader answering `[]`, and
+ * assert that this repository installs neither shape today — so extending the
+ * readers starts as a red test naming these cases.
+ *
+ * The narrowing that paragraph did not mention: a reusable workflow **in this
+ * repository** is a top-level file under `.github/workflows/`, so the reader
+ * sees it and a packaging step inside it is caught. Only the remote case is
+ * invisible, and the third case in that describe pins the half the gate does
+ * cover.
+ *
+ * The subdirectory case is not a blind spot but a rule: GitHub does not read
+ * workflows from a subdirectory, so a `nested/ci.yml` is not run by anyone.
  */
 
 import { describe, expect, it } from 'vitest';
-import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -132,6 +151,43 @@ describe('the CI workflows package nothing', () => {
         ].join('\n'),
       ),
     ).toEqual([]);
+  });
+
+  it('recognises the other ways an Electron packaging step is written', () => {
+    // This repository packages with electron-builder, and the first version of
+    // the vocabulary named only its entry points. The other two toolchains an
+    // Electron project reaches for are named too — not because this repository
+    // uses them, but because the expensive mistake here is a *missed* step
+    // (`ci-shape.ts` argues the asymmetry): a release job switched to
+    // electron-forge would otherwise start packaging the app in CI while every
+    // document went on saying CI does not.
+    //
+    // Each line is asserted rather than assumed, so the list is a decision with
+    // a failing test behind it instead of a list nobody reads twice.
+    expect(packagingCommands('      - run: npm run make\n')).toEqual(['`npm run make`']);
+    expect(packagingCommands('      - run: npx electron-packager . --platform=win32\n')).toEqual([
+      '`electron-packager`',
+    ]);
+    expect(packagingCommands('      - run: npx electron-forge make\n')).toEqual([
+      '`electron-forge`',
+    ]);
+    // A comment naming one of them trips the gate exactly like a step does —
+    // the same textual rule, and the same one-minute fix.
+    expect(packagingCommands('      # electron-forge is how a fork would do it\n')).toEqual([
+      '`electron-forge`',
+    ]);
+  });
+
+  it('cannot see a command hidden behind a script, which is the boundary of the vocabulary', () => {
+    // The boundary `ci-shape.ts` declares, pinned so it is a known edge rather
+    // than a surprise: the step names a *file*, and no pattern can read what
+    // that file does. `npm run build:dist` is here for the other half — a
+    // command this repository does not have and the vocabulary does not claim
+    // to recognise. If either of these ever becomes the way the app is
+    // packaged, the fix is to make the workflow call a named command (or to
+    // extend the readers), not to trust this gate.
+    expect(packagingCommands('      - run: ./scripts/package.sh\n')).toEqual([]);
+    expect(packagingCommands('      - run: npm run build:dist\n')).toEqual([]);
   });
 });
 
@@ -311,5 +367,170 @@ describe('the readers cover the directory, not one file', () => {
     // makes the documents' claim look verified. A moved or renamed workflows
     // directory has to be a red gate, not a silent green one.
     expect(() => readWorkflowFiles(join(REPO_ROOT, '.github', 'no-such-dir'))).toThrow();
+  });
+});
+
+/** ci.yml as a repository that keeps its packaging step in a local action. */
+const CI_CALLING_A_COMPOSITE_ACTION = [
+  'name: CI',
+  'jobs:',
+  '  gates:',
+  '    steps:',
+  '      - uses: actions/checkout@v4',
+  '      - uses: ./.github/actions/package',
+].join('\n');
+
+/** A composite action that packages the app, living outside the workflows directory. */
+const COMPOSITE_PACKAGE_ACTION = [
+  'name: package',
+  'description: build the installer',
+  'runs:',
+  '  using: composite',
+  '  steps:',
+  '    - run: npm run dist',
+  '      shell: bash',
+].join('\n');
+
+/** The caller of a reusable workflow that lives in somebody else's repository. */
+const REMOTE_REUSABLE_RELEASE = [
+  'name: Release',
+  'on:',
+  '  workflow_dispatch:',
+  'jobs:',
+  '  dist:',
+  '    uses: acme/tools/.github/workflows/package.yml@v1',
+].join('\n');
+
+/**
+ * A throwaway repository root, for the shapes that are not in the workflows
+ * directory at all.
+ *
+ * Same contract as `withWorkflowsDir` — the callback gets the root and the tree
+ * is removed afterwards — because the composite action case has to place two
+ * files in *different* directories, and a fixture rooted at `.github/workflows/`
+ * could not express that.
+ */
+function withRepoRoot(files: Record<string, string>, run: (root: string) => void): void {
+  const root = mkdtempSync(join(tmpdir(), 'ucad-repo-'));
+  try {
+    for (const [name, text] of Object.entries(files)) {
+      const path = join(root, ...name.split('/'));
+      mkdirSync(join(path, '..'), { recursive: true });
+      writeFileSync(path, text);
+    }
+    run(root);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}
+
+/**
+ * The blind spots `ci-shape.ts` used to declare in a paragraph.
+ *
+ * A declared gap is honest, and it is also unfalsifiable: nothing goes red when
+ * the shape appears, so the declaration ages into a false sentence. These cases
+ * make each gap a thing that can fail — the command shown present where it
+ * lives, the reader shown answering `[]` where it looks — and then make the
+ * *repository* fail if either shape is ever installed. The last case is the one
+ * that fires on the dangerous commit: moving a packaging step into
+ * `.github/actions/` or invoking a remote reusable workflow turns this file red
+ * with the extension the reader needs written in the message.
+ */
+describe('what this reader deliberately does not see', () => {
+  it('does not read a composite action, so a packaging step can hide in one', () => {
+    withRepoRoot(
+      {
+        '.github/workflows/ci.yml': CI_CALLING_A_COMPOSITE_ACTION,
+        '.github/actions/package/action.yml': COMPOSITE_PACKAGE_ACTION,
+      },
+      (root) => {
+        const actionPath = join(root, '.github', 'actions', 'package', 'action.yml');
+        // First half: the command is genuinely packaging. Read where it lives,
+        // the shared vocabulary catches it — without this, the case would prove
+        // only that some file the reader skips says something.
+        expect(packagingCommands(readFileSync(actionPath, 'utf8'))).toEqual(['`npm run dist`']);
+        // Second half: read where the gate reads, the same command is invisible.
+        const workflows = readWorkflowFiles(join(root, '.github', 'workflows'));
+        expect(workflows.map((workflow) => workflow.name)).toEqual(['ci.yml']);
+        expect(packagingCommandsIn(workflows)).toEqual([]);
+        expect(workflowsPackageTheApp(workflows)).toBe(false);
+      },
+    );
+  });
+
+  it('does read a reusable workflow that lives in this directory', () => {
+    // The half of the gap that is *not* open, and the reason the doc says
+    // "in another repository" rather than "reusable workflows": a workflow in
+    // this repository is a top-level file under `.github/workflows/`, so GitHub
+    // runs it and this reader opens it. Stating the gap more broadly than it is
+    // would send the next reader widening a reader that already covers it.
+    withWorkflowsDir(
+      {
+        'ci.yml': [
+          'name: CI',
+          'jobs:',
+          '  gates:',
+          '    uses: ./.github/workflows/gates.yml',
+        ].join('\n'),
+        'gates.yml': PACKAGING_RELEASE,
+      },
+      (dir) => {
+        expect(packagingCommandsIn(readWorkflowFiles(dir))).toEqual([
+          '`npm run dist` in `gates.yml`',
+        ]);
+      },
+    );
+  });
+
+  it('cannot see a reusable workflow in another repository', () => {
+    withWorkflowsDir({ 'ci.yml': CLEAN_CI, 'release.yml': REMOTE_REUSABLE_RELEASE }, (dir) => {
+      const workflows = readWorkflowFiles(dir);
+      // The caller is read — and it names a workflow that is not here. The gate
+      // is green over a job that may well package the app, which is the cost of
+      // the gap, asserted rather than described.
+      expect(workflows.map((workflow) => workflow.name)).toEqual(['ci.yml', 'release.yml']);
+      expect(packagingCommandsIn(workflows)).toEqual([]);
+      expect(workflowsPackageTheApp(workflows)).toBe(false);
+      // And the absence is a decision, not an oversight: the `uses:` line is a
+      // path, not a command. Matching it would produce a red gate whose only
+      // fix is a lie ("this repository packages the app"), so the vocabulary
+      // stays silent about it and the case says so.
+      expect(
+        packagingCommands('    uses: acme/tools/.github/workflows/package.yml@v1'),
+      ).toEqual([]);
+    });
+  });
+
+  it('finds neither blind spot installed in this repository today', () => {
+    // A blind spot is only a blind spot while it is empty. These two assertions
+    // are the ones that fire on the dangerous commit: they do not depend on
+    // anybody reading the paragraph, and their messages name the reader to
+    // extend.
+    const actionsDir = join(REPO_ROOT, '.github', 'actions');
+    expect(
+      existsSync(actionsDir),
+      `\`.github/actions/\` now exists (${actionsDir}) and readWorkflowFiles() does not read it: ` +
+        'a packaging step could live there and this gate would still answer "CI packages nothing". ' +
+        'Extend readWorkflowFiles() (and the cases in this describe, and the blind-spot paragraph ' +
+        'in ci-shape.ts) before relying on the gate.',
+    ).toBe(false);
+
+    // A `uses:` that names a workflow file is a reusable-workflow call; the
+    // ones naming an action (`actions/checkout@v4`) do not end in `.yml@ref`
+    // and are not matched. A local call is read anyway (the case above); a
+    // remote one is the gap, so a call to *any* workflow file is reported here
+    // for the reader to classify.
+    // Job-level (`    uses:`) and step-level (`      - uses:`) both, because a
+    // reusable workflow is called from either position.
+    const reusableCall = /^\s*(?:-\s*)?uses:\s*\S*\.ya?ml(?:@\S*)?\s*$/mu;
+    const calling = realWorkflows()
+      .filter((workflow) => reusableCall.test(workflow.text))
+      .map((workflow) => workflow.name);
+    expect(
+      calling,
+      `a workflow now invokes a reusable workflow (${calling.join(', ')}); if it lives in another ` +
+        'repository, a packaging step inside it is invisible to readWorkflowFiles(). Extend the ' +
+        'reader, or update this case and ci-shape.ts if the call is genuinely not a packaging path.',
+    ).toEqual([]);
   });
 });
