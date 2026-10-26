@@ -139,12 +139,21 @@ export class GitLikeBridge {
      * `expired` is the test for "too late" rather than a separate timer: it
      * is already the flag the workers stop on, so there is one clock and one
      * answer to "is it still in time".
+     *
+     * The `stage` is `'status-late'`, not `'status'`. Both lines are about the
+     * same subprocess, and sharing the stage name made them the same *kind* of
+     * line as far as anything machine-readable is concerned: a support report
+     * could only tell them apart by the event string, and a report that counts
+     * `stage: 'status'` occurrences counted one hung `git status` twice. The
+     * deadline line is the snapshot of a summary that gave up; this one is the
+     * same subprocess arriving afterwards, and the two call for different
+     * readings.
      */
     const logLateStatus = (outcome: 'answered' | 'failed', error?: unknown): void => {
       if (!expired) return;
       this.opts.logger.debug('git diff summary discarded a late status answer', {
         workspaceId: input.workspaceId,
-        stage: 'status',
+        stage: 'status-late',
         // The subprocess has returned — that is the only reason the answer is
         // here at all — so nothing of it is still out there.
         statusInFlight: false,

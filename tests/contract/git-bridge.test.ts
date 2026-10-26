@@ -386,7 +386,12 @@ describe('git diffSummary — the bounds', () => {
       (line) => line.event === 'git diff summary discarded a late status answer',
     );
     expect(discarded, 'the late status answer left no trace at all').toBeDefined();
-    expect(discarded!.fields?.stage).toBe('status');
+    // Its own stage name: the deadline line is the snapshot of a summary that
+    // gave up, this one is the same subprocess arriving after it, and a reader
+    // (or a report counting `stage: 'status'`) must not read one hung
+    // `git status` as two.
+    expect(discarded!.fields?.stage).toBe('status-late');
+    expect(discarded!.fields?.stage).not.toBe(stopped!.fields?.stage);
     // The subprocess has returned — that is the only reason the answer is
     // here at all — so nothing of it is still out there.
     expect(discarded!.fields?.statusInFlight).toBe(false);
@@ -404,7 +409,7 @@ describe('git diffSummary — the bounds', () => {
     expect(h.diffs).toEqual([]);
   });
 
-  it('writes the late-status line with the same fields as the deadline line', async () => {
+  it('writes the late-status line with the deadline line\'s fields, and a stage of its own', async () => {
     // The two lines are the same story told twice — a snapshot at the deadline,
     // and what became of the subprocess that snapshot left out there — so a
     // reader (or a support report) compares them field by field. Which fields
@@ -413,12 +418,15 @@ describe('git diffSummary — the bounds', () => {
     // added to one and not the other, and the reader would then be comparing
     // `undefined` against a number and drawing a conclusion from it.
     //
-    // So the sets are pinned exactly, not as a subset. The two fields that
+    // So the sets are pinned exactly, not as a subset. The fields that
     // legitimately belong to one line only are named here, which is what makes
-    // a *third* one a decision someone has to make out loud:
+    // another one a decision someone has to make out loud:
     //  - `deadlineMs` is about the budget, which the late answer knows nothing
     //    about;
     //  - `outcome` is about the late answer, which the deadline does not have.
+    //
+    // `stage` is on both lines and differs by design (`'status'` /
+    // `'status-late'`) — see the assertions after the field sets.
     const h = harness({ statusSlowMs: 60, diffDeadlineMs: 25 });
 
     await h.bridge.diffSummary({ workspaceId: 'ws_1' });
@@ -438,21 +446,32 @@ describe('git diffSummary — the bounds', () => {
       'failed',
       'inFlight',
       'requested',
-      'stage',
       'statusInFlight',
       'workspaceId',
     ];
-    expect(Object.keys(stopped!.fields ?? {}).sort()).toEqual([...shared, 'deadlineMs'].sort());
-    expect(Object.keys(discarded!.fields ?? {}).sort()).toEqual([...shared, 'outcome'].sort());
+    // `stage` is on both lines and is *not* shared: it is the field that says
+    // which of the two a line is (`'status'` vs `'status-late'`), so counting
+    // one hung `git status` twice becomes impossible instead of improbable.
+    expect(Object.keys(stopped!.fields ?? {}).sort()).toEqual(
+      [...shared, 'deadlineMs', 'stage'].sort(),
+    );
+    expect(Object.keys(discarded!.fields ?? {}).sort()).toEqual(
+      [...shared, 'outcome', 'stage'].sort(),
+    );
 
     // The shared fields mean the same thing on both lines: a summary with
-    // nothing in it. Only the subprocess counts may differ, and they must.
+    // nothing in it. Only the subprocess counts and the stage may differ, and
+    // they must.
     for (const key of shared) {
       if (key === 'inFlight' || key === 'statusInFlight') continue;
       expect(discarded!.fields?.[key], `${key} disagrees between the two lines`).toEqual(
         stopped!.fields?.[key],
       );
     }
+    // The stage is the machine-readable difference between "gave up" and
+    // "arrived afterwards": same subprocess, two different lines.
+    expect(stopped!.fields?.stage).toBe('status');
+    expect(discarded!.fields?.stage).toBe('status-late');
     // The one pair that is *supposed* to differ, and the whole reason the
     // second line exists: still out there at the deadline, gone by the time
     // the answer arrived.

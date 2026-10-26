@@ -56,12 +56,17 @@ vi.mock('electron', () => ({
 }));
 
 import { IPC_CHANNELS } from '@ucad/contracts';
+// The reason table comes from its own module, not from `ipc.ts`: the wording of
+// a refusal no longer needs the whole IPC surface registered (and Electron
+// mocked) to be asked a question, and the table's tests below are the reason
+// that separation exists.
 import {
   ZOD_ISSUE_CODES,
   ZOD_REASON_BY_CODE,
   ZOD_REASON_GENERIC,
-  registerIpc,
-} from '../../apps/desktop/src/main/ipc';
+  zodReason,
+} from '../../apps/desktop/src/main/ipc-errors';
+import { registerIpc } from '../../apps/desktop/src/main/ipc';
 import type { UcadApp } from '../../apps/desktop/src/main/app-container';
 import type { Locale } from '../../apps/desktop/src/shared/i18n';
 
@@ -404,5 +409,35 @@ describe('every Zod issue code has a Chinese reason of its own', () => {
       // through the fix.
       expect(reason, `${code} is not a Chinese sentence`).toMatch(/^[\u4e00-\u9fff]+$/);
     }
+  });
+
+  it('answers a code the table has no entry for, instead of `undefined`', () => {
+    // The table is exhaustive for `tsc`, and `tsc` is not what runs the app: a
+    // Zod upgrade that adds a code, or an issue constructed by hand somewhere
+    // far from the schemas, indexes the table with a key that is not there. The
+    // lookup then answers `undefined`, and `toUserError` puts it through a
+    // template literal — so the sentence a person reads is
+    // 「输入无效 (cols)：undefined」, an English word where the reason belongs.
+    // The fallback used to sit in the `??`-less return of a `switch`, which is
+    // exactly the shape that reads as total and is not.
+    const outOfTable = {
+      code: 'not_a_code_this_build_knows',
+      // English, so `isZodOwnText` says it is Zod's wording and the reason has
+      // to be derived from the code — the path that reaches the table.
+      message: 'Expected number, received string',
+      path: ['cols'],
+      // Typed off `zodReason`'s own parameter rather than imported from `zod`:
+      // the point is "the reason function refuses to answer `undefined`", and
+      // naming the issue type from here would also mean this test depends on
+      // the library directly.
+    } as unknown as Parameters<typeof zodReason>[0];
+
+    const reason = zodReason(outOfTable);
+
+    expect(reason, 'a code outside the table produced no reason at all').not.toBeUndefined();
+    expect(reason).toBe(ZOD_REASON_GENERIC);
+    // Chinese, like every other reason: the fallback must not be the place the
+    // library's wording (or `undefined`) survives.
+    expect(reason).toMatch(/^[\u4e00-\u9fff]+$/);
   });
 });
