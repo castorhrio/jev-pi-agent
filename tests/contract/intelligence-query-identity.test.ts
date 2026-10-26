@@ -511,6 +511,69 @@ describe('the payload the provider receives', () => {
     query.mockRestore();
   });
 
+  it('tells an id that is not a project id apart from another project', async () => {
+    // Both refusals are `INVALID_INPUT` and neither runs a query, so the code
+    // cannot tell them apart — and for a while neither could the sentence.
+    // `workspaceId: null` (a form nobody filled in, a JSON body that says
+    // `null` on purpose) was answered with "the payload's project and the
+    // request's are inconsistent", which sends the reader looking for a
+    // project that was never named. The three inputs are pinned here together
+    // so the two sentences cannot drift back into one.
+    const { manager, provider } = makeRecordingManager();
+
+    const attempt = async (
+      payload: Record<string, unknown>,
+    ): Promise<{ refused: boolean; code: string; message: string }> =>
+      runIntelligenceQuery({ intelligence: manager }, {
+        workspaceId: 'ws_1',
+        kind: 'search',
+        input: { query: 'needle', ...payload },
+      }).then(
+        () => ({ refused: false, code: '', message: '' }),
+        (error: unknown) => ({
+          refused: true,
+          code: (error as { code?: string }).code ?? '',
+          message: (error as Error).message,
+        }),
+      );
+
+    // Absent — and explicitly `undefined`, which is how a payload built from an
+    // optional field spells "not provided". The request's id is used, which is
+    // what every caller without a payload field relies on.
+    for (const payload of [{}, { workspaceId: undefined }]) {
+      const outcome = await attempt(payload);
+      expect(outcome.refused, 'a payload with no workspace id was refused').toBe(false);
+      expect((provider.lastInput as { workspaceId?: string }).workspaceId).toBe('ws_1');
+    }
+
+    // Present but not an id: `null` is the case that started this, and the
+    // other spellings are the same mistake. Same code, and the sentence says
+    // the value is invalid rather than that two projects disagree.
+    for (const claimed of [null, '', 42, { id: 'ws_1' }]) {
+      const outcome = await attempt({ workspaceId: claimed });
+      expect(outcome.refused, `a payload naming ${JSON.stringify(claimed)} was accepted`).toBe(true);
+      expect(outcome.code).toBe('INVALID_INPUT');
+      expect(outcome.message, `the sentence for ${JSON.stringify(claimed)} blames a mismatch`).toContain(
+        '无效',
+      );
+      expect(outcome.message).not.toContain('不一致');
+    }
+
+    // Present and a real id, but another project: the only input that is a
+    // disagreement, and the only one that gets the mismatch sentence.
+    const mismatch = await attempt({ workspaceId: 'ws_other' });
+    expect(mismatch.refused).toBe(true);
+    expect(mismatch.code).toBe('INVALID_INPUT');
+    expect(mismatch.message).toContain('不一致');
+    expect(mismatch.message).not.toContain('无效');
+
+    // And no refusal reached the provider: had the mismatched payload been
+    // run, the provider would have been handed `ws_other`, and the id it holds
+    // is still the request's.
+    expect((provider.lastInput as { workspaceId?: string }).workspaceId).toBe('ws_1');
+    expect((provider.lastInput as { query?: string }).query).toBe('needle');
+  });
+
   it('accepts a payload that repeats the request’s workspace id', async () => {
     const { manager, provider } = makeRecordingManager();
     await runIntelligenceQuery({ intelligence: manager }, {

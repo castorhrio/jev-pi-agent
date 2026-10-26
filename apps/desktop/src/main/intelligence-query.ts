@@ -122,6 +122,14 @@ export interface IntelligenceQueryEnvelope {
  * replacing it made the mismatch unobservable: the provider answered for the
  * *request's* project while the caller believed it had asked for the payload's
  * one, and nothing in the result said which project it described.
+ *
+ * Two refusals, two sentences. "The payload names another project" and "the
+ * payload's id is not a project id at all" are different mistakes with
+ * different fixes, and they used to share one sentence: a `workspaceId: null`
+ * — what a form that was never filled in, or a JSON body with an explicit
+ * `null`, produces — was told the two ids "不一致", which points the reader at
+ * a project that was never named. The code is the same (`INVALID_INPUT`, both
+ * are caller bugs and neither runs a query), the reason is not.
  */
 function mergeInput(
   workspaceId: string,
@@ -135,12 +143,28 @@ function mergeInput(
   // while looking like the right one. Fail closed (§4.8, NFR-14): a conflict
   // is a caller bug, and the safe answer is "no query ran", not "here are
   // some results".
-  if (claimed !== undefined && claimed !== workspaceId) {
-    throw codedError(
-      'INVALID_INPUT',
-      '查询载荷中的项目与请求不一致：一次查询只能针对一个项目，请重新发起查询。',
-      'ipc',
-    );
+  if (claimed !== undefined) {
+    // Absent is not a claim: every panel that has no id to send relies on the
+    // request's one, and that stays allowed. Anything *present* has to be a
+    // project id, and `null` is the spelling that made the old single sentence
+    // wrong — a payload with `workspaceId: null` claims no project, so calling
+    // it "a different project" described a project the caller never named.
+    // Numbers, objects and the empty string are the same mistake: a value that
+    // cannot be an id.
+    if (typeof claimed !== 'string' || claimed.length === 0) {
+      throw codedError(
+        'INVALID_INPUT',
+        '查询载荷中的 workspaceId 无效：它必须是请求所指项目的非空字符串，本次查询没有发起。',
+        'ipc',
+      );
+    }
+    if (claimed !== workspaceId) {
+      throw codedError(
+        'INVALID_INPUT',
+        '查询载荷中的项目与请求不一致：一次查询只能针对一个项目，请重新发起查询。',
+        'ipc',
+      );
+    }
   }
   return { ...payload, workspaceId };
 }

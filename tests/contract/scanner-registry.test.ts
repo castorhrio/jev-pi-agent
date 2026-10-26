@@ -159,7 +159,11 @@ function missingFiles(paths: readonly string[], exists: (path: string) => boolea
  * Whether a test file contains the named block.
  *
  * `describe(…)` or `it(…)`, either quote style, so the check is about the block
- * existing rather than about how it was written.
+ * existing rather than about how it was written. A template literal is
+ * deliberately not read — the blind spot is pinned in
+ * "does not recognise a block whose name is written as a template literal"
+ * below, so teaching the scan about backticks is a decision with a red test
+ * attached rather than a quiet widening of the map.
  */
 function hasBlock(source: string, block: string): boolean {
   return new RegExp(`(?:describe|it)\\((['"])${block.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\1`)
@@ -310,6 +314,23 @@ describe('the helpers that read the table', () => {
     expect(hasBlock(source, 'the bare throw scan')).toBe(false);
     // A block name with regex characters in it must be matched literally.
     expect(hasBlock("it('reports a (weird) name', () => {})", 'reports a (weird) name')).toBe(true);
+  });
+
+  it('does not recognise a block whose name is written as a template literal', () => {
+    // The blind spot, asserted rather than described. `hasBlock` reads a
+    // quoted string argument, so a gate whose fixture block is written
+    // it(`the bare-throw scan`, …) reads as a *missing* block here — the table
+    // then fails claiming a block CONTRIBUTING tells a contributor to extend
+    // has been deleted, and the message names the wrong cause.
+    //
+    // Pinned in this direction on purpose: if the scan is taught about
+    // backticks, this line goes red and whoever changed it has to decide what
+    // the map now accepts. CONTRIBUTING says the same in prose ("write the
+    // block name in a quoted literal").
+    expect(hasBlock('it(`the bare-throw scan`, () => {});', 'the bare-throw scan')).toBe(false);
+    // And the quoted spelling of the same block is the one that counts, so the
+    // assertion above is about the quoting, not about this name.
+    expect(hasBlock("it('the bare-throw scan', () => {});", 'the bare-throw scan')).toBe(true);
   });
 
   it('reports a scanner module the table does not name', () => {

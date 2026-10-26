@@ -157,7 +157,11 @@ scanners it knows about in both directions, resolves every path in the *Lives in
 disk, requires a row for every `-scan.ts` module in `tests/contract`, and checks that each
 row's driving test still imports its scanner and keeps the fixture block named below. Adding a
 scan without a row, or renaming a file in one place only, fails there — the map is read by
-people who are already lost.
+people who are already lost. The block name it looks for is a **quoted** string argument, so write
+a fixture block as `it('name', …)` or `describe("name", …)`; a backticked name reads as a missing
+block and the gate reports the block as deleted. That blind spot is asserted, not just noted:
+`tests/contract/scanner-registry.test.ts` pins that a template literal is *not* recognised, so
+teaching the scan about backticks fails there first.
 
 **Container claims.** The rule matches `!:`, not `!: ` — `db!:Database` is the same claim
 as `db!: Database` to the compiler, so requiring the space silently skipped a field. It
