@@ -16,6 +16,9 @@
  * over the captured output, and this file pins them:
  *
  *  - the summary line is parsed, and `(none)` is *not* parsed as success;
+ *  - the **first** summary line is the answer, both in the parser and in the
+ *    launch, so a later line cannot rescue a launch that resolved nothing — the
+ *    rule is stated in `resolvedAdapterIds` and pinned from both ends here;
  *  - a build that never reached resolution is reported as that, not as
  *    "no adapters" — the two send a reader to different places;
  *  - the executable to launch is looked for where `electron-builder` actually
@@ -91,6 +94,25 @@ describe('the summary line a packaged build prints', () => {
     expect(resolvedAdapterIds('[ucad] adapters resolved: (none)\n')).toEqual([]);
   });
 
+  it('takes the first summary line a build prints, and only that one', () => {
+    // A packaged UCAD is a tray app and keeps printing; a build whose resolution
+    // is attempted more than once can therefore print the line twice. The first
+    // line is the launch's own resolution, so `exec` without `/g` — which
+    // returns the first match — is the documented answer rather than an
+    // accident of statement order. Both directions are pinned below, because a
+    // "last line wins" edit would look like a tidy-up.
+    expect(
+      resolvedAdapterIds(
+        '[ucad] adapters resolved: universal, mock\n[ucad] adapters resolved: (none)\n',
+      ),
+    ).toEqual(['universal', 'mock']);
+    expect(
+      resolvedAdapterIds(
+        '[ucad] adapters resolved: (none)\n[ucad] adapters resolved: universal\n',
+      ),
+    ).toEqual([]);
+  });
+
   it('returns null when there is no line at all', () => {
     // Distinct from `[]` on purpose: a launch that never reached resolution has
     // a different cause (and a different fix) from one that resolved nothing.
@@ -126,6 +148,18 @@ describe('the verdict on a packaged launch', () => {
     expect(problems).toHaveLength(1);
     expect(problems[0]).toContain('printed no `[ucad] adapters resolved:` line');
     expect(problems[0]).not.toContain('resolved no adapter at all');
+  });
+
+  it('judges the first resolution, so a later line cannot rescue the launch', () => {
+    // The failure this keeps out of the "retry" direction: if the verdict read
+    // the last line, a build that resolved nothing and later printed a good
+    // line — from a second attempt, or from a line that was already in the
+    // buffer — would pass. The first line is the state this launch reached.
+    const problems = verifyResolution(
+      '[ucad] adapters resolved: (none)\n[ucad] adapters resolved: universal\n',
+    );
+    expect(problems).toHaveLength(2);
+    expect(problems[0]).toContain('resolved no adapter at all');
   });
 
   it('takes the required adapters from the caller, so the check is not hard-coded', () => {
@@ -401,6 +435,28 @@ describe('the launch, driven through an injected spawn', () => {
     );
     child.say('[ucad] adapters resolved: universal\n');
     await pending;
+  });
+
+  it('settles on the first summary line when both arrive in one chunk', async () => {
+    // The same first-line assumption at the launch level, where it is harder to
+    // see: a chunk that carries two lines is appended whole, so the verdict is
+    // decided by the parser's first match rather than by which chunk arrived.
+    const child = new FakeChild();
+    const group = new FakeGroup();
+    const pending = launch('/opt/ucad', {
+      spawnFn: () => child,
+      killFn: group.kill,
+      timeoutMs: 1000,
+    });
+
+    child.say('[ucad] adapters resolved: universal\n[ucad] adapters resolved: (none)\n');
+    const { output, reason } = await pending;
+
+    expect(reason).toBe('resolved-line');
+    expect(resolvedAdapterIds(output)).toEqual(['universal']);
+    expect(verifyResolution(output)).toEqual([]);
+    // One stop for one launch, not one per summary line.
+    expect(group.sent).toEqual([{ pid: -4242, signal: 'SIGTERM' }]);
   });
 
   it('reports the child while the build is still running', async () => {
@@ -719,6 +775,21 @@ describe('the manual step is discoverable as a command', () => {
     expect(preflight.length).toBeGreaterThan(0);
     expect(preflight).toMatch(/detached HEAD/u);
     expect(preflight).toContain('git switch main');
+  });
+
+  it('puts the Ctrl+C claim in the release checklist, where it is verified', () => {
+    // CONTRIBUTING states that an interrupted check exits `130`. That is a
+    // claim about the terminal delivering `SIGINT`, which no unit test can
+    // observe — `interruptRun` is driven directly. So the claim needs a manual
+    // step, in the list the operator is already reading, or it is a sentence
+    // nobody has ever checked.
+    const contributing = readFileSync(join(REPO_ROOT, 'CONTRIBUTING.md'), 'utf8');
+    const preflight = contributing.slice(contributing.indexOf('### Release preflight'));
+    expect(preflight, 'CONTRIBUTING.md no longer has a "### Release preflight" section').not.toBe(
+      '',
+    );
+    expect(preflight).toMatch(/Ctrl\+C/u);
+    expect(preflight).toContain('130');
   });
 
   it('is not claimed to run in CI, which still has no packaging job', () => {

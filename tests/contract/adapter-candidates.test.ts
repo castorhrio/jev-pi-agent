@@ -394,6 +394,13 @@ describe('README adapter paragraph ↔ ADAPTER_CANDIDATES', () => {
     expect(Object.keys(ADAPTER_CANDIDATES).length, 'the table names no adapters').toBeGreaterThan(
       0,
     );
+    // The comparison is against the constant the app loads, not against a copy
+    // of the ids written here: a third adapter added to `ADAPTER_CANDIDATES`
+    // must reach these checks without anyone also editing a list in this file.
+    // (`readme-parity.test.ts` compares the two languages with each other; this
+    // file is the one that knows which ids ship, so its source has to be the
+    // table itself.)
+    expect(facts.candidates).toBe(ADAPTER_CANDIDATES);
     // `bullets(body)[0]` is a hardcoded assumption: the adapter paragraph is
     // the *first* bullet under "Current limitations". If someone inserts a new
     // limitation above it, the checks below read the new bullet — which names

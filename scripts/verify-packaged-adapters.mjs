@@ -144,6 +144,13 @@ export function findPackagedExecutable(options) {
  * product's), while `(none)` means resolution ran and found nothing. Both fail
  * the check, but for different reasons, and a reader who is told "no adapters"
  * for a crashed launch looks in the wrong place.
+ *
+ * The **first** summary line wins. The pattern is anchored per line and `exec`
+ * returns its first match, so a build that prints the line twice — a tray app
+ * keeps talking, and a second resolution attempt would print again — is judged
+ * on the resolution its launch performed. A last-line-wins reading would let a
+ * later line rescue a failed launch, which is the opposite of what the check is
+ * for; the tests pin both directions so that edit has to be deliberate.
  */
 export function resolvedAdapterIds(output) {
   const match = RESOLVED_LINE.exec(output);

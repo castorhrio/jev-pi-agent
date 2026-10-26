@@ -20,7 +20,11 @@
  *
  * So this file compares the documents to the repository:
  *
- *  - every `scripts/…` path a document names has to exist;
+ *  - every `scripts/…` path a document names has to exist, and a mention the
+ *    extractor cannot read — a path wrapped across a line, or split by markup —
+ *    is reported instead of being skipped, because "the extractor read nothing"
+ *    and "there is nothing to read" must not look the same in the document that
+ *    was reflowed;
  *  - every `npm run …` a document names has to be a key in `package.json`;
  *  - the manual check is never named without `npm run package`, because the
  *    script refuses to run without the build that command writes; and
@@ -79,6 +83,49 @@ function npmRunNames(text: string): string[] {
 }
 
 /**
+ * Where a `scripts/` mention begins, without matching inside another token.
+ *
+ * The lookbehind keeps this off a path that merely contains `scripts/` as a
+ * segment (`docs/scripts/…`), which is not a reference to this repository's
+ * scripts directory.
+ */
+const SCRIPT_MENTION = /(?<![\w./-])scripts\//gu;
+
+/**
+ * `scripts/` mentions {@link scriptReferences} could not read, as quotable snippets.
+ *
+ * The extractor recognizes one form and only one: an unbroken literal such as
+ * `` `scripts/verify-packaged-adapters.mjs` ``. That is a deliberate trade —
+ * a fuzzy matcher that accepted any `scripts/` followed by anything would read
+ * prose about "the scripts directory" as a file reference — but it has a blind
+ * spot with the same shape as the defect this file exists for: a document that
+ * wraps the path across a line (markdown does it for long lines) or splits it
+ * with markup is *silently skipped* by the loop in `referenceProblems`, so the
+ * rename it should have reported stays green in exactly the document that was
+ * hardest to read.
+ *
+ * Closing that by widening the extractor would trade one false-negative shape
+ * for a family of false positives. So the trade is made checkable instead: the
+ * document may keep its prose, but a `scripts/` mention the extractor cannot
+ * read is itself reported. The gate then says "I cannot read this line" rather
+ * than quietly reading nothing.
+ *
+ * A snippet rather than the whole line, because the failure names a location:
+ * `JSON.stringify` renders a newline as `\n`, which is the fact being
+ * reported — the path is broken across lines.
+ */
+function unmatchedScriptMentions(text: string): string[] {
+  const readable = new Set([...text.matchAll(SCRIPT_REFERENCE)].map((match) => match.index ?? -1));
+  const mentions: string[] = [];
+  for (const match of text.matchAll(SCRIPT_MENTION)) {
+    const start = match.index ?? 0;
+    if (readable.has(start)) continue;
+    mentions.push(JSON.stringify(text.slice(start, start + 48)));
+  }
+  return mentions;
+}
+
+/**
  * Every way a document can name something that is not there.
  *
  * Empty means the documents agree with the repository. Deduplicated per
@@ -102,6 +149,14 @@ function referenceProblems(
       problems.push(
         `${document.name}: tells the reader to run \`npm run ${script}\`, which ` +
           '`package.json` does not define',
+      );
+    }
+    // A mention the extractor cannot read is not silence: the loop above would
+    // skip a wrapped path, so this says so instead of comparing nothing.
+    for (const mention of new Set(unmatchedScriptMentions(document.text))) {
+      problems.push(
+        `${document.name}: mentions a path starting \`scripts/\` in a form this check cannot ` +
+          `read (${mention}); keep it on one line, as a plain literal`,
       );
     }
     // The manual check and its precondition travel together: the script exits
@@ -224,6 +279,65 @@ describe('the commands the release documents tell a reader to run', () => {
     );
     expect(problems).toHaveLength(1);
     expect(problems[0]).toContain('without `npm run package`');
+  });
+
+  it('reads a script path only when it is one unbroken literal', () => {
+    // The extractor's boundary, stated as a test rather than as a comment: it
+    // recognizes `scripts/name.mjs` and nothing else. A path wrapped across a
+    // line — which is what a long markdown line turns into — is not read.
+    expect(scriptReferences(`Run \`${MANUAL_SCRIPT}\`, then read the summary.`)).toEqual([
+      MANUAL_SCRIPT,
+    ]);
+    expect(scriptReferences('Run `scripts/\nverify-packaged-adapters.mjs`.')).toEqual([]);
+    expect(scriptReferences('Run `scripts/<wbr>verify-packaged-adapters.mjs`.')).toEqual([]);
+  });
+
+  it('reports a path the extractor cannot read instead of silently skipping it', () => {
+    // The blind spot this closes. The earlier cases prove the extractor reads
+    // nothing from a wrapped path; without this one, a document that wrapped
+    // the command would be *green* — no reference to compare with the
+    // filesystem, so a renamed script would go unreported in that document.
+    const wrapped = referenceProblems(
+      [{ name: 'README.md', text: `Run \`scripts/\nverify-packaged-adapters.mjs\`.` }],
+      // The file being absent is irrelevant here: the complaint is about the
+      // form, not about what it names.
+      { fileExists: () => true, npmScripts: ['package'] },
+    );
+    expect(wrapped).toHaveLength(1);
+    expect(wrapped[0]).toContain('README.md');
+    expect(wrapped[0]).toContain('cannot read');
+    expect(wrapped[0]).toContain('scripts/');
+
+    // Markup that splits the path is the same blind spot, and gets the same
+    // answer: the gate cannot compare what it cannot see.
+    const markedUp = referenceProblems(
+      [{ name: 'CONTRIBUTING.md', text: 'Run `scripts/<span>verify-packaged-adapters.mjs</span>`.' }],
+      { fileExists: () => true, npmScripts: ['package'] },
+    );
+    expect(markedUp).toHaveLength(1);
+    expect(markedUp[0]).toContain('CONTRIBUTING.md');
+    expect(markedUp[0]).toContain('cannot read');
+
+    // A readable reference is still judged by existence alone, not reported
+    // twice: one path, one problem.
+    const renamed = referenceProblems(
+      [{ name: 'README.md', text: `Run \`${PACKAGING_COMMAND}\`, then \`${MANUAL_COMMAND}\`.` }],
+      { fileExists: () => false, npmScripts: ['package'] },
+    );
+    expect(renamed).toHaveLength(1);
+    expect(renamed[0]).toContain('which is not in the repository');
+  });
+
+  it('reads every `scripts/` mention in the real documents', () => {
+    // The documents as they are. This is the case that would go red if someone
+    // wrapped a long command line in the README — the gate would then be blind
+    // to that document, so it is a failure rather than a reflow.
+    for (const document of DOCUMENTS) {
+      expect(
+        unmatchedScriptMentions(document.text),
+        `${document.name} wraps or splits a \`scripts/\` path, which this check cannot read`,
+      ).toEqual([]);
+    }
   });
 
   it('has no opinion about the prose around the literals', () => {

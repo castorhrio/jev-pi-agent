@@ -305,6 +305,10 @@ Run these on the machine that produces the artifact, in this order:
 - [ ] `npm run package` — writes `release/`; a failure here is usually the Windows symlink trap
       above, not the app.
 - [ ] `node scripts/verify-packaged-adapters.mjs` — exits 0, and its summary names `universal`.
+- [ ] run it once more and press `Ctrl+C` while the build is starting: the command exits `130`
+      and leaves no UCAD process behind. The paragraph above makes that claim, and only a real
+      signal checks it: the unit tests pin `interruptRun`'s exit codes, not the terminal's own
+      `SIGINT` reaching the script.
 - [ ] install the artifact on a machine that has never run UCAD, launch it, and complete one
       turn — the parts no gate here can reach (`node-pty`, signing, the asar reads).
 - [ ] say in the release notes which adapter the packaged build resolved: no CI job covered it,
