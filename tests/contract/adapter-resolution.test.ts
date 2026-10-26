@@ -49,7 +49,7 @@ import {
   resolveAdapterModules,
   resolveFromProcess,
 } from '../../apps/desktop/src/main/adapter-resolution';
-import { packagesTheApp } from './ci-shape';
+import { readWorkflowFiles, workflowsPackageTheApp, type WorkflowFile } from './ci-shape';
 
 const here = import.meta.dirname;
 const REPO_ROOT = join(here, '..', '..');
@@ -896,27 +896,38 @@ describe('bootstrap.ts names the real search roots and stays off the `write` cha
 /**
  * "CI does not cover it", as the README bullet states it.
  *
- * "Does CI package the app" is answered by `packagesTheApp` in `ci-shape.ts`,
- * which names all three commands that build an artifact. This file used to
- * answer it with a narrower private regex, so a `npm run dist` step would have
- * passed here while the README went on saying CI does not cover the packaged
- * check. `ci-shape.test.ts` pins the shared vocabulary against the real
- * workflow.
+ * "Does CI package the app" is answered by `workflowsPackageTheApp` in
+ * `ci-shape.ts`, which names all three commands that build an artifact. This
+ * file used to answer it with a narrower private regex, so a `npm run dist`
+ * step would have passed here while the README went on saying CI does not cover
+ * the packaged check. `ci-shape.test.ts` pins the shared vocabulary against the
+ * real workflows.
+ *
+ * It takes the *set* of workflow files, not one file's text — the shared
+ * reader was widened because the claim is about CI, and CI is everything under
+ * `.github/workflows/`. A `release.yml` with an `electron-builder` step is the
+ * same defect as one in `ci.yml`: the sentence stops being true, and the gates
+ * here are what make that a red test rather than a stale paragraph.
  */
 const CI_NOT_COVERED = /\bci does not cover\b/iu;
 
+/** A workflow set as `readWorkflowFiles` returns it, for the fixtures below. */
+function workflowFiles(name: string, text: string): WorkflowFile[] {
+  return [{ name, text }];
+}
+
 function ciClaimProblems(input: {
   readonly bullet: string | undefined;
-  readonly workflow: string;
+  readonly workflows: readonly WorkflowFile[];
 }): string[] {
   if (input.bullet === undefined) {
     return ['the asar limitation bullet is missing, so its CI claim is unchecked'];
   }
   const claimsManual = CI_NOT_COVERED.test(input.bullet);
-  const ciPackages = packagesTheApp(input.workflow);
+  const ciPackages = workflowsPackageTheApp(input.workflows);
   if (claimsManual && ciPackages) {
     return [
-      'the README says CI does not cover the packaged asar check, but .github/workflows/ci.yml runs one; ' +
+      'the README says CI does not cover the packaged asar check, but a workflow under .github/workflows/ runs one; ' +
         'update the bullet, adapter-resolution.ts and readme-parity.test.ts to say what CI checks',
     ];
   }
@@ -930,7 +941,7 @@ function ciClaimProblems(input: {
 }
 
 describe('the README’s asar/CI claim matches what CI actually does', () => {
-  const CI_PATH = join(REPO_ROOT, '.github', 'workflows', 'ci.yml');
+  const WORKFLOWS_DIR = join(REPO_ROOT, '.github', 'workflows');
   const readme = existsSync(join(REPO_ROOT, 'README.md'))
     ? readFileSync(join(REPO_ROOT, 'README.md'), 'utf8')
     : '';
@@ -950,8 +961,14 @@ describe('the README’s asar/CI claim matches what CI actually does', () => {
     return out;
   }
 
-  it('reads both the workflow and the bullet, so the check is not vacuous', () => {
-    expect(existsSync(CI_PATH), `the CI workflow is missing (${CI_PATH})`).toBe(true);
+  it('reads both the workflows and the bullet, so the check is not vacuous', () => {
+    expect(existsSync(WORKFLOWS_DIR), `the workflows directory is missing (${WORKFLOWS_DIR})`).toBe(
+      true,
+    );
+    expect(
+      readWorkflowFiles(WORKFLOWS_DIR).length,
+      `no workflow was read from ${WORKFLOWS_DIR}`,
+    ).toBeGreaterThan(0);
     const bullets = enLimitationBullets(readme);
     expect(bullets, 'the README no longer has a "### Current limitations" section').toBeDefined();
     // The bullet this reads has to be the asar one: reading another limitation
@@ -966,7 +983,7 @@ describe('the README’s asar/CI claim matches what CI actually does', () => {
     );
     const problems = ciClaimProblems({
       bullet,
-      workflow: readFileSync(CI_PATH, 'utf8'),
+      workflows: readWorkflowFiles(WORKFLOWS_DIR),
     });
     expect(problems, problems.join('\n')).toEqual([]);
   });
@@ -977,7 +994,7 @@ describe('the README’s asar/CI claim matches what CI actually does', () => {
     expect(
       ciClaimProblems({
         bullet: '**Adapter resolution inside a real `.asar` archive is verified by the packaged smoke run.**',
-        workflow: 'jobs:\n  gates:\n    steps:\n      - run: npm test\n',
+        workflows: workflowFiles('ci.yml', 'jobs:\n  gates:\n    steps:\n      - run: npm test\n'),
       }),
     ).toEqual([
       'no CI job packages the app, and the README does not say the asar check is manual; ' +
@@ -988,18 +1005,32 @@ describe('the README’s asar/CI claim matches what CI actually does', () => {
     expect(
       ciClaimProblems({
         bullet: '**Adapter resolution inside a real `.asar` archive is verified by hand; CI does not cover it.**',
-        workflow: 'steps:\n  - run: npm run package\n',
+        workflows: workflowFiles('ci.yml', 'steps:\n  - run: npm run package\n'),
+      }),
+    ).toHaveLength(1);
+    // …including when the packaging step is in a *different* file. This is the
+    // blind spot the shared reader was widened for: `ci.yml` still runs only
+    // the gates, so a reader that took one file's text would report agreement
+    // while CI packages the app.
+    expect(
+      ciClaimProblems({
+        bullet:
+          '**Adapter resolution inside a real `.asar` archive is verified by hand; CI does not cover it.**',
+        workflows: [
+          ...workflowFiles('ci.yml', 'steps:\n  - run: npm test\n'),
+          ...workflowFiles('release.yml', 'steps:\n  - run: npx electron-builder --dir\n'),
+        ],
       }),
     ).toHaveLength(1);
     // Either claim is fine beside a workflow that really packages.
     expect(
       ciClaimProblems({
         bullet: '**Adapter resolution inside a real `.asar` archive is verified from the packaged build.**',
-        workflow: 'steps:\n  - run: npm run package\n',
+        workflows: workflowFiles('ci.yml', 'steps:\n  - run: npm run package\n'),
       }),
     ).toEqual([]);
     // A missing bullet is reported rather than treated as agreement.
-    expect(ciClaimProblems({ bullet: undefined, workflow: '' })).toEqual([
+    expect(ciClaimProblems({ bullet: undefined, workflows: [] })).toEqual([
       'the asar limitation bullet is missing, so its CI claim is unchecked',
     ]);
   });

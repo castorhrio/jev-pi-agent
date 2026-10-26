@@ -62,8 +62,10 @@
  * — but reading modules from inside the archive needs Electron's patched `fs`,
  * which only a packaged launch provides.
  *
- * **No automated gate covers that last step.** There is no packaging job in
- * `.github/workflows/ci.yml`: the check is `npm run package`, then
+ * **No automated gate covers that last step.** No workflow under
+ * `.github/workflows/` packages the app — `tests/contract/ci-shape.test.ts`
+ * reads every `*.yml` / `*.yaml` there and turns red if one grows a packaging
+ * step — so the check is `npm run package`, then
  * `node scripts/verify-packaged-adapters.mjs`, which launches the built app,
  * captures stdout and stderr, and fails unless this module's
  * `adapters resolved:` summary names `universal`. On Windows that has to be a

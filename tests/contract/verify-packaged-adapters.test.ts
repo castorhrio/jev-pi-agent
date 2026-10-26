@@ -81,7 +81,7 @@ import {
   tailOf,
   verifyResolution,
 } from '../../scripts/verify-packaged-adapters.mjs';
-import { packagesTheApp } from './ci-shape';
+import { readWorkflowFiles, workflowsPackageTheApp } from './ci-shape';
 
 const here = import.meta.dirname;
 const REPO_ROOT = join(here, '..', '..');
@@ -940,12 +940,18 @@ describe('the manual step is discoverable as a command', () => {
 
   it('is not claimed to run in CI, which still has no packaging job', () => {
     // The same claim `adapter-resolution.test.ts` keeps for the README bullets,
-    // and the same vocabulary: `packagesTheApp` names `npm run package`,
-    // `npm run dist` and `electron-builder`, so a release job added under any
-    // of them turns this red. If a packaging job appears, the honest sentence
-    // changes with it — this case exists so the change is made on purpose.
-    const workflow = readFileSync(join(REPO_ROOT, '.github', 'workflows', 'ci.yml'), 'utf8');
-    expect(packagesTheApp(workflow)).toBe(false);
+    // and the same vocabulary: `workflowsPackageTheApp` names `npm run
+    // package`, `npm run dist` and `electron-builder`, so a release job added
+    // under any of them turns this red. If a packaging job appears, the honest
+    // sentence changes with it — this case exists so the change is made on
+    // purpose.
+    //
+    // The whole directory is read, not `ci.yml`: "the script does not run in
+    // CI" is a claim about every workflow GitHub runs, so a `release.yml` that
+    // packaged the app and then ran the script would falsify it just as much.
+    const workflows = readWorkflowFiles(join(REPO_ROOT, '.github', 'workflows'));
+    expect(workflows.length).toBeGreaterThan(0);
+    expect(workflowsPackageTheApp(workflows)).toBe(false);
     expect(existsSync(join(REPO_ROOT, 'scripts', 'verify-packaged-adapters.mjs'))).toBe(true);
   });
 });
