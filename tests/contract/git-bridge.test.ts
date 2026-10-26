@@ -496,6 +496,57 @@ describe('git diffSummary — the bounds', () => {
     );
   });
 
+  it('does not let a late failure escape as an unhandled rejection', async () => {
+    // The rejection handler of the race used to re-throw, which reads like an
+    // error that travels: the summary had already been returned, so there was
+    // nobody left to refuse it. What actually happened is milder — and worth
+    // pinning, because "mild" is exactly the kind of thing a later edit
+    // breaks without anybody noticing:
+    //
+    //  - `Promise.race` attaches a handler to *both* branches, so the
+    //    rejection of the branch that lost is consumed by the race and never
+    //    reaches the process;
+    //  - the failure is recorded on the `status-late` line, so a git process
+    //    that died on a stale lock is not the same as one that never ran.
+    //
+    // So a late failure is neither a crash nor an error the caller has to
+    // handle: the caller gets an empty summary, and the failure is on the
+    // record. The listener below is what turns "nothing reached the process"
+    // from an assumption into an assertion.
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown): void => {
+      unhandled.push(reason);
+    };
+    process.on('unhandledRejection', onUnhandled);
+
+    try {
+      const h = harness({ statusSlowFailsMs: 60, diffDeadlineMs: 25 });
+
+      // The answer the caller gets is an answer, not a failure: the deadline
+      // had already decided the outcome of this summary.
+      await expect(h.bridge.diffSummary({ workspaceId: 'ws_1' })).resolves.toEqual([]);
+
+      // Now the status fails, late.
+      await after(120, undefined);
+
+      expect(
+        unhandled,
+        'the late failure escaped as an unhandled rejection',
+      ).toEqual([]);
+
+      // And it is on the record, with the stage of its own.
+      const discarded = h.logs.find(
+        (line) => line.event === 'git diff summary discarded a late status answer',
+      );
+      expect(discarded, 'the late failure left no trace at all').toBeDefined();
+      expect(discarded!.fields?.stage).toBe('status-late');
+      expect(discarded!.fields?.outcome).toBe('failed');
+      expect(discarded!.fields?.error).toBe('fatal: unable to read index.lock');
+    } finally {
+      process.off('unhandledRejection', onUnhandled);
+    }
+  });
+
   it('writes the late-status line with the deadline line\'s fields, and a stage of its own', async () => {
     // The two lines are the same story told twice — a snapshot at the deadline,
     // and what became of the subprocess that snapshot left out there — so a

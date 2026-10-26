@@ -199,6 +199,27 @@ export class GitLikeBridge {
             // git process that died on a stale lock is not the same as one
             // that never ran.
             logLateStatus('failed', error);
+            // The two endings are told apart here, because the difference is
+            // what the caller sees.
+            //
+            // Late — the deadline has fired. The race has already settled,
+            // the summary is on its way back empty, and `Promise.race`
+            // attaches a handler to *both* branches: the rejection of the
+            // branch that lost is consumed by the race, so it never reaches
+            // the process as an unhandled rejection and there is nobody left
+            // to hand it to. It is recorded above, and that is all that is
+            // left to do with it. Saying so here is what keeps the next
+            // reader from "fixing" a re-throw that would only throw into a
+            // promise nobody is waiting for any more.
+            //
+            // In time — the summary has no status to work from, and the
+            // failure belongs to the caller. The re-throw is what carries it
+            // to the `catch` below, which reports it and answers with an
+            // empty summary. Swallowing it here would report a deadline
+            // that never happened.
+            if (expired) {
+              return { answered: false as const, dto: undefined };
+            }
             throw error;
           },
         ),
