@@ -231,10 +231,11 @@ export class UcadApp {
    * caller that reaches a subsystem before `start()` (a test, a second entry
    * point, a future main-process path that constructs the container early)
    * gets `undefined` with a `Database` type on it. Downstream that becomes a
-   * fault report about the wrong layer. The code is `CONTAINER_NOT_STARTED`:
-   * the fault is the container's lifecycle, not the storage the caller would
-   * have used, and a report that filters on `STORAGE_ERROR` must not collect
-   * it. The message names the field, which is the part a support report needs.
+   * fault report about the wrong layer. The code is `CONTAINER_NOT_STARTED`
+   * and the component is `'container'`: the fault is the container's
+   * lifecycle, not the storage the caller would have used, and a report that
+   * filters on `STORAGE_ERROR` or `component: 'storage'` must not collect it.
+   * The message names the field, which is the part a support report needs.
    *
    * `field` is typed as a real field of this class, and the value has to be
    * the field it names: `requireStarted('db', this.sessionStore)` is a type
@@ -250,7 +251,7 @@ export class UcadApp {
       throw codedError(
         'CONTAINER_NOT_STARTED',
         `容器尚未初始化：${field} 在 start() 之前被读取。`,
-        'storage',
+        'container',
       );
     }
     // The mark is added here and nowhere else. At runtime this is the same

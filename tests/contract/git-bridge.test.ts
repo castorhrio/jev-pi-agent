@@ -69,6 +69,12 @@ function harness(options: {
   /** `status` returns, but only after this many ms — the deadline may beat it */
   statusSlowMs?: number;
   /**
+   * `status` is slow only from this 1-based call on; earlier calls answer
+   * immediately. Lets one test hold a late status from one call and a late
+   * diff from another in the same bridge's log.
+   */
+  statusSlowFromCall?: { call: number; ms: number };
+  /**
    * `status` *fails*, but only after this many ms — the deadline may beat it.
    *
    * Slow is not hung, and a slow failure is not a fast one: `statusFails`
@@ -105,7 +111,12 @@ function harness(options: {
     // Slow is not hung: the answer arrives, and arrives too late. That is a
     // different case from a lock that never lets go, and the log has to tell
     // them apart.
-    if (options.statusSlowMs !== undefined) return after(options.statusSlowMs, dto);
+    const slowMs =
+      options.statusSlowMs ??
+      (options.statusSlowFromCall && statusCalls >= options.statusSlowFromCall.call
+        ? options.statusSlowFromCall.ms
+        : undefined);
+    if (slowMs !== undefined) return after(slowMs, dto);
     // A rejection that arrives too late to be refused: the summary has already
     // returned, and there is no caller left to hand the error to.
     if (options.statusSlowFailsMs !== undefined) {
@@ -974,5 +985,75 @@ describe('git diffSummary — one call does not answer for the next', () => {
     // Both turns really did run their own `git diff` for `late.ts` — the late
     // answer was a real subprocess result, not a phantom of the test.
     expect(h.diffs.filter((call) => call.path === 'late.ts')).toHaveLength(2);
+  });
+
+  it('records a late status and a late diff from different calls, each with its own context', async () => {
+    // The two late lines cannot come from the same call: a status that misses
+    // the deadline never lists a path, so that call spawns no diff; a diff
+    // that misses it means `status` answered in time. They can share a log
+    // when two calls overlap, and then each line must keep its own call's
+    // context — a status line that borrowed the other call's path, or a diff
+    // line that named the other workspace, would describe the wrong turn.
+    let releaseDiff: (() => void) | undefined;
+    const lateDiff = new Promise<void>((resolve) => {
+      releaseDiff = resolve;
+    });
+    const h = harness({
+      unstaged: ['slow.ts'],
+      // Only the second call's status is slow; the first call's answers in
+      // time and starts its diff, which is the one that will be late.
+      statusSlowFromCall: { call: 2, ms: 60 },
+      diffFor: async () => {
+        await lateDiff;
+        return patch('slow.ts');
+      },
+      diffConcurrency: 1,
+      diffDeadlineMs: 25,
+    });
+
+    // Call one: status answers, its only diff does not.
+    await expect(h.bridge.diffSummary({ workspaceId: 'ws_first' })).resolves.toEqual([]);
+    // Call two: status itself misses the deadline, so no diff is spawned.
+    await expect(h.bridge.diffSummary({ workspaceId: 'ws_second' })).resolves.toEqual([]);
+    expect(h.statusCalls()).toBe(2);
+    expect(h.diffs.map((call) => call.path)).toEqual(['slow.ts']);
+
+    // Both subprocesses finish after both summaries were built.
+    releaseDiff!();
+    await after(120, undefined);
+
+    const lateStatus = h.logs.find(
+      (line) => line.event === 'git diff summary discarded a late status answer',
+    );
+    const lateDiffLine = h.logs.find(
+      (line) => line.event === 'git diff summary discarded a late diff answer',
+    );
+    expect(lateStatus, 'the late status left no trace').toBeDefined();
+    expect(lateDiffLine, 'the late diff left no trace').toBeDefined();
+
+    // The status belongs to the second call and has no path to name: it gave
+    // up before `git status` listed anything.
+    expect(lateStatus!.fields?.stage).toBe('status-late');
+    expect(lateStatus!.fields?.workspaceId).toBe('ws_second');
+    expect(lateStatus!.fields?.outcome).toBe('answered');
+    expect(lateStatus!.fields).not.toHaveProperty('path');
+
+    // The diff belongs to the first call, and names the path — the whole
+    // reason the deadline line's count was not enough.
+    expect(lateDiffLine!.fields?.stage).toBe('diff-late');
+    expect(lateDiffLine!.fields?.workspaceId).toBe('ws_first');
+    expect(lateDiffLine!.fields?.path).toBe('slow.ts');
+    expect(lateDiffLine!.fields?.outcome).toBe('answered');
+
+    // Two deadline lines, one per call, and neither late line duplicated.
+    expect(
+      h.logs.filter((line) => line.event === 'git diff summary stopped at its deadline'),
+    ).toHaveLength(2);
+    expect(
+      h.logs.filter((line) => line.event === 'git diff summary discarded a late status answer'),
+    ).toHaveLength(1);
+    expect(
+      h.logs.filter((line) => line.event === 'git diff summary discarded a late diff answer'),
+    ).toHaveLength(1);
   });
 });

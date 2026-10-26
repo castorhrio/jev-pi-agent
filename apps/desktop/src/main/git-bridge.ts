@@ -53,6 +53,38 @@ const DEFAULT_DIFF_CONCURRENCY = 4;
  */
 const DEFAULT_DIFF_DEADLINE_MS = 2_000;
 
+/**
+ * The three flags that decide what a late answer may claim.
+ *
+ * `diffSummary` has two asynchronous stages and one deadline, and its logs are
+ * easier to read than its state — which is why the state is written down once,
+ * here, instead of being inferred from the guards below:
+ *
+ *  - `expired` — the deadline timer fired. Monotonic, set only by the timer,
+ *    and the single answer to "is this too late": the workers stop claiming
+ *    paths on it and `logLateStatus` decides with it.
+ *  - `statusInFlight` — `git status` was called and has not settled. True on
+ *    the deadline line when status is the call that hung (the process cannot
+ *    be cancelled), false on every `status-late` line (the answer is that
+ *    process returning).
+ *  - `snapshotTaken` — the returned array has been built from `collected`.
+ *    Set once, after the diff race; a diff that lands later can only be
+ *    evidence about a subprocess, so `logLateDiff` gates on this. It is *not*
+ *    set on the early return for a status-stage deadline: no path was listed,
+ *    so no diff exists to report.
+ *
+ * `snapshotTaken` does **not** imply `expired`: every summary that finishes
+ * inside its budget sets `snapshotTaken` with `expired` still false. The
+ * converse is not an invariant at every instant either — the timer fires while
+ * the race is still being awaited — and is false after the status-stage early
+ * return. What holds is why each line has its own guard: a late *status* is
+ * defined by `expired`, a late *diff* by `snapshotTaken`.
+ *
+ * Both late lines can appear in one log, but never for the same call: a status
+ * that missed the deadline lists no paths, so that call spawned no diff; a diff
+ * that missed it means `status` answered in time. They are independent endings
+ * of two different calls, which the cross-call test pins.
+ */
 export class GitLikeBridge {
   private readonly opts: GitLikeBridgeOptions;
 

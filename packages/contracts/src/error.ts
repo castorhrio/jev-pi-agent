@@ -43,7 +43,11 @@ export type ErrorComponent =
   | 'intelligence'
   | 'decision'
   | 'storage'
-  | 'ipc';
+  | 'ipc'
+  // The composition root itself: a subsystem reached before `start()` built
+  // it. Distinct from `storage`, which is the layer the caller would have
+  // used — a report that filters on `storage` must not collect it.
+  | 'container';
 
 export interface AppError {
   code: AppErrorCode;
@@ -56,13 +60,48 @@ export interface AppError {
   vendor?: { name: string; code?: string };
 }
 
-const RETRYABLE: ReadonlySet<AppErrorCode> = new Set<AppErrorCode>([
-  'NETWORK_ERROR',
-  'RATE_LIMITED',
-  'HOST_UNRESPONSIVE',
-  'PROCESS_EXITED',
-  'STORAGE_ERROR',
-]);
+/**
+ * Whether each code is worth retrying.
+ *
+ * A `Set` of the retryable codes answered "false" for every code it did not
+ * name, so a new code inherited "not retryable" without anyone deciding that —
+ * and `tsc` could not tell a deliberate `false` from a forgotten row. The
+ * record makes the classification total: adding a member to `AppErrorCode`
+ * fails the build until this table answers for it. Exported for the runtime
+ * half of the same check (`tests/contract/error-formatting.test.ts`), because
+ * a test cannot enumerate a type and the suite transpiles without typechecking.
+ */
+export const RETRYABLE: Readonly<Record<AppErrorCode, boolean>> = {
+  WORKSPACE_NOT_TRUSTED: false,
+  ADAPTER_NOT_AVAILABLE: false,
+  AGENT_START_FAILED: false,
+  NATIVE_SESSION_LOST: false,
+  PERMISSION_DENIED: false,
+  // The process can be started again; the fault is not in the request.
+  PROCESS_EXITED: true,
+  // A host that stopped answering may answer on the next attempt.
+  HOST_UNRESPONSIVE: true,
+  AUTH_REQUIRED: false,
+  // Transient by definition.
+  RATE_LIMITED: true,
+  NETWORK_ERROR: true,
+  // A locked or busy database is retried; a failed migration is not, and has
+  // its own code.
+  STORAGE_ERROR: true,
+  CONTAINER_NOT_STARTED: false,
+  MIGRATION_FAILED: false,
+  BUDGET_EXCEEDED: false,
+  INJECTION_UNSUPPORTED: false,
+  TOOL_CONTRACT_UNAVAILABLE: false,
+  DECISION_TIMEOUT: false,
+  INTELLIGENCE_UNAVAILABLE: false,
+  WORKSPACE_NOT_FOUND: false,
+  NO_ACTIVE_WORKSPACE: false,
+  NOT_FOUND: false,
+  INVALID_INPUT: false,
+  FEATURE_UNAVAILABLE: false,
+  UNKNOWN: false,
+};
 
 /** Single constructor so every plane produces errors the same way. */
 export function appError(
@@ -74,7 +113,7 @@ export function appError(
   return {
     code,
     message,
-    retryable: RETRYABLE.has(code),
+    retryable: RETRYABLE[code],
     component,
     ...(extra.details !== undefined ? { details: extra.details } : {}),
     ...(extra.vendor !== undefined ? { vendor: extra.vendor } : {}),
@@ -120,7 +159,7 @@ export function codedError(
     name: 'AppFailure',
     code,
     component,
-    retryable: RETRYABLE.has(code),
+    retryable: RETRYABLE[code],
   });
 }
 

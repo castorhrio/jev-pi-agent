@@ -157,6 +157,11 @@ describe('the container owns one retention service (§8.4)', () => {
     // lifecycle rather than storage: the old `STORAGE_ERROR` sent a report to
     // SQLite when the container had simply never been started.
     expect((thrown as { code?: string }).code).toBe('CONTAINER_NOT_STARTED');
+    // And the component names the container, not the layer the caller would
+    // have used. The code was split from `STORAGE_ERROR` first; leaving the
+    // component as `storage` kept pointing the same report at SQLite.
+    expect((thrown as { component?: string }).component).toBe('container');
+    expect((thrown as { component?: string }).component).not.toBe('storage');
     // The message names *which* field was missing, so "call start() first" is
     // actionable rather than a guess about the container's whole state.
     expect((thrown as Error).message).toContain('db');
@@ -211,6 +216,7 @@ describe('the container owns one retention service (§8.4)', () => {
       // storage fault: the missing field is the symptom, the unstarted
       // container is the cause.
       expect((thrown as { code?: string }).code).toBe('CONTAINER_NOT_STARTED');
+      expect((thrown as { component?: string }).component).toBe('container');
       // And the field itself, so the message is actionable.
       expect((thrown as Error).message, `the refusal did not name ${field}`).toContain(field);
     }

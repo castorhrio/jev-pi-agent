@@ -12,7 +12,8 @@ import { describe, it, expect } from 'vitest';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { appError, codedError, describeError, toAppError } from '@ucad/contracts';
+import { RETRYABLE, appError, codedError, describeError, toAppError } from '@ucad/contracts';
+import type { AppErrorCode } from '@ucad/contracts';
 import { scanBareThrows } from './bare-throw-scan';
 
 describe('describeError', () => {
@@ -127,6 +128,73 @@ describe('codedError', () => {
     expect(keys).toContain('code');
     expect(keys).toContain('component');
     expect(keys).toContain('retryable');
+  });
+});
+
+/**
+ * Retryability is a decision about every code, not a default for the unnamed.
+ *
+ * The compile-time half is the table's type: `Record<AppErrorCode, boolean>`
+ * means a new code fails `npm run typecheck` until someone answers for it.
+ * This is the runtime half. The suite transpiles without typechecking, and a
+ * test cannot enumerate a type — so the codes are written out below and
+ * compared with the table in *both* directions: a code the table forgets is a
+ * missing row, and a row for a code that no longer exists is a classification
+ * nothing can ever read.
+ */
+describe('the retryable table', () => {
+  const RETRYABLE_CODES = [
+    'PROCESS_EXITED',
+    'HOST_UNRESPONSIVE',
+    'RATE_LIMITED',
+    'NETWORK_ERROR',
+    'STORAGE_ERROR',
+  ] as const satisfies readonly AppErrorCode[];
+
+  const TERMINAL_CODES = [
+    'WORKSPACE_NOT_TRUSTED',
+    'ADAPTER_NOT_AVAILABLE',
+    'AGENT_START_FAILED',
+    'NATIVE_SESSION_LOST',
+    'PERMISSION_DENIED',
+    'AUTH_REQUIRED',
+    'CONTAINER_NOT_STARTED',
+    'MIGRATION_FAILED',
+    'BUDGET_EXCEEDED',
+    'INJECTION_UNSUPPORTED',
+    'TOOL_CONTRACT_UNAVAILABLE',
+    'DECISION_TIMEOUT',
+    'INTELLIGENCE_UNAVAILABLE',
+    'WORKSPACE_NOT_FOUND',
+    'NO_ACTIVE_WORKSPACE',
+    'NOT_FOUND',
+    'INVALID_INPUT',
+    'FEATURE_UNAVAILABLE',
+    'UNKNOWN',
+  ] as const satisfies readonly AppErrorCode[];
+
+  it('classifies every code, and no code that is gone', () => {
+    // Equality, not a subset: both a missing row and a leftover row fail.
+    expect([...RETRYABLE_CODES, ...TERMINAL_CODES].sort()).toEqual(
+      Object.keys(RETRYABLE).sort(),
+    );
+    for (const code of RETRYABLE_CODES) {
+      expect(RETRYABLE[code], `${code} lost its retryable classification`).toBe(true);
+    }
+    for (const code of TERMINAL_CODES) {
+      expect(RETRYABLE[code], `${code} is classified as retryable`).toBe(false);
+    }
+  });
+
+  it('is the one table both constructors read', () => {
+    // Not a second copy of the answers: `appError()` and `codedError()` each
+    // consult `RETRYABLE`, so a code whose row says `true` must arrive as
+    // retryable through both shapes a plane can produce.
+    for (const [code, retryable] of Object.entries(RETRYABLE)) {
+      const asCode = code as AppErrorCode;
+      expect(appError(asCode, 'x', 'ipc').retryable, code).toBe(retryable);
+      expect(codedError(asCode, 'x', 'ipc').retryable, code).toBe(retryable);
+    }
   });
 });
 
