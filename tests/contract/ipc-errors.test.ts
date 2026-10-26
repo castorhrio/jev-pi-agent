@@ -281,6 +281,24 @@ describe('zodReason — one Chinese reason per code, decided by the table', () =
     );
   });
 
+  it('replaces a message made only of Chinese punctuation, which carries no sentence', () => {
+    // The boundary of the heuristic, pinned: `[\u4e00-\u9fff]` is ideographs,
+    // not "anything full-width". `？！` has no Chinese word in it, so it is not
+    // a sentence this app wrote and the table answers instead. The opposite
+    // decision would keep a message a person cannot act on — and no other test
+    // would notice, which is why the boundary is asserted instead of being
+    // left to the range in the source.
+    for (const message of ['？！', '，。', '！？!']) {
+      const one = issue({ code: 'custom', message });
+
+      expect(zodReasonSource(one), message).toBe('table');
+      expect(zodReason(one), message).toBe(ZOD_REASON_GENERIC);
+      expect(toUserError(new ZodError([one])).message, message).toBe(
+        `输入无效：${ZOD_REASON_GENERIC}`,
+      );
+    }
+  });
+
   it('still uses the table when a Zod default message happens to contain a CJK value', () => {
     // Zod quotes the value it received, so a default message can end up with
     // Chinese inside it: `received '红色'`. Judging by "does it contain CJK"

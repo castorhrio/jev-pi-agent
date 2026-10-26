@@ -50,23 +50,33 @@
  *    `let`, a helper result);
  *  - a call, member access, conditional or other expression.
  *
- * The remaining limits are shapes the scan does not even reach:
+ * The remaining limits split two ways. Shapes the scan does not even reach:
  *
  *  - a schema built through a destructured or renamed Zod namespace
  *    (`const { string } = z; string({ message })`, or `import { z as zod }`
  *    and `zod.string({ message })`) — only a literal `z.…` call opens a
  *    schema context, so the scan cannot tell a Zod call from any other call
  *    written in the same file;
- *  - a message attached through a helper that is not itself a Zod call;
+ *  - a message attached through a helper that is not itself a Zod call.
+ *
+ * And one shape it reaches but misreads:
+ *
  *  - a positional message that follows an argument containing a comma inside a
- *    regular-expression literal (`/a,b/`), because the argument walk does not
- *    parse regexes.
+ *    regular-expression literal (`regex(/a,b/, '…')`). The argument walk does
+ *    not parse regexes, so the comma inside `/a,b/` reads as the argument
+ *    separator: the sentence is never judged, and the position is reported as
+ *    an unknown constant named from whatever follows the comma. The app-wide
+ *    `unresolved` assertion does see that report, so this cannot ship without
+ *    a red test — but the *language* check never reads the sentence, and the
+ *    report blames a constant that does not exist. That is the accepted cost
+ *    of not putting a JavaScript parser in a contract test.
  *
  * Those limits are *pinned*, not merely listed: `zod-custom-messages.test.ts`
  * asserts that the renamed and destructured shapes are invisible to the scan,
- * so a blind spot is a contract with a name instead of a gap in a comment. If
- * the scan ever learns to see them, that assertion fails and says so — the
- * limit has to be lifted on purpose, not by accident.
+ * and that the regex shape's message is not judged (and what is reported
+ * instead), so a blind spot is a contract with a name instead of a gap in a
+ * comment. If the scan ever learns to see them, those assertions fail and say
+ * so — the limit has to be lifted on purpose, not by accident.
  *
  * Listing them is not the same as fixing them: the alternative is a JavaScript
  * parser in a contract test, which is a much larger thing to keep correct than

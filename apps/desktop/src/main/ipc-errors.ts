@@ -127,6 +127,14 @@ export const ZOD_OWN_OPENINGS: readonly string[] = [
 ];
 
 function isZodOwnText(message: string): boolean {
+  // "Chinese" here means a CJK *ideograph*, not any full-width character.
+  // Chinese punctuation (`，。？！`) is outside the range, so a message made
+  // only of it is read as "not a sentence this app wrote" and replaced by the
+  // table. That is the deliberate side of the boundary: punctuation alone is
+  // not an instruction a person can act on, and widening the range to
+  // punctuation would keep strings that contain no Chinese words. Pinned in
+  // `tests/contract/ipc-errors.test.ts`, so an i18n change has to flip it on
+  // purpose.
   if (!/[\u4e00-\u9fff]/.test(message)) return true;
   return ZOD_OWN_OPENINGS.some((opening) => message.startsWith(opening));
 }

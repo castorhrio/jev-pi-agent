@@ -788,18 +788,22 @@ describe('a combination chain: every entry, its reason, and the order', () => {
  *
  * The table in `decision-facade.ts` is what makes the type growable only on
  * purpose: `Record<SideEffectRefusal, string>` fails `tsc` for a member with no
- * explanation, and this is the same check made by a test run — one sample
- * declaration per member, and the log asked whether it produced that reason at
- * all. The mirror of `ZOD_OWN_OPENINGS` in `ipc-errors.test.ts`: an entry
- * nothing can confirm is indistinguishable from an entry that is right.
+ * explanation. A test run cannot enumerate a type — types are erased — so
+ * `ALL_REFUSALS` below is its runtime stand-in, the same role
+ * `ZOD_ISSUE_CODES` plays for `ZOD_REASON_BY_CODE` in `ipc-errors.test.ts`.
+ * It is compared with the table in both directions, and every member is asked
+ * for a declaration that produces it: an entry nothing can confirm is
+ * indistinguishable from an entry that is right.
  */
+const ALL_REFUSALS = ['contradiction', 'unauthorized'] as const satisfies readonly SideEffectRefusal[];
+
 describe('every side-effect refusal has a case, and an explanation', () => {
   /**
    * One declaration that produces each refusal.
    *
    * Typed `Record<SideEffectRefusal, …>` so a member with no sample is a
-   * `tsc` error here too, and matched against the exported table below so that
-   * a sample left behind for a deleted member fails as well.
+   * `tsc` error here too, and matched against `ALL_REFUSALS` below so that a
+   * sample left behind for a deleted member fails as well.
    */
   const SAMPLES: Record<SideEffectRefusal, DecisionEngineManifest['sideEffects']> = {
     // Says "no effects" and "network" at once — the manifest contradicts
@@ -853,13 +857,23 @@ describe('every side-effect refusal has a case, and an explanation', () => {
     expect(new Set(Object.values(SIDE_EFFECT_REFUSAL_EXPLANATION)).size).toBe(ids.length);
   });
 
-  it('has a sample for every member of the union, and no sample for a member that is gone', () => {
-    // The other direction, at runtime: the suite transpiles without
-    // typechecking, so the `Record` type above has to be asked the same
-    // question it is supposed to answer. A member with no sample would land
-    // here; so would a sample left behind.
-    expect(Object.keys(SAMPLES).sort()).toEqual(
+  it('has an explanation for every refusal, and no explanation for a refusal that is gone', () => {
+    // The runtime half of `Record<SideEffectRefusal, string>`, in both
+    // directions: a member with no row would log `undefined` as the sentence,
+    // and a row for a member the union no longer has is a sentence nobody can
+    // ever see. The suite transpiles without typechecking, so without this the
+    // `Record` annotation would be the only check — and it is not run by
+    // `npm test`.
+    expect([...ALL_REFUSALS].sort()).toEqual(
       Object.keys(SIDE_EFFECT_REFUSAL_EXPLANATION).sort(),
     );
+  });
+
+  it('has a sample for every refusal, and no sample for a refusal that is gone', () => {
+    // The same question for the sample map above: its `Record` type catches a
+    // missing member only under `tsc`, so compare it with the hand list. A
+    // member with no sample would shrink the loop in the case above; a sample
+    // left behind for a deleted member is a test that no longer tests anything.
+    expect(Object.keys(SAMPLES).sort()).toEqual([...ALL_REFUSALS].sort());
   });
 });

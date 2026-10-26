@@ -208,6 +208,46 @@ const schema = string({ message: 'an English sentence' });
     expect(destructured).toEqual({ messages: [], unresolved: [] });
   });
 
+  it('does not judge a message that follows a regex literal containing a comma', () => {
+    // A KNOWN LIMIT, pinned beside the renamed/destructured pair above.
+    //
+    // `secondArgument` finds the separator by walking characters and counting
+    // nesting; a regular-expression literal is not a quote it knows, so the
+    // comma inside `/a,b/` reads as the argument separator. The sentence is
+    // never read — an English one passes the check that exists to find it —
+    // and the only trace is an unresolved entry that names `b`, the text after
+    // the comma inside the regex.
+    //
+    // Unlike the two shapes above, this one does reach the app-wide gate: the
+    // `unresolved` list is asserted empty for shipping source, so this fixture
+    // could not ship silently. What is lost is the language check, and the
+    // report misnames the shape. Teaching the walk about regex literals is the
+    // fix; until then the cost is a contract, and this assertion is where a
+    // future change meets it.
+    const text = `${ZOD_FILE}
+const schema = z.string().regex(/a,b/, 'must be longer');
+`;
+
+    const scan = scanZodMessages('fixture.ts', text);
+
+    // An English sentence in a message position, and the English check finds
+    // nothing: this is the miss the limit is about.
+    expect(scan.messages).toEqual([]);
+    expect(englishMessages('fixture.ts', text)).toEqual([]);
+    // What the scan reports instead is not the message: the argument walk
+    // stopped at the comma inside the regex, so the "unknown constant" is a
+    // fragment of the pattern.
+    expect(scan.unresolved).toEqual([
+      {
+        file: 'fixture.ts',
+        at: 2,
+        key: 'regex() argument',
+        reason: 'unknown-constant',
+        expression: "b/, 'must be longer');",
+      },
+    ]);
+  });
+
   it('ignores prose, other files, and messages it cannot read as a sentence', () => {
     const prose = `${ZOD_FILE}
 // z.string({ message: 'this is a comment, not a schema' });
