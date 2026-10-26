@@ -96,8 +96,11 @@ export const GIT_DIFF_STAGE = {
  * own guard: a late status is defined by `expired`, a late diff by
  * `snapshotTaken`.
  *
- * The combinations, including the impossible ones, are pinned as a table in
- * `tests/contract/git-bridge.test.ts` ("the three flags, as a table").
+ * The combinations are pinned as a table in
+ * `tests/contract/git-bridge.test.ts` ("the three flags, as a table"): its
+ * rows must cover every reachable combination of the three flags and none of
+ * the impossible ones, so the two facts above are checked against the table
+ * rather than trusted to stay in prose.
  */
 export class GitLikeBridge {
   private readonly opts: GitLikeBridgeOptions;

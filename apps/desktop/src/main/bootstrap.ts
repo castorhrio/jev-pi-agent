@@ -12,6 +12,7 @@ import * as path from 'node:path';
 import { IPC_PUSH, describeError, type CloseBehaviour, type TurnEvent } from '@ucad/contracts';
 import type { Logger } from '@ucad/observability';
 import { FileLogSink, Logger as UcadLogger, MemoryLogSink, MultiLogSink } from '@ucad/observability';
+import { ADAPTER_CANDIDATES } from './adapter-candidates';
 import { UcadApp } from './app-container';
 import { resolvePaths } from './paths';
 import { registerIpc } from './ipc';
@@ -112,16 +113,15 @@ function shouldPreventClose(): boolean {
  * in a build, so one call covers both.
  *
  * V1 ships the mock adapter as the executable reference. A real vendor adapter
- * is added here by pointing an entry at its compiled module (ADR-017: the
- * product must not depend on any single adapter being present).
+ * is added by adding an entry to `ADAPTER_CANDIDATES` (ADR-017: the product
+ * must not depend on any single adapter being present) — and the README's
+ * limitation paragraph, which names that list, is checked against it.
  */
 function resolveAdapterModules(log?: Logger): Record<string, string> {
-  const candidates: Record<string, string> = {
-    // The reference adapter that actually talks to a model.
-    universal: '@ucad/adapter-universal',
-    // The executable specification of the protocol, for offline work and CI.
-    mock: '@ucad/adapter-mock',
-  };
+  // The table itself is in `adapter-candidates.ts`, where the README gate can
+  // reach it: the same two ids are stated to a reader in both languages, and a
+  // list inlined here could change without the prose changing with it.
+  const candidates: Record<string, string> = ADAPTER_CANDIDATES;
   // Electron resolves bare specifiers against the ASAR-appended app path, which
   // is not the workspace root, so a plain `require.resolve` silently finds only
   // what the packaged app contains. Search the usual roots explicitly and give

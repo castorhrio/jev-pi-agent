@@ -889,11 +889,16 @@ describe('git diffSummary — a directory that is not a repository', () => {
  * fired, whether `status` settled before the snapshot, and whether a diff
  * settled before the snapshot, which late lines appear and with what outcome?
  *
- * Two combinations cannot happen and the table says so by construction:
- * without a deadline, `Promise.all` settles before the snapshot, so nothing
- * can be late; and if status settles before the snapshot, no `status-late`
- * line can exist. A status-stage deadline takes no snapshot at all, which is
- * why a hung status writes two deadline-side facts and zero late lines.
+ * Seven rows answer for the four reachable combinations of the three flags.
+ * Two facts rule the other four out: without a deadline, `Promise.all`
+ * settles before the snapshot, so nothing can be late; and a status-stage
+ * deadline takes no snapshot at all — no path was listed, so no diff exists to
+ * report late — which is why a hung status writes two deadline-side facts and
+ * zero late lines. Those two facts are applied to the *declared* flags at the
+ * bottom of this block, so a row for a combination the bridge cannot enter,
+ * or a reachable combination with no row, fails here rather than reading as
+ * coverage. A status that settles before the snapshot cannot produce a
+ * `status-late` line for the same reason the no-deadline rows cannot.
  */
 describe('git diffSummary — the three flags, as a table', () => {
   const statusLate = (h: Harness): unknown[] =>
@@ -905,11 +910,18 @@ describe('git diffSummary — the three flags, as a table', () => {
       .filter((line) => line.event === 'git diff summary discarded a late diff answer')
       .map((line) => line.fields?.outcome);
 
-  interface Row {
+  /**
+   * The three flags, named once so the table and the coverage checks below
+   * agree by construction on what a combination is.
+   */
+  interface Flags {
+    readonly deadlineFired: boolean;
+    readonly statusSettledBeforeSnapshot: boolean;
+    readonly diffSettledBeforeSnapshot: boolean;
+  }
+
+  interface Row extends Flags {
     name: string;
-    deadlineFired: boolean;
-    statusSettledBeforeSnapshot: boolean;
-    diffSettledBeforeSnapshot: boolean;
     expected: {
       items: string[];
       statusLate: Array<'answered' | 'failed'>;
@@ -1064,6 +1076,130 @@ describe('git diffSummary — the three flags, as a table', () => {
       statusLate(h).length + diffLate(h).length,
       'a single call wrote both late lines',
     ).toBeLessThanOrEqual(1);
+  });
+
+  /**
+   * The other half of "as a table": the rows above are a sample of the flag
+   * cube, and nothing said which of its eight vertices they are missing.
+   *
+   * Seven rows, four reachable combinations — three flags make eight, and the
+   * difference is not an oversight. Two facts about the state machine rule the
+   * rest out:
+   *
+   *  - without a deadline, `Promise.all` settles before the snapshot, so both
+   *    answers are in before the array is built. (F-T-F, F-F-T, F-F-F)
+   *  - a deadline that fires while `git status` is still running returns early:
+   *    no path was listed, so no diff was ever spawned. (T-F-T)
+   *
+   * Written down, they were still only prose, and prose is what this table
+   * replaced. A row added for an impossible combination would have documented
+   * a state the bridge cannot enter; a reachable combination losing its last
+   * row would have left a behaviour described by nothing. Both are checks over
+   * the table's own coverage, so they run here without touching git.
+   *
+   * The rules are applied to the *declared* flags, not to the log lines: a
+   * rule that read the logs would agree with whatever the bridge did and pin
+   * nothing. What the declared flags predict the logs to say is the per-row
+   * `it.each` above.
+   */
+  const comboKey = (flags: Flags): string =>
+    [flags.deadlineFired, flags.statusSettledBeforeSnapshot, flags.diffSettledBeforeSnapshot]
+      .map((flag) => (flag ? 'T' : 'F'))
+      .join('-');
+
+  /** Why this vertex of the flag cube cannot happen, or `undefined` if it can. */
+  const impossibleBecause = (flags: Flags): string | undefined => {
+    if (
+      !flags.deadlineFired &&
+      (!flags.statusSettledBeforeSnapshot || !flags.diffSettledBeforeSnapshot)
+    ) {
+      return 'without a deadline `Promise.all` settles before the snapshot, so nothing can still be in flight';
+    }
+    if (
+      flags.deadlineFired &&
+      !flags.statusSettledBeforeSnapshot &&
+      flags.diffSettledBeforeSnapshot
+    ) {
+      return 'a status-stage deadline returns before any diff is spawned, so no diff can have settled';
+    }
+    return undefined;
+  };
+
+  /** All eight flag combinations, in a fixed order. */
+  const flagCube = (): Flags[] =>
+    [false, true].flatMap((deadlineFired) =>
+      [false, true].flatMap((statusSettledBeforeSnapshot) =>
+        [false, true].map((diffSettledBeforeSnapshot) => ({
+          deadlineFired,
+          statusSettledBeforeSnapshot,
+          diffSettledBeforeSnapshot,
+        })),
+      ),
+    );
+
+  /**
+   * Every way the table can stop describing the flag cube.
+   *
+   * Pure over the declared flags so the fixtures below can show it answering.
+   */
+  const coverageProblems = (table: readonly Flags[]): string[] => {
+    const problems: string[] = [];
+    const seen = new Set<string>();
+    for (const flags of table) {
+      const why = impossibleBecause(flags);
+      if (why !== undefined) problems.push(`the table has a row for ${comboKey(flags)}, which cannot happen: ${why}`);
+      seen.add(comboKey(flags));
+    }
+    for (const flags of flagCube()) {
+      if (impossibleBecause(flags) !== undefined) continue;
+      if (!seen.has(comboKey(flags))) {
+        problems.push(`no row states the reachable combination ${comboKey(flags)}`);
+      }
+    }
+    return problems;
+  };
+
+  it('states every reachable combination of the three flags, and no impossible one', () => {
+    const problems = coverageProblems(rows);
+    expect(
+      problems,
+      `the flag table no longer covers the state machine:\n  ${problems.join('\n  ')}`,
+    ).toEqual([]);
+  });
+
+  it('calls exactly four of the eight combinations impossible, each for a stated reason', () => {
+    // The count is not decoration: two independent facts rule out four
+    // vertices. If a rule above is loosened, this number changes and somebody
+    // has to say why.
+    const cube = flagCube();
+    expect(cube.length).toBe(8);
+    const impossible = cube.filter((flags) => impossibleBecause(flags) !== undefined);
+    expect(impossible.map(comboKey).sort()).toEqual(['F-F-F', 'F-F-T', 'F-T-F', 'T-F-T']);
+    for (const flags of impossible) {
+      expect(impossibleBecause(flags), `${comboKey(flags)} has no explanation`).toBeTruthy();
+    }
+  });
+
+  it('reports a row dropped from a reachable combination', () => {
+    // The last row answers for T-T-T; without it the bridge could stop taking
+    // a snapshot after a deadline and nothing here would miss it.
+    const withoutSnapshotAfterDeadline = rows.filter(
+      (row) => comboKey(row) !== 'T-T-T',
+    );
+    expect(coverageProblems(withoutSnapshotAfterDeadline)).toEqual([
+      'no row states the reachable combination T-T-T',
+    ]);
+  });
+
+  it('reports a row for a combination the bridge cannot enter', () => {
+    const invented: Flags = {
+      deadlineFired: false,
+      statusSettledBeforeSnapshot: true,
+      diffSettledBeforeSnapshot: false,
+    };
+    expect(coverageProblems([...rows, invented])).toEqual([
+      'the table has a row for F-T-F, which cannot happen: without a deadline `Promise.all` settles before the snapshot, so nothing can still be in flight',
+    ]);
   });
 });
 
