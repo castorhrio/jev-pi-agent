@@ -26,3 +26,31 @@ export const ADAPTER_CANDIDATES = {
   // The executable specification of the protocol, for offline work and CI.
   mock: '@ucad/adapter-mock',
 } as const satisfies Record<string, string>;
+
+/**
+ * The ids of `ADAPTER_CANDIDATES`, in the order the app tries them.
+ *
+ * The order is behaviour, not presentation: `resolveAdapterModules` walks
+ * `Object.entries(ADAPTER_CANDIDATES)`, so declaration order in the object
+ * literal above *is* the attempt order — and until this constant existed, the
+ * only statement of it was the phrase "in the order they are tried" in the
+ * doc comment. A later reader who reorders the table (alphabetically, say, or
+ * by putting the "real" adapter last) would change which adapter the app
+ * reports first and which one a resolution failure names first, with nothing
+ * going red.
+ *
+ * So the order is written down twice, deliberately, and
+ *
+ *  - the type ties every entry to a key of the table, so renaming or removing
+ *    an adapter is a `tsc` error here rather than a stale string, and
+ *  - the contract gate compares this list with `Object.keys(ADAPTER_CANDIDATES)`,
+ *    so a reordering, an addition or a removal that skips this constant is a
+ *    red test naming both lists.
+ *
+ * If you add an adapter, add its id here in the position it should be tried;
+ * if you move one, move it here too.
+ */
+export const ADAPTER_LOAD_ORDER: readonly (keyof typeof ADAPTER_CANDIDATES)[] = [
+  'universal',
+  'mock',
+];

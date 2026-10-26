@@ -33,7 +33,14 @@
  *    so a candidate cannot point at a package nobody ships; and
  *  - `bootstrap.ts` still reads the table rather than re-inlining it, because
  *    a copied list would leave this gate green while the app loaded something
- *    else.
+ *    else;
+ *  - the ids are tried in the order `ADAPTER_LOAD_ORDER` states, because the
+ *    table's declaration order *is* the attempt order (`bootstrap.ts` walks
+ *    `Object.entries`) and "in the order they are tried" used to live only in
+ *    a doc comment; and
+ *  - the bullet this gate reads is the adapter bullet: it says
+ *    adapter/适配器, so a new bullet inserted above it turns the gate red
+ *    instead of quietly making it read a different sentence.
  *
  * The gate reads identifiers out of one bullet, and out of the "what it does"
  * bullets that call the thing an adapter, not the whole README. That last
@@ -64,7 +71,10 @@
 import { beforeAll, describe, expect, it } from 'vitest';
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { ADAPTER_CANDIDATES } from '../../apps/desktop/src/main/adapter-candidates';
+import {
+  ADAPTER_CANDIDATES,
+  ADAPTER_LOAD_ORDER,
+} from '../../apps/desktop/src/main/adapter-candidates';
 
 const here = import.meta.dirname;
 const REPO_ROOT = join(here, '..', '..');
@@ -352,6 +362,20 @@ describe('README adapter paragraph ↔ ADAPTER_CANDIDATES', () => {
     expect(Object.keys(ADAPTER_CANDIDATES).length, 'the table names no adapters').toBeGreaterThan(
       0,
     );
+    // `bullets(body)[0]` is a hardcoded assumption: the adapter paragraph is
+    // the *first* bullet under "Current limitations". If someone inserts a new
+    // limitation above it, the checks below read the new bullet — which names
+    // no adapters, so the gate says "the text does not name `universal`" and
+    // sends the editor to the wrong sentence. This assertion names the real
+    // defect: the bullet the gate reads is no longer the adapter bullet.
+    expect(
+      facts.bullets.en,
+      `the first "${EN_HEADING}" bullet is no longer the adapter one; the adapter bullet moved down`,
+    ).toMatch(ADAPTER_WORD);
+    expect(
+      facts.bullets.zh,
+      `the first "${ZH_HEADING}" bullet is no longer the adapter one; the adapter bullet moved down`,
+    ).toMatch(ADAPTER_WORD);
     // The ids have to survive the shape filter, otherwise "no extra adapters"
     // would pass for the wrong reason.
     expect(adapterIdsIn(facts.bullets.en!), 'no adapter id was read out of the English bullet')
@@ -498,6 +522,84 @@ describe('the checks can see the README diverge', () => {
     // A count word outside the table is still "a count we cannot read", not a
     // number the checks then compare.
     expect(statedCount('Several adapters are registered.', 'en')).toBeUndefined();
+  });
+});
+
+/**
+ * A stand-in README whose first "Current limitations" bullet is *not* the
+ * adapter one — the shape a new limitation inserted above it produces.
+ */
+const README_WITH_LEADING_BULLET = [
+  '### Current limitations',
+  '',
+  '- **The installer is unsigned.** Windows SmartScreen warns on first run.',
+  '- **One provider protocol ships.** Two adapters are registered — `universal`, `mock`.',
+  '',
+].join('\n');
+
+describe('the adapter bullet is identified, not assumed', () => {
+  it('reports the wrong bullet when a new limitation is inserted above it', () => {
+    // Same helper, a README whose adapter paragraph moved down: the gate reads
+    // the unsigned-installer bullet. Without the assertion above that shows up
+    // as "the adapter text does not name `universal`" — a true statement about
+    // the wrong sentence — so this pins what the helper does with the shape
+    // the README is about to have.
+    const leading = providerBullet(README_WITH_LEADING_BULLET, EN_HEADING);
+    expect(leading).toBeDefined();
+    expect(leading).not.toMatch(ADAPTER_WORD);
+    // …and it is the sentence the count check would then read, which states no
+    // count at all: the two failure messages point at a bullet that has nothing
+    // to do with adapters.
+    expect(statedCount(leading!, 'en')).toBeUndefined();
+  });
+});
+
+/**
+ * `ADAPTER_CANDIDATES`'s declaration order is behaviour, not presentation.
+ *
+ * `bootstrap.ts` walks `Object.entries(ADAPTER_CANDIDATES)`, so the order of
+ * the keys in that object literal is the order the app tries adapters: which
+ * one wins when both resolve, which id a resolution failure names first, and
+ * the order of the "adapters resolved" log line a person reads in a bug
+ * report. Until this suite existed, that contract lived only in the phrase
+ * "in the order they are tried" in the module's doc comment, and `tsc` sees
+ * an object literal as unordered — so reordering the table was silently
+ * legal, and so was adding an adapter without saying where it belongs in the
+ * sequence.
+ *
+ * `ADAPTER_LOAD_ORDER` writes the order down a second time; these checks keep
+ * the two copies equal. The constant's type already ties each entry to a key
+ * of the table, so a rename or a removal is a compile error; an *addition* is
+ * only visible here, which is why the comparison is equality of the whole
+ * list in both directions rather than a subset test.
+ */
+describe('ADAPTER_CANDIDATES is tried in the order ADAPTER_LOAD_ORDER states', () => {
+  it('declares the table in the documented order', () => {
+    expect(
+      Object.keys(ADAPTER_CANDIDATES),
+      'the table declaration order and ADAPTER_LOAD_ORDER disagree',
+    ).toEqual([...ADAPTER_LOAD_ORDER]);
+  });
+
+  it('keeps the order list exhaustive and duplicate-free', () => {
+    // A subset check on the other side: every adapter in the table is named in
+    // the order list exactly once. `toEqual` above already implies this, but
+    // the message here says *which* adapter was forgotten, and a duplicated id
+    // in the order list would make the attempt order ambiguous.
+    expect([...ADAPTER_LOAD_ORDER].sort()).toEqual(Object.keys(ADAPTER_CANDIDATES).sort());
+    expect(new Set(ADAPTER_LOAD_ORDER).size).toBe(ADAPTER_LOAD_ORDER.length);
+  });
+
+  it('is what a reordered table would break', () => {
+    // The counter-example, so the two assertions above are known to be able to
+    // fail: an alphabetised table — the exact edit a tidy-up PR makes — is a
+    // different attempt order and is reported as one.
+    const alphabetised = { mock: ADAPTER_CANDIDATES.mock, universal: ADAPTER_CANDIDATES.universal };
+    expect(Object.keys(alphabetised)).not.toEqual([...ADAPTER_LOAD_ORDER]);
+    // …and a table that grew without the order list growing with it is
+    // reported by the exhaustive check, not by the equality one alone.
+    const grown = { ...ADAPTER_CANDIDATES, anthropic: '@ucad/adapter-anthropic' };
+    expect([...ADAPTER_LOAD_ORDER].sort()).not.toEqual(Object.keys(grown).sort());
   });
 });
 
