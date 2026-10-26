@@ -35,7 +35,6 @@ import { createWriteStream } from 'node:fs';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { pipeline } from 'node:stream/promises';
-import { Readable } from 'node:stream';
 import * as https from 'node:https';
 import * as http from 'node:http';
 import { describeError } from '@ucad/contracts';
@@ -97,11 +96,27 @@ export interface UpdateServiceOptions {
     onProgress: (received: number, total: number) => void,
   ) => Promise<void>;
   /**
+   * test seam: the HTTP GET behind the default downloader.
+   *
+   * The redirect rules run in the response callback, which only a request
+   * reaches. Injecting the transport lets a gate drive a 302 to cleartext — or
+   * six hops — through the same listener the app uses, without a certificate
+   * or a network.
+   */
+  downloadGet?: DownloadGet;
+  /**
    * test seam: launches the staged installer. Resolves with an error string
    * when the launch failed, and with an empty string when it started.
    */
   openInstaller?: (target: string) => Promise<string>;
 }
+
+/** The HTTP GET a download uses. Structurally `https.get`/`http.get`. */
+export type DownloadGet = (
+  url: URL,
+  options: { readonly timeout: number },
+  onResponse: (response: http.IncomingMessage) => void,
+) => http.ClientRequest;
 
 const CHECK_TIMEOUT_MS = 15_000;
 const DOWNLOAD_TIMEOUT_MS = 10 * 60_000;
@@ -327,10 +342,14 @@ export class UpdateService {
     }
     try {
       fs.mkdirSync(this.opts.downloadDir, { recursive: true });
-      const downloader = this.opts.downloadImpl ?? downloadTo;
-      await downloader(url, target, (received, total) => {
+      const onProgress = (received: number, total: number) => {
         this.set({ progress: total > 0 ? Math.min(1, received / total) : 0 });
-      });
+      };
+      if (this.opts.downloadImpl) {
+        await this.opts.downloadImpl(url, target, onProgress);
+      } else {
+        await downloadTo(url, target, onProgress, 0, this.opts.downloadGet);
+      }
     } catch (error) {
       // A half-written file is not an update, and it must not be left on disk
       // under the name that means "pending update".
@@ -516,15 +535,18 @@ export function resolveDownloadRedirect(
   return { ok: true, url: next, depth: depth + 1 };
 }
 
+const defaultDownloadGet: DownloadGet = (url, options, onResponse) =>
+  (url.protocol === 'https:' ? https : http).get(url, options, onResponse);
+
 async function downloadTo(
   url: URL,
   target: string,
   onProgress: (received: number, total: number) => void,
   depth = 0,
+  getImpl: DownloadGet = defaultDownloadGet,
 ): Promise<void> {
-  const client = url.protocol === 'https:' ? https : http;
   await new Promise<void>((resolve, reject) => {
-    const request = client.get(url, { timeout: DOWNLOAD_TIMEOUT_MS }, (response) => {
+    const request = getImpl(url, { timeout: DOWNLOAD_TIMEOUT_MS }, (response) => {
       if (response.statusCode && response.statusCode >= 300 && response.headers.location) {
         response.resume();
         const redirect = resolveDownloadRedirect(response.headers.location, url, depth);
@@ -532,7 +554,10 @@ async function downloadTo(
           reject(new Error(REDIRECT_MESSAGE[redirect.reason]));
           return;
         }
-        void downloadTo(redirect.url, target, onProgress, redirect.depth).then(resolve, reject);
+        void downloadTo(redirect.url, target, onProgress, redirect.depth, getImpl).then(
+          resolve,
+          reject,
+        );
         return;
       }
       if (response.statusCode !== 200) {
@@ -545,7 +570,12 @@ async function downloadTo(
         received += chunk.length;
         onProgress(received, total);
       });
-      pipeline(Readable.from(response), createWriteStream(target)).then(resolve, reject);
+      // Pipe the response itself, not `Readable.from(response)`. The progress
+      // listener above already put the stream into flowing mode; iterating the
+      // same stream a second time races that listener for its chunks, and the
+      // file can end up empty while every byte was counted. A pipe shares the
+      // flowing stream, so the progress count and the bytes written agree.
+      pipeline(response, createWriteStream(target)).then(resolve, reject);
     });
     request.on('timeout', () => request.destroy(new Error('下载超时')));
     request.on('error', reject);

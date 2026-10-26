@@ -33,6 +33,8 @@ import { createHash } from 'node:crypto';
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { Readable } from 'node:stream';
+import type * as http from 'node:http';
 import { silentLogger } from '@ucad/observability';
 import {
   normalizeSha256,
@@ -40,7 +42,11 @@ import {
   resolveUpdateFeed,
   verifyInstaller,
 } from '../../apps/desktop/src/main/update-feed';
-import { UpdateService, resolveDownloadRedirect } from '../../apps/desktop/src/main/update-service';
+import {
+  UpdateService,
+  resolveDownloadRedirect,
+  type DownloadGet,
+} from '../../apps/desktop/src/main/update-service';
 import { buildFeedDocument, installerUrlFor } from '../../scripts/make-update-feed.mjs';
 
 const FEED_URL = 'https://example.test/update-feed.json';
@@ -61,6 +67,51 @@ function feedFetch(document: unknown): { fetchImpl: typeof fetch; calls: number 
     });
   }) as unknown as typeof fetch;
   return { fetchImpl, get calls() { return state.calls; } } as { fetchImpl: typeof fetch; calls: number };
+}
+
+/** One scripted HTTP response, and the request that produced it. */
+interface ScriptedResponse {
+  readonly status: number;
+  readonly location?: string;
+  readonly body?: string;
+}
+
+/**
+ * A `https.get` stand-in that answers requests from a script, in order.
+ *
+ * The redirect rules live in the downloader's response callback, not in
+ * `resolveDownloadRedirect` alone. A gate that only calls the helper proves
+ * what the rule says; this drives the real listener, so "a 302 to `http:`
+ * writes nothing" is a statement about the download, not about a predicate.
+ */
+function scriptedGet(script: readonly ScriptedResponse[]): {
+  getImpl: DownloadGet;
+  requests: string[];
+} {
+  const steps = [...script];
+  const requests: string[] = [];
+  const getImpl: DownloadGet = (url, _options, onResponse) => {
+    requests.push(url.toString());
+    const step = steps.shift();
+    if (step === undefined) throw new Error(`unexpected request for ${url}`);
+    const response = Object.assign(
+      Readable.from(step.body === undefined ? [] : [Buffer.from(step.body)]),
+      {
+        statusCode: step.status,
+        headers: {
+          ...(step.location === undefined ? {} : { location: step.location }),
+          'content-length': String(step.body?.length ?? 0),
+        },
+      },
+    );
+    onResponse(response as unknown as http.IncomingMessage);
+    const request = {
+      on: () => request,
+      destroy: () => {},
+    } as unknown as http.ClientRequest;
+    return request;
+  };
+  return { getImpl, requests };
 }
 
 describe('the feed a released build ships with', () => {
@@ -274,22 +325,30 @@ describe('the updater itself', () => {
     feed: unknown;
     getFeedUrl?: () => string | null;
     download?: (url: URL, target: string) => Promise<void>;
+    /** drive the real downloader through a scripted transport instead */
+    downloadGet?: DownloadGet;
     open?: (target: string) => Promise<string>;
   }) {
     const fetched = feedFetch(options.feed);
     const downloads: string[] = [];
     const launched: string[] = [];
+    const download = options.download;
     const instance = new UpdateService({
       logger: silentLogger('test'),
       getFeedUrl: options.getFeedUrl ?? (() => FEED_URL),
       downloadDir: dir,
       currentVersion: '1.0.0',
       fetchImpl: fetched.fetchImpl,
-      downloadImpl: async (url, target, onProgress) => {
-        downloads.push(url.toString());
-        if (options.download) await options.download(url, target);
-        onProgress(1, 1);
-      },
+      ...(download === undefined
+        ? {}
+        : {
+            downloadImpl: async (url: URL, target: string, onProgress) => {
+              downloads.push(url.toString());
+              await download(url, target);
+              onProgress(1, 1);
+            },
+          }),
+      ...(options.downloadGet === undefined ? {} : { downloadGet: options.downloadGet }),
       openInstaller: async (target) => {
         launched.push(target);
         return options.open ? options.open(target) : '';
@@ -480,6 +539,137 @@ describe('the updater itself', () => {
     expect(installed).toBe(false);
     expect(launched).toEqual([]);
     expect(instance.current.state).toBe('error');
+  });
+
+  it('writes every byte it reports as downloaded', async () => {
+    // Two consumers of one stream: the progress listener, and the pipeline
+    // that writes the file. The downloader used to iterate the response a
+    // second time (`Readable.from(response)`), which raced the listener — the
+    // file could be written empty while `onProgress` reported the whole
+    // package. A same-tick response is where that race is deterministic, and
+    // it is also the shape of a fast local mirror. A ready status with an
+    // empty staged file is exactly the state that would later fail its hash
+    // check and look like a tampered download.
+    const genuine = 'the genuine installer';
+    const { getImpl } = scriptedGet([{ status: 200, body: genuine }]);
+    const { instance } = service({
+      feed: {
+        version: '9.9.9',
+        url: INSTALLER_URL,
+        sha256: sha256Of(genuine),
+        size: genuine.length,
+      },
+      downloadGet: getImpl,
+    });
+
+    await instance.check();
+    const status = await instance.download();
+
+    expect(status.state).toBe('ready');
+    expect(status.progress).toBe(1);
+    expect(readFileSync(join(dir, 'UCAD-setup.exe'), 'utf8')).toBe(genuine);
+  });
+
+  it('refuses a redirect to cleartext, leaving no staged file and launching nothing', async () => {
+    // The feed is https, the URL it names is https, and the hash is present —
+    // every check before the request passes. The installer then arrives as a
+    // 302 to `http:`. That hop is the downgrade the hash cannot catch: the
+    // bytes would still be checkable, but they would have travelled in the
+    // clear. The download must fail before the cleartext request is made.
+    const genuine = 'the genuine installer';
+    const { getImpl, requests } = scriptedGet([
+      { status: 302, location: 'http://example.test/UCAD-Setup-9.9.9.exe' },
+    ]);
+    const { instance, launched } = service({
+      feed: {
+        version: '9.9.9',
+        url: INSTALLER_URL,
+        sha256: sha256Of(genuine),
+        size: genuine.length,
+      },
+      downloadGet: getImpl,
+    });
+
+    await instance.check();
+    expect(instance.current.state).toBe('available');
+
+    const status = await instance.download();
+
+    expect(status.state).toBe('error');
+    expect(status.message).toContain('https');
+    // Only the request the feed named was made. A second request would mean
+    // the cleartext Location was followed before being judged.
+    expect(requests).toEqual([INSTALLER_URL]);
+    expect(existsSync(join(dir, 'UCAD-setup.exe'))).toBe(false);
+
+    const installed = await instance.installAndRestart();
+    expect(installed).toBe(false);
+    expect(launched).toEqual([]);
+  });
+
+  it('follows exactly five redirects and stages the bytes at the end', async () => {
+    // The boundary in the safe direction: five hops are followed. Without
+    // this case the limit could be tightened to four and every assertion
+    // about "too many" would still pass — a limit that refuses the fifth hop
+    // is not the limit the comment describes.
+    const genuine = 'the genuine installer';
+    const hops = Array.from({ length: 5 }, (_, index) => ({
+      status: 302,
+      location: `https://example.test/hop-${index + 1}`,
+    }));
+    const { getImpl, requests } = scriptedGet([...hops, { status: 200, body: genuine }]);
+    const { instance } = service({
+      feed: {
+        version: '9.9.9',
+        url: INSTALLER_URL,
+        sha256: sha256Of(genuine),
+        size: genuine.length,
+      },
+      downloadGet: getImpl,
+    });
+
+    await instance.check();
+    const status = await instance.download();
+
+    expect(status.state, status.message).toBe('ready');
+    expect(status.verified).toBe(true);
+    // The feed URL plus the five redirect targets.
+    expect(requests).toHaveLength(6);
+    expect(readFileSync(join(dir, 'UCAD-setup.exe'), 'utf8')).toBe(genuine);
+  });
+
+  it('refuses the sixth redirect and leaves nothing staged', async () => {
+    // The comment calls the limit a safety promise; this is the case that
+    // makes it fail. Six redirect responses are offered and the sixth is
+    // refused, so the request count stops at six instead of following the
+    // loop forever.
+    const genuine = 'the genuine installer';
+    const hops = Array.from({ length: 6 }, (_, index) => ({
+      status: 302,
+      location: `https://example.test/hop-${index + 1}`,
+    }));
+    const { getImpl, requests } = scriptedGet(hops);
+    const { instance, launched } = service({
+      feed: {
+        version: '9.9.9',
+        url: INSTALLER_URL,
+        sha256: sha256Of(genuine),
+        size: genuine.length,
+      },
+      downloadGet: getImpl,
+    });
+
+    await instance.check();
+    const status = await instance.download();
+
+    expect(status.state).toBe('error');
+    expect(status.message).toContain('重定向次数过多');
+    expect(requests).toHaveLength(6);
+    expect(existsSync(join(dir, 'UCAD-setup.exe'))).toBe(false);
+
+    const installed = await instance.installAndRestart();
+    expect(installed).toBe(false);
+    expect(launched).toEqual([]);
   });
 });
 

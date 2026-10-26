@@ -86,12 +86,18 @@ interface Limitation {
 const LIMITATIONS: readonly Limitation[] = [
   { id: 'one provider protocol; `mock` is not a real model', en: ['mock'], zh: ['mock'] },
   { id: 'the installer is unsigned', en: ['unsigned'], zh: ['未签名'] },
-  // Two keywords, because the Chinese section states a fact this row exists to
-  // keep: the override must be `https`, and a cleartext address is refused
-  // rather than quietly falling back to the bundled feed. English only carried
-  // that in the Installers section above, so the limitation itself read as if
-  // any feed URL would do.
-  { id: 'auto-update reads an `https` feed', en: ['feed', 'cleartext'], zh: ['feed', '明文'] },
+  // Three keywords, because the Chinese section states two facts this row
+  // exists to keep: the override must be `https`, and a cleartext address is
+  // refused rather than quietly falling back to the bundled feed; and with no
+  // feed the app says so instead of reporting "up to date". English only
+  // carried the first in the Installers section above, so the limitation
+  // itself read as if any feed URL would do — and a reader with no feed was
+  // told nothing about what the button would answer.
+  {
+    id: 'auto-update reads an `https` feed and says so when there is none',
+    en: ['feed', 'cleartext', 'failing quietly'],
+    zh: ['feed', '明文', '静默'],
+  },
   { id: 'the terminal needs `node-pty`', en: ['node-pty'], zh: ['node-pty'] },
   // Five keywords, because "verified somehow" is not the claim that matters.
   // The bullet has to say (a) there is no CI job, and (b) how a reader closes
@@ -271,6 +277,31 @@ describe('README limitations, English and Chinese', () => {
     expect(problems).toHaveLength(1);
     expect(problems[0]).toContain('zh: limitation 1 does not state');
     expect(problems[0]).toContain('"mock"');
+  });
+
+  it('reports a feed bullet that dropped the "no feed" answer in one language', () => {
+    // The sentence a reader with no feed depends on: the button says so rather
+    // than reporting the app is up to date. Both languages carried it, but
+    // only the `https` half was in the table — so one language could drop the
+    // other half and stay green. This is the case that makes the new keyword
+    // fail, and it fails on the language that lost the sentence.
+    const table = [LIMITATIONS[2]!];
+    expect(
+      parityProblems(
+        {
+          en: [
+            '**Auto-update needs a feed URL.** The variable must be `https`: a cleartext ' +
+              'address is refused. With no feed the app says so rather than failing quietly.',
+          ],
+          zh: ['**自动更新需要一个 feed 地址。** 这个变量只接受 `https`：明文地址会被拒绝。'],
+        },
+        table,
+      ),
+    ).toEqual([
+      'zh: limitation 1 does not state "auto-update reads an `https` feed and says so when ' +
+        'there is none" — looked for "feed" + "明文" + "静默" in ' +
+        '"**自动更新需要一个 feed 地址。** 这个变量只接受 `https`：明文地址会被拒绝。"',
+    ]);
   });
 
   it('reports a section with a different number of limitations', () => {
