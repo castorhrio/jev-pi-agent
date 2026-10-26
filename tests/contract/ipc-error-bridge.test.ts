@@ -56,7 +56,12 @@ vi.mock('electron', () => ({
 }));
 
 import { IPC_CHANNELS } from '@ucad/contracts';
-import { registerIpc } from '../../apps/desktop/src/main/ipc';
+import {
+  ZOD_ISSUE_CODES,
+  ZOD_REASON_BY_CODE,
+  ZOD_REASON_GENERIC,
+  registerIpc,
+} from '../../apps/desktop/src/main/ipc';
 import type { UcadApp } from '../../apps/desktop/src/main/app-container';
 import type { Locale } from '../../apps/desktop/src/shared/i18n';
 
@@ -320,5 +325,84 @@ describe('a malformed request is logged as INVALID_INPUT, not as a crash', () =>
     expect(entry).toBeDefined();
     expect(entry!.fields?.code).toBe('INVALID_INPUT');
     expect(entry!.fields?.invalidFields).toEqual(['confirm']);
+  });
+
+  it('names the request as a whole when no one field is at fault', async () => {
+    log.length = 0;
+    // `storage:setRetention` takes a union: a positive day count, or `null` for
+    // "keep forever". A string matches neither branch, so the issue has no
+    // path — and the field list used to carry the issue `code` instead, so the
+    // log line said the wrong fields were `['invalid_union']`: an English
+    // identifier in a list of field names, reading as a field called
+    // "invalid_union". The reason is already in the sentence; the field list
+    // only has to say "not one field in particular".
+    const rejection = (await invoke(IPC_CHANNELS.storage.setRetention, 'forever')) as Error;
+
+    expect(rejection.message).toBe('输入无效：格式不匹配');
+    const entry = log.find((line) => line.fields?.channel === IPC_CHANNELS.storage.setRetention);
+    expect(entry, 'the refusal produced no log line').toBeDefined();
+    expect(entry!.fields?.code).toBe('INVALID_INPUT');
+    expect(entry!.fields?.invalidFields).toEqual(['整体']);
+    // The code stays out of the line a person reads a log to understand.
+    expect(JSON.stringify(entry!.fields)).not.toContain('invalid_union');
+  });
+});
+
+/**
+ * The reason table covers every code this build's Zod can raise.
+ *
+ * ## Why this file exists
+ *
+ * `zodReason` used to be a `switch` with a `default`. The `default` was the
+ * quiet failure mode: a code the switch did not list — a Zod upgrade adding
+ * one, or a schema raising one this build never translated — answered
+ * 「不符合要求」 and nothing anywhere said a translation was missing. The only
+ * way to notice was to open the source and compare it by hand with the
+ * library's enum, which is not a check.
+ *
+ * The table is now `Record<z.ZodIssueCode, string>`, so a new code fails
+ * `npm run typecheck`. That is necessary and not sufficient: this suite runs
+ * through vitest, which transpiles without typechecking, so a type error alone
+ * would never fail a test run. The two assertions below make the same question
+ * a runtime one — every code the *running* Zod knows has an entry, and the
+ * codes that answer with the generic reason are exactly the listed ones, so
+ * "translated" cannot decay into "silently generic".
+ */
+describe('every Zod issue code has a Chinese reason of its own', () => {
+  it('has an entry for every code this build of Zod can raise', () => {
+    // Both directions: an entry for a code that no longer exists is dead
+    // weight that makes the table look more complete than it is.
+    expect([...ZOD_ISSUE_CODES].sort()).toEqual(Object.keys(ZOD_REASON_BY_CODE).sort());
+  });
+
+  it('gives the generic reason only to the codes that say so', () => {
+    const generic = Object.entries(ZOD_REASON_BY_CODE)
+      .filter(([, reason]) => reason === ZOD_REASON_GENERIC)
+      .map(([code]) => code)
+      .sort();
+
+    // `custom` is a schema's own refusal, which normally carries the sentence
+    // it was given — the generic reason is only what is left when it was not.
+    // The other three belong to Zod's own type machinery (`.function()`
+    // argument/return checks, intersections), which none of this app's schemas
+    // produce, so there is no sentence to invent for them.
+    //
+    // A code added to this list is a decision that a person sees 「不符合要求」
+    // and nothing more specific; that decision has to be written here.
+    expect(generic).toEqual([
+      'custom',
+      'invalid_arguments',
+      'invalid_intersection_types',
+      'invalid_return_type',
+    ]);
+  });
+
+  it('writes every reason in Chinese, with no library wording left in it', () => {
+    for (const [code, reason] of Object.entries(ZOD_REASON_BY_CODE)) {
+      // Nothing but Chinese characters: a stray English word here is the
+      // original bug (the library's diagnostics reaching a person) coming back
+      // through the fix.
+      expect(reason, `${code} is not a Chinese sentence`).toMatch(/^[\u4e00-\u9fff]+$/);
+    }
   });
 });

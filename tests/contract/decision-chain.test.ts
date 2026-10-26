@@ -254,6 +254,18 @@ describe('a declared side effect is a permission question, answered one case at 
     expect(facade.setChain(['repeated'])).toEqual(['rule']);
   });
 
+  it('refuses a manifest that repeats a real effect', () => {
+    // The same rule as `['none', 'none']`, applied to the other branch: a
+    // declaration states one thing. This case used to pass — `every()` asks
+    // about each element, and two `network`s are two elements that each pass —
+    // so the case list's "the manifest has to say one thing" was true of
+    // `none` and false of `network`, with nothing saying which was intended.
+    const repeated = stubEngine('repeated-net', { sideEffects: ['network', 'network'] });
+    const { facade } = makeFacade({ engines: [repeated], allowNetworkEngines: true });
+
+    expect(facade.setChain(['repeated-net'])).toEqual(['rule']);
+  });
+
   it('refuses a manifest that says `none` and a real effect at once', () => {
     // A contradiction is not a permission — not even when the real effect
     // (here `network`) is authorised. The manifest has to say one thing.
@@ -337,6 +349,9 @@ describe('a side-effect declaration is judged one branch at a time', () => {
     },
     { what: '`network`, not authorised', sideEffects: ['network'], authorised: false, verdict: 'refused' },
     { what: '`network`, authorised', sideEffects: ['network'], authorised: true, verdict: 'allowed' },
+    // A repeated effect is a malformed declaration, not a wider permission —
+    // the same verdict as `none` twice, whichever way the setting is switched.
+    { what: '`network` twice', sideEffects: ['network', 'network'], authorised: true, verdict: 'refused' },
     { what: '`process`', sideEffects: ['process'], authorised: true, verdict: 'refused' },
   ];
 

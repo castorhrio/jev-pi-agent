@@ -164,6 +164,12 @@ export class DecisionFacade {
    *   one way to say "no side effects", so a manifest that repeats it is not a
    *   different statement, it is a malformed one — and it is refused rather
    *   than silently read as `['none']`.
+   * - **the same effect declared twice** (`['network', 'network']`) — the same
+   *   malformedness as `['none', 'none']`, and refused for the same reason. It
+   *   used to be allowed whenever `allowNetworkEngines` was on, because the
+   *   `every()` below asks about each element and two `network`s are two
+   *   elements that each pass; the rule this case list states is about the
+   *   declaration's shape, not about the effects happening to be authorised.
    * - **anything else** (`process`, or an effect a newer build added) — there
    *   is no setting behind it, so nobody can have agreed to it. Refused: fail
    *   closed rather than run something nobody authorised (NFR-14).
@@ -185,6 +191,12 @@ export class DecisionFacade {
     // must state one thing, and "no effects, declared twice" is not a second
     // kind of statement.
     if (effects.includes('none')) return false;
+    // A declaration says one thing, once. Repeating an effect is not a wider
+    // permission, it is a manifest that does not match the shape the case list
+    // describes — the same reason `['none', 'none']` is refused two lines up.
+    // Checked before the `every()` below, which asks per element and so cannot
+    // tell `['network']` from `['network', 'network']`.
+    if (new Set(effects).size !== effects.length) return false;
     // Every effect needs a setting behind it. `network` has one; `process`
     // does not yet, so it is refused whatever `allowNetworkEngines` says.
     return effects.every((effect) => effect === 'network' && this.opts.allowNetworkEngines);

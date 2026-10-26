@@ -44,6 +44,17 @@ const secretRefSchema = z.object({
 });
 
 /**
+ * How a schema failure with no field is named in the log.
+ *
+ * The issue `code` used to be pushed here, which meant the log line for a bad
+ * union carried `invalid_union` — an English identifier in a list of field
+ * names, indistinguishable from a field that happens to be spelled that way.
+ * The reason for the refusal is already in `message` (see `zodReason`), so the
+ * field list only has to say "not one field in particular".
+ */
+const WHOLE_REQUEST_FIELD = '整体';
+
+/**
  * The field names a schema failure is about.
  *
  * Zod reports each problem as an issue: a path to the field, and — for a key
@@ -61,9 +72,14 @@ function schemaFailureFields(error: ZodError): string[] {
       continue;
     }
     const path = issue.path.join('.');
-    // A path can be empty (the whole object failed) — then the issue's own
-    // code is the only thing that says what kind of failure it was.
-    fields.push(path.length > 0 ? path : issue.code);
+    // A path can be empty: the whole request failed, either because it was the
+    // wrong type at the root or because it matched no branch of a union. The
+    // field list then has nothing to name, and the issue's own `code` is
+    // English — pushing it put `invalid_union` in the log beside real field
+    // names, where it reads as a field called "invalid_union" and puts a
+    // library identifier into a line written for people. A Chinese placeholder
+    // says "the request as a whole" without inventing a field.
+    fields.push(path.length > 0 ? path : WHOLE_REQUEST_FIELD);
   }
   return fields;
 }
@@ -93,6 +109,62 @@ function isZodOwnText(message: string): boolean {
 }
 
 /**
+ * What 「输入无效」 says when this build has nothing more precise to add.
+ *
+ * A code lands here only when it is listed below with this reason: `custom` is
+ * a schema's own refusal, which normally carries the sentence it was given, and
+ * the other three are codes this app's schemas cannot produce at all. The list
+ * is asserted in `tests/contract/ipc-error-bridge.test.ts`, so a Zod upgrade
+ * that adds a code has to be an explicit decision here instead of silently
+ * becoming 「不符合要求」.
+ */
+export const ZOD_REASON_GENERIC = '不符合要求';
+
+/**
+ * One Chinese reason per issue `code` — the whole table Zod can raise.
+ *
+ * It was a `switch` with a `default`, and the `default` is what made it rot: a
+ * code the switch did not list became 「不符合要求」 with nothing anywhere
+ * saying a translation was missing. Keyed as `Record<z.ZodIssueCode, …>` it is
+ * now exhaustive — a Zod upgrade that adds a code fails `npm run typecheck`
+ * before the app can ship a generic sentence for it — and the exported table
+ * lets a test ask the same question at runtime, because the suite transpiles
+ * without typechecking.
+ *
+ * Three codes need more than their code to decide (`invalid_type`'s
+ * "not sent", `too_small`/`too_big`'s "how many / how long"), so `zodReason`
+ * refines those and falls back to the entry here.
+ */
+export const ZOD_REASON_BY_CODE: Record<z.ZodIssueCode, string> = {
+  invalid_type: '类型不正确',
+  invalid_literal: '取值不在允许的范围内',
+  invalid_enum_value: '取值不在允许的范围内',
+  invalid_union: '格式不匹配',
+  invalid_union_discriminator: '格式不匹配',
+  unrecognized_keys: '包含未知字段',
+  invalid_string: '格式不正确',
+  invalid_date: '日期无效',
+  too_small: '内容太短',
+  too_big: '内容太长',
+  not_finite: '数值无效',
+  not_multiple_of: '数值无效',
+  custom: ZOD_REASON_GENERIC,
+  invalid_arguments: ZOD_REASON_GENERIC,
+  invalid_return_type: ZOD_REASON_GENERIC,
+  invalid_intersection_types: ZOD_REASON_GENERIC,
+};
+
+/**
+ * Every issue code this build's Zod knows, at runtime.
+ *
+ * Exported for the meta-test only: the type of {@link ZOD_REASON_BY_CODE} is
+ * checked by `tsc`, and this is how the same check is made by a test run.
+ */
+export const ZOD_ISSUE_CODES: readonly z.ZodIssueCode[] = Object.keys(
+  z.ZodIssueCode,
+) as z.ZodIssueCode[];
+
+/**
  * The reason half of 「输入无效」, in Chinese.
  *
  * A schema failure reaches a person as one sentence — `输入无效 (cols)：…` — and
@@ -117,35 +189,20 @@ function zodReason(issue: z.ZodIssue): string {
     case 'invalid_type':
       // `received: 'undefined'` is how Zod spells "the field was not sent" — a
       // different mistake from a wrong type, and one the caller can fix.
-      return issue.received === 'undefined' ? '缺少必填字段' : '类型不正确';
+      return issue.received === 'undefined'
+        ? '缺少必填字段'
+        : ZOD_REASON_BY_CODE.invalid_type;
     case 'too_small':
       if (issue.type === 'array') return '至少需要一项';
       if (issue.type === 'number' || issue.type === 'date') return '数值太小';
-      return '内容太短';
+      return ZOD_REASON_BY_CODE.too_small;
     case 'too_big':
       if (issue.type === 'array') return '项目太多';
       if (issue.type === 'number' || issue.type === 'date') return '数值太大';
-      return '内容太长';
-    case 'invalid_string':
-      return '格式不正确';
-    case 'invalid_enum_value':
-    case 'invalid_literal':
-      return '取值不在允许的范围内';
-    case 'invalid_union':
-    case 'invalid_union_discriminator':
-      return '格式不匹配';
-    case 'invalid_date':
-      return '日期无效';
-    case 'unrecognized_keys':
-      return '包含未知字段';
-    case 'not_finite':
-    case 'not_multiple_of':
-      return '数值无效';
-    default:
-      // `custom` lands here when a schema added an issue without a message of
-      // its own; anything else is a Zod code this build does not translate.
-      return '不符合要求';
+      return ZOD_REASON_BY_CODE.too_big;
   }
+  // Every other code has exactly one reason, in the table above.
+  return ZOD_REASON_BY_CODE[issue.code];
 }
 
 /**
