@@ -176,6 +176,28 @@ describe('a slash is a division where a value already ended', () => {
     expect(blank('x = {} / 2; // comment')).not.toContain('comment');
   });
 
+  it('reads a slash after a bracketed, called, numeric or boolean value as division', () => {
+    // The `}` case above shares a branch with every other way a value ends:
+    // `startsRegexLiteral` treats `[\w$)\]]` as "a value just ended" and `}`
+    // as its own case. The matrix pins the spellings that reach the first
+    // branch — an index (`]`), a call (`)`), a number and a boolean — because
+    // one regex covers them: moving any spelling to the operand side would
+    // turn exactly that line into a swallowed comment, which no other fixture
+    // here would catch.
+    const cases: ReadonlyArray<readonly [source: string, code: string]> = [
+      ['const q = arr[i] / 2; // comment', 'const q = arr[i] / 2;'],
+      ['const q = f() / 2; // comment', 'const q = f() / 2;'],
+      ['const q = 1 / 2; // comment', 'const q = 1 / 2;'],
+      ['const q = true / 1; // comment', 'const q = true / 1;'],
+    ];
+    for (const [source, code] of cases) {
+      expect(compact(source), `${source} was read as a regex literal`).toBe(code);
+      // The comment is gone, not merely uncounted: a literal attempt that ran
+      // past the `//` would leave it readable in the blanked text.
+      expect(blank(source), `${source} left its comment readable`).not.toContain('comment');
+    }
+  });
+
   it('reads a slash after return as a regex literal, flags and all', () => {
     // The other side of the same heuristic: `return` asks for a value, so the
     // literal is a literal — and the `//` that would otherwise look like a
