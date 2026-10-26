@@ -57,7 +57,7 @@ vi.mock('electron', () => ({
 
 import { RetentionService } from '@ucad/session';
 
-import { UcadApp } from '../../apps/desktop/src/main/app-container';
+import { RETENTION_DEPENDENCIES, UcadApp } from '../../apps/desktop/src/main/app-container';
 import type { AppPaths } from '../../apps/desktop/src/main/paths';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -106,6 +106,26 @@ function checklistEntriesNotPromised(
 ): string[] {
   const promised = new Set(found);
   return checklist.filter((field) => !promised.has(field));
+}
+
+/**
+ * Names on `RETENTION_DEPENDENCIES` that the checklist does not cover.
+ *
+ * The two lists are written down separately — one says "these fields the
+ * retention service is built from", the other "these fields `start()` must
+ * provide". Each is right on its own, and that is exactly the problem: a
+ * retention dependency that is not on the checklist is a field the guard in
+ * `requireStarted()` relies on and the scan-and-run gate does not cover, so
+ * the container could hand retention an `undefined` that no test looks at.
+ * A pure function (like the two above) so its failure mode can be pinned on
+ * a fixture rather than assumed.
+ */
+function dependenciesOutsideTheChecklist(
+  dependencies: readonly string[],
+  checklist: readonly string[],
+): string[] {
+  const promised = new Set(checklist);
+  return dependencies.filter((field) => !promised.has(field));
 }
 
 /**
@@ -218,6 +238,15 @@ describe('the scan that reads the container’s promises', () => {
     expect(promisesMissingFromChecklist(found, ['db'])).toEqual(['brandNew']);
   });
 
+  it('reports a retention dependency the checklist does not cover', () => {
+    // The cross-check below is a plain `filter`, so its "nothing to report"
+    // answer is only worth something if a fixture shows it can answer
+    // otherwise. `files` stands in for a field somebody added to the
+    // retention bag without adding it to the promises.
+    expect(dependenciesOutsideTheChecklist(['db', 'files'], ['db', 'logger'])).toEqual(['files']);
+    expect(dependenciesOutsideTheChecklist(['db'], ['db', 'logger'])).toEqual([]);
+  });
+
   it('reports a checklist entry the class no longer declares', () => {
     // The other direction: a renamed or deleted field must not leave a stale
     // checklist entry behind, or the `has every one of them after start()`
@@ -240,6 +269,53 @@ describe('the container keeps every promise start() made', () => {
       checklistEntriesNotPromised(found, PROMISED_FIELDS),
       'the checklist names a field the container no longer declares',
     ).toEqual([]);
+  });
+
+  it('covers every field the retention service is built from', () => {
+    // `RETENTION_DEPENDENCIES` is the retention dependency bag's only source
+    // of names, and `PROMISED_FIELDS` is what the scan-and-run gate checks.
+    // Nothing used to connect the two: a dependency could sit in the bag, be
+    // demanded of `start()` by `requireStarted()`, and still be missing from
+    // the checklist — leaving the one field the service cannot work without
+    // outside the gate that proves `start()` sets it.
+    expect(
+      RETENTION_DEPENDENCIES.length,
+      'the retention dependency list is empty, so this assertion proves nothing',
+    ).toBeGreaterThan(0);
+    expect(
+      dependenciesOutsideTheChecklist(RETENTION_DEPENDENCIES, PROMISED_FIELDS),
+      'a field the retention service is built from is missing from PROMISED_FIELDS',
+    ).toEqual([]);
+  });
+
+  it('guards exactly the retention dependencies, once each', async () => {
+    // The bag is typed by `RETENTION_DEPENDENCIES`, so a *missing* field does
+    // not compile — but a fifth field added by hand in `retentionDeps()`, or
+    // one field asked for twice through a slightly different expression,
+    // compiles fine. The calls are the contract, so record them: the guard is
+    // the only thing between the retention service and an `undefined` `db`.
+    const prototype = UcadApp.prototype as unknown as {
+      requireStarted: (field: string, value: unknown) => unknown;
+    };
+    const guard = vi.spyOn(prototype, 'requireStarted');
+    let guarded: string[];
+    try {
+      app = await startApp();
+      // `start()` builds the service, so the calls above are the only ones
+      // that can happen; a second build would be a second bag, which is the
+      // duplicate-instance defect this container already fixed once.
+      app.getRetention();
+      // Read the calls before `mockRestore()`: restoring also clears them,
+      // and an empty list would then compare unequal for the wrong reason.
+      guarded = guard.mock.calls.map((call) => call[0]);
+    } finally {
+      guard.mockRestore();
+    }
+
+    expect(
+      [...guarded].sort(),
+      'retentionDeps() asked the guard for a different set of fields than RETENTION_DEPENDENCIES names',
+    ).toEqual([...RETENTION_DEPENDENCIES].sort());
   });
 
   it('has every one of them after start()', async () => {
@@ -276,6 +352,25 @@ describe('the container keeps every promise start() made', () => {
       const value = (container as unknown as Record<string, unknown>)[field];
       expect(value, `${field} was already set before start()`).toBeUndefined();
     }
+  });
+
+  it('releases the database when it is disposed', async () => {
+    // The `afterEach` above is load-bearing: it closes the database and
+    // removes the temporary directory. A `dispose()` that quietly stopped
+    // closing SQLite would not fail any test — it would leak a file handle
+    // per test and, on Windows, leave `fs.rmSync` fighting an open file, so
+    // the failure would surface as a teardown error attributed to whichever
+    // test ran last. Pinning the teardown keeps a broken one from looking
+    // like a broken assertion somewhere else.
+    const container = await startApp();
+    const db = container.db;
+    expect(db.schemaVersion).toBeGreaterThan(0);
+
+    await container.dispose();
+    // Deliberately not assigned to `app`: `afterEach` would dispose it a
+    // second time, and a double close throws ("Database already closed"),
+    // which is the same class of misattributed failure this test exists for.
+    expect(() => db.schemaVersion, 'dispose() left the SQLite database open').toThrow();
   });
 
   it('builds the retention service over those same fields', async () => {
