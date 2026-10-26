@@ -32,8 +32,9 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { existsSync, readFileSync, readdirSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, sep } from 'node:path';
 
 import {
   SCAN_ROOTS,
@@ -332,34 +333,144 @@ describe('no schema in this app writes an English sentence', () => {
  */
 describe('the scan covers every workspace in this repository', () => {
   /**
-   * The `src` directories this repository has, wherever they are.
+   * The `src` directories under `dir`, at any depth.
    *
-   * Two levels: a workspace is either a top-level directory with its own
-   * `src`, or a directory of workspaces (`packages/one/src`). `node_modules`
-   * and dot-directories are not the repository's source and are left out.
+   * The question is asked of the *repository*, not of the rule that derives the
+   * scan's roots. A walk that stopped where the rule stops would report
+   * exactly the roots the rule reaches — and a root the rule misses would be
+   * neither scanned nor reported: `apps/desktop/worker/src` is not
+   * `apps/<name>/src` and not under one, so an English sentence there passed
+   * this gate untouched, in a test whose subject is "the scan covers every
+   * workspace".
+   *
+   * The directories left out are build output and the test tree, and each for a
+   * reason:
+   *
+   *  - `node_modules`, `dist`, `out`, `release`, `coverage` — the names in
+   *    `.gitignore`; they are output, not this repository's source;
+   *  - dot-directories — the tool's own (`.git`, `.run-logs`);
+   *  - `tests` — the test tree ships nothing, and it carries English sentences
+   *    on purpose: they are the fixtures that prove the scan can read and
+   *    judge one.
    */
-  function repositorySourceRoots(): string[] {
+  function sourceRootsUnder(dir: string): string[] {
     const roots: string[] = [];
 
-    for (const entry of readdirSync('.', { withFileTypes: true })) {
-      if (!entry.isDirectory()) continue;
-      if (entry.name.startsWith('.') || entry.name === 'node_modules') continue;
+    const walk = (current: string): void => {
+      for (const entry of readdirSync(current, { withFileTypes: true })) {
+        if (!entry.isDirectory()) continue;
+        if (entry.name.startsWith('.')) continue;
+        if (
+          entry.name === 'node_modules' ||
+          entry.name === 'dist' ||
+          entry.name === 'out' ||
+          entry.name === 'release' ||
+          entry.name === 'coverage' ||
+          entry.name === 'tests'
+        ) {
+          continue;
+        }
 
-      const own = join(entry.name, 'src');
-      if (existsSync(own)) {
-        roots.push(own);
-        continue;
+        const full = join(current, entry.name);
+        if (entry.name === 'src') roots.push(full);
+        // A `src` directory is descended into as well: a root may hold
+        // another one (`apps/desktop/src/renderer/src`), and that one is a
+        // root of its own.
+        walk(full);
       }
+    };
 
-      for (const child of readdirSync(entry.name, { withFileTypes: true })) {
-        if (!child.isDirectory()) continue;
-        const nested = join(entry.name, child.name, 'src');
-        if (existsSync(nested)) roots.push(nested);
-      }
-    }
+    walk(dir);
 
     return roots;
   }
+
+  /** Every source root this repository has. */
+  function repositorySourceRoots(): string[] {
+    return sourceRootsUnder('.');
+  }
+
+  /**
+   * The source roots the scan does not read.
+   *
+   * A root is read when it *is* one of the scanned roots or sits under one of
+   * them — the scan walks a root recursively, so a root nested inside a
+   * scanned root is covered by it (`apps/desktop/src/renderer/src` is read by
+   * `apps/desktop/src`). The separator matters: `packages/bench/src-extra` is
+   * not under `packages/bench/src`.
+   */
+  function unreadSourceRoots(roots: readonly string[], scanned: readonly string[]): string[] {
+    return roots.filter((root) => !scanned.some((one) => root === one || root.startsWith(one + sep)));
+  }
+
+  it('finds a source root at any depth, and skips the build output', () => {
+    // The walk is the fix, so the walk is what is tested: a version that
+    // stopped at the depth the scan's own rule reaches would pass the
+    // assertion below on this repository and miss a root the rule misses.
+    const dir = mkdtempSync(join(tmpdir(), 'ucad-scan-roots-'));
+    try {
+      mkdirSync(join(dir, 'apps', 'desktop', 'src'), { recursive: true });
+      mkdirSync(join(dir, 'apps', 'desktop', 'src', 'renderer', 'src'), { recursive: true });
+      mkdirSync(join(dir, 'packages', 'one', 'src'), { recursive: true });
+      mkdirSync(join(dir, 'node_modules', 'pkg', 'src'), { recursive: true });
+      mkdirSync(join(dir, 'dist', 'src'), { recursive: true });
+      mkdirSync(join(dir, 'tests', 'src'), { recursive: true });
+      mkdirSync(join(dir, '.hidden', 'src'), { recursive: true });
+
+      const roots = sourceRootsUnder(dir)
+        .map((root) => root.slice(dir.length + 1))
+        .sort();
+
+      expect(roots).toEqual(
+        [
+          join('apps', 'desktop', 'src'),
+          join('apps', 'desktop', 'src', 'renderer', 'src'),
+          join('packages', 'one', 'src'),
+        ].sort(),
+      );
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('reports a source root the scan does not read', () => {
+    // The red-proof for the assertion below: a coverage rule that reported
+    // nothing would leave "every source root is read" true for any
+    // repository, including one with an unread root.
+    //
+    // The paths are joined rather than written out, because the coverage rule
+    // compares against the platform's separator.
+    const bench = join('packages', 'bench', 'src');
+    const desktop = join('apps', 'desktop', 'src');
+    const scanned = [bench, desktop];
+
+    // Read: the root itself, and a root nested inside a scanned one.
+    expect(unreadSourceRoots([bench, join('apps', 'desktop', 'src', 'renderer', 'src')], scanned)).toEqual(
+      [],
+    );
+    // Not read: a root that is not under any scanned root — the shape that
+    // used to pass this gate untouched.
+    expect(unreadSourceRoots([join('apps', 'desktop', 'worker', 'src')], scanned)).toEqual([
+      join('apps', 'desktop', 'worker', 'src'),
+    ]);
+    // Not read: a name that merely starts with a scanned root.
+    expect(unreadSourceRoots([`${bench}-extra`], scanned)).toEqual([`${bench}-extra`]);
+  });
+
+  it('reads a file nested under a scanned root', () => {
+    // The coverage rule above says a root *under* a scanned root is read.
+    // That is only true while the scan walks a root recursively, so the
+    // recursion is pinned here on a fixture rather than assumed.
+    const dir = mkdtempSync(join(tmpdir(), 'ucad-scan-files-'));
+    try {
+      mkdirSync(join(dir, 'a', 'b'), { recursive: true });
+      writeFileSync(join(dir, 'a', 'b', 'deep.ts'), 'export const x = 1;\n');
+
+      expect(sourceFilesIn(dir)).toContain(join(dir, 'a', 'b', 'deep.ts'));
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
 
   it('scans a root for every workspace, and every root holds source', () => {
     // A root that does not exist is a typo; a root with no source in it is a
@@ -375,21 +486,21 @@ describe('the scan covers every workspace in this repository', () => {
     }
   });
 
-  it('scans every source root the repository has', () => {
+  it('reads every source root the repository has', () => {
     // The question that keeps the scope honest: not "does the scan read what
-    // it lists", but "is there source the scan does not list". A workspace
-    // added as a new top-level directory would not be in `SCAN_ROOTS` — the
-    // roots are derived from `packages/` and `apps/` — and would carry
-    // schemas the English check never reads.
+    // it lists", but "is there source the scan does not read". A workspace
+    // added as a new top-level directory, or nested deeper than the rule that
+    // derives the roots reaches, is not in `SCAN_ROOTS` — and its schemas
+    // would never be read by the English check.
     const roots = repositorySourceRoots();
 
     expect(roots.length, 'the repository has no source roots at all').toBeGreaterThan(0);
 
-    const unscanned = roots.filter((root) => !SCAN_ROOTS.includes(root));
+    const unread = unreadSourceRoots(roots, SCAN_ROOTS);
 
     expect(
-      unscanned,
-      'a source root this repository has is not in the scan’s scope — add it to SCAN_ROOTS in tests/contract/zod-message-scan.ts (and to CONTRIBUTING.md’s “Adding a workspace package” if it is a new top-level directory)',
+      unread,
+      'a source root this repository has is not read by the scan — add it to EXTRA_SCAN_ROOTS in tests/contract/zod-message-scan.ts (and to CONTRIBUTING.md’s “Adding a workspace package” if it is a new top-level directory)',
     ).toEqual([]);
   });
 });

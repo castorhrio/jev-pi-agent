@@ -84,7 +84,7 @@ something else. These are the gates that decide the upgrade for you.
 | `tests/contract/ipc-errors.test.ts` | Every issue code the *new* Zod can raise has a Chinese reason of its own. The list is taken from the running Zod's own enum, so a new code fails here rather than silently answering 「不符合要求」. |
 | `tests/contract/ipc-errors.test.ts` — wordings | `ZOD_OWN_OPENINGS` is the list of sentences Zod writes *itself*, and the only thing that tells a library message from one this app wrote. That test makes the installed Zod raise one issue per code and checks every message it wrote starts with an entry, so a reworded message fails there and names the message. Without it a Zod upgrade silently turns a library sentence into an "app sentence" and shows it to a person in English. |
 | `tests/contract/ipc-error-bridge.test.ts` | The exact set of codes that answer with the generic reason, the sentence that crosses the bridge, and the `reasonSource` that says whether the reason came from the schema or from the table — so a schema whose own message was swallowed cannot pass as a wording change. |
-| `tests/contract/zod-custom-messages.test.ts` | The “no English custom message” scan, and the shapes it is known *not* to judge: a schema reached through a renamed or destructured `z`, and a positional message after a regex literal containing a comma (`/a,b/`). Each blind spot is an assertion, so teaching the scan to see one fails there instead of quietly changing what the gate covers. |
+| `tests/contract/zod-custom-messages.test.ts` | The “no English custom message” scan, and the shapes it is known *not* to judge: a schema reached through a renamed or destructured `z`, and a positional message after a regex literal containing a comma (`/a,b/`). Each blind spot is an assertion, so teaching the scan to see one fails there instead of quietly changing what the gate covers. The same file asks the *repository* which source roots it has — at any depth — and fails on one the scan does not read. |
 | `npm run typecheck` | The reason table is `Record<z.ZodIssueCode, string>`, so a new code fails the build before the app can ship a generic sentence for it. |
 
 A new code is not finished until it is **translated**. Adding it to
@@ -190,10 +190,18 @@ build graph is checked by `tests/contract/build-graph.test.ts`. Without the refe
 clean build, never on an incremental one.
 
 A package under `packages/` or `apps/` is covered by the source scans without being
-named anywhere. A **top-level** workspace — a new directory beside `packages/` — is not:
-add its `src` to `SCAN_ROOTS` in `tests/contract/zod-message-scan.ts`, or its schemas are
-never read by the "no English custom message" scan. `tests/contract/zod-custom-messages.test.ts`
-fails when a source root exists that the scan does not cover.
+named anywhere. Two shapes are not:
+
+- a **top-level** workspace — a new directory beside `packages/`;
+- a workspace **nested deeper** than the rule reaches — `apps/<name>/src` is a
+  root, `apps/desktop/worker/src` is not, and neither is anything under it.
+
+Either one has to be added to `EXTRA_SCAN_ROOTS` in
+`tests/contract/zod-message-scan.ts`, or its schemas are never read by the
+"no English custom message" scan. `tests/contract/zod-custom-messages.test.ts`
+fails when the repository holds a source root the scan does not read, and names
+it: the walk it uses looks for `src` directories at **any** depth, so a root
+the rule misses cannot slip through unnoticed.
 
 ## Commit messages
 

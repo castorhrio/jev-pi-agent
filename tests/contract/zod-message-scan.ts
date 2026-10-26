@@ -509,12 +509,18 @@ export function englishMessages(file: string, text: string): ZodCustomMessage[] 
  * ------------------------------------------------------------------------- */
 
 /**
- * Source roots outside `packages/` and `apps/`.
+ * Source roots the rule below does not reach.
  *
- * Empty today: every workspace in this repository lives under one of those
- * two directories, and a workspace added there is picked up automatically. A
- * *top-level* workspace — a new directory beside `packages/` — is not, and has
- * to be listed here.
+ * Empty today: every workspace in this repository lives under `packages/` or
+ * `apps/`, and a workspace added there is picked up automatically. Two shapes
+ * are not: a *top-level* workspace — a new directory beside `packages/` — and
+ * a workspace nested deeper than the rule reaches, such as
+ * `apps/desktop/worker/src` (the rule knows `apps/<name>/src`, and that one
+ * is neither it nor under it). Both have to be listed here.
+ *
+ * `zod-custom-messages.test.ts` fails when the repository holds a source root
+ * the scan does not read, and names it, so the omission is a decision rather
+ * than a silence.
  */
 const EXTRA_SCAN_ROOTS: readonly string[] = [];
 
@@ -536,8 +542,9 @@ function rootsUnder(parent: string): string[] {
  *
  * The list is explicit here, and `zod-custom-messages.test.ts` asks two
  * questions about it — that every root exists and holds source, and that
- * every source root this repository has is in this list. A new top-level
- * workspace therefore fails a test until it is added to
+ * every source root this repository has is *read* by the scan (a root at or
+ * under one of these, since the scan walks a root recursively). A source root
+ * the rule does not reach therefore fails a test until it is added to
  * {@link EXTRA_SCAN_ROOTS}: the omission becomes a decision instead of a
  * silence. `CONTRIBUTING.md` says the same in prose, under "Adding a
  * workspace package".
