@@ -292,6 +292,10 @@ a built app.
 
 Run these on the machine that produces the artifact, in this order:
 
+- [ ] `git switch main` (or the release branch) — **not** a detached HEAD. `git status` says
+      "HEAD detached at …" in one line, and it is the line people skim past: the build is then
+      traceable to no branch, and the version tag lands on a commit the changelog does not
+      describe. Switch first, then start the checklist; switching later means rebuilding.
 - [ ] `npm ci && npm run build && npm test` — the gates CI runs, on the platform that will ship.
 - [ ] `npm run package` — writes `release/`; a failure here is usually the Windows symlink trap
       above, not the app.

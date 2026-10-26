@@ -22,20 +22,30 @@
  *    writes it, per platform; and
  *  - a missing build names the command that produces one.
  *
- * The launch itself is the only part not covered here, by construction: it needs
- * a packaged app. That is the same boundary the README states, and the last
- * case below keeps the statement discoverable — CONTRIBUTING has to name the
- * command, or the reader is back to "read the line yourself".
+ * The launch used to be the one part not covered here, because it needs a
+ * packaged app. It now takes its `spawn` as a parameter, so a fake child drives
+ * every path that decides the outcome — the summary line arriving (split across
+ * chunks), the timeout, a launch error, an early exit, and the stop that follows
+ * each of them — including the `SIGKILL` fallback without which a wedged build
+ * is left running as an orphan. What remains manual is running the real
+ * artifact; the last cases keep THAT statement discoverable, since CONTRIBUTING
+ * has to name the command or the reader is back to "read the line yourself".
  */
 
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { EventEmitter } from 'node:events';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import {
+  RELEASE_DIR,
   findPackagedExecutable,
+  launch,
   packagedExecutables,
+  parseArgs,
+  releaseDirFrom,
   resolvedAdapterIds,
+  stop,
   tailOf,
   verifyResolution,
 } from '../../scripts/verify-packaged-adapters.mjs';
@@ -149,6 +159,206 @@ describe('the failure message a terminal sees', () => {
   });
 });
 
+/**
+ * A stand-in for `ChildProcess`, with the shape `launch`/`stop` actually touch.
+ *
+ * Nothing here spawns anything: `stdout`/`stderr` are emitters the test pushes
+ * chunks into, and `kill` records the signals instead of delivering them. That
+ * is enough to assert *when* a run finishes and *what* it was killed with, which
+ * is exactly what a real launch makes impossible to observe.
+ */
+class FakeChild extends EventEmitter {
+  pid: number | undefined = 4242;
+  exitCode: number | null = null;
+  stdout = new EventEmitter();
+  stderr = new EventEmitter();
+  signals: Array<string | undefined> = [];
+  kill = vi.fn((signal?: string) => {
+    this.signals.push(signal);
+    return true;
+  });
+
+  /** The app prints a chunk on the diagnostic channel it uses in practice. */
+  say(text: string): void {
+    this.stderr.emit('data', Buffer.from(text));
+  }
+}
+
+describe('the flags the command reads', () => {
+  it('takes the value that follows a flag', () => {
+    expect(parseArgs(['--require', 'universal,mock'])).toEqual({ require: 'universal,mock' });
+    expect(parseArgs(['--timeout', '1000'])).toEqual({ timeout: '1000' });
+  });
+
+  it('reads a flag with nothing after it as a boolean', () => {
+    expect(parseArgs(['--help'])).toEqual({ help: true });
+    expect(parseArgs(['--help', '--timeout', '1000'])).toEqual({ help: true, timeout: '1000' });
+  });
+
+  it('does not swallow the next flag as a value', () => {
+    // `--require --timeout 1000` is a missing value, not an adapter called
+    // "--timeout": the reader gets an empty requirement and the timeout still
+    // applies, instead of one silently eating the other.
+    expect(parseArgs(['--require', '--timeout', '1000'])).toEqual({
+      require: true,
+      timeout: '1000',
+    });
+  });
+
+  it('keeps the last value of a repeated flag', () => {
+    expect(parseArgs(['--require', 'a', '--require', 'b'])).toEqual({ require: 'b' });
+  });
+
+  it('ignores bare words, which are not options', () => {
+    expect(parseArgs(['package', '--timeout', '1000', 'extra'])).toEqual({ timeout: '1000' });
+  });
+
+  it('resolves --release against the repository, not the caller\'s cwd', () => {
+    // The preflight is often started from a shell sitting somewhere else; the
+    // answer must not depend on that. `release` is the default directory, so the
+    // two spellings have to agree.
+    expect(releaseDirFrom({})).toBe(RELEASE_DIR);
+    expect(releaseDirFrom({ release: 'release' })).toBe(RELEASE_DIR);
+    expect(releaseDirFrom({ release: 'out/ci' })).toBe(resolve(RELEASE_DIR, '..', 'out/ci'));
+    expect(releaseDirFrom({ release: '/abs/elsewhere' })).toBe('/abs/elsewhere');
+  });
+});
+
+describe('the launch, driven through an injected spawn', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('finishes the moment the summary line completes, and keeps every byte', async () => {
+    // Real timers with a short bound on purpose: if the line stops being
+    // recognised this fails in a second with `reason: 'timeout'`, instead of
+    // hanging until the 30s test timeout and saying nothing useful.
+    const child = new FakeChild();
+    const spawnFn = vi.fn(() => child);
+    const pending = launch('/opt/ucad', { spawnFn, timeoutMs: 1000 });
+
+    child.say('Checking for update\n[ucad] adapters resolv');
+    // Split mid-line: a run that judged each chunk would miss the line entirely.
+    expect(child.kill).not.toHaveBeenCalled();
+    child.say('ed: universal\n');
+
+    const { output, reason } = await pending;
+    expect(reason).toBe('resolved-line');
+    expect(output).toContain('Checking for update');
+    expect(output).toContain('[ucad] adapters resolved: universal');
+    // stdin is ignored: a packaged app must not inherit a terminal and wait on it.
+    expect(spawnFn).toHaveBeenCalledWith(
+      '/opt/ucad',
+      [],
+      expect.objectContaining({ stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true }),
+    );
+    expect(child.signals).toEqual(['SIGTERM']);
+  });
+
+  it('gives up at the timeout, so a build that never prints the line is a failure', async () => {
+    vi.useFakeTimers();
+    const child = new FakeChild();
+    const pending = launch('/opt/ucad', { spawnFn: () => child, timeoutMs: 1000 });
+
+    child.say('Error: Cannot open display\n');
+    await vi.advanceTimersByTimeAsync(999);
+    expect(child.kill).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(1);
+    const { output, reason } = await pending;
+    expect(reason).toBe('timeout');
+    // The output is kept for the tail in the failure message.
+    expect(output).toContain('Cannot open display');
+    expect(child.signals).toEqual(['SIGTERM']);
+  });
+
+  it('reports a launch that could not start at all, with the reason', async () => {
+    const child = new FakeChild();
+    const pending = launch('/opt/ucad', { spawnFn: () => child, timeoutMs: 10_000 });
+    child.emit('error', new Error('ENOENT: no such file'));
+
+    const { output, reason } = await pending;
+    expect(reason).toBe('launch-error');
+    expect(output).toContain('could not launch /opt/ucad');
+    expect(output).toContain('ENOENT');
+  });
+
+  it('reports a build that exited before printing the line as exited, not as resolved', async () => {
+    const child = new FakeChild();
+    const pending = launch('/opt/ucad', { spawnFn: () => child, timeoutMs: 10_000 });
+    child.exitCode = 1;
+    child.emit('exit', 1);
+
+    const { reason } = await pending;
+    expect(reason).toBe('exited');
+  });
+
+  it('stops a timed-out run through the process tree on Windows', async () => {
+    vi.useFakeTimers();
+    const child = new FakeChild();
+    const taskkill = new EventEmitter();
+    const spawnFn = vi.fn((command: string) => (command === 'taskkill' ? taskkill : child));
+    const pending = launch('/opt/ucad', { spawnFn, platform: 'win32', timeoutMs: 10 });
+
+    await vi.advanceTimersByTimeAsync(10);
+    const { reason } = await pending;
+    expect(reason).toBe('timeout');
+    // `kill()` alone leaves the Chromium children behind on Windows.
+    expect(spawnFn).toHaveBeenCalledWith(
+      'taskkill',
+      ['/pid', '4242', '/T', '/F'],
+      expect.objectContaining({ windowsHide: true }),
+    );
+    expect(child.kill).not.toHaveBeenCalled();
+  });
+});
+
+describe('the stop that keeps a failed run from leaving an orphan', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('escalates to SIGKILL when the app ignores SIGTERM', async () => {
+    // `kill()` returning true means the signal was delivered, not that the app
+    // died. A wedged Electron build ignores SIGTERM and would stay in the tray.
+    vi.useFakeTimers();
+    const child = new FakeChild();
+    stop(child, { platform: 'linux', graceMs: 200 });
+    expect(child.signals).toEqual(['SIGTERM']);
+
+    await vi.advanceTimersByTimeAsync(200);
+    expect(child.signals).toEqual(['SIGTERM', 'SIGKILL']);
+  });
+
+  it('does not SIGKILL an app that honoured SIGTERM', async () => {
+    vi.useFakeTimers();
+    const child = new FakeChild();
+    stop(child, { platform: 'linux', graceMs: 200 });
+    child.exitCode = 143;
+
+    await vi.advanceTimersByTimeAsync(200);
+    expect(child.signals).toEqual(['SIGTERM']);
+  });
+
+  it('falls back to kill() when taskkill cannot be started', () => {
+    vi.useFakeTimers();
+    const child = new FakeChild();
+    const taskkill = new EventEmitter();
+    stop(child, { platform: 'win32', spawnFn: () => taskkill });
+
+    taskkill.emit('error', new Error('ENOENT'));
+    expect(child.kill).toHaveBeenCalled();
+  });
+
+  it('leaves an app that already exited alone', () => {
+    const child = new FakeChild();
+    child.exitCode = 0;
+
+    stop(child, { platform: 'linux' });
+    expect(child.kill).not.toHaveBeenCalled();
+  });
+});
+
 describe('the manual step is discoverable as a command', () => {
   it('is named in CONTRIBUTING, next to the packaging command it depends on', () => {
     const contributing = readFileSync(join(REPO_ROOT, 'CONTRIBUTING.md'), 'utf8');
@@ -157,6 +367,18 @@ describe('the manual step is discoverable as a command', () => {
     // The precondition and the command in the same breath: the script refuses to
     // run without a build, so the instructions have to say where one comes from.
     expect(contributing.slice(index - 400, index + 400)).toContain('npm run package');
+  });
+
+  it('tells the operator to leave a detached HEAD before packaging', () => {
+    // A detached HEAD is a process trap, not a code defect: the build still
+    // succeeds, and the result is traceable to no branch. It belongs in the
+    // preflight checklist, where the operator is already reading, rather than
+    // in a paragraph someone might read once.
+    const contributing = readFileSync(join(REPO_ROOT, 'CONTRIBUTING.md'), 'utf8');
+    const preflight = contributing.slice(contributing.indexOf('### Release preflight'));
+    expect(preflight.length).toBeGreaterThan(0);
+    expect(preflight).toMatch(/detached HEAD/u);
+    expect(preflight).toContain('git switch main');
   });
 
   it('is not claimed to run in CI, which still has no packaging job', () => {

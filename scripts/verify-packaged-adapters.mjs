@@ -50,7 +50,10 @@
  * Everything that decides pass/fail is a pure function over strings — which
  * executable to launch, what the line says, whether the ids satisfy the
  * requirement — so `tests/contract/verify-packaged-adapters.test.ts` can pin the
- * judgement without packaging anything. Only `launch` touches a real process.
+ * judgement without packaging anything. The process handling is also covered,
+ * by injecting the `spawn` it would otherwise call: the tests drive a fake
+ * child through the resolved-line, timeout, error, exit and stop paths, so the
+ * only thing left manual is running a real packaged app.
  */
 
 import { spawn } from 'node:child_process';
@@ -163,7 +166,7 @@ export function verifyResolution(output, { required = ['universal'] } = {}) {
 }
 
 /** `--flag value` and `--flag` pairs, as `make-update-feed.mjs` reads them. */
-function parseArgs(argv) {
+export function parseArgs(argv) {
   const args = {};
   for (let i = 0; i < argv.length; i += 1) {
     const token = argv[i];
@@ -178,6 +181,18 @@ function parseArgs(argv) {
     }
   }
   return args;
+}
+
+/**
+ * Where to look for the build: `--release` is relative to the repository, not
+ * to the directory the command happened to be run from.
+ *
+ * `npm run package` writes `release/` beside `package.json`, and a preflight is
+ * as likely to be started from a shell sitting in `apps/desktop` as from the
+ * root. Resolving against `root` keeps one answer for both.
+ */
+export function releaseDirFrom(args) {
+  return typeof args.release === 'string' ? resolve(root, args.release) : RELEASE_DIR;
 }
 
 /** The last few lines of a launch, for a failure message a terminal can show. */
@@ -196,14 +211,21 @@ export function tailOf(output, lines = 25) {
  * `timeoutMs` is a real bound rather than decoration: a build that fails to
  * start (no display, a missing DLL, a sandbox refusal as root) prints an error
  * and keeps running, and a check that hangs is reported as a broken repository.
+ *
+ * `spawnFn` and `platform` are seams, defaulted to the real ones: they let the
+ * tests drive a fake child through the resolved-line, timeout, launch-error,
+ * exit and stop paths, so this is not the one I/O function nobody can fail.
  */
-export function launch(executable, { timeoutMs = 45_000 } = {}) {
+export function launch(
+  executable,
+  { timeoutMs = 45_000, spawnFn = spawn, platform = process.platform, killGraceMs } = {},
+) {
   return new Promise((resolvePromise) => {
     let output = '';
     let settled = false;
     let timer;
 
-    const child = spawn(executable, [], {
+    const child = spawnFn(executable, [], {
       // `ignore` for stdin: the app must not inherit a terminal and wait on it.
       stdio: ['ignore', 'pipe', 'pipe'],
       env: process.env,
@@ -214,7 +236,7 @@ export function launch(executable, { timeoutMs = 45_000 } = {}) {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      stop(child);
+      stop(child, { spawnFn, platform, graceMs: killGraceMs });
       resolvePromise({ output, reason });
     };
 
@@ -235,17 +257,38 @@ export function launch(executable, { timeoutMs = 45_000 } = {}) {
   });
 }
 
-/** Stop the launched app, and its children on the platforms that need it. */
-function stop(child) {
+/** How long a stopped build gets to honour `SIGTERM` before it is `SIGKILL`ed. */
+const KILL_GRACE_MS = 5_000;
+
+/**
+ * Stop the launched app, and its children on the platforms that need it.
+ *
+ * `SIGTERM` on its own is not enough. `kill()` returning `true` says the signal
+ * was *delivered*, not that the process died: a packaged Electron app that is
+ * wedged (no display, a hung renderer, a sandbox refusal) ignores it and sits
+ * there, and every manual smoke run would leave another tray process behind.
+ * So the non-Windows path escalates to `SIGKILL` after a grace period — long
+ * enough for a healthy app to shut down cleanly, short enough to be invisible in
+ * a run that already failed.
+ */
+export function stop(
+  child,
+  { spawnFn = spawn, platform = process.platform, graceMs = KILL_GRACE_MS } = {},
+) {
   if (child.exitCode !== null) return;
-  if (process.platform === 'win32' && typeof child.pid === 'number') {
-    spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'], { windowsHide: true }).on(
+  if (platform === 'win32' && typeof child.pid === 'number') {
+    spawnFn('taskkill', ['/pid', String(child.pid), '/T', '/F'], { windowsHide: true }).on(
       'error',
       () => child.kill(),
     );
     return;
   }
   child.kill('SIGTERM');
+  const escalate = setTimeout(() => {
+    if (child.exitCode === null) child.kill('SIGKILL');
+  }, graceMs);
+  // A safety net, not work: it must never be the reason the script stays alive.
+  escalate.unref?.();
 }
 
 const USAGE = `usage: node scripts/verify-packaged-adapters.mjs [options]
@@ -275,7 +318,7 @@ async function main(argv) {
       ? Number(args.timeout)
       : 45_000;
 
-  const releaseDir = typeof args.release === 'string' ? resolve(root, args.release) : RELEASE_DIR;
+  const releaseDir = releaseDirFrom(args);
   const executable = findPackagedExecutable({ releaseDir });
   if (executable === undefined) {
     throw new Error(
