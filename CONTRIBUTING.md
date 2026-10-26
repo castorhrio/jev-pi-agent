@@ -284,8 +284,15 @@ not). On a headless machine: `xvfb-run node scripts/verify-packaged-adapters.mjs
 
 The build is stopped again once the line appears, and what is stopped is the whole tree rather
 than the app alone — a packaged UCAD runs Chromium children, and leaving those behind would
-mean every smoke run leaves a process behind. `Ctrl+C` stops it the same way and exits 130, so
-an interrupted check is not reported as a broken build.
+mean every smoke run leaves a process behind. The stop is `SIGTERM` to the process group, and
+`SIGKILL` to the same group if it is still there after a 5-second grace period: the build
+that needs the second signal is the wedged one (no display, a hung renderer), which is exactly
+the smoke run that would otherwise leave a tray process behind. `Ctrl+C` stops it the same way
+and exits 130, so an interrupted check is not reported as a broken build.
+
+The line is only judged once its newline has arrived. A pipe read boundary can fall anywhere,
+and a chunk ending in the middle of `adapters resolved: universal, mock` parses as the shorter
+list `universal, mo` — a truncated answer that looks like a real one.
 
 Reading a module from *inside* the asar needs Electron's patched `fs`, so it is the one
 adapter-resolution step `npm test` cannot reach — the README states the same boundary, and

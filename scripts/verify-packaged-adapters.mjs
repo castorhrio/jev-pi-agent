@@ -95,6 +95,42 @@ const RESOLVED_LINE = /^\[ucad\] adapters resolved: (.*)$/m;
 const NONE = '(none)';
 
 /**
+ * A summary line that has arrived *whole* — terminator included.
+ *
+ * `RESOLVED_LINE` answers "what did the build resolve", and a string that ends
+ * mid-line still answers it: `$` matches the end of the string as well as the
+ * end of a line, so `[ucad] adapters resolved: universal, mo` parses as the
+ * ids `universal` and `mo`. Over a captured output that is harmless (the
+ * string is what the app printed), but over a *stream* it is a verdict on a
+ * value that is still arriving: the launch would stop the build and report
+ * `universal, mo`, and the operator would read a truncated list as the answer.
+ *
+ * So the launch only judges a line whose newline has arrived. A build that
+ * prints the line and exits without a terminator is not stranded by this: the
+ * exit path hands the captured output to `verifyResolution`, which parses it
+ * the same as any other line.
+ *
+ * `\r?` because the terminator is not always bare: a console that writes
+ * `\r\n` would otherwise never satisfy "the newline has arrived", and a build
+ * that printed the line would be reported as one that timed out. The carriage
+ * return cannot be swallowed by `.*` either — `.` does not match `\r` — so it
+ * has to be spelled out here.
+ */
+const COMPLETE_RESOLVED_LINE = /^\[ucad\] adapters resolved: .*\r?\n/m;
+
+/**
+ * How long a stopped build gets to honour `SIGTERM` before it is `SIGKILL`ed.
+ *
+ * Exported and used as `launch`'s own default, not only as `stop`'s: the
+ * escalation is the reason this script exists, so the path that has to
+ * escalate is the one an operator runs with no flags. Spelling the default out
+ * at the seam that owns it, and pinning it with a case that passes no grace
+ * period at all, keeps a later refactor from turning the escalation off
+ * exactly there.
+ */
+export const KILL_GRACE_MS = 5_000;
+
+/**
  * The binaries `electron-builder` may have written, in the order they are tried.
  *
  * The unpacked directories are tried before any installer: an installer, if it
@@ -249,6 +285,15 @@ export function tailOf(output, lines = 25) {
  * `onChild` is handed the child as soon as it exists, before the launch
  * settles: a caller that may be interrupted needs the handle while the build
  * is still running, and the promise does not resolve until then.
+ *
+ * `killGraceMs` defaults to `KILL_GRACE_MS` here rather than being left to
+ * `stop`. Both spellings reach the same number today, but the interesting path
+ * is not "a caller who chose a grace period": it is the command an operator
+ * runs (`node scripts/verify-packaged-adapters.mjs`, no flags), and that path
+ * has to escalate to `SIGKILL` on its own. Passing the default explicitly —
+ * and pinning it with a test that never mentions a grace period — keeps a
+ * future `graceMs: undefined` refactor from quietly turning the escalation off
+ * everywhere the flag is not typed.
  */
 export function launch(
   executable,
@@ -256,7 +301,7 @@ export function launch(
     timeoutMs = 45_000,
     spawnFn = spawn,
     platform = process.platform,
-    killGraceMs,
+    killGraceMs = KILL_GRACE_MS,
     killFn,
     onChild,
   } = {},
@@ -303,7 +348,10 @@ export function launch(
       // in ("output that arrives after the line does not change the verdict").
       if (settled) return;
       output += String(chunk);
-      if (RESOLVED_LINE.test(output)) finish('resolved-line');
+      // A *complete* line, not merely a matching prefix: see
+      // `COMPLETE_RESOLVED_LINE` for what a chunk boundary would otherwise do
+      // to the id list.
+      if (COMPLETE_RESOLVED_LINE.test(output)) finish('resolved-line');
     };
 
     child.stdout?.on('data', collect);
@@ -317,9 +365,6 @@ export function launch(
     timer = setTimeout(() => finish('timeout'), timeoutMs);
   });
 }
-
-/** How long a stopped build gets to honour `SIGTERM` before it is `SIGKILL`ed. */
-const KILL_GRACE_MS = 5_000;
 
 /**
  * `process.kill`, wrapped so it can be handed around as a plain function.
@@ -387,7 +432,10 @@ const warnToStderr = (message) => {
  * there, and every manual smoke run would leave another tray process behind.
  * So the non-Windows path escalates to `SIGKILL` after a grace period — long
  * enough for a healthy app to shut down cleanly, short enough to be invisible in
- * a run that already failed.
+ * a run that already failed. That grace period is not a knob the operator has to
+ * know about: `launch` defaults it to `KILL_GRACE_MS`, so the command without
+ * flags takes the escalating path, and a test that passes no grace period at all
+ * is what keeps it that way.
  *
  * And what is signalled is the *tree*, on every platform. `child.kill()`
  * reaches the build's own process; the Chromium children it started are

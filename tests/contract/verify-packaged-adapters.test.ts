@@ -28,11 +28,13 @@
  * The launch used to be the one part not covered here, because it needs a
  * packaged app. It now takes its `spawn` as a parameter, so a fake child drives
  * every path that decides the outcome — the summary line arriving (split across
- * chunks), the timeout, a launch error, an early exit, and the stop that follows
- * each of them — including the `SIGKILL` fallback without which a wedged build
- * is left running as an orphan. What remains manual is running the real
- * artifact; the last cases keep THAT statement discoverable, since CONTRIBUTING
- * has to name the command or the reader is back to "read the line yourself".
+ * chunks, and only judged once its newline has arrived, because a chunk cut
+ * through `universal, mock` parses as the shorter list `universal, mo`), the
+ * timeout, a launch error, an early exit, and the stop that follows each of
+ * them — including the `SIGKILL` fallback without which a wedged build is left
+ * running as an orphan. What remains manual is running the real artifact; the
+ * last cases keep THAT statement discoverable, since CONTRIBUTING has to name
+ * the command or the reader is back to "read the line yourself".
  *
  * The stop is pinned on the *tree*, because that is what the orphan was. The
  * old code signalled the app's own process and asked "is the app still alive?"
@@ -42,6 +44,12 @@
  * escalation asks is "is the group still there?". The group signal is a seam
  * too: a test that signalled whatever group happened to carry that id on the
  * machine could hit something else entirely.
+ *
+ * The escalation is also not the caller's to opt into: the grace period has a
+ * default, and the cases that pass none are the ones that matter, because the
+ * command an operator runs passes none either. A timeout — the path where the
+ * build has proved nothing about shutting down — is pinned to reach `SIGKILL`
+ * as a group for exactly that reason.
  *
  * That question turns out to have three answers, not two, and the third one is
  * the dangerous one: a probe can be *refused* (`EPERM` — a pid recycled onto
@@ -59,6 +67,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import {
+  KILL_GRACE_MS,
   RELEASE_DIR,
   findPackagedExecutable,
   interruptRun,
@@ -346,10 +355,12 @@ describe('the launch, driven through an injected spawn', () => {
     const spawnFn = vi.fn(() => child);
     const pending = launch('/opt/ucad', { spawnFn, killFn: group.kill, timeoutMs: 1000 });
 
-    child.say('Checking for update\n[ucad] adapters resolv');
-    // Split mid-line: a run that judged each chunk would miss the line entirely.
+    // Cut *inside* the word the line is matched on, which is the boundary that
+    // hurts: a run that judged each chunk on its own would see
+    // `[ucad] adapters reso` and `lved: universal` and never the line.
+    child.say('Checking for update\n[ucad] adapters reso');
     expect(child.kill).not.toHaveBeenCalled();
-    child.say('ed: universal\n');
+    child.say('lved: universal\n');
 
     const { output, reason } = await pending;
     expect(reason).toBe('resolved-line');
@@ -362,6 +373,60 @@ describe('the launch, driven through an injected spawn', () => {
       expect.objectContaining({ stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true }),
     );
     // The build is stopped through its group, so its Chromium children go too.
+    expect(group.sent).toEqual([{ pid: -4242, signal: 'SIGTERM' }]);
+  });
+
+  it('does not judge a summary line whose value is still arriving', async () => {
+    // The other half of the same chunk-boundary problem, and the one that reads
+    // as a pass. `RESOLVED_LINE` is anchored with `$` under `/m`, which matches
+    // the end of the *string* as well as the end of a line — so a chunk ending
+    // mid-value parses as a complete, *smaller* resolution:
+    // `[ucad] adapters resolved: universal, mo` yields `['universal', 'mo']`.
+    // The launch therefore waits for the newline. This is not a hypothetical:
+    // a pipe read boundary can fall anywhere, and the id list it cuts through
+    // is the answer the operator reads.
+    vi.useFakeTimers();
+    const child = new FakeChild();
+    const group = new FakeGroup();
+    const pending = launch('/opt/ucad', {
+      spawnFn: () => child,
+      killFn: group.kill,
+      timeoutMs: 1000,
+    });
+
+    child.say('[ucad] adapters resolved: universal, mo');
+    await vi.advanceTimersByTimeAsync(0);
+    // Nothing settled on the truncated list: no stop, no verdict.
+    expect(child.kill).not.toHaveBeenCalled();
+    expect(group.sent).toEqual([]);
+
+    child.say('ck\n');
+    const { output, reason } = await pending;
+    expect(reason).toBe('resolved-line');
+    expect(resolvedAdapterIds(output)).toEqual(['universal', 'mock']);
+    expect(group.sent).toEqual([{ pid: -4242, signal: 'SIGTERM' }]);
+  });
+
+  it('recognises the line when the console writes CRLF', async () => {
+    // "The newline has arrived" is two characters on a console that writes
+    // `\r\n`, and `.` in a JavaScript regex does not match `\r`: without the
+    // optional carriage return the check would wait out its whole timeout on a
+    // build that printed the line, and report the wait as a launch that never
+    // reached resolution. Real timers and a short bound, so that failure is a
+    // second of waiting rather than the test timeout.
+    const child = new FakeChild();
+    const group = new FakeGroup();
+    const pending = launch('/opt/ucad', {
+      spawnFn: () => child,
+      killFn: group.kill,
+      timeoutMs: 1000,
+    });
+
+    child.say('[ucad] adapters resolved: universal, mock\r\n');
+    const { output, reason } = await pending;
+    expect(reason).toBe('resolved-line');
+    // And the carriage return is not part of the last id.
+    expect(resolvedAdapterIds(output)).toEqual(['universal', 'mock']);
     expect(group.sent).toEqual([{ pid: -4242, signal: 'SIGTERM' }]);
   });
 
@@ -496,7 +561,51 @@ describe('the launch, driven through an injected spawn', () => {
     expect(reason).toBe('timeout');
     // The output is kept for the tail in the failure message.
     expect(output).toContain('Cannot open display');
+    // The timeout is the path most likely to leave an orphan — the build never
+    // proved it can shut down, it is exactly the wedged case — so it goes
+    // through the group stop, not `child.kill()`.
+    expect(child.kill).not.toHaveBeenCalled();
     expect(group.sent).toEqual([{ pid: -4242, signal: 'SIGTERM' }]);
+
+    // And that stop escalates on its default grace period, with no number
+    // passed by this test beyond the launch's own default: a timed-out build
+    // that ignores SIGTERM is the orphan, and it is `SIGKILL`ed as a group.
+    await vi.advanceTimersByTimeAsync(KILL_GRACE_MS);
+    expect(group.sent).toEqual([
+      { pid: -4242, signal: 'SIGTERM' },
+      { pid: -4242, signal: 'SIGKILL' },
+    ]);
+  });
+
+  it('escalates to SIGKILL on its default grace period, with none passed in', async () => {
+    // The command an operator runs passes no `killGraceMs`, and neither does
+    // this case. That is the point: the escalation is the reason the script
+    // exists, so it must not be a property of the *tested* call path only —
+    // `launch(executable)` has to stop a wedged build through the group and
+    // then, when the group is still there, `SIGKILL` it.
+    vi.useFakeTimers();
+    const child = new FakeChild();
+    const group = new FakeGroup(); // `alive: true` — nothing honoured SIGTERM
+    const pending = launch('/opt/ucad', {
+      spawnFn: () => child,
+      killFn: group.kill,
+      timeoutMs: 60_000,
+    });
+
+    child.say('[ucad] adapters resolved: universal\n');
+    const { reason } = await pending;
+    expect(reason).toBe('resolved-line');
+    expect(group.sent).toEqual([{ pid: -4242, signal: 'SIGTERM' }]);
+
+    // One millisecond short: the grace period is a period, not a formality.
+    await vi.advanceTimersByTimeAsync(KILL_GRACE_MS - 1);
+    expect(group.sent).toEqual([{ pid: -4242, signal: 'SIGTERM' }]);
+
+    await vi.advanceTimersByTimeAsync(1);
+    expect(group.sent).toEqual([
+      { pid: -4242, signal: 'SIGTERM' },
+      { pid: -4242, signal: 'SIGKILL' },
+    ]);
   });
 
   it('reports a launch that could not start at all, with the reason', async () => {
@@ -790,6 +899,14 @@ describe('the manual step is discoverable as a command', () => {
     );
     expect(preflight).toMatch(/Ctrl\+C/u);
     expect(preflight).toContain('130');
+  });
+
+  it('names the grace period the script really uses, so the sentence cannot drift', () => {
+    // The paragraph above the checklist promises a stopped build five seconds
+    // before `SIGKILL`. That number is `KILL_GRACE_MS`, and a doc that states a
+    // duration nobody checks is the kind of sentence that is wrong for a year.
+    const contributing = readFileSync(join(REPO_ROOT, 'CONTRIBUTING.md'), 'utf8');
+    expect(contributing).toContain(`${KILL_GRACE_MS / 1000}-second grace period`);
   });
 
   it('is not claimed to run in CI, which still has no packaging job', () => {
