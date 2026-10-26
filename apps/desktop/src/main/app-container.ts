@@ -209,6 +209,41 @@ export const STARTED_FIELDS = [
   'skills',
 ] as const satisfies readonly ContainerField[];
 
+/**
+ * A retention dependency that is not a started field — `never` when the two
+ * lists agree.
+ *
+ * `RETENTION_DEPENDENCIES` is a subset of `STARTED_FIELDS`, and it is not an
+ * accident: retention is built from container fields (`db`, `sessionStore`,
+ * `blobs`, `logger`), and those are exactly the fields `start()` promises.
+ * The runtime test in `tests/contract/app-container-started.test.ts` asserts
+ * the inclusion, but a test runs only when somebody runs it — and the two
+ * lists are written down separately, one field at a time, so the day one of
+ * them gains a name the other does not have is the day a field escapes
+ * `start()`'s own completeness check while `requireStarted()` keeps vouching
+ * for it. This alias makes that a `tsc` error instead: the assertion below
+ * only compiles while the exclusion is empty.
+ */
+type RetentionDependencyOutsideStartedFields = Exclude<
+  (typeof RETENTION_DEPENDENCIES)[number],
+  (typeof STARTED_FIELDS)[number]
+>;
+
+/**
+ * The line above `npm run typecheck` refuses to compile when the two lists
+ * disagree.
+ *
+ * The annotation is `true` while every dependency is a started field, and
+ * `never` the moment one is not — and `true` is not assignable to `never`, so
+ * the error names this declaration. A type alias alone would not do it: an
+ * unused alias that evaluates to something unpleasant is still a valid alias,
+ * and nothing would report it. The `_` prefix is what keeps the linter's
+ * unused-variable rule quiet about a value that exists only to be checked.
+ */
+const _retentionDependenciesAreStarted: [RetentionDependencyOutsideStartedFields] extends [never]
+  ? true
+  : never = true;
+
 export class UcadApp {
   readonly paths: AppPaths;
 
@@ -395,15 +430,15 @@ export class UcadApp {
    * as fatal (`app.exit(1)`), and a half-initialised app that keeps running is
    * the outcome this is here to prevent. The message names the missing fields,
    * because that is the one fact a support report needs.
+   *
+   * The decision itself is `assertStartComplete()`, a module function rather
+   * than the body of this method, because a `#`-private method can only be
+   * checked from outside by reading the source — which says the call exists,
+   * not that it refuses. The gate drives the function; this method is the
+   * production caller, and the source scan below keeps it that way.
    */
   #assertStartComplete(): void {
-    const missing = missingStartedFields(this);
-    if (missing.length === 0) return;
-    throw codedError(
-      'CONTAINER_NOT_STARTED',
-      `容器初始化不完整：${missing.join('、')} 在 start() 之后仍未赋值。`,
-      'container',
-    );
+    assertStartComplete(this);
   }
 
   /**
@@ -1167,4 +1202,34 @@ export function missingStartedFields(app: UcadApp): ContainerField[] {
     const value: unknown = (app as unknown as Record<string, unknown>)[field];
     return value === undefined || value === null;
   });
+}
+
+/**
+ * The refusal `start()` ends with, as a function a gate can call.
+ *
+ * `missingStartedFields()` answers *which* fields are missing; this answers
+ * *whether the container accepts that answer* — which is the half that
+ * matters, because the failure it produces is the one a half-started app
+ * would otherwise reach a user with. It used to be the body of a
+ * `#`-private method, and a `#`-private method cannot be driven from a test:
+ * the only thing a gate could assert was that `start()` contains the call,
+ * which is a statement about the source and not about the refusal. A test
+ * can now hand it a container that is missing a field and read the error —
+ * `CONTAINER_NOT_STARTED`, the component, and the field's name.
+ *
+ * Throwing is the contract, not a convenience: `bootstrap()` treats a failed
+ * start as fatal (`app.exit(1)`), and a container that kept running with a
+ * missing subsystem would fail later, somewhere else, with a message about
+ * that subsystem. `#assertStartComplete()` is the production caller and does
+ * nothing else, so the behaviour a gate reads here is the behaviour a real
+ * `start()` produces.
+ */
+export function assertStartComplete(app: UcadApp): void {
+  const missing = missingStartedFields(app);
+  if (missing.length === 0) return;
+  throw codedError(
+    'CONTAINER_NOT_STARTED',
+    `容器初始化不完整：${missing.join('、')} 在 start() 之后仍未赋值。`,
+    'container',
+  );
 }

@@ -608,6 +608,43 @@ describe('proving a downloaded file is the one the feed named', () => {
     });
   });
 
+  it('answers a size mismatch without reading the file it refuses', async () => {
+    // The order of the two checks is a promise, not an implementation detail:
+    // a truncated download — what a dropped connection leaves behind — must be
+    // refused from the `stat` alone, not read end to end and then refused.
+    //
+    // A directory is the fixture that can tell the two orders apart: `stat`
+    // describes it, and a streamed read of it fails with EISDIR. So the same
+    // path answers differently depending on which check ran first:
+    //
+    //  - expected size differs → `size-mismatch`, from the `stat`, with the
+    //    file never opened;
+    //  - expected size agrees  → `unreadable`, because the hash read is then
+    //    the thing that runs, and it is the thing that fails.
+    //
+    // A verifier that hashed first would answer `unreadable` for both, and the
+    // size branch would only be reachable after reading every file it refuses
+    // — which is the defect these two assertions exist to keep out.
+    const size = statSync(dir).size;
+    const hash = sha256Of('not the installer');
+
+    expect(await verifyInstaller(dir, { sha256: hash, size: size + 1 })).toEqual({
+      ok: false,
+      reason: 'size-mismatch',
+      expected: String(size + 1),
+      actual: String(size),
+      bytes: size,
+    });
+    // The neighbour, and the reason the first assertion means anything: with a
+    // size that agrees, the read is what runs and what fails. Without it,
+    // "size-mismatch on a directory" could also be produced by a verifier that
+    // never reads at all.
+    expect(await verifyInstaller(dir, { sha256: hash, size })).toEqual({
+      ok: false,
+      reason: 'unreadable',
+    });
+  });
+
   it('says "not checked" rather than "checked" when the feed has no hash', async () => {
     writeFileSync(file, 'anything');
 

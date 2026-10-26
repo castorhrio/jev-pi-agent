@@ -287,6 +287,21 @@ function expectedSizeOf(size: unknown): number | null {
  * A feed that carries no hash is neither a match nor a mismatch: it is
  * `no-hash`, meaning the installer was never checked — which is the one
  * state the caller must not confuse with "checked and fine".
+ *
+ * **The size is checked before the hash, and the difference is observable.**
+ * The feed's `size` is answered from one `stat`; the hash costs a streamed
+ * read of the whole file. Doing the hash first would mean a truncated
+ * download — the common failure, because it is what a dropped connection
+ * leaves behind — is read end to end before it is refused, so the answer
+ * arrives seconds later and says nothing the size already said. The order is
+ * therefore a contract, not an implementation detail: `size-mismatch` is
+ * reachable *without reading the file at all*, and
+ * `tests/contract/update-integrity.test.ts` pins it with a path whose read
+ * fails, so the two answers can only come out in this order.
+ *
+ * The hash is still what decides "is this the file": the size can only say
+ * "this is not", which is why a size the feed did not publish (`null`) skips
+ * that branch rather than skipping the verification.
  */
 export async function verifyInstaller(
   filePath: string,
@@ -304,13 +319,8 @@ export async function verifyInstaller(
     return { ok: false, reason: 'unreadable' };
   }
 
-  let actual: string;
-  try {
-    actual = await sha256OfFile(filePath);
-  } catch {
-    return { ok: false, reason: 'unreadable' };
-  }
-
+  // Before the hash, deliberately (see the doc comment): a file the size
+  // already says is not the one is refused without being read.
   if (expectedSize !== null && expectedSize !== bytes) {
     return {
       ok: false,
@@ -320,6 +330,14 @@ export async function verifyInstaller(
       bytes,
     };
   }
+
+  let actual: string;
+  try {
+    actual = await sha256OfFile(filePath);
+  } catch {
+    return { ok: false, reason: 'unreadable' };
+  }
+
   if (actual !== expectedHash) {
     return { ok: false, reason: 'hash-mismatch', expected: expectedHash, actual, bytes };
   }
@@ -436,9 +454,16 @@ function sha256OfDescriptor(fd: number, filePath: string): Promise<string> {
  * `checkStagedFileUnchanged()` can ask the path one question afterwards: is
  * this still that file?
  *
- * Same four refusals as `verifyInstaller()`, in the same words, because the
- * caller's message to the user is the same for both. The difference is what a
- * success carries.
+ * Same four refusals as `verifyInstaller()`, in the same words and in the same
+ * order, because the caller's message to the user is the same for both. The
+ * difference is what a success carries.
+ *
+ * The order matters here for the same reason it does there: the size comes
+ * from the descriptor's own `fstat`, so a truncated download is refused
+ * before the stream is read. Keeping one order in both verifiers is also what
+ * lets the shared-refusal gate compare them field for field — a verifier that
+ * answered `unreadable` where the other answered `size-mismatch` would be a
+ * second copy of the rule that had drifted.
  */
 export async function verifyStagedInstallerForLaunch(
   filePath: string,
@@ -468,13 +493,9 @@ export async function verifyStagedInstallerForLaunch(
       return { ok: false, reason: 'unreadable' };
     }
 
-    let actual: string;
-    try {
-      actual = await sha256OfDescriptor(fd, filePath);
-    } catch {
-      return { ok: false, reason: 'unreadable' };
-    }
-
+    // The descriptor's size is already in hand, so the same contract as
+    // `verifyInstaller()` costs nothing to keep: a size the feed disagrees
+    // with is refused before the stream is read.
     const bytes = identity.size;
     if (expectedSize !== null && expectedSize !== bytes) {
       return {
@@ -485,6 +506,14 @@ export async function verifyStagedInstallerForLaunch(
         bytes,
       };
     }
+
+    let actual: string;
+    try {
+      actual = await sha256OfDescriptor(fd, filePath);
+    } catch {
+      return { ok: false, reason: 'unreadable' };
+    }
+
     if (actual !== expectedHash) {
       return { ok: false, reason: 'hash-mismatch', expected: expectedHash, actual, bytes };
     }

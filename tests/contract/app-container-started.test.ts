@@ -69,6 +69,7 @@ import {
   RETENTION_DEPENDENCIES,
   STARTED_FIELDS,
   UcadApp,
+  assertStartComplete,
   missingStartedFields,
 } from '../../apps/desktop/src/main/app-container';
 import type { AppPaths } from '../../apps/desktop/src/main/paths';
@@ -229,6 +230,22 @@ function overCheckedFields(calls: readonly string[]): string[] {
  */
 function startBody(source: string): string {
   const start = source.indexOf('\n  async start(): Promise<void> {');
+  if (start === -1) return '';
+  const end = source.indexOf('\n  }\n', start);
+  return end === -1 ? '' : source.slice(start, end);
+}
+
+/**
+ * The body of a `#`-private method at class-member indent, or `''`.
+ *
+ * `methodBody()` above finds `private name(`, which is what the retention bag
+ * is written as. `#assertStartComplete` is a `#`-private method instead, and
+ * the source gate needs to read it for the same reason: what is asserted is
+ * that the method delegates to the exported decision rather than carrying a
+ * second copy of it.
+ */
+function privateHashBody(source: string, name: string): string {
+  const start = source.indexOf(`\n  #${name}(`);
   if (start === -1) return '';
   const end = source.indexOf('\n  }\n', start);
   return end === -1 ? '' : source.slice(start, end);
@@ -942,6 +959,81 @@ describe('the container keeps every promise start() made', () => {
     expect(missingStartedFields(app), 'start() finished with a field still missing').toEqual([]);
   });
 
+  it('refuses a container that lost a field, naming it', async () => {
+    // The refusal, not the detector. `missingStartedFields()` says *which*
+    // fields are missing; `#assertStartComplete()` is what turns that answer
+    // into the error a half-started app dies on — and while it was a
+    // `#`-private method, nothing could drive it: the only gate was a source
+    // scan that said the call exists, which is not the same claim as "a
+    // missing field is refused with its name".
+    //
+    // A real started container with one assignment undone is the shape a
+    // `start()` that forgot a step leaves behind: every other subsystem is
+    // there, so the failure has to be reported as *this field*, not as the
+    // first subsystem that trips over it.
+    app = await startApp();
+    const field = 'files';
+    const original = (app as unknown as Record<string, unknown>)[field];
+    expect(original, 'the container no longer starts with ' + field).toBeDefined();
+    delete (app as unknown as Record<string, unknown>)[field];
+
+    let thrown: unknown;
+    try {
+      assertStartComplete(app);
+    } catch (error) {
+      thrown = error;
+    } finally {
+      (app as unknown as Record<string, unknown>)[field] = original;
+    }
+
+    expect(thrown, 'a container with a missing field was accepted as complete').toBeInstanceOf(Error);
+    const failure = thrown as Error & { code?: string; component?: string };
+    // The field's name is the one fact a support report needs, and the code
+    // is what tells a reader this is the container's lifecycle rather than
+    // the subsystem the next caller would have touched.
+    expect(failure.message, 'the refusal did not name the missing field').toContain(field);
+    expect(failure.code).toBe('CONTAINER_NOT_STARTED');
+    expect(failure.component).toBe('container');
+    // Restored before the assertion above, so a failing expectation cannot
+    // leave `afterEach` disposing a half-container and attributing the error
+    // to teardown.
+    expect(assertStartComplete.bind(null, app), 'the restored container is still refused').not.toThrow();
+  });
+
+  it('accepts a container start() finished, and names every field of a fresh one', async () => {
+    // Both ends of the same function. Without the first half the refusal would
+    // be indistinguishable from a check that always throws; without the second,
+    // a `start()` that assigned everything but still got refused could only be
+    // seen as a `start()` failure.
+    app = await startApp();
+    expect(() => assertStartComplete(app!), 'start() finished but was refused').not.toThrow();
+
+    const fresh = new UcadApp({
+      paths: {
+        userData: dir,
+        dbPath: path.join(dir, 'ucad.db'),
+        blobDir: path.join(dir, 'blobs'),
+        logDir: path.join(dir, 'logs'),
+        cacheDir: path.join(dir, 'cache'),
+        downloadDir: path.join(dir, 'downloads'),
+      },
+    });
+    let thrown: unknown;
+    try {
+      assertStartComplete(fresh);
+    } catch (error) {
+      thrown = error;
+    }
+    const failure = thrown as Error & { code?: string };
+    expect(failure, 'a container that never started was accepted as complete').toBeInstanceOf(
+      Error,
+    );
+    expect(failure.code).toBe('CONTAINER_NOT_STARTED');
+    for (const field of PROMISED_FIELDS) {
+      expect(failure.message, `the refusal left ${field} out`).toContain(field);
+    }
+  });
+
   it('checks its own promises as the last thing start() does', () => {
     // The runtime half of the promise is only a guarantee while `start()`
     // actually calls it, and it is only *correct* while it runs after every
@@ -957,6 +1049,19 @@ describe('the container keeps every promise start() made', () => {
       body.indexOf('this.#assertStartComplete();'),
       'the completeness check runs before the steps it is checking',
     ).toBeGreaterThan(body.indexOf('this.#initRuntime();'));
+
+    // And the method the body calls has to be the decision the gate above
+    // drives: `#assertStartComplete()` delegating to `assertStartComplete()`
+    // is what makes "a missing field is refused, by name" a fact about
+    // `start()` rather than about a function beside it. A body that grew its
+    // own copy of the check would leave the gate testing a path production no
+    // longer takes.
+    const check = privateHashBody(fs.readFileSync(CONTAINER_SOURCE, 'utf8'), 'assertStartComplete');
+    expect(check, 'the completeness check is gone or was renamed').not.toBe('');
+    expect(
+      check,
+      '#assertStartComplete() no longer delegates to assertStartComplete(), so the gate drives a path start() does not take',
+    ).toContain('assertStartComplete(this);');
   });
 
   it('builds the retention service over those same fields', async () => {
