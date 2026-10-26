@@ -48,6 +48,8 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { blankComments } from './source-scan';
+
 /**
  * `app-container.ts` imports `safeStorage` at module load. The container
  * keeps a database key in the OS key store, and the mock below stands in for
@@ -259,77 +261,34 @@ const REPO_ROOT = path.join(here, '../..');
 const CONTAINER_REL = path.relative(REPO_ROOT, CONTAINER_SOURCE).split(path.sep).join('/');
 
 /**
- * Source with comments removed, string literals kept.
- *
- * `requireStarted` is named in a dozen doc comments in `app-container.ts` —
- * "the guard's scope" is explained by quoting a call site. Counting raw text
- * would count those quotes, and the numbers would be wrong in the one file
- * that matters. A small character walk rather than a regex, because `//`
- * inside a string is not a comment (a URL in a log line is the common case)
- * and that is pinned by a fixture below.
- *
- * Not parsed: regex literals. A regex containing two adjacent slashes would be
- * read as the start of a comment. Such a literal would have to sit immediately
- * before a call to hide one, and a hidden call is reported by the count
- * assertion, so the blind spot fails loudly rather than silently.
- */
-function stripComments(source: string): string {
-  let out = '';
-  let quote: string | null = null;
-  for (let i = 0; i < source.length; i += 1) {
-    const ch = source[i]!;
-    const next = source[i + 1];
-    if (quote !== null) {
-      out += ch;
-      if (ch === '\\') {
-        out += next ?? '';
-        i += 1;
-        continue;
-      }
-      if (ch === quote) quote = null;
-      continue;
-    }
-    if (ch === '"' || ch === "'" || ch === '`') {
-      quote = ch;
-      out += ch;
-      continue;
-    }
-    if (ch === '/' && next === '/') {
-      while (i < source.length && source[i] !== '\n') i += 1;
-      out += '\n';
-      continue;
-    }
-    if (ch === '/' && next === '*') {
-      const end = source.indexOf('*/', i + 2);
-      i = end === -1 ? source.length : end + 1;
-      out += ' ';
-      continue;
-    }
-    out += ch;
-  }
-  return out;
-}
-
-/**
  * The fields a file asks the guard for, in source order.
  *
  * A *call* is what counts — `x.requireStarted('field', …)`. The declaration is
  * `private requireStarted<K …>(` and has no receiver, so it is not matched, and
- * prose is gone by the time this runs (`stripComments`). Every receiver counts,
+ * prose is gone by the time this runs (`blankComments`). Every receiver counts,
  * not only `this`: the claim being checked is "nothing outside `retentionDeps()`
  * asks the guard", and a call through a parameter or a destructured value
  * (`app.requireStarted(…)`, `app?.requireStarted(…)`) is exactly the shape a
  * `this`-only rule would miss. Both quotes and a wrapped call are read, because
  * Prettier wraps a long call and the field name then lands on the next line.
  *
- * Two spellings are deliberately outside the rule, and both are pinned below:
- * a regex literal containing two adjacent slashes (read as the start of a
- * comment), and a space between the receiver and the dot (`this . requireStarted`,
- * valid TypeScript, not a match). They are blind spots, not claims that the
- * shapes do not occur.
+ * The blanking is `source-scan.ts`'s walk, shared with the update-channel
+ * scan rather than copied. This file's copy used to say that a regex literal
+ * containing two adjacent slashes would be read as the start of a comment, and
+ * that the loss would be loud because the count below would disagree. That was
+ * true *here* — and the same walk in `update-integrity.test.ts` loses a
+ * `new UpdateService({ beforeLaunch })` silently, which is why the walk is now
+ * one implementation with regex literals recognised, and why the fixture below
+ * drives the shape the old copy lost.
+ *
+ * One spelling is still outside the rule, and it is pinned below: a space
+ * between the receiver and the dot (`this . requireStarted`, valid TypeScript,
+ * not a match). That is a blind spot, not a claim that the shape does not
+ * occur — and unlike the regex one it costs nothing to read, which is why it
+ * is left as a documented refusal rather than a parser.
  */
 function guardCalls(source: string): string[] {
-  return [...stripComments(source).matchAll(/\.requireStarted\(\s*(['"])([^'"]+)\1/g)].map(
+  return [...blankComments(source).matchAll(/\.requireStarted\(\s*(['"])([^'"]+)\1/g)].map(
     (match) => match[2]!,
   );
 }
@@ -595,7 +554,33 @@ describe('the guard’s scope, as the sources write it', () => {
       "logger.info('see https://example.com/docs'); this.requireStarted('db', this.db);",
     ].join('\n');
     expect(guardCalls(source)).toEqual(['db']);
-    expect(stripComments('a // b'), 'a \n');
+    // And the blanking keeps positions, which is what every line number in a
+    // failure message depends on: a walk that deleted a comment would shift
+    // the whole file by a few characters and still look right.
+    const blanked = blankComments('a // b');
+    expect(blanked).toBe('a     ');
+    expect(blanked.split('\n').length).toBe('a // b'.split('\n').length);
+  });
+
+  it('reads a call that follows a regex literal containing two slashes', () => {
+    // The shape this scan used to lose. `/[//]/` is a valid regex — a `/`
+    // needs no escape inside a character class — and a walk that reads `//` as
+    // the start of a comment blanks the rest of the line, call included. The
+    // old note here said that loss would be *loud* (the count would disagree)
+    // and the same walk in `update-integrity.test.ts` loses a constructor
+    // silently; both are now the shared, regex-aware walk in `source-scan.ts`.
+    //
+    // Pinned as a fixture rather than described, because "the scan reads this"
+    // is the only thing that makes the count below mean anything.
+    expect(guardCalls("const re = /[//]/; this.requireStarted('db', this.db);")).toEqual(['db']);
+    expect(guardCalls("const re = /a[/]b/g; this.requireStarted('db', this.db);")).toEqual(['db']);
+    // The escaped spelling is the one the old walk *did* read, kept here so a
+    // future rewrite cannot trade one blind spot for the other.
+    expect(guardCalls("const re = /\\/\\//; this.requireStarted('db', this.db);")).toEqual(['db']);
+    // Division is not a regex literal, and the call after it is still a call.
+    expect(guardCalls("const half = total / 2; this.requireStarted('db', this.db);")).toEqual([
+      'db',
+    ]);
   });
 
   it('reads a wrapped call and a double-quoted field name', () => {
@@ -777,6 +762,37 @@ describe('the guard’s scope check, on fixtures', () => {
     ).toBe(
       'retentionDeps() asks the guard for a different set of fields than RETENTION_DEPENDENCIES names',
     );
+  });
+
+  it('reports the count mismatch a call the scan cannot see would cause', () => {
+    // The count check is the half of the scope gate that catches a hidden
+    // call, and a check whose failure has never been produced is a check
+    // nobody knows the shape of. The call below sits in a comment, so the
+    // blanking removes it: the bag is then empty while the dependency list
+    // still names one field, and the failure has to be the count — not the
+    // silence the old regex-literal blind spot produced.
+    const commented = [
+      'class A {',
+      '  private retentionDeps(): Deps {',
+      "    // return { db: this.requireStarted('db', this.db) };",
+      '    return {};',
+      '  }',
+      '}',
+    ].join('\n');
+
+    expect(guardCalls(commented), 'a commented-out call was counted as a call').toEqual([]);
+    expect(
+      scopeViolation([{ path: CONTAINER_PATH, source: commented }], CONTAINER_PATH, ['db']),
+      'a hidden call left the count check green',
+    ).toBe('the number of guarded fields is not the number of retention dependencies');
+
+    // And the same source with the call live: the count is right, and the
+    // fixture above is therefore about the hidden call rather than about the
+    // fixture being malformed.
+    const live = commented.replace("    // return { db: this.requireStarted('db', this.db) };", "    return { db: this.requireStarted('db', this.db) };");
+    expect(
+      scopeViolation([{ path: CONTAINER_PATH, source: live }], CONTAINER_PATH, ['db']),
+    ).toBeNull();
   });
 
   it('walks every file under the scanned root, not just the container', () => {

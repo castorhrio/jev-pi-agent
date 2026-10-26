@@ -46,6 +46,8 @@ import { join, relative, sep } from 'node:path';
 import { Readable } from 'node:stream';
 import type * as http from 'node:http';
 import { Logger, MemoryLogSink, silentLogger } from '@ucad/observability';
+
+import { blankComments as blankCommentsShared } from './source-scan';
 import {
   checkChannelUrl,
   checkFeedUrl,
@@ -2531,59 +2533,20 @@ const UPDATE_FEED_SOURCE = join(MAIN_SOURCE, 'update-feed.ts');
  * and template literals are kept: a seam hidden in a string is still a source
  * fact worth seeing, and the product code uses them for paths and log lines.
  *
- * The `//` inside a string is not a comment (a URL in a log line is the common
- * case), which is why this walks characters rather than running a regex.
- * Regex literals are not parsed; a regex containing `//` would be read as a
- * comment. Hiding a seam that way would require the literal to sit immediately
- * before it on the same line, and the gate would then be silent — a blind spot
- * stated here rather than discovered later.
+ * This used to be a local walk, with a blind spot written down instead of
+ * fixed: a regex literal containing `//` was read as the start of a comment,
+ * and the rest of that line was blanked. Here the doc comment said the gate
+ * "would then be silent — a blind spot stated here rather than discovered
+ * later", and silent is exactly what a scan must not be: a
+ * `new UpdateService({ beforeLaunch })` written after such a literal was a
+ * construction the scan never saw, so the seam it exists to forbid was passed
+ * with every test green. `app-container-started.test.ts` had a copy of the
+ * same walk, and in *that* copy the loss was loud (its count disagreed). Two
+ * copies, one silent: the walk now lives in `source-scan.ts`, recognises regex
+ * literals, and both gates read it there. The fixtures below drive the shape
+ * the local copy lost.
  */
-function blankComments(source: string): string {
-  const out: string[] = [];
-  let quote: string | null = null;
-  for (let i = 0; i < source.length; i += 1) {
-    const ch = source[i]!;
-    const next = source[i + 1];
-    if (quote !== null) {
-      out.push(ch);
-      if (ch === '\\') {
-        out.push(next ?? '');
-        i += 1;
-      } else if (ch === quote) {
-        quote = null;
-      }
-      continue;
-    }
-    if (ch === '"' || ch === "'" || ch === '`') {
-      quote = ch;
-      out.push(ch);
-      continue;
-    }
-    if (ch === '/' && next === '/') {
-      while (i < source.length && source[i] !== '\n') {
-        out.push(' ');
-        i += 1;
-      }
-      out.push('\n');
-      continue;
-    }
-    if (ch === '/' && next === '*') {
-      out.push('  ');
-      i += 2;
-      while (i < source.length && !(source[i] === '*' && source[i + 1] === '/')) {
-        out.push(source[i] === '\n' ? '\n' : ' ');
-        i += 1;
-      }
-      if (i < source.length) {
-        out.push('  ');
-        i += 1;
-      }
-      continue;
-    }
-    out.push(ch);
-  }
-  return out.join('');
-}
+const blankComments = blankCommentsShared;
 
 /** One source file the production-wiring scan reads. */
 interface SourceFile {
@@ -2821,6 +2784,38 @@ describe('the production wiring never opens the launch-test seam', () => {
         },
       ]),
     ).toEqual([]);
+  });
+
+  it('reports a seam that follows a regex literal containing two slashes', () => {
+    // The shape this scan used to lose *silently*. `/[//]/` is valid — a `/`
+    // needs no escape inside a character class — and the local walk read its
+    // `//` as the start of a comment and blanked the rest of the line, so a
+    // construction sitting after the literal was a construction the scan never
+    // saw. The old note called that "silent", which for this gate means a seam
+    // could be passed with every test green; the walk now comes from
+    // `source-scan.ts` and recognises the literal.
+    const onOneLine = [
+      "const NONCE = /[//]/; const service = new UpdateService({ logger, beforeLaunch: seam });",
+    ].join('\n');
+    expect(
+      constructionProblems([{ path: 'apps/desktop/src/main/bootstrap.ts', source: onOneLine }]),
+      'a construction after a regex literal was invisible to the scan',
+    ).toEqual([
+      { path: 'apps/desktop/src/main/bootstrap.ts', line: 1, reason: 'opens-the-seam' },
+    ]);
+
+    // The same literal with the options spread as a literal across lines still
+    // lands on the right line, because blanking preserves every newline.
+    const acrossLines = [
+      'const NONCE = /a[/]b/g;',
+      'const service = new UpdateService({',
+      '  logger,',
+      '  beforeLaunch: seam,',
+      '});',
+    ].join('\n');
+    expect(
+      constructionProblems([{ path: 'bootstrap.ts', source: acrossLines }]),
+    ).toEqual([{ path: 'bootstrap.ts', line: 2, reason: 'opens-the-seam' }]);
   });
 
   it('does not read a comment as a seam', () => {
