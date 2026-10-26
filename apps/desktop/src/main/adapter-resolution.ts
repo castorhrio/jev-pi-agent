@@ -17,13 +17,24 @@
  *  - {@link adapterSearchPaths} turns "where am I running from" into the list
  *    of directories Node will be asked about, and
  *  - {@link resolveAdapterModules} walks the table, resolves each specifier
- *    against that list, and returns what it found **and** what it did not.
+ *    against that list, and returns what it found **and** what it did not, and
+ *  - {@link resolveFromProcess} is the one place the two are joined: it takes
+ *    the three facts about the running process, derives the list, resolves, and
+ *    hands back the report.
  *
- * Both are plain functions over strings. `tests/contract/adapter-resolution.test.ts`
+ * All three are plain functions over strings. `tests/contract/adapter-resolution.test.ts`
  * drives them with a packaged-shaped context, a development-shaped context and
  * the real repository, so "the search paths cover both layouts" is an
  * assertion rather than a hope — and with a table entry that cannot resolve,
  * so "a missing adapter is reported, not swallowed" is asserted too.
+ *
+ * `resolveFromProcess` exists because that seam used to live in `bootstrap.ts`,
+ * where the only check on it was a source-text scan for three field names: a
+ * caller that passed `mainDir: process.cwd()` still *contained* the string
+ * `mainDir: __dirname` in the file, one line away, and nothing failed. The
+ * composition is a pure function now, so "the process facts reach the resolver"
+ * is a behavioural assertion; what is left in `bootstrap.ts` is the three getters
+ * that only Electron can answer, and the source gate keeps those honest.
  *
  * ## What must not drift
  *
@@ -53,10 +64,12 @@
  *
  * **No automated gate covers that last step.** There is no packaging job in
  * `.github/workflows/ci.yml`: the check is `npm run package`, launch the build,
- * read the `adapters resolved:` line it prints. The README states the same
- * boundary in both languages, and `tests/contract/readme-parity.test.ts` keeps
- * the two saying it — "verified by hand, CI does not cover it" is the claim, so
- * do not restate it as if a gate existed.
+ * read the `adapters resolved:` line it prints — on Windows from a terminal,
+ * because a double-clicked build has no console attached and the line goes to
+ * stderr. The README states the same boundary in both languages, and
+ * `tests/contract/readme-parity.test.ts` keeps the two saying it — "verified by
+ * hand, CI does not cover it" is the claim, so do not restate it as if a gate
+ * existed.
  */
 
 import { createRequire } from 'node:module';
@@ -274,4 +287,59 @@ export function resolveAdapterModules(
   write(`[ucad] adapters resolved: ${Object.keys(modules).join(', ') || '(none)'}`);
 
   return { modules, failures, searchPaths };
+}
+
+/**
+ * Everything `resolveFromProcess` needs: the process facts, plus the seams
+ * {@link resolveAdapterModules} already accepts.
+ *
+ * `searchPaths` is deliberately absent. The whole point of this function is that
+ * the mapping from "where am I running from" to "which directories Node is
+ * asked about" happens once, here — a caller that could pass its own list would
+ * be free to reproduce the miscounted hop outside the gate.
+ */
+export interface ResolveFromProcessOptions extends AdapterSearchContext {
+  /** the table; `ADAPTER_CANDIDATES` unless a test says otherwise */
+  candidates?: Readonly<Record<string, string>>;
+  /** the resolver, for a test that needs a failure without a missing package */
+  resolve?: (specifier: string, searchPaths: readonly [string, ...string[]]) => string;
+  /** where the structured per-failure warning and the summary record go */
+  log?: Logger;
+  /**
+   * The diagnostic channel, passed straight through. Left unset by
+   * `bootstrap.ts` on purpose, so the resolver's own default — `console.error` —
+   * is what a person at a terminal sees. See {@link ResolveAdapterModulesOptions.write}.
+   */
+  write?: (line: string) => void;
+}
+
+/**
+ * Resolve the adapters for a process described by its three facts.
+ *
+ * This is the composition `bootstrap.ts` used to perform inline. It was moved
+ * here for the same reason as the two functions it joins: as a call site, the
+ * mapping could only be inspected as *text*, so a caller that swapped one source
+ * for another (`mainDir: process.cwd()`) kept the identifiers the source gate
+ * was looking for and nothing went red — while the packaged layout, the one
+ * layout where the difference shows, is exactly the layout no test can boot.
+ * As a function over strings, the arguments are observable: the contract test
+ * passes a packaged-shaped context and reads back the directories that were
+ * actually searched.
+ *
+ * The report is returned whole (`modules`, `failures`, `searchPaths`) rather
+ * than just `modules`: a caller that wants to say something about the misses
+ * should not have to resolve a second time to find out what they were.
+ */
+export function resolveFromProcess(options: ResolveFromProcessOptions): AdapterResolution {
+  return resolveAdapterModules({
+    searchPaths: adapterSearchPaths({
+      appPath: options.appPath,
+      mainDir: options.mainDir,
+      cwd: options.cwd,
+    }),
+    ...(options.candidates ? { candidates: options.candidates } : {}),
+    ...(options.resolve ? { resolve: options.resolve } : {}),
+    ...(options.log ? { log: options.log } : {}),
+    ...(options.write ? { write: options.write } : {}),
+  });
 }

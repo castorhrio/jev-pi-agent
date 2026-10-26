@@ -45,6 +45,7 @@ import { ADAPTER_CANDIDATES } from '../../apps/desktop/src/main/adapter-candidat
 import {
   adapterSearchPaths,
   resolveAdapterModules,
+  resolveFromProcess,
 } from '../../apps/desktop/src/main/adapter-resolution';
 
 const here = import.meta.dirname;
@@ -435,24 +436,129 @@ describe('resolution reports what it found and what it did not', () => {
 });
 
 /**
- * `bootstrap.ts` supplies the three context fields — and deliberately no
- * `write`.
+ * `resolveFromProcess` is the composition, so it is checked as behaviour.
  *
- * ## Why this file reads source text
+ * ## Why the call site moved out of the source-text gate
  *
- * Everything above drives `resolveAdapterModules` directly, so all of it stays
- * green if the *call site* changes shape: `adapterSearchPaths` handed
- * `process.cwd()` three times, `__dirname` replaced by a guess, or a `write`
- * added "for consistency" while someone unifies the logging outlets. None of
- * those is a visible defect — resolution still succeeds in development, where
- * every search path points into the same checkout — and the one layout where it
- * matters is a packaged build, which no test here can open.
+ * The seam this pins used to live inline in `bootstrap.ts`: three getters,
+ * `adapterSearchPaths`, `resolveAdapterModules`. The only gate on it was a scan
+ * of that file's *text*, and a text scan cannot tell `mainDir: __dirname` from
+ * `mainDir: process.cwd()` sitting one line below a comment that still spells
+ * the first one — the identifiers are all still in the file, and the drift is
+ * invisible in development, where both point into the same checkout. The one
+ * layout where it matters is a packaged build, which no test here can boot.
  *
- * So the call site itself is the subject: `bootstrap.ts` is read as text and
- * the arguments of the two calls inside `loadAdapterModules` are asserted. It
- * is a source-level gate rather than a behavioural one because the caller's
- * inputs are the fact that must not drift, and the function they are passed to
- * is already covered case by case above.
+ * As a function over strings the composition is observable: the cases below
+ * hand it a packaged-shaped context and read back the directories that were
+ * actually searched, and the resolution that came out of them.
+ */
+describe('resolveFromProcess turns the process facts into a resolution', () => {
+  const ID = 'packaged';
+  const SPECIFIER = '@ucad/adapter-resolution-fixture';
+
+  it('searches exactly the paths adapterSearchPaths derives from the context', () => {
+    const context = {
+      appPath: '/opt/UCAD/resources/app.asar',
+      mainDir: '/opt/repo/apps/desktop/dist/main',
+      cwd: '/opt/repo',
+    };
+    const seen: { specifier: string; paths: readonly string[] }[] = [];
+
+    const resolution = resolveFromProcess({
+      ...context,
+      candidates: { one: SPECIFIER },
+      resolve: (specifier, searchPaths) => {
+        seen.push({ specifier, paths: searchPaths });
+        return '/resolved/index.js';
+      },
+      write: () => undefined,
+    });
+
+    // The list the resolver was handed is the list the mapping derives — not a
+    // second, hand-built one. A caller that "fixed" a hop by passing its own
+    // `searchPaths` cannot do that here: the option does not exist.
+    expect(seen).toEqual([{ specifier: SPECIFIER, paths: adapterSearchPaths(context) }]);
+    expect(resolution.searchPaths).toEqual(adapterSearchPaths(context));
+    expect(resolution.modules).toEqual({ one: '/resolved/index.js' });
+    expect(resolution.failures).toEqual([]);
+  });
+
+  it('treats the appPath it was given as the packaged root', () => {
+    // The packaged layout, driven end to end through the composition: a package
+    // under an asar-shaped `appPath` resolves with that `appPath`, and is
+    // reported missing when it is moved — while `mainDir`/`cwd` still point at
+    // the real checkout. A composition that dropped `appPath` (or filled it from
+    // `cwd`) would stay green in development and fail here.
+    const tempRoot = mkdtempSync(join(tmpdir(), 'ucad-adapter-from-process-'));
+    try {
+      const appPath = join(tempRoot, 'resources', 'app.asar');
+      const packageDir = writeFakeAdapter(appPath, SPECIFIER);
+
+      const found = resolveFromProcess({
+        appPath,
+        mainDir: MAIN_DIR,
+        cwd: REPO_ROOT,
+        candidates: { [ID]: SPECIFIER },
+        write: () => undefined,
+      });
+      expect(found.failures).toEqual([]);
+      expect(found.modules[ID]).toBe(join(packageDir, 'index.js'));
+
+      const moved = resolveFromProcess({
+        appPath: join(tempRoot, 'no-app-here'),
+        mainDir: MAIN_DIR,
+        cwd: REPO_ROOT,
+        candidates: { [ID]: SPECIFIER },
+        write: () => undefined,
+      });
+      expect(moved.failures.map((failure) => failure.id)).toEqual([ID]);
+      // The report still names the root it used, so a support report says which
+      // directory was looked in rather than "the adapter is missing".
+      expect(moved.searchPaths[0]).toBe(join(tempRoot, 'no-app-here'));
+    } finally {
+      rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('passes log and write through, so neither channel is lost in the join', () => {
+    // The two channels reach different readers (a log file opened afterwards, a
+    // terminal watched during launch). A composition that accepted them and
+    // dropped one would look correct here at the call site and be silent in the
+    // one situation the lines exist for.
+    const { log, sink } = recordingLogger();
+    const written: string[] = [];
+
+    const resolution = resolveFromProcess({
+      appPath: REPO_ROOT,
+      mainDir: MAIN_DIR,
+      cwd: REPO_ROOT,
+      candidates: { ghost: '@ucad/adapter-nobody-ships' },
+      log,
+      write: (line) => written.push(line),
+    });
+
+    expect(resolution.failures.map((failure) => failure.id)).toEqual(['ghost']);
+    expect(sink.records.filter((record) => record.level === 'warn')).toHaveLength(1);
+    expect(written).toEqual([
+      '[ucad] adapter "ghost" could not be resolved @ucad/adapter-nobody-ships',
+      '[ucad] adapters resolved: (none)',
+    ]);
+  });
+});
+
+/**
+ * `bootstrap.ts` supplies the three process facts — and deliberately no
+ * `write` — and that is now all it does.
+ *
+ * ## Why this file still reads source text
+ *
+ * The composition itself is behaviour now (above), but the three *getters* are
+ * still only answerable inside Electron: `app.getAppPath()`, `__dirname`,
+ * `process.cwd()`. What is left to drift is exactly that mapping, so the
+ * loader's body is read as text and its `resolveFromProcess(...)` arguments are
+ * asserted verbatim — `mainDir: __dirname` is not satisfied by
+ * `mainDir: process.cwd()`, and the loader may not build its own search paths
+ * or call the resolver directly.
  *
  * The problems are produced by a pure function so the fixtures below can show
  * it answering something other than `[]` — a gate that has never gone red is
@@ -463,8 +569,9 @@ describe('resolution reports what it found and what it did not', () => {
  * The argument text of the first `callee(` call in `source`, with parentheses
  * matched.
  *
- * A regex cannot do this: the arguments are two nested object literals, and a
- * lazy `\)` stops at the first `adapterSearchPaths` call's closing paren.
+ * A regex cannot do this: the arguments are an object literal whose values
+ * contain calls (`app.getAppPath()`), and a lazy `\)` would stop at the inner
+ * call's closing paren.
  */
 function callArguments(source: string, callee: string): string | undefined {
   const start = source.indexOf(`${callee}(`);
@@ -483,15 +590,41 @@ function callArguments(source: string, callee: string): string | undefined {
 }
 
 /**
- * The three facts `adapterSearchPaths` requires, spelled as the call passes
+ * The body of `function <name>(…) { … }`, with braces matched.
+ *
+ * Body-scoped on purpose: a check for "does not call `adapterSearchPaths`" run
+ * against the whole file would read every other function in `bootstrap.ts`,
+ * and a loader that lost its own call could still be reported green by one
+ * added further down. The fixtures below contain no braces inside strings, so
+ * brace counting without a tokenizer is enough; the real file's loader is the
+ * same shape.
+ */
+function functionBody(source: string, name: string): string | undefined {
+  const declaration = source.indexOf(`function ${name}(`);
+  if (declaration === -1) return undefined;
+  const open = source.indexOf('{', declaration);
+  if (open === -1) return undefined;
+  let depth = 0;
+  for (let index = open; index < source.length; index += 1) {
+    if (source[index] === '{') depth += 1;
+    else if (source[index] === '}') {
+      depth -= 1;
+      if (depth === 0) return source.slice(open + 1, index);
+    }
+  }
+  return undefined;
+}
+
+/**
+ * The three facts `resolveFromProcess` requires, spelled as the call passes
  * them.
  *
  * Exact text, not "mentions `getAppPath`": each of these is a *source* of the
  * running process, and the drift this catches is one source being swapped for
- * another (`__dirname` → `app.getAppPath()` in both slots looks fine to a
+ * another (`__dirname` → `process.cwd()` in both slots looks fine to a
  * substring check on the field names).
  */
-const REQUIRED_CONTEXT = [
+const REQUIRED_PROCESS_FACTS = [
   'appPath: app.getAppPath()',
   'mainDir: __dirname',
   'cwd: process.cwd()',
@@ -499,43 +632,42 @@ const REQUIRED_CONTEXT = [
 
 /** Every way `loadAdapterModules` can stop naming the real sources, or start writing. */
 function loaderCallProblems(source: string): string[] {
+  const body = functionBody(source, 'loadAdapterModules');
+  if (body === undefined) return ['bootstrap.ts no longer defines loadAdapterModules'];
+
   const problems: string[] = [];
-  const loaderStart = source.indexOf('function loadAdapterModules');
-  if (loaderStart === -1) {
-    problems.push('bootstrap.ts no longer defines loadAdapterModules');
-    return problems;
-  }
-  const loader = source.slice(loaderStart);
-
-  const contextArgs = callArguments(loader, 'adapterSearchPaths');
-  if (contextArgs === undefined) {
-    problems.push('loadAdapterModules no longer calls adapterSearchPaths');
+  const args = callArguments(body, 'resolveFromProcess');
+  if (args === undefined) {
+    problems.push('loadAdapterModules no longer calls resolveFromProcess');
   } else {
-    for (const expected of REQUIRED_CONTEXT) {
-      if (!contextArgs.includes(expected)) {
-        problems.push(`adapterSearchPaths is no longer given \`${expected}\``);
+    for (const expected of REQUIRED_PROCESS_FACTS) {
+      if (!args.includes(expected)) {
+        problems.push(`resolveFromProcess is no longer given \`${expected}\``);
       }
-    }
-  }
-
-  const resolveArgs = callArguments(loader, 'resolveAdapterModules');
-  if (resolveArgs === undefined) {
-    problems.push('loadAdapterModules no longer calls resolveAdapterModules');
-  } else {
-    if (!resolveArgs.includes('adapterSearchPaths(')) {
-      problems.push(
-        'resolveAdapterModules is no longer given the paths adapterSearchPaths produced',
-      );
     }
     // The deliberate omission, made a gate. `write` unset means the resolver
     // prints to `console.error`, the one channel that survives an app which
     // starts with no adapter at all; passing it here (from `log`, most likely,
     // as a tidy-up) would leave the failure in a log file nobody opened.
-    if (/[\s{,;]write\s*:/.test(resolveArgs)) {
+    if (/[\s{,;]write\s*:/.test(args)) {
       problems.push(
         'loadAdapterModules passes `write`; leave it unset so the failure reaches console.error',
       );
     }
+  }
+
+  // The mapping and the resolution belong to `adapter-resolution.ts`. Doing
+  // either here would put the drift back where no Node test can see it — and it
+  // is the shape this loader had before the extraction.
+  if (body.includes('adapterSearchPaths(')) {
+    problems.push(
+      'loadAdapterModules maps its own search paths; adapterSearchPaths is called inside resolveFromProcess',
+    );
+  }
+  if (body.includes('resolveAdapterModules(')) {
+    problems.push(
+      'loadAdapterModules calls resolveAdapterModules directly; resolveFromProcess is the one composition point',
+    );
   }
 
   return problems;
@@ -548,13 +680,12 @@ describe('bootstrap.ts names the real search roots and stays off the `write` cha
       `bootstrap.ts is missing (${BOOTSTRAP_PATH})`,
     ).toBe(true);
     const source = readFileSync(BOOTSTRAP_PATH, 'utf8');
-    expect(source).toContain('function loadAdapterModules');
+    const body = functionBody(source, 'loadAdapterModules');
+    expect(body, 'bootstrap.ts no longer defines loadAdapterModules').toBeDefined();
     // The parser is the gate's eyes: a call it cannot find would be reported as
-    // "no longer calls adapterSearchPaths", which sends the editor to a call
+    // "no longer calls resolveFromProcess", which sends the editor to a call
     // that is right there.
-    expect(callArguments(source, 'adapterSearchPaths')).toBeDefined();
-    const loader = source.slice(source.indexOf('function loadAdapterModules'));
-    expect(callArguments(loader, 'resolveAdapterModules')).toBeDefined();
+    expect(callArguments(body ?? '', 'resolveFromProcess')).toBeDefined();
   });
 
   it('passes app.getAppPath(), __dirname and process.cwd(), and no write', () => {
@@ -571,12 +702,10 @@ describe('bootstrap.ts names the real search roots and stays off the `write` cha
     // refactor that removes the only channel a person at a terminal sees.
     const withWrite = [
       'function loadAdapterModules(log?: Logger): Record<string, string> {',
-      '  return resolveAdapterModules({',
-      '    searchPaths: adapterSearchPaths({',
-      '      appPath: app.getAppPath(),',
-      '      mainDir: __dirname,',
-      '      cwd: process.cwd(),',
-      '    }),',
+      '  return resolveFromProcess({',
+      '    appPath: app.getAppPath(),',
+      '    mainDir: __dirname,',
+      '    cwd: process.cwd(),',
       '    log,',
       '    write: (line) => log?.error(line),',
       '  }).modules;',
@@ -587,24 +716,45 @@ describe('bootstrap.ts names the real search roots and stays off the `write` cha
     ]);
   });
 
-  it('reports a context field that stopped naming the running process', () => {
+  it('reports a process fact that stopped naming the running process', () => {
     // `cwd` standing in for `__dirname` resolves in development (both point
     // into the checkout when the app is launched from its root) and looks
     // wrong only in a packaged build — the drift is invisible without this.
     const swapped = [
       'function loadAdapterModules(log?: Logger): Record<string, string> {',
+      '  return resolveFromProcess({',
+      '    appPath: app.getAppPath(),',
+      '    mainDir: process.cwd(),',
+      '    cwd: process.cwd(),',
+      '    log,',
+      '  }).modules;',
+      '}',
+    ].join('\n');
+    expect(loaderCallProblems(swapped)).toEqual([
+      'resolveFromProcess is no longer given `mainDir: __dirname`',
+    ]);
+  });
+
+  it('reports a loader that took the mapping or the resolution back', () => {
+    // The pre-extraction shape, which is what a "simplify the indirection"
+    // edit would restore: correct-looking in development, and once again
+    // checkable only by packaging the app.
+    const inlined = [
+      'function loadAdapterModules(log?: Logger): Record<string, string> {',
       '  return resolveAdapterModules({',
       '    searchPaths: adapterSearchPaths({',
       '      appPath: app.getAppPath(),',
-      '      mainDir: process.cwd(),',
+      '      mainDir: __dirname,',
       '      cwd: process.cwd(),',
       '    }),',
       '    log,',
       '  }).modules;',
       '}',
     ].join('\n');
-    expect(loaderCallProblems(swapped)).toEqual([
-      'adapterSearchPaths is no longer given `mainDir: __dirname`',
+    expect(loaderCallProblems(inlined)).toEqual([
+      'loadAdapterModules no longer calls resolveFromProcess',
+      'loadAdapterModules maps its own search paths; adapterSearchPaths is called inside resolveFromProcess',
+      'loadAdapterModules calls resolveAdapterModules directly; resolveFromProcess is the one composition point',
     ]);
   });
 

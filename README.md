@@ -157,7 +157,9 @@ that does not.
   package from an asar-shaped app root — the directory semantics Node applies —
   but reading modules from *inside* the archive needs Electron's patched `fs`,
   and no automated gate does that step. Run `npm run package`, launch the
-  build, and read the `adapters resolved:` line it prints.
+  build, and read the `adapters resolved:` line it prints. On Windows, launch
+  `UCAD.exe` from a terminal: a double-clicked build has no console attached,
+  so the line has nowhere to appear.
 
 ### Contributing
 
@@ -292,6 +294,7 @@ npm run package  # 免安装目录，不出安装包
   契约门禁会从 asar 形状的应用根目录解析一个包——也就是 Node 采用的目录语义——
   但从归档*内部*读取模块需要 Electron 打过补丁的 `fs`，没有自动门禁做这一步：
   手动跑 `npm run package`，启动产物，再看它打印的 `adapters resolved:` 那一行。
+  Windows 上请从命令行启动 `UCAD.exe`：双击启动的进程没有控制台，这一行没有地方可打印。
 
 ### 参与贡献
 

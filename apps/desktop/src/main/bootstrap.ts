@@ -13,7 +13,7 @@ import { IPC_PUSH, describeError, type CloseBehaviour, type TurnEvent } from '@u
 import type { Logger } from '@ucad/observability';
 import { FileLogSink, Logger as UcadLogger, MemoryLogSink, MultiLogSink } from '@ucad/observability';
 import { ADAPTER_LOAD_ORDER } from './adapter-candidates';
-import { adapterSearchPaths, resolveAdapterModules } from './adapter-resolution';
+import { resolveFromProcess } from './adapter-resolution';
 import { UcadApp } from './app-container';
 import { resolvePaths } from './paths';
 import { registerIpc } from './ipc';
@@ -130,12 +130,16 @@ function shouldPreventClose(): boolean {
  * over every diagnostic in this file.
  */
 function loadAdapterModules(log?: Logger): Record<string, string> {
-  return resolveAdapterModules({
-    searchPaths: adapterSearchPaths({
-      appPath: app.getAppPath(),
-      mainDir: __dirname,
-      cwd: process.cwd(),
-    }),
+  return resolveFromProcess({
+    // The three facts only Electron can answer. Everything downstream — the
+    // search-path mapping, the resolution, the reporting — is in
+    // `adapter-resolution.ts`, where a Node test can pass a packaged-shaped
+    // context and read back what was actually searched. This function is the
+    // one place the running process is consulted, and the contract gate keeps
+    // it to these three getters.
+    appPath: app.getAppPath(),
+    mainDir: __dirname,
+    cwd: process.cwd(),
     log,
   }).modules;
 }
