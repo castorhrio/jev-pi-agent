@@ -47,6 +47,11 @@ export const ADAPTER_CANDIDATES = {
  *    so a reordering, an addition or a removal that skips this constant is a
  *    red test naming both lists.
  *
+ * `bootstrap.ts` also *starts* adapters in this order — it iterates this list
+ * rather than an inline `['universal', 'mock']`, which was a third copy of the
+ * ids and meant an adapter added to the table could resolve and be logged while
+ * never being started.
+ *
  * If you add an adapter, add its id here in the position it should be tried;
  * if you move one, move it here too.
  */

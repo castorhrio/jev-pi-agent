@@ -12,7 +12,7 @@ import * as path from 'node:path';
 import { IPC_PUSH, describeError, type CloseBehaviour, type TurnEvent } from '@ucad/contracts';
 import type { Logger } from '@ucad/observability';
 import { FileLogSink, Logger as UcadLogger, MemoryLogSink, MultiLogSink } from '@ucad/observability';
-import { ADAPTER_CANDIDATES } from './adapter-candidates';
+import { ADAPTER_CANDIDATES, ADAPTER_LOAD_ORDER } from './adapter-candidates';
 import { UcadApp } from './app-container';
 import { resolvePaths } from './paths';
 import { registerIpc } from './ipc';
@@ -121,7 +121,14 @@ function resolveAdapterModules(log?: Logger): Record<string, string> {
   // The table itself is in `adapter-candidates.ts`, where the README gate can
   // reach it: the same two ids are stated to a reader in both languages, and a
   // list inlined here could change without the prose changing with it.
-  const candidates: Record<string, string> = ADAPTER_CANDIDATES;
+  //
+  // No annotation on purpose. `const candidates: Record<string, string> =
+  // ADAPTER_CANDIDATES` compiled to the same object, but it told every reader —
+  // and every later refactor — that this is a mutable, arbitrary map rather
+  // than *the* table. The one place the app loads adapters is the last place
+  // that should look like a second copy; the ids and specifiers stay the
+  // literal types `as const` gave them.
+  const candidates = ADAPTER_CANDIDATES;
   // Electron resolves bare specifiers against the ASAR-appended app path, which
   // is not the workspace root, so a plain `require.resolve` silently finds only
   // what the packaged app contains. Search the usual roots explicitly and give
@@ -376,8 +383,15 @@ async function bootstrap(): Promise<void> {
 
   // Start the reference adapters. `universal` is the one that can actually do
   // work; `mock` is the offline/CI reference that needs no credentials.
+  //
+  // The ids come from `ADAPTER_LOAD_ORDER`, not from a literal list here. They
+  // were spelled out in this loop, which made a third copy of the adapter list:
+  // an adapter added to `ADAPTER_CANDIDATES` resolved fine and was logged in
+  // "adapters resolved", and then never started, because nobody edited this
+  // line. The gate in `tests/contract/adapter-candidates.test.ts` now scans
+  // this file for quoted ids, so a copy here is red.
   const started: string[] = [];
-  for (const agentId of ['universal', 'mock']) {
+  for (const agentId of ADAPTER_LOAD_ORDER) {
     const manifest = await ucad.registerAgent(agentId);
     if (manifest) started.push(manifest.id);
   }

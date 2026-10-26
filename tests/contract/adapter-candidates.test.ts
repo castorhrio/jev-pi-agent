@@ -603,6 +603,22 @@ describe('ADAPTER_CANDIDATES is tried in the order ADAPTER_LOAD_ORDER states', (
   });
 });
 
+/**
+ * Adapter ids written as *string literals* in a source file.
+ *
+ * Quoted with `'` or `"` only. The doc comments in these files name the ids in
+ * backticks — `bootstrap.ts` says which adapter "can actually do work" — and a
+ * gate that reports its own prose as a copy of the table is a gate people turn
+ * off. A string literal is the shape a copy of the list actually takes
+ * (`['universal', 'mock']`), and nothing else in these files uses it for an
+ * id.
+ */
+function quotedAdapterIds(source: string, ids: readonly string[]): string[] {
+  return ids
+    .filter((id) => new RegExp(`['"]${id}['"]`).test(source))
+    .sort();
+}
+
 describe('bootstrap.ts loads the table, not a copy of it', () => {
   beforeAll(() => {
     expect(bootstrap, `bootstrap.ts is missing (${BOOTSTRAP_PATH})`).not.toBe('');
@@ -612,6 +628,23 @@ describe('bootstrap.ts loads the table, not a copy of it', () => {
     expect(bootstrap).toContain('ADAPTER_CANDIDATES');
   });
 
+  it('starts adapters from ADAPTER_LOAD_ORDER, not from a literal list', () => {
+    // `bootstrap()` used to start `['universal', 'mock']` — a third copy of the
+    // ids, invisible to every check here, because the specifier scan below only
+    // looks for `@ucad/adapter-*`. An adapter added to the table therefore
+    // resolved, was logged in "adapters resolved", and was never started: green
+    // tests, absent adapter. The order the app starts them in is the same
+    // constant the attempt order is written down in.
+    expect(
+      bootstrap,
+      'bootstrap.ts does not iterate ADAPTER_LOAD_ORDER; the ids it starts are not the table',
+    ).toContain('ADAPTER_LOAD_ORDER');
+    expect(
+      bootstrap.match(/for \(const agentId of (\w+)\)/)?.[1],
+      'the start loop no longer iterates ADAPTER_LOAD_ORDER',
+    ).toBe('ADAPTER_LOAD_ORDER');
+  });
+
   it('names no adapter package itself', () => {
     // A second copy of the list in `bootstrap.ts` would keep this gate green
     // while the app loaded a different set: the table would describe the
@@ -619,6 +652,31 @@ describe('bootstrap.ts loads the table, not a copy of it', () => {
     expect(
       bootstrap.match(/@ucad\/adapter-[a-z-]+/g) ?? [],
       'bootstrap.ts spells out an adapter package; add it to ADAPTER_CANDIDATES instead',
+    ).toEqual([]);
+  });
+
+  it('spells no adapter id as a string literal', () => {
+    // The two checks above catch a copied *specifier* and a replaced *loop*.
+    // Neither catches the shape that actually drifted: the id list itself. This
+    // one does, for every id the table knows — so renaming an adapter reddens
+    // here if the old name is still written down in `bootstrap.ts`.
+    expect(
+      quotedAdapterIds(bootstrap, Object.keys(ADAPTER_CANDIDATES)),
+      'bootstrap.ts writes adapter ids as string literals; use ADAPTER_LOAD_ORDER',
+    ).toEqual([]);
+  });
+
+  it('is what the id scan can see', () => {
+    // The fixture: the line this gate was written for. Without it, the check
+    // above is a regex whose silence has never been shown to mean anything.
+    const copied = "for (const agentId of ['universal', 'mock']) {";
+    expect(quotedAdapterIds(copied, Object.keys(ADAPTER_CANDIDATES))).toEqual(
+      Object.keys(ADAPTER_CANDIDATES).sort(),
+    );
+    // …and the doc-comment spelling of the same ids is *not* reported, because
+    // it is prose about the table rather than a copy of it.
+    expect(
+      quotedAdapterIds('`universal` can actually do work; `mock` is offline', ['universal', 'mock']),
     ).toEqual([]);
   });
 });
