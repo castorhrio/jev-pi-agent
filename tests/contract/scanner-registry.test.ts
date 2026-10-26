@@ -78,6 +78,15 @@ interface ScannerRule {
  */
 const SCANNERS: readonly ScannerRule[] = [
   {
+    id: 'Comment blanking',
+    lives: ['tests/contract/source-scan.ts', 'tests/contract/source-scan.test.ts'],
+    driver: 'tests/contract/source-scan.test.ts',
+    pins: {
+      file: 'tests/contract/source-scan.test.ts',
+      block: 'a template literal is text, and its interpolation is code',
+    },
+  },
+  {
     id: 'Container claims',
     lives: ['tests/contract/app-container-started.test.ts'],
     pins: {

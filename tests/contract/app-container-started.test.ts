@@ -92,6 +92,61 @@ interface Claim {
   readonly modifiers: readonly string[];
 }
 
+/** The one line shape a definite-assignment claim is written as. */
+const CLAIM_LINE = /^\s*((?:[A-Za-z_$][\w$]*\s+)*)([A-Za-z_$][\w$]*)\s*!:/;
+
+/**
+ * A definite assignment, however it is spaced: the character pair that says
+ * "assigned elsewhere", allowing the space the compiler also allows.
+ *
+ * `CLAIM_LINE` is the shape the scan can read; this is the shape it must not
+ * walk past. `db! : Database` is the same claim to tsc and is not the same line
+ * to the scan — which is the whole reason the two patterns are separate.
+ */
+const DEFINITE_ASSIGNMENT = /!\s*:/;
+
+/** The words that may stand in front of the claimed name. */
+const MODIFIER_WORDS = new Set([
+  'public',
+  'private',
+  'protected',
+  'readonly',
+  'static',
+  'declare',
+  'abstract',
+  'override',
+  'accessor',
+]);
+
+/**
+ * The modifiers written on the line before a claim, if that is all it holds.
+ *
+ * Prettier wraps a member declaration when it gets long, and the wrap can land
+ * between the modifiers and the name:
+ *
+ * ```ts
+ *   private readonly
+ *     db!: Database;
+ * ```
+ *
+ * Read line by line, that claim has no modifiers — which used to be harmless
+ * and is not any more: `skippedClaims()` decides what the scan may leave alone
+ * from the modifiers, so a wrapped `static` would silently move from "skipped
+ * and asserted absent" to "on the checklist", i.e. from a named refusal to a
+ * checklist entry `app[field]` cannot ever satisfy. A previous line counts only
+ * when every word on it is a modifier word: `}` from the method above is not
+ * one, and neither is a decorator.
+ */
+function modifiersFromPreviousLine(lines: readonly string[], index: number): string[] {
+  for (let previous = index - 1; previous >= 0; previous -= 1) {
+    const text = lines[previous]!.trim();
+    if (text === '') continue;
+    const words = text.split(/\s+/);
+    return words.every((word) => MODIFIER_WORDS.has(word)) ? words : [];
+  }
+  return [];
+}
+
 /**
  * Every definite-assignment claim in a class body, with its modifiers.
  *
@@ -104,19 +159,62 @@ interface Claim {
  *
  * The modifiers are kept rather than dropped so the claims the scan
  * *deliberately* skips can be named and asserted absent, instead of
- * disappearing (see `skippedClaims`).
+ * disappearing (see `skippedClaims`), and a declaration Prettier wrapped
+ * between its modifiers and its name is read the same as an unwrapped one.
+ *
+ * What this cannot do is notice a claim it did not understand — `db! : T`, a
+ * `#`-private field, a shape added later. That is what `unreadableClaims()`
+ * below is for: a `!:` the line rule does not parse is a red test, not an
+ * unchecked field.
  */
 function claims(source: string): Claim[] {
+  const lines = source.split('\n');
   const out: Claim[] = [];
-  for (const line of source.split('\n')) {
-    const match = /^\s*((?:[A-Za-z_$][\w$]*\s+)*)([A-Za-z_$][\w$]*)\s*!:/.exec(line);
+  lines.forEach((line, index) => {
+    const match = CLAIM_LINE.exec(line);
     const name = match?.[2];
-    if (name === undefined) continue;
+    if (name === undefined) return;
+    const written = (match?.[1] ?? '').split(/\s+/).filter((modifier) => modifier !== '');
     out.push({
       name,
-      modifiers: (match?.[1] ?? '').split(/\s+/).filter((modifier) => modifier !== ''),
+      modifiers: written.length > 0 ? written : modifiersFromPreviousLine(lines, index),
     });
-  }
+  });
+  return out;
+}
+
+/**
+ * `!:` lines the claim rule does not understand, as `line: text`.
+ *
+ * The fail-closed half of `claims()`. The scan is line-based on purpose (it is
+ * the check on the checklist, and a parser would have bugs indistinguishable
+ * from the defects it looks for), so it has a known shape it can read and
+ * everything else is *not read*. Silence there is the dangerous answer: a field
+ * written `db! : Database` — a spacing Prettier does not produce but a person
+ * can, and the compiler accepts — would simply not be a claim, so it would
+ * neither be on the checklist nor be reported as skipped, and the gate would
+ * keep passing about a field nobody checks.
+ *
+ * So the count of `!:` lines is compared with the count of *understood* ones,
+ * and a line in between is named. Comments are blanked first, because the
+ * container's doc comments quote `field!: T` by name (which is prose, not a
+ * claim) — and blanking keeps the line numbers, so the report points at the
+ * line a reader would open.
+ *
+ * The cost is that a tricky-but-readable spelling could be refused. That is the
+ * right direction: a red test with a line number is a fix, and an unread claim
+ * is a promise nobody checks.
+ */
+function unreadableClaims(source: string): string[] {
+  const original = source.split('\n');
+  const out: string[] = [];
+  blankComments(source)
+    .split('\n')
+    .forEach((line, index) => {
+      if (!DEFINITE_ASSIGNMENT.test(line)) return;
+      if (CLAIM_LINE.test(line)) return;
+      out.push(`${index + 1}: ${original[index]?.trim() ?? ''}`);
+    });
   return out;
 }
 
@@ -229,6 +327,8 @@ function overCheckedFields(calls: readonly string[]): string[] {
  * asserted is *where* one line sits relative to the steps it checks, and that
  * is a fact about the source. `start()` is `async start(): Promise<void> {`,
  * so it needs its own signature rather than `methodBody()`'s `private` one.
+ *
+ * `''` is the answer when either anchor is missing — see `requiredSlice()`.
  */
 function startBody(source: string): string {
   const start = source.indexOf('\n  async start(): Promise<void> {');
@@ -245,12 +345,62 @@ function startBody(source: string): string {
  * the source gate needs to read it for the same reason: what is asserted is
  * that the method delegates to the exported decision rather than carrying a
  * second copy of it.
+ *
+ * `''` when either anchor is missing — see `requiredSlice()`.
  */
 function privateHashBody(source: string, name: string): string {
   const start = source.indexOf(`\n  #${name}(`);
   if (start === -1) return '';
   const end = source.indexOf('\n  }\n', start);
   return end === -1 ? '' : source.slice(start, end);
+}
+
+/**
+ * A slice, or a failure that says which anchor is missing instead of `''`.
+ *
+ * This is the difference between a gate and a gate-shaped hole. `startBody()`
+ * and `privateHashBody()` answer `''` when the source is not the shape they
+ * slice, and `''` is a value every assertion can be written against and fail
+ * *somewhere else*: `toContain('this.#assertStartComplete();')` on `''` fails
+ * with "expected '' to contain …", which reads as "`start()` lost the call" —
+ * the very defect the gate reports — while the truth is that the anchor moved
+ * and nothing was read at all. Worse, a check made of *negative* assertions
+ * (`not.toContain('this.#initRuntime()')`) would pass on `''` and the gate would
+ * go green on a source it never saw.
+ *
+ * So the slice is handed to this before it is asserted on, and an empty slice
+ * is a failure in the shape of the fix: the anchors are printed, and the reader
+ * is told that the assertion below is not what broke. The exact-anchor slices
+ * stay pure functions of the source, so the truncation itself can be pinned by
+ * a fixture (`a source that is not the shape it slices is a failed read`).
+ */
+function requiredSlice(body: string, what: string, anchors: string): string {
+  if (body === '') {
+    throw new Error(
+      `the source gate could not slice ${what} out of app-container.ts: expected to find ` +
+        `${anchors}, and one of them is gone. Nothing below this point was checked — fix the ` +
+        `scan (or the declaration form it anchors on) rather than the assertion that follows.`,
+    );
+  }
+  return body;
+}
+
+/** `start()`'s body, or a failure naming the anchors it could not find. */
+function startBodyOrFail(source: string): string {
+  return requiredSlice(
+    startBody(source),
+    'start()',
+    '`\n  async start(): Promise<void> {` and its closing `\n  }\n`',
+  );
+}
+
+/** A `#`-private method's body, or a failure naming the anchors it could not find. */
+function privateHashBodyOrFail(source: string, name: string): string {
+  return requiredSlice(
+    privateHashBody(source, name),
+    `#${name}()`,
+    `\`\n  #${name}(\` and its closing \`\n  }\n\``,
+  );
 }
 
 /** The main-process sources the guard's scope is read from. */
@@ -492,6 +642,53 @@ describe('the scan that reads the container’s promises', () => {
     expect(skippedClaims('class A {\n  declare db!: Database;\n}')).toEqual(['declare db']);
   });
 
+  it('reads a declaration Prettier wrapped between the modifiers and the name', () => {
+    // The reformat this scan has to survive: a member long enough that the
+    // printer puts the modifiers on one line and the name on the next. Read
+    // line by line, that claim has no modifiers — and the modifiers are what
+    // `skippedClaims()` decides with, so a wrapped `static` would move from
+    // "skipped and asserted absent" to "on the checklist", where the run half
+    // (`app[field]`) can never satisfy it.
+    const wrappedStatic = ['class A {', '  static', '    db!: Database;', '}'].join('\n');
+    expect(promisedFields(wrappedStatic)).toEqual([]);
+    expect(skippedClaims(wrappedStatic)).toEqual(['static db']);
+
+    // The instance case, which must stay a promise: the name is what makes it
+    // one, and the wrapping does not change that.
+    const wrappedInstance = ['class A {', '  private readonly', '    db!: Database;', '}'].join('\n');
+    expect(promisedFields(wrappedInstance)).toEqual(['db']);
+    expect(skippedClaims(wrappedInstance)).toEqual([]);
+
+    // And the type may be on the next line instead; the claim is the `!:`.
+    expect(promisedFields(['class A {', '  db!:', '    Database;', '}'].join('\n'))).toEqual(['db']);
+  });
+
+  it('reports a `!:` line it cannot read, instead of not seeing it', () => {
+    // The fail-closed half. A line rule has a shape it understands, and every
+    // other spelling of the same claim is *not read* — which used to be silent
+    // in both directions: the field was not on the checklist and not reported
+    // as skipped, so the gate kept passing about a field nobody checked.
+    // `unreadableClaims()` makes that difference visible, and the assertion
+    // below is the fixture that keeps it from answering `[]` unconditionally.
+    const spacedColon = ['class A {', '  db! : Database;', '}'].join('\n');
+    expect(promisedFields(spacedColon), 'the scan reads a shape it does not understand').toEqual([]);
+    expect(unreadableClaims(spacedColon)).toEqual(['2: db! : Database;']);
+
+    // A `#`-private claim is another shape it cannot read. Skipping it silently
+    // would be a hole: `app[field]` cannot reach it, so the run half could
+    // never check it, and nobody would be told.
+    const privateField = ['class A {', '  #db!: Database;', '}'].join('\n');
+    expect(unreadableClaims(privateField)).toEqual(['2: #db!: Database;']);
+
+    // The readable shapes answer `[]`, and so does prose — the container's doc
+    // comments quote `field!: T` by name, and a scan that called its own
+    // documentation unreadable would be red about itself rather than the code.
+    expect(unreadableClaims('class A {\n  db!: Database;\n  static x!: T;\n}')).toEqual([]);
+    expect(unreadableClaims('/** A `field!: T` claim, quoted in prose. */\nclass A {}')).toEqual(
+      [],
+    );
+  });
+
   it('is not vacuous on the real container', () => {
     const found = promisedFields(fs.readFileSync(CONTAINER_SOURCE, 'utf8'));
     expect(found.length, 'the scan found no promises in the container at all').toBeGreaterThan(10);
@@ -627,6 +824,60 @@ describe('the guard’s scope, as the sources write it', () => {
     // says so instead of comparing two empty lists.
     expect(methodBody('class A {\n    private retentionDeps(): X {\n    }\n}', 'retentionDeps')).toBe(
       '',
+    );
+  });
+
+  it('a source that is not the shape it slices is a failed read, not an empty body', () => {
+    // `startBody()`/`privateHashBody()` answer `''` when the anchors are gone,
+    // and `''` is the value every assertion below can fail *about something
+    // else*: a `toContain('this.#assertStartComplete();')` on `''` reports
+    // exactly the defect the gate exists to name ("`start()` lost the call"),
+    // while a negative assertion would pass and leave the gate green on a
+    // source it never read. So the truncation is pinned here, and the caller
+    // above goes through `…OrFail()`, which turns `''` into a message naming
+    // the anchors.
+    const noStart = ['class A {', '  other() {}', '}'].join('\n');
+    expect(startBody(noStart)).toBe('');
+    expect(privateHashBody(noStart, 'assertStartComplete')).toBe('');
+    expect(() => startBodyOrFail(noStart), 'an unreadable start() body passed silently').toThrow(
+      /async start\(\): Promise<void> \{/,
+    );
+    expect(() => privateHashBodyOrFail(noStart, 'assertStartComplete')).toThrow(
+      /#assertStartComplete\(/,
+    );
+
+    // The other truncation: the opening anchor is there and the closing one is
+    // not, which is what a re-indented or re-wrapped `start()` looks like. The
+    // slice is still `''` — not "everything from the anchor to the end of the
+    // file", which is how a text slice turns into a scan of unrelated code.
+    const unterminated = [
+      'class A {',
+      '  async start(): Promise<void> {',
+      '    await this.#initLogging();',
+      '  }',
+      '}',
+    ]
+      .join('\n')
+      .replace('\n  }\n', '\n    }\n');
+    expect(startBody(unterminated)).toBe('');
+    expect(() => startBodyOrFail(unterminated)).toThrow(/closing/);
+
+    // And the message is about the *scan*, not about the assertion that
+    // follows it: the reader of a red gate should not be sent to the line that
+    // is merely downstream of the missing anchor.
+    let message = '';
+    try {
+      startBodyOrFail(noStart);
+    } catch (error) {
+      message = error instanceof Error ? error.message : String(error);
+    }
+    expect(message).toContain('app-container.ts');
+    expect(message).toContain('Nothing below this point was checked');
+
+    // The positive control: the real body slices, so the fixtures above are
+    // about a scanner that can answer and not about one that always refuses.
+    expect(startBodyOrFail(fs.readFileSync(CONTAINER_SOURCE, 'utf8'))).toContain(
+      'this.#assertStartComplete();',
     );
   });
 
@@ -851,6 +1102,18 @@ describe('the container keeps every promise start() made', () => {
     ).toEqual([]);
   });
 
+  it('declares no claim the scan cannot read', () => {
+    // The fail-closed half of the declaration scan, asserted on the source this
+    // whole file is about. `skippedClaims` covers the shapes the scan reads and
+    // deliberately leaves alone; this covers the ones it does not read at all,
+    // which used to be the silent case: not on the checklist, not reported as
+    // skipped, and the gate green about a field nobody checks.
+    expect(
+      unreadableClaims(fs.readFileSync(CONTAINER_SOURCE, 'utf8')),
+      'a `!:` in the container is written in a shape the claim scan cannot read, so it is neither checked nor reported',
+    ).toEqual([]);
+  });
+
   it('covers every field the retention service is built from', () => {
     // `RETENTION_DEPENDENCIES` is the retention dependency bag's only source
     // of names, and `PROMISED_FIELDS` is what the scan-and-run gate checks.
@@ -1065,8 +1328,12 @@ describe('the container keeps every promise start() made', () => {
     // step: a check placed before `#initRuntime()` would report the fields that
     // step assigns. Both halves are read from the source, because there is no
     // way to make a real `start()` skip a step.
-    const body = startBody(fs.readFileSync(CONTAINER_SOURCE, 'utf8'));
-    expect(body, 'start() could not be found, so this gate is reading nothing').not.toBe('');
+    //
+    // `startBodyOrFail()` rather than `startBody()`: an empty slice would make
+    // the assertion below report `start()` as having lost the call, which is
+    // the defect the gate exists to name — so a moved anchor would be
+    // indistinguishable from that defect. The failure now names the anchor.
+    const body = startBodyOrFail(fs.readFileSync(CONTAINER_SOURCE, 'utf8'));
     expect(body, 'start() no longer runs #assertStartComplete()').toContain(
       'this.#assertStartComplete();',
     );
@@ -1081,8 +1348,10 @@ describe('the container keeps every promise start() made', () => {
     // `start()` rather than about a function beside it. A body that grew its
     // own copy of the check would leave the gate testing a path production no
     // longer takes.
-    const check = privateHashBody(fs.readFileSync(CONTAINER_SOURCE, 'utf8'), 'assertStartComplete');
-    expect(check, 'the completeness check is gone or was renamed').not.toBe('');
+    const check = privateHashBodyOrFail(
+      fs.readFileSync(CONTAINER_SOURCE, 'utf8'),
+      'assertStartComplete',
+    );
     expect(
       check,
       '#assertStartComplete() no longer delegates to assertStartComplete(), so the gate drives a path start() does not take',

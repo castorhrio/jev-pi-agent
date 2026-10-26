@@ -154,6 +154,7 @@ contract test. Two rules apply to all of them:
 
 | Scanner | Lives in | What it reads |
 |---|---|---|
+| Comment blanking | `tests/contract/source-scan.ts`, driven by `source-scan.test.ts` | Comments vs. code: strings, template literals and their `${…}` interpolations, regex literals, division |
 | Container claims | `tests/contract/app-container-started.test.ts` | `field!: T` declarations in `app-container.ts` |
 | Zod messages | `tests/contract/zod-message-scan.ts`, driven by `zod-custom-messages.test.ts` | Custom-message positions inside Zod schema expressions |
 | Bare throws | `tests/contract/bare-throw-scan.ts`, driven by `error-formatting.test.ts` | `throw new Error(…)` / `throw appError(…)` under `apps/desktop/src/main` |
@@ -173,6 +174,16 @@ the gate then reports the block as deleted. That blind spot is asserted, not jus
 teaching the scan about backticks fails there first. The wrappings that *are* recognised have
 fixtures of their own, so a false "block deleted" on a wrapped or `test(`-written block would have
 shown up there rather than at whoever next wrapped a long name.
+
+**Comment blanking.** Every scanner below that asks a question about *code* reads
+`blankComments()` rather than its own walk. The module is tested where its states are decided
+(`source-scan.test.ts`), not only through the gates that consume it: a shape it misreads is a
+shape every gate misreads. The states are strings, template literals — whose `${…}` is code,
+so its comments are blanked and its quotes and regex literals are read again — and regex
+literals, judged by the operand heuristic (a value before the `/` means division). The
+heuristic is biased so that a mistake can only make a gate *find* something, never lose code.
+If a scan needs a different reading of a shape, add it here with a fixture; a second copy of
+this walk in a gate is the bug this module exists to prevent.
 
 **Container claims.** The rule matches `!:`, not `!: ` — `db!:Database` is the same claim
 as `db!: Database` to the compiler, so requiring the space silently skipped a field. It

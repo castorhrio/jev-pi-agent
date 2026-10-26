@@ -19,14 +19,37 @@
  * difference between a blind spot a comment mentions and a blind spot a
  * fixture shows.
  *
+ * ## Template literals are code again, not text
+ *
+ * A template literal used to be one more `quote` state, so everything between
+ * the backticks was read as text — including `${…}`, which is not text at all.
+ * That is a hole in both directions, and it is the second blind spot this
+ * module has grown a fixture for:
+ *
+ *  - a comment inside an interpolation stayed verbatim, so a gate reading
+ *    "which identifiers appear in the code" counted with the comment;
+ *  - a backtick inside such a comment (`` `${a /* ` *\/}b` ``) closed the
+ *    template early, and the rest of the template became code — where `//` is
+ *    a comment and text is not text any more. That is a *swallowing* error,
+ *    the direction that hides source.
+ *
+ * So `${` now opens a code frame and the `}` that closes it returns to the
+ * template's text. Braces are counted inside the frame, quotes and regex
+ * literals are read again there (they are code), and a nested template inside
+ * an interpolation is another frame — a stack, because `` `${`${a}`}` `` is
+ * valid and one boolean could not describe it.
+ *
  * ## The rules
  *
  *  - comments become spaces; newlines stay newlines, so every index — and
  *    therefore every line number printed in a failure — still points at the
  *    original source;
- *  - strings and template literals are kept verbatim (a seam inside a string
- *    is still a source fact worth seeing), and `//` inside one is not a
+ *  - strings and template literal *text* are kept verbatim (a seam inside a
+ *    string is still a source fact worth seeing), and `//` inside one is not a
  *    comment;
+ *  - the code inside a `${…}` interpolation is scanned as code: its comments
+ *    are blanked, its strings and regex literals are kept, and a `/` there is
+ *    judged by the same rule as anywhere else;
  *  - regex literals are recognised and kept verbatim, so the `//` inside one
  *    is not a comment either. Detection is the usual operand-position
  *    heuristic: a `/` starts a regex where a value is expected — after an
@@ -38,7 +61,7 @@
  *    regex scan stops at the end of the line and falls back to division rather
  *    than swallowing the rest of the file. A `/` wrongly read as division is
  *    the direction that loses text, and that is the case this module exists to
- *    remove: the fixtures in the two gate files drive it.
+ *    remove: the fixtures in the gate files drive it.
  */
 export function blankComments(source: string): string {
   const out: string[] = [];
@@ -46,6 +69,7 @@ export function blankComments(source: string): string {
   let tail = '';
   /** The last non-space character emitted, or `null` at the start of the file. */
   let previous: string | null = null;
+  /** `'` or `"` while inside a plain string; template literals are frames. */
   let quote: string | null = null;
 
   const emit = (text: string): void => {
@@ -54,16 +78,69 @@ export function blankComments(source: string): string {
     const last = text[text.length - 1];
     if (last !== undefined && !/\s/.test(last)) previous = last;
   };
+  /** A value just ended, whatever its spelling: a `/` after it is division. */
+  const emitValue = (text: string): void => {
+    emit(text);
+    tail = (tail + '0').slice(-24);
+    previous = '0';
+  };
   /** A blanked region: positions preserved, and it teaches the scan nothing. */
   const blank = (text: string): void => {
     out.push(text);
   };
+
+  /**
+   * Where the walk is, as a stack.
+   *
+   * Empty is plain code. `template` is the text between backticks (verbatim),
+   * `interpolation` is the code inside `${…}` — which is code, with one extra
+   * duty: the `}` at depth 0 closes the frame and hands the walk back to the
+   * template text it came from. Nested templates push another `template` frame
+   * on top, so `` `${`${a}`}` `` needs no special case.
+   */
+  interface Frame {
+    readonly kind: 'template' | 'interpolation';
+    /** Braces seen inside an interpolation, so only the matching `}` closes it. */
+    depth: number;
+  }
+  const frames: Frame[] = [];
+  const top = (): Frame | undefined => frames[frames.length - 1];
 
   const LIMIT = source.length;
   let i = 0;
   while (i < LIMIT) {
     const ch = source[i]!;
     const next = source[i + 1];
+    const frame = top();
+
+    if (frame?.kind === 'template') {
+      // Template *text*: kept verbatim. A `//` here is two characters the user
+      // will see, not a comment, and a `${` here is the one thing that is not
+      // text — it opens code, which is where a comment would start.
+      if (ch === '\\') {
+        emit(ch);
+        emit(next ?? '');
+        i += 2;
+        continue;
+      }
+      if (ch === '`') {
+        frames.pop();
+        // Closing a template is a value, exactly like closing a regex literal:
+        // `` `${a}` / 2 `` is division, not the start of another literal.
+        emitValue(ch);
+        i += 1;
+        continue;
+      }
+      if (ch === '$' && next === '{') {
+        frames.push({ kind: 'interpolation', depth: 0 });
+        emit('${');
+        i += 2;
+        continue;
+      }
+      emit(ch);
+      i += 1;
+      continue;
+    }
 
     if (quote !== null) {
       emit(ch);
@@ -77,11 +154,41 @@ export function blankComments(source: string): string {
       continue;
     }
 
-    if (ch === '"' || ch === "'" || ch === '`') {
+    if (ch === '"' || ch === "'") {
       quote = ch;
       emit(ch);
       i += 1;
       continue;
+    }
+
+    if (ch === '`') {
+      frames.push({ kind: 'template', depth: 0 });
+      emit(ch);
+      i += 1;
+      continue;
+    }
+
+    if (frame?.kind === 'interpolation') {
+      // Only the `}` that matches the interpolation's own `{` closes it; the
+      // others are object literals and blocks inside the code, and counting
+      // them here is what keeps `${{ a: 1 }}` from ending at the first brace.
+      if (ch === '{') {
+        frame.depth += 1;
+        emit(ch);
+        i += 1;
+        continue;
+      }
+      if (ch === '}') {
+        if (frame.depth === 0) {
+          frames.pop();
+          emitValue(ch);
+        } else {
+          frame.depth -= 1;
+          emit(ch);
+        }
+        i += 1;
+        continue;
+      }
     }
 
     if (ch === '/' && next === '*') {
@@ -114,11 +221,7 @@ export function blankComments(source: string): string {
       if (startsRegexLiteral(previous, tail)) {
         const end = regexLiteralEnd(source, i);
         if (end !== -1) {
-          emit(source.slice(i, end));
-          // A regex literal is a value: a `/` after it is division, not the
-          // start of another literal.
-          tail = (tail + '0').slice(-24);
-          previous = '0';
+          emitValue(source.slice(i, end));
           i = end;
           continue;
         }
