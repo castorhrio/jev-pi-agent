@@ -152,6 +152,13 @@ contract test. Two rules apply to all of them:
 | Page scripts | `tests/contract/layout-scripts.test.ts` | The scripts in `scripts/layout-page-scripts.mjs` |
 | Renderer markup | `tests/contract/ui-copy.test.ts`, `layout.test.ts` | Hard-coded copy, unnamed controls, inline spacing/type sizes |
 
+**The table is itself a gate.** `tests/contract/scanner-registry.test.ts` compares it with the
+scanners it knows about in both directions, resolves every path in the *Lives in* column on
+disk, requires a row for every `-scan.ts` module in `tests/contract`, and checks that each
+row's driving test still imports its scanner and keeps the fixture block named below. Adding a
+scan without a row, or renaming a file in one place only, fails there — the map is read by
+people who are already lost.
+
 **Container claims.** The rule matches `!:`, not `!: ` — `db!:Database` is the same claim
 as `db!: Database` to the compiler, so requiring the space silently skipped a field. It
 reads the modifiers in front of the name (`private`, `readonly`, …) because `static` and
