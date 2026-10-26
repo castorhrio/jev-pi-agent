@@ -44,6 +44,31 @@ const secretRefSchema = z.object({
 });
 
 /**
+ * The field names a schema failure is about.
+ *
+ * Zod reports each problem as an issue: a path to the field, and — for a key
+ * the schema does not know — the list of keys it did not recognise. The
+ * *names* are what a log line needs to say which fields were wrong; the
+ * values are what a log must not repeat, so the issue messages themselves
+ * stay out of it. Zod's own `.message` is a JSON dump of every issue, which
+ * is unreadable in a log line and echoes the input back.
+ */
+function schemaFailureFields(error: ZodError): string[] {
+  const fields: string[] = [];
+  for (const issue of error.issues) {
+    if (issue.code === 'unrecognized_keys') {
+      fields.push(...issue.keys);
+      continue;
+    }
+    const path = issue.path.join('.');
+    // A path can be empty (the whole object failed) — then the issue's own
+    // code is the only thing that says what kind of failure it was.
+    fields.push(path.length > 0 ? path : issue.code);
+  }
+  return fields;
+}
+
+/**
  * The last narrowing before the bridge: one user-safe sentence, and no fields.
  *
  * The `code` was already logged by `handle()`; it is dropped here on purpose.
@@ -103,13 +128,30 @@ export function registerIpc(
       try {
         return await fn(...(args as A));
       } catch (error) {
-        const appError = toAppError(error, 'ipc');
+        // The sentence the person reads is computed once and used for both
+        // sides: the log line and the rejection must not drift apart.
+        const userError = toUserError(error);
+        let appError = toAppError(error, 'ipc');
+        let invalidFields: string[] | undefined;
+        if (error instanceof ZodError) {
+          // A schema failure is a malformed request, and it has a code for
+          // that. `toAppError` cannot tell a `ZodError` from a crash — it has
+          // no `code` of its own, so it became `UNKNOWN`, and a log full of
+          // `UNKNOWN` cannot tell "the client sent the wrong fields" (which a
+          // person can fix) from "the app fell over" (which they cannot).
+          appError = codedError('INVALID_INPUT', userError.message, 'ipc');
+          invalidFields = schemaFailureFields(error);
+        }
         ucad.logger.error('ipc handler failed', {
           channel,
           code: appError.code,
           message: appError.message,
+          // Which fields were wrong — the names, not the values. A schema
+          // failure is the one refusal whose cause is a handful of field
+          // names, and the log is where a field name belongs.
+          ...(invalidFields ? { invalidFields } : {}),
         });
-        throw toUserError(error);
+        throw userError;
       }
     });
   };

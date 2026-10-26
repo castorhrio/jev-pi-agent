@@ -160,3 +160,61 @@ describe('input mistakes are not refusals with codes', () => {
     expect('code' in rejection).toBe(false);
   });
 });
+
+/**
+ * The code of a malformed request, on the log side of the bridge.
+ *
+ * ## Why this file exists
+ *
+ * `toAppError()` reads a `code` and a `component` off the error it is given,
+ * and a `ZodError` has neither — so every schema failure was logged as
+ * `UNKNOWN`, side by side with the crashes it is nothing like. A log in which
+ * "the client sent the wrong fields" and "the app fell over" are the same
+ * entry cannot answer either question: the first is fixable by the caller,
+ * the second is a bug.
+ *
+ * So a schema failure gets the code it always should have had,
+ * `INVALID_INPUT` — the code the app already uses for a payload it refuses.
+ * The *Renderer* still receives the one user-safe sentence and no code; that
+ * boundary is the one above and it does not move.
+ */
+describe('a malformed request is logged as INVALID_INPUT, not as a crash', () => {
+  it('gives a schema failure a code of its own', async () => {
+    log.length = 0;
+    const rejection = (await invoke(IPC_CHANNELS.app.setLocale, 42)) as Error;
+
+    expect(rejection.message).toContain('输入无效');
+    const entry = log.find((line) => line.fields?.channel === IPC_CHANNELS.app.setLocale);
+    expect(entry, 'the refusal produced no log line').toBeDefined();
+    expect(entry!.fields?.code).toBe('INVALID_INPUT');
+    // The log line is the sentence a person reads, not Zod's JSON dump of
+    // every issue: the dump is unreadable in a log line and it echoes the
+    // input back.
+    expect(String(entry!.fields?.message)).toContain('输入无效');
+    expect(String(entry!.fields?.message)).not.toContain('42');
+    expect(String(entry!.fields?.message)).not.toContain('\n');
+  });
+
+  it('names the field that was wrong, and not its value', async () => {
+    log.length = 0;
+    // A purge request with a field the schema does not know. The field name
+    // is what a log needs; the value must not be repeated back into it.
+    await invoke(IPC_CHANNELS.storage.purge, { scope: 'all', confirm: true, extra: 1 });
+
+    const entry = log.find((line) => line.fields?.channel === IPC_CHANNELS.storage.purge);
+    expect(entry, 'the refusal produced no log line').toBeDefined();
+    expect(entry!.fields?.code).toBe('INVALID_INPUT');
+    expect(entry!.fields?.invalidFields).toEqual(['extra']);
+    expect(String(entry!.fields?.message)).not.toContain('extra');
+  });
+
+  it('names the field of a missing confirmation too', async () => {
+    log.length = 0;
+    await invoke(IPC_CHANNELS.storage.purge, { scope: 'all' });
+
+    const entry = log.find((line) => line.fields?.channel === IPC_CHANNELS.storage.purge);
+    expect(entry).toBeDefined();
+    expect(entry!.fields?.code).toBe('INVALID_INPUT');
+    expect(entry!.fields?.invalidFields).toEqual(['confirm']);
+  });
+});

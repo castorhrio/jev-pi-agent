@@ -58,7 +58,7 @@ const purge = handlers.get(IPC_CHANNELS.storage.purge);
  * reads when it renders 「输入无效 (confirm)」.
  */
 interface ValidationFailure {
-  issues: Array<{ path: Array<string | number>; message: string }>;
+  issues: Array<{ path: Array<string | number>; message: string; code?: string }>;
 }
 
 function isValidationFailure(error: unknown): error is ValidationFailure {
@@ -132,6 +132,64 @@ describe('storage:purge refuses an unconfirmed request at the schema', () => {
     expect(error).toBeInstanceOf(Error);
     expect(isValidationFailure(error), 'a confirmed purge was rejected as malformed').toBe(false);
     expect((error as Error).message).toContain('没有已打开的项目');
+  });
+
+  it('rejects a confirm that is explicitly undefined', async () => {
+    // "Not confirmed" has more than one spelling, and a caller that builds
+    // the request as `{ scope, confirm: maybe }` sends `undefined` rather
+    // than leaving the field out. `z.unknown()` accepts `undefined` — it is
+    // the *value* that is checked, so this has to end in the same refusal
+    // with the same sentence, not in a request that purges everything.
+    const error = await rejection({ scope: 'all', confirm: undefined });
+
+    expect(isValidationFailure(error), 'a purge with `confirm: undefined` was accepted').toBe(true);
+    const issue = (error as ValidationFailure).issues[0];
+    expect(issue?.path).toEqual(['confirm']);
+    expect(issue?.message).toContain('确认');
+    expect(issue?.message).not.toMatch(/invalid|Invalid|expected/i);
+  });
+});
+
+/**
+ * The request is described exactly: no field is quietly ignored.
+ *
+ * A purge cannot be undone, so a field the app does not understand is a
+ * question, not a detail. `z.object()` drops unknown keys without a word, so
+ * `{ scope: 'all', confirm: true, force: true }` used to delete everything
+ * and say nothing about the `force` that was never read — and a misspelled
+ * key used to be the only hint that the request was not what the caller
+ * thought it was.
+ */
+describe('storage:purge refuses a request it does not fully understand', () => {
+  it('rejects a request that carries an extra field', async () => {
+    const error = await rejection({ scope: 'all', confirm: true, extra: 1 });
+
+    expect(isValidationFailure(error), 'a request with an unknown field was accepted').toBe(true);
+    const issue = (error as ValidationFailure).issues[0];
+    expect(issue?.code).toBe('unrecognized_keys');
+    // The sentence a person reads, in Chinese, like every other refusal on
+    // this channel.
+    expect(issue?.message).toContain('未知的字段');
+    expect(issue?.message).not.toMatch(/unrecognized|Unrecognized/i);
+  });
+
+  it('names the field it did not recognise', async () => {
+    const error = await rejection({ scope: 'all', confirm: true, extra: 1 });
+
+    const issue = (error as ValidationFailure).issues[0];
+    // The message names the field, so a caller can see *which* one it got
+    // wrong without reading the source.
+    expect(issue?.message).toContain('scope');
+    expect(issue?.message).toContain('confirm');
+  });
+
+  it('still refuses an unconfirmed request that also carries an extra field', async () => {
+    // Both faults at once: the extra field and the missing confirmation.
+    // Whichever the schema reports first, the request is refused — a purge
+    // is not something that may half-happen.
+    const error = await rejection({ scope: 'all', extra: 1 });
+
+    expect(isValidationFailure(error)).toBe(true);
   });
 });
 

@@ -121,6 +121,45 @@ export class GitLikeBridge {
     // for, so the state is measured rather than assumed.
     let statusInFlight = false;
 
+    /**
+     * Records a `git status` that answered after the deadline.
+     *
+     * The deadline log below says `statusInFlight: true`, and that is true
+     * *at that moment*: the subprocess is still out there and cannot be
+     * cancelled. It is a snapshot, and a snapshot has no ending — so without
+     * this line a reader could not tell whether the git process finished a
+     * moment later or is still hanging, and the two call for different
+     * reactions (wait it out vs. go and kill the workspace).
+     *
+     * The answer itself changes nothing: the summary was already returned
+     * empty, and no `git diff` is spawned for a path nobody listed. What
+     * changes is that the answer is now *on the record* as dropped, rather
+     * than landing on nothing and disappearing.
+     *
+     * `expired` is the test for "too late" rather than a separate timer: it
+     * is already the flag the workers stop on, so there is one clock and one
+     * answer to "is it still in time".
+     */
+    const logLateStatus = (outcome: 'answered' | 'failed', error?: unknown): void => {
+      if (!expired) return;
+      this.opts.logger.debug('git diff summary discarded a late status answer', {
+        workspaceId: input.workspaceId,
+        stage: 'status',
+        // The subprocess has returned — that is the only reason the answer is
+        // here at all — so nothing of it is still out there.
+        statusInFlight: false,
+        inFlight: 0,
+        // The same shape as the deadline line, so the two can be read
+        // side by side: both of them describe a summary with nothing in it.
+        collected: 0,
+        requested: 0,
+        abandoned: 0,
+        failed: 0,
+        outcome,
+        ...(error !== undefined ? { error: describeError(error) } : {}),
+      });
+    };
+
     try {
       // The flag is set from the call's *return value*, not from its
       // resolution: a `status` that rejects still left a subprocess behind,
@@ -135,10 +174,17 @@ export class GitLikeBridge {
         statusCall.then(
           (dto) => {
             statusInFlight = false;
+            logLateStatus('answered');
             return { answered: true as const, dto };
           },
           (error) => {
             statusInFlight = false;
+            // A failure that lands after the deadline is dropped by the race
+            // and reaches nobody: the summary was already returned, and the
+            // rejection has no caller left to refuse. Written down here so a
+            // git process that died on a stale lock is not the same as one
+            // that never ran.
+            logLateStatus('failed', error);
             throw error;
           },
         ),
@@ -213,6 +259,18 @@ export class GitLikeBridge {
           inFlight += 1;
           try {
             const diff = await this.opts.git.diff({ workspaceRoot: root, path });
+            // A diff that lands after the deadline is counted here and dropped
+            // there. The deadline line is a snapshot taken at the deadline, and
+            // it already accounts for this path — as `inFlight` while it was
+            // running, as `abandoned` afterwards. No second line is written
+            // for it: the arithmetic (`requested = answered + failed +
+            // abandoned`) already says what became of every path, and a
+            // per-path line would only restate it.
+            //
+            // The one late answer that does get a line of its own is
+            // `git status` (see `logLateStatus`), because there the deadline
+            // line carries a *subprocess* count and the reader cannot tell
+            // from it whether that process is still hanging.
             answered += 1;
             if (diff.binary || diff.patch.trim() === '') continue;
             collected[index] = {

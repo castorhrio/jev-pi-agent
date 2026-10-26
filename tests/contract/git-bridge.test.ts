@@ -362,6 +362,48 @@ describe('git diffSummary — the bounds', () => {
     expect(h.logs.filter((line) => line.event.includes('deadline'))).toHaveLength(1);
   });
 
+  it('records the `git status` that answered late, and says the process is gone', async () => {
+    // The deadline line is a *snapshot*: `statusInFlight: true` says the
+    // subprocess was still out there at that moment, which is true and also
+    // the end of the story — nothing anywhere said what became of it. A git
+    // process that finished a moment later and one that is still hanging on a
+    // stale lock call for different reactions, and the log could not tell
+    // them apart.
+    const h = harness({ statusSlowMs: 60, diffDeadlineMs: 25 });
+
+    await h.bridge.diffSummary({ workspaceId: 'ws_1' });
+
+    const stopped = h.logs.find((line) => line.event === 'git diff summary stopped at its deadline');
+    expect(stopped).toBeDefined();
+    // The snapshot at the deadline: still running, and it cannot be
+    // cancelled.
+    expect(stopped!.fields?.statusInFlight).toBe(true);
+
+    // Now the status answers, late.
+    await after(120, undefined);
+
+    const discarded = h.logs.find(
+      (line) => line.event === 'git diff summary discarded a late status answer',
+    );
+    expect(discarded, 'the late status answer left no trace at all').toBeDefined();
+    expect(discarded!.fields?.stage).toBe('status');
+    // The subprocess has returned — that is the only reason the answer is
+    // here at all — so nothing of it is still out there.
+    expect(discarded!.fields?.statusInFlight).toBe(false);
+    expect(discarded!.fields?.inFlight).toBe(0);
+    // The summary is still the empty one it was.
+    expect(discarded!.fields?.collected).toBe(0);
+    expect(discarded!.fields?.outcome).toBe('answered');
+
+    // The deadline line is not rewritten. It was a snapshot, and the two
+    // lines together are the whole story: still running at the deadline,
+    // finished a moment later.
+    expect(h.logs.filter((line) => line.event === 'git diff summary stopped at its deadline')).toHaveLength(1);
+    // And the late answer still changed nothing about the summary: no diff
+    // was spawned for a path nobody listed.
+    expect(h.diffs).toEqual([]);
+  });
+
   it('accounts for every requested path in the deadline log', async () => {
     // The log used to carry `abandoned` as a number nobody could check. It is
     // an arithmetic claim — every requested path is in exactly one bucket —
@@ -572,5 +614,101 @@ describe('git diffSummary — a directory that is not a repository', () => {
     const logged = h.logs.find((line) => line.event === 'git diff summary unavailable');
     expect(logged).toBeDefined();
     expect(String(logged!.fields?.error)).toContain('not a git repository');
+  });
+});
+
+/**
+ * One turn's late answer is not the next turn's answer.
+ *
+ * ## Why this file exists
+ *
+ * The bridge's counters — `collected`, `answered`, `abandoned`, `inFlight` —
+ * are all local to one `diffSummary` call, and that is the whole reason a
+ * second turn on the same workspace is safe. It was not pinned anywhere.
+ *
+ * The window is real and narrow: the deadline stops the *waiting*, not the
+ * subprocesses that already started. So a `git diff` launched by the first
+ * turn is still running when the first turn has already returned, and it
+ * lands during the second turn — after the second turn's own diffs, possibly
+ * after the second turn's own answer was built. Anything the bridge kept
+ * between calls (a "collected" list, a counter, a pending result) would be
+ * read by the second turn, and the second turn's context pack would carry
+ * the first turn's patch.
+ *
+ * The two things this file asserts are the ones a reader cannot check by
+ * reading the code: the second answer is built from the second call's own
+ * subprocesses, and the late answer changes nothing at all — not the answer
+ * that was already returned, and not the log.
+ */
+describe('git diffSummary — one call does not answer for the next', () => {
+  it('keeps a late diff out of the next call, and writes no log for it', async () => {
+    // The first turn's `late.ts` diff is held open by a gate this test
+    // releases by hand, so the late answer lands at a moment the test
+    // chooses: after the second turn has already answered. No sleeping, no
+    // race between two timers.
+    let releaseLate: (() => void) | undefined;
+    const lateGate = new Promise<void>((resolve) => {
+      releaseLate = resolve;
+    });
+
+    let round = 0;
+    const h = harness({
+      unstaged: ['late.ts', 'quick.ts'],
+      diffFor: async (path) => {
+        // Each turn's patch says which turn produced it, so a mixed-up
+        // answer is visible in the text and not only in the file list.
+        const tag = round === 0 ? `TURN ONE${path === 'late.ts' ? ' LATE' : ''}` : 'TURN TWO';
+        const body = { patch: `--- a/${path}\n+++ b/${path}\n${tag}\n`, binary: false };
+        if (round === 0 && path === 'late.ts') {
+          await lateGate;
+          return body;
+        }
+        return body;
+      },
+      diffConcurrency: 2,
+      diffDeadlineMs: 50,
+    });
+
+    // ---- first turn: stops at its deadline with the one file that answered
+    const first = await h.bridge.diffSummary({ workspaceId: 'ws_1' });
+
+    expect(first.map((item) => item.path)).toEqual(['quick.ts']);
+    expect(first[0]!.patch).toContain('TURN ONE');
+    expect(first[0]!.patch).not.toContain('TURN TWO');
+
+    // ---- second turn: starts while the first turn's subprocess is still out
+    round = 1;
+    const second = await h.bridge.diffSummary({ workspaceId: 'ws_1' });
+
+    expect(second.map((item) => item.path)).toEqual(['late.ts', 'quick.ts']);
+    // The patch in the second answer is the *second* turn's own. A list
+    // shared between the two calls would have put the first turn's late
+    // patch here, and the file list alone would not have shown it.
+    expect(second[0]!.patch).toContain('TURN TWO');
+    expect(second[0]!.patch).not.toContain('TURN ONE LATE');
+
+    // ---- the first turn's late answer finally lands
+    const logsBefore = h.logs.length;
+    releaseLate!();
+    await after(60, undefined);
+
+    // It writes no log line: a diff that arrives late is already accounted
+    // for in the deadline line's arithmetic (`requested = answered + failed +
+    // abandoned`), and a second line would only restate it.
+    expect(h.logs.length, 'the late answer wrote a log line').toBe(logsBefore);
+    // And it changes nothing: not the answer the second turn already
+    // returned...
+    expect(second.map((item) => item.path)).toEqual(['late.ts', 'quick.ts']);
+    expect(second[0]!.patch).toContain('TURN TWO');
+    // ...not the first turn's deadline line, which was a snapshot taken at
+    // the deadline.
+    const stopped = h.logs.filter((line) => line.event === 'git diff summary stopped at its deadline');
+    expect(stopped).toHaveLength(1);
+    expect(stopped[0]!.fields?.collected).toBe(1);
+    expect(stopped[0]!.fields?.requested).toBe(2);
+
+    // Both turns really did run their own `git diff` for `late.ts` — the late
+    // answer was a real subprocess result, not a phantom of the test.
+    expect(h.diffs.filter((call) => call.path === 'late.ts')).toHaveLength(2);
   });
 });

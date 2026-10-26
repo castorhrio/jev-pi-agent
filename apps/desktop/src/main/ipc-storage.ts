@@ -61,6 +61,25 @@ const retentionSchema = z.union([z.number().int().positive(), z.null()]);
  */
 const PURGE_UNCONFIRMED = '清理未确认：请先预览要删除的内容，再确认一次。';
 
+/**
+ * The request is described exactly — no field is quietly ignored.
+ *
+ * A purge cannot be undone, so a field the app does not understand is a
+ * question, not a detail. `z.object()` drops unknown keys without a word: a
+ * client that sent `{ scope: 'all', confirm: true, force: true }` would get
+ * everything deleted, and no sign that the `force` it asked for was never
+ * read. A typo has the same shape — `scpoe: 'all'` is a request for the
+ * `scope` the app *does* have, and the misspelled key would have been the
+ * only hint that something was off.
+ *
+ * So an unknown field is refused, the way an unknown *value* is refused
+ * above: in the schema, before the retention service is touched. The
+ * sentence is written here for the same reason the confirmation is — it is
+ * what a person reads, and it has to be Chinese for every way of getting it
+ * wrong.
+ */
+const PURGE_UNKNOWN_FIELD = '请求里有未知的字段：请只发送 scope、workspaceId 和 confirm。';
+
 const confirmSchema = z
   .unknown()
   .superRefine((value, ctx) => {
@@ -70,11 +89,13 @@ const confirmSchema = z
   })
   .transform(() => true as const);
 
-const purgeRequestSchema = z.object({
-  scope: purgeScopeSchema,
-  workspaceId: z.string().min(1).optional(),
-  confirm: confirmSchema,
-});
+const purgeRequestSchema = z
+  .object({
+    scope: purgeScopeSchema,
+    workspaceId: z.string().min(1).optional(),
+    confirm: confirmSchema,
+  })
+  .strict(PURGE_UNKNOWN_FIELD);
 
 export interface StorageIpcDeps {
   /**

@@ -26,7 +26,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { Database } from '@ucad/storage';
 import { Logger, MemoryLogSink, silentLogger } from '@ucad/observability';
-import { buildDecisionFacts } from '@ucad/decision';
+import { buildDecisionFacts, RULE_ENGINE_ID } from '@ucad/decision';
 import type {
   DecisionEngine,
   DecisionEngineManifest,
@@ -468,5 +468,115 @@ describe('a pruned chain says what it dropped and why', () => {
     // user can act on — but only if it is written down.
     expect(fallback).toBeDefined();
     expect(fallback?.meta?.requested).toEqual(['nope']);
+  });
+});
+
+/**
+ * A combination chain, entry by entry.
+ *
+ * ## Why this file exists
+ *
+ * The three reasons `resolveChainIds` drops an entry are tested one at a time
+ * above, and each of them on a chain of its own. What a reader actually meets
+ * is a chain with *several* problems in it, and the log for that chain is a
+ * sequence of lines: the order they arrive in, and which reason each one
+ * carries, are the two things that make the difference between "the app
+ * dropped three engines" and "the app dropped the one I did not recognise,
+ * kept the second copy of the one I listed twice, and refused the one that
+ * starts processes".
+ *
+ * So this file pins the combination, not the reasons: the exact sequence of
+ * log lines, the id each line names, and the chain that is left running.
+ *
+ * The chain is `['unknown', 'dup', 'dup', 'process-only']` — three of the
+ * four entries dropped, each for a different reason. The one thing the
+ * outcome depends on is whether this build knows `dup`, and both answers are
+ * pinned below: an engine that is known and may run is kept, and the *second*
+ * copy of it is the duplicate; an id this build does not know is dropped as
+ * unknown, twice.
+ */
+describe('a combination chain: every entry, its reason, and the order', () => {
+  it('names each dropped entry with its own reason, in the order the chain was written', () => {
+    const sink = new MemoryLogSink();
+    const logger = new Logger({ scope: 'chain', sink });
+    const { facade } = makeFacade({
+      engines: [
+        // Known, and allowed to run: this is what makes the *second* copy
+        // the duplicate rather than an unknown id.
+        stubEngine('dup'),
+        stubEngine('process-only', { sideEffects: ['process'] }),
+      ],
+      logger,
+    });
+
+    const running = facade.setChain(['unknown', 'dup', 'dup', 'process-only']);
+
+    // `dup` is kept, so the chain is not empty and the rule engine is not the
+    // fallback here — the first copy of a known, allowed engine.
+    expect(running).toEqual(['dup']);
+    expect(facade.chain).toEqual(['dup']);
+
+    // The lines, in the order they were written. Each of the three drop
+    // reasons appears once, and they are three different reasons — a chain
+    // like this is the only place all three can appear at once.
+    expect(sink.records.map((record) => record.msg)).toEqual([
+      'engine chain: dropping an unknown engine id',
+      'engine chain: dropping a duplicate engine id',
+      'engine chain: dropping an engine whose effects are not authorised',
+      'engine chain pruned',
+    ]);
+
+    // Each line names the entry it is about, so the reasons can be told
+    // apart without reading the message.
+    const [unknown, duplicate, unauthorised] = sink.records;
+    expect(unknown?.meta?.engineId).toBe('unknown');
+    expect(duplicate?.meta?.engineId).toBe('dup');
+    expect(unauthorised?.meta?.engineId).toBe('process-only');
+    // A refusal is a warning; a duplicate is a tidiness problem, and the
+    // level says so.
+    expect(unknown?.level).toBe('warn');
+    expect(unauthorised?.level).toBe('warn');
+    expect(duplicate?.level).toBe('info');
+
+    // And the summary names both sides, so the difference between the chain
+    // in Settings and the chain that runs is stated rather than reconstructed.
+    const pruned = sink.records.find((record) => record.msg === 'engine chain pruned');
+    expect(pruned?.meta?.requested).toEqual(['unknown', 'dup', 'dup', 'process-only']);
+    expect(pruned?.meta?.running).toEqual(['dup']);
+  });
+
+  it('falls back to the rule engine when the same chain has nothing left to run', () => {
+    // The same four ids, on a build that does not know `dup` either. Then the
+    // second copy of it is unknown as well, nothing in the chain may run, and
+    // the rule engine is the documented last resort (D-2) — said out loud,
+    // because "Settings shows a chain, another one runs" has to have a cause
+    // on record.
+    const sink = new MemoryLogSink();
+    const logger = new Logger({ scope: 'chain', sink });
+    const { facade } = makeFacade({
+      engines: [stubEngine('process-only', { sideEffects: ['process'] })],
+      logger,
+    });
+
+    const running = facade.setChain(['unknown', 'dup', 'dup', 'process-only']);
+
+    expect(running).toEqual([RULE_ENGINE_ID]);
+    expect(facade.chain).toEqual([RULE_ENGINE_ID]);
+
+    expect(sink.records.map((record) => record.msg)).toEqual([
+      'engine chain: dropping an unknown engine id',
+      'engine chain: dropping an unknown engine id',
+      'engine chain: dropping an unknown engine id',
+      'engine chain: dropping an engine whose effects are not authorised',
+      'engine chain: nothing may run from the requested chain; using the rule engine',
+    ]);
+
+    // The last line is the one that explains the fallback, and it names the
+    // chain that was asked for.
+    const fallback = sink.records[sink.records.length - 1];
+    expect(fallback?.meta?.requested).toEqual(['unknown', 'dup', 'dup', 'process-only']);
+    // And the "pruned" summary is not written as well: the chain was not
+    // pruned to something, it was emptied.
+    expect(sink.records.some((record) => record.msg === 'engine chain pruned')).toBe(false);
   });
 });
