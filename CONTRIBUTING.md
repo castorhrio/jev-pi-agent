@@ -248,7 +248,9 @@ will meet, and where each is written down:
 - **Comments count as matches.** `tests/contract/ci-shape.ts` matches the raw text of a workflow,
   so a comment that spells out a packaging command trips the gate. That is deliberate: a false
   alarm is reworded in a minute, while a missed step makes this document lie. Do not narrow the
-  pattern to remove the false alarm.
+  pattern to remove the false alarm — the failure (`packagingProblem`) names the file **and line**
+  it matched, and says both fixes: reword the comment, or, if it is a real step, update README.md
+  in both languages, this file and `adapter-resolution.ts` to describe what CI now checks.
 - **Symlinked workflow files are not read**, for the same reason: `isFile()` is false for a link.
   The module doc says what to extend if that ever matters.
 - **Composite actions, and reusable workflows in *other* repositories, are not read** — they are
@@ -354,9 +356,12 @@ list `universal, mo` — a truncated answer that looks like a real one.
 
 Reading a module from *inside* the asar needs Electron's patched `fs`, so it is the one
 adapter-resolution step `npm test` cannot reach — the README states the same boundary, and
-`tests/contract/adapter-resolution.test.ts` keeps that statement true of `ci.yml`. The script's
-judgement is covered by `tests/contract/verify-packaged-adapters.test.ts`; only the launch needs
-a built app.
+`tests/contract/adapter-resolution.test.ts` keeps that statement true of every workflow under
+`.github/workflows/`, in **both** README languages: the English and Chinese bullets are each
+compared with the workflows, so one language cannot go on promising a manual step beside an
+automated one. (`readme-parity.test.ts` only keeps the two sections carrying the same keywords —
+words-to-words cannot see that drift.) The script's judgement is covered by
+`tests/contract/verify-packaged-adapters.test.ts`; only the launch needs a built app.
 
 ### Release preflight
 

@@ -27,8 +27,9 @@
  * a packaging step: CI would then package the app, every document would still
  * say it does not, and this file would stay green because it only ever opened
  * one path. The gate now reads every `*.yml` / `*.yaml` in the directory, and
- * a failure names the file the command was found in. The fixture below proves
- * it: a clean `ci.yml` beside a packaging `release.yaml` is reported.
+ * a failure names the file *and line* the command was found on. The fixture
+ * below proves it: a clean `ci.yml` beside a packaging `release.yaml` is
+ * reported, and a red run says which of the two fixes it needs.
  *
  * ## What it deliberately does not check — and how that is pinned
  *
@@ -69,6 +70,8 @@ import {
   PACKAGING_COMMANDS,
   packagingCommands,
   packagingCommandsIn,
+  packagingFindings,
+  packagingProblem,
   readWorkflowFiles,
   workflowsPackageTheApp,
 } from './ci-shape';
@@ -111,13 +114,12 @@ describe('the CI workflows package nothing', () => {
   });
 
   it('names no packaging step in any workflow, so the manual asar check stays manual', () => {
-    const found = packagingCommandsIn(realWorkflows());
-    expect(
-      found,
-      `a workflow under \`.github/workflows/\` now runs ${found.join(', ')}; the packaged asar ` +
-        'check is no longer manual. Update README.md (both languages), CONTRIBUTING.md and ' +
-        'adapter-resolution.ts to say what CI checks instead of only adding the job.',
-    ).toEqual([]);
+    // The failure carries its own fix (`packagingProblem`): the file and line it
+    // matched, and the two readings a textual match can have — a comment to
+    // reword, or a real step that makes the documents stale. That is why this
+    // assertion hands the message to the reader instead of rebuilding it here:
+    // a second copy of the advice would drift from the one the gate prints.
+    expect(packagingProblem(realWorkflows())).toBeUndefined();
   });
 
   it('recognises every packaging command, so the assertion has teeth', () => {
@@ -239,11 +241,52 @@ describe('the packaging match is textual, and errs toward a false alarm', () => 
     withWorkflowsDir(
       { 'ci.yml': CLEAN_CI, 'release.yml': '# we do not run npm run dist; see CONTRIBUTING\n' },
       (dir) => {
+        // `release.yml:1` — the line the match starts on, not the file alone.
+        // A comment is the reading where the fix is a reword, so the address is
+        // what the reader needs from a red run.
         expect(packagingCommandsIn(readWorkflowFiles(dir))).toEqual([
-          '`npm run dist` in `release.yml`',
+          '`npm run dist` at `release.yml:1`',
         ]);
       },
     );
+  });
+
+  it('reports the file, the line and the fix, so a red run is actionable on its own', () => {
+    // The failure used to name the file and the command, and leave the reader to
+    // find the module doc to learn that a comment is the likely cause and that
+    // rewording it is the whole fix. Both readings are now in the message, which
+    // is what makes the difference between "the gate is wrong" and a one-line
+    // edit. Asserted here rather than described in `ci-shape.ts`, because advice
+    // that is only printed until somebody edits the string is advice that can
+    // disappear silently.
+    withWorkflowsDir(
+      {
+        'release.yml': [
+          'name: Release',
+          'on:',
+          '  workflow_dispatch:',
+          'jobs:',
+          '  dist:',
+          '    steps:',
+          '      # we package by hand; npm run dist is the manual step',
+        ].join('\n'),
+      },
+      (dir) => {
+        const problem = packagingProblem(readWorkflowFiles(dir));
+        expect(problem, 'a packaging comment did not produce a failure').toBeDefined();
+        // The address: file and line, so the reword needs no search.
+        expect(problem).toContain('`npm run dist` at `release.yml:7`');
+        // The fix for the false-positive reading, first because it is the cheap
+        // one, and the fix for the real-step reading after it.
+        expect(problem).toContain('reword that line');
+        expect(problem).toContain('README.md (both languages)');
+        expect(problem).toContain('CONTRIBUTING.md');
+      },
+    );
+
+    // The clean direction, so the hint is not printed over a tree that passes:
+    // a gate whose message always fires is a message nobody reads.
+    expect(packagingProblem([{ name: 'ci.yml', text: CLEAN_CI }])).toBeUndefined();
   });
 });
 
@@ -298,7 +341,12 @@ describe('the readers cover the directory, not one file', () => {
       // The message names the file, not just the command: this is the whole
       // difference between "CI packages the app" and "the release workflow
       // does, leave `ci.yml` alone".
-      expect(packagingCommandsIn(workflows)).toEqual(['`npm run dist` in `release.yaml`']);
+      // `PACKAGING_RELEASE` puts the step on line 5; the findings carry it as
+      // a field as well, because the formatted string is one consumer of it.
+      expect(packagingFindings(workflows)).toEqual([
+        { command: '`npm run dist`', workflow: 'release.yaml', line: 5 },
+      ]);
+      expect(packagingCommandsIn(workflows)).toEqual(['`npm run dist` at `release.yaml:5`']);
     });
   });
 
@@ -356,7 +404,9 @@ describe('the readers cover the directory, not one file', () => {
       // the target not being read at all: the same body under a `.yml` name is
       // caught.
       writeFileSync(join(dir, 'copied.yml'), PACKAGING_RELEASE);
-      expect(packagingCommandsIn(readWorkflowFiles(dir))).toEqual(['`npm run dist` in `copied.yml`']);
+      expect(packagingCommandsIn(readWorkflowFiles(dir))).toEqual([
+        '`npm run dist` at `copied.yml:5`',
+      ]);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -476,7 +526,7 @@ describe('what this reader deliberately does not see', () => {
       },
       (dir) => {
         expect(packagingCommandsIn(readWorkflowFiles(dir))).toEqual([
-          '`npm run dist` in `gates.yml`',
+          '`npm run dist` at `gates.yml:5`',
         ]);
       },
     );

@@ -74,8 +74,9 @@
  * than a parse:
  *
  *  - A **false positive** costs a sentence in a comment and a minute of
- *    confusion; the fix is to reword the comment, and the gate's message names
- *    the file, so the reader knows where to look.
+ *    confusion; the fix is to reword the comment, and {@link packagingProblem}
+ *    says so in the failure itself — with the file *and* the line it matched,
+ *    so the reword has an address instead of a search.
  *  - A **false negative** — a packaging step this vocabulary did not recognise
  *    — leaves every document promising "CI does not cover it" beside a CI run
  *    that does. That is the failure this module exists to prevent, and no
@@ -146,19 +147,6 @@ export const PACKAGING_COMMANDS: readonly PackagingCommand[] = [
   { command: 'electron-packager', pattern: /\belectron-packager\b/u },
 ];
 
-/**
- * The packaging commands present in a workflow, in {@link PACKAGING_COMMANDS}
- * order; an empty list means the workflow packages nothing.
- *
- * Returning the names rather than a boolean is what lets a failure say *which*
- * step appeared, instead of only that the claim was broken.
- */
-export function packagingCommands(workflow: string): string[] {
-  return PACKAGING_COMMANDS.filter(({ pattern }) => pattern.test(workflow)).map(
-    ({ command }) => `\`${command}\``,
-  );
-}
-
 /** A workflow file as the readers below see it: its name and its raw text. */
 export interface WorkflowFile {
   /** File name inside the workflows directory, e.g. `ci.yml`. */
@@ -203,24 +191,120 @@ export function readWorkflowFiles(dir: string): WorkflowFile[] {
 }
 
 /**
+ * Where one entry of {@link PACKAGING_COMMANDS} was found.
+ *
+ * The line matters because the match is textual: a failure that says only
+ * "`release.yml` mentions `npm run dist`" leaves the reader searching a file
+ * for a line that may be prose. The line number is the difference between an
+ * address and a hint.
+ */
+export interface PackagingFinding {
+  /** The literal command, in backticks — the form a failure quotes. */
+  readonly command: string;
+  /** File name inside the workflows directory, e.g. `release.yml`. */
+  readonly workflow: string;
+  /** 1-based line of the first occurrence in that file. */
+  readonly line: number;
+}
+
+/**
+ * The packaging commands present in a workflow, in {@link PACKAGING_COMMANDS}
+ * order; an empty list means the workflow packages nothing.
+ *
+ * Returning the names rather than a boolean is what lets a failure say *which*
+ * step appeared, instead of only that the claim was broken.
+ */
+export function packagingCommands(workflow: string): string[] {
+  return PACKAGING_COMMANDS.filter(({ pattern }) => workflow.search(pattern) !== -1).map(
+    ({ command }) => `\`${command}\``,
+  );
+}
+
+/** The 1-based line `index` falls on in `text`. */
+function lineOf(text: string, index: number): number {
+  let line = 1;
+  for (let cursor = 0; cursor < index; cursor += 1) {
+    if (text[cursor] === '\n') line += 1;
+  }
+  return line;
+}
+
+/**
+ * Every packaging command found across a set of workflow files, with the file
+ * and line it was found on.
+ *
+ * Structured rather than formatted so callers can report the fact their way:
+ * {@link packagingCommandsIn} quotes it in a one-line list, and
+ * {@link packagingProblem} builds the failure a contributor reads.
+ */
+export function packagingFindings(workflows: readonly WorkflowFile[]): PackagingFinding[] {
+  return workflows.flatMap(({ name, text }) =>
+    PACKAGING_COMMANDS.flatMap(({ command, pattern }) => {
+      const index = text.search(pattern);
+      if (index === -1) return [];
+      return [{ command: `\`${command}\``, workflow: name, line: lineOf(text, index) }];
+    }),
+  );
+}
+
+/**
  * The packaging commands present across a set of workflow files, each qualified
- * with the file it was found in.
+ * with the file and line it was found on.
  *
  * Qualified, because "a packaging step appeared" is only actionable together
- * with *where*: `release.yml` is a different conversation from `ci.yml`.
+ * with *where*: `release.yml:5` is a different conversation from `ci.yml:20`,
+ * and the line is what turns "the gate named my file" into a fix. The format is
+ * `` `command` at `file:line` `` — tests assert it, so a failure message and a
+ * fixture cannot drift apart.
  */
 export function packagingCommandsIn(workflows: readonly WorkflowFile[]): string[] {
-  return workflows.flatMap(({ name, text }) =>
-    packagingCommands(text).map((command) => `${command} in \`${name}\``),
+  return packagingFindings(workflows).map(
+    ({ command, workflow, line }) => `${command} at \`${workflow}:${line}\``,
   );
 }
 
 /**
  * Whether any workflow in the set packages the app.
  *
- * The boolean is what the claim checks need; {@link packagingCommandsIn} is
- * what their failure messages quote.
+ * The boolean is what the claim checks need; {@link packagingProblem} is the
+ * failure they report, and it carries the file, the line and the fix.
  */
 export function workflowsPackageTheApp(workflows: readonly WorkflowFile[]): boolean {
-  return workflows.some(({ text }) => packagingCommands(text).length > 0);
+  return packagingFindings(workflows).length > 0;
+}
+
+/**
+ * The failure a gate reports when a workflow packages the app, or `undefined`
+ * when none does.
+ *
+ * ## Why the failure carries the fix, not only the fact
+ *
+ * Two very different edits reach this line of output: a comment (or a step's
+ * `name:`) that spells out the command, and a real packaging step. The match
+ * cannot tell them apart — that is {@link PACKAGING_COMMANDS}'s declared
+ * asymmetry — so a message that only names the file and the command sends the
+ * reader to the module doc to work out which one they are looking at. Naming
+ * both readings and what each costs is the difference between a red gate and a
+ * puzzle, and it keeps the fix inside the workflow (reword the prose) when the
+ * workflow is the thing that is wrong.
+ *
+ * The line number is part of the same rule: a text match inside a long workflow
+ * is not findable by `grep`-ing the command alone once the reader is told only
+ * "this file".
+ *
+ * The exact wording is asserted in `ci-shape.test.ts` (*reports the file, the
+ * line and the fix*), because advice nobody tests is advice that quietly stops
+ * being printed.
+ */
+export function packagingProblem(workflows: readonly WorkflowFile[]): string | undefined {
+  const findings = packagingCommandsIn(workflows);
+  if (findings.length === 0) return undefined;
+  return [
+    `a workflow under \`.github/workflows/\` names a packaging command: ${findings.join(', ')}.`,
+    'The packaged asar check is documented as manual, so one of these lines is now false.',
+    'If it is a comment or a `name:` string — the match is textual and cannot tell a comment ' +
+      'from a step — reword that line; no document needs to change.',
+    'If it is a real step, update README.md (both languages), CONTRIBUTING.md and ' +
+      'adapter-resolution.ts to say what CI checks instead of only adding the job.',
+  ].join('\n');
 }

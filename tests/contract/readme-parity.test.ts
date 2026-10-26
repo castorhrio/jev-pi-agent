@@ -85,6 +85,12 @@ const LIMITATIONS: readonly Limitation[] = [
   // it to. Without "from a terminal" the instructions read as complete and
   // leave a Windows reader looking for a line that was never printed — the same
   // failure as a missing gate, one layer out.
+  //
+  // These keywords keep the two sections saying the same thing; whether the
+  // sentence is *true* of CI is a second gate, in
+  // `adapter-resolution.test.ts`: each language's bullet is compared with the
+  // workflows. Words-to-words parity cannot see one language go on promising a
+  // manual step while the other was corrected, so both are needed.
   {
     id: 'adapter resolution inside a real asar is verified by hand, not by CI',
     en: ['asar', 'ci does not cover', 'npm run package', 'adapters resolved', 'from a terminal'],

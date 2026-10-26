@@ -38,6 +38,7 @@ import {
   rmSync,
   writeFileSync,
 } from 'node:fs';
+import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join, sep } from 'node:path';
 import { MemoryLogSink, Logger } from '@ucad/observability';
@@ -49,7 +50,7 @@ import {
   resolveAdapterModules,
   resolveFromProcess,
 } from '../../apps/desktop/src/main/adapter-resolution';
-import { readWorkflowFiles, workflowsPackageTheApp, type WorkflowFile } from './ci-shape';
+import { packagingCommandsIn, readWorkflowFiles, type WorkflowFile } from './ci-shape';
 
 const here = import.meta.dirname;
 const REPO_ROOT = join(here, '..', '..');
@@ -74,14 +75,66 @@ function recordingLogger(): { log: Logger; sink: MemoryLogSink } {
  * message then reads like a resolution bug in `adapter-resolution.ts` while the
  * actual fix is one command. Checked here, before the interesting assertion, so
  * the failure names the command.
+ *
+ * ## Why the path is derived from the specifier, not from the id
+ *
+ * This used to build `packages/adapter-${id}/dist/index.js`, which is two
+ * assumptions written as a path: that the workspace directory is named after
+ * the adapter id, and that `main` is `dist/index.js`. `adapter-candidates.ts`
+ * is explicit that the id is the *user-visible name* and the specifier is the
+ * *package*, so the two are free to differ — and the package's own
+ * `package.json#main` is the only authority on its entry point. Node already
+ * knows both, so the check asks Node: `require.resolve` from this checkout
+ * answers with the file the package declares, and the only thing assumed here
+ * is that the package is installed (which the workspace set-up guarantees).
+ *
+ * The report stays actionable either way: an unbuilt package and an unlinked
+ * one both say which specifier failed to resolve and which command builds it.
  */
+const requireFromRepo = createRequire(import.meta.url);
+
+/**
+ * Every adapter's entry point, as Node resolves it from this checkout.
+ *
+ * Keyed by adapter id so a failure can name the user-visible adapter as well as
+ * the package. Throws for a package that is not installed or not built; only
+ * called after {@link assertAdapterPackagesBuilt}, which turns that into a
+ * message naming the build command.
+ */
+function adapterEntryPoints(): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(ADAPTER_CANDIDATES).map(([id, specifier]) => [
+      id,
+      requireFromRepo.resolve(specifier, { paths: [REPO_ROOT] }),
+    ]),
+  );
+}
+
+/**
+ * The specifiers in a table that do not resolve from this checkout, with the
+ * reason.
+ *
+ * Takes the table rather than reading `ADAPTER_CANDIDATES` directly so a
+ * fixture can show it reporting something — a pre-flight check that has only
+ * ever answered `[]` is indistinguishable from one that checks nothing.
+ */
+function unresolvedAdapters(specifiers: Readonly<Record<string, string>>): string[] {
+  return Object.entries(specifiers).flatMap(([id, specifier]) => {
+    try {
+      requireFromRepo.resolve(specifier, { paths: [REPO_ROOT] });
+      return [];
+    } catch (error) {
+      return [`${specifier} (adapter "${id}"): ${(error as Error).message.split('\n')[0]}`];
+    }
+  });
+}
+
 function assertAdapterPackagesBuilt(): void {
-  const missing = Object.keys(ADAPTER_CANDIDATES)
-    .map((id) => join(REPO_ROOT, 'packages', `adapter-${id}`, 'dist', 'index.js'))
-    .filter((dist) => !existsSync(dist));
+  const missing = unresolvedAdapters(ADAPTER_CANDIDATES);
   expect(
     missing,
-    `these adapter builds are missing, so nothing can resolve them:\n  ${missing.join('\n  ')}\n` +
+    `these adapter packages do not resolve from ${REPO_ROOT}, so nothing can load them:\n  ` +
+      `${missing.join('\n  ')}\n` +
       'run `npm run build:packages` first (`npm test` does it in `pretest`).',
   ).toEqual([]);
 }
@@ -326,6 +379,17 @@ describe('the packaged app root is a search root in its own right', () => {
 });
 
 describe('resolution reports what it found and what it did not', () => {
+  it('reports an unbuilt adapter package by specifier, so the fix is the build command', () => {
+    // The pre-flight is the only thing standing between "forgot `npm run
+    // build:packages`" and a failure that reads like a broken search path. Its
+    // two directions are asserted here: a specifier nothing installs is
+    // reported and named, one that is installed and built is not.
+    expect(unresolvedAdapters({ ghost: '@ucad/adapter-nobody-ships' })).toEqual([
+      expect.stringContaining('@ucad/adapter-nobody-ships'),
+    ]);
+    expect(unresolvedAdapters({ mock: ADAPTER_CANDIDATES.mock })).toEqual([]);
+  });
+
   it('resolves every adapter in the table through the development search paths', () => {
     // Before "it resolved": the packages have to be built. Without this, CI
     // ordering (or a direct `vitest run`) reports a missing `dist` as a broken
@@ -345,11 +409,16 @@ describe('resolution reports what it found and what it did not', () => {
     expect(Object.keys(resolution.modules)).toEqual(Object.keys(ADAPTER_CANDIDATES));
     expect(resolution.failures).toEqual([]);
     // Resolved to the real package inside this workspace, not to something that
-    // merely exists: a path outside `packages/` means the search found a
-    // stranger with the same name.
+    // merely exists: the expected path comes from Node's own resolution of the
+    // specifier (`adapterEntryPoints`), so a search that found a stranger with
+    // the same name — or a directory named after the id rather than the package
+    // — fails here instead of agreeing with a hand-written path.
+    const expected = adapterEntryPoints();
     for (const [id, modulePath] of Object.entries(resolution.modules)) {
       expect(existsSync(modulePath), `${id} resolved to a path that does not exist`).toBe(true);
-      expect(modulePath).toContain(join('packages', `adapter-${id}`));
+      expect(modulePath, `adapter "${id}" resolved outside ${expected[id] ?? 'its package'}`).toBe(
+        expected[id],
+      );
     }
     // The one summary line, and no failure lines: a passing start is quiet.
     expect(written).toEqual([
@@ -948,7 +1017,8 @@ describe('bootstrap.ts names the real search roots and stays off the `write` cha
 });
 
 /**
- * The "CI does not cover it" claim is checked against `ci.yml`.
+ * The "CI does not cover it" claim is checked against `.github/workflows/`, in
+ * **both languages**.
  *
  * The README bullet and the header of `adapter-resolution.ts` both state that
  * the packaged check is manual. A statement about CI that nothing compares with
@@ -964,82 +1034,149 @@ describe('bootstrap.ts names the real search roots and stays off the `write` cha
  *  - CI has no such job and the prose does not say so → the README is back to
  *    implying coverage it does not have.
  *
+ * ## Why each language is read, rather than only the English one
+ *
+ * `readme-parity.test.ts` compares the two sections for the words each
+ * limitation must carry: `ci does not cover` in English, `ci 不覆盖` in Chinese.
+ * That keeps the two versions saying *something* about CI, but it compares
+ * words to words — so the state this file exists to prevent is half-visible.
+ * If a packaging job landed, correcting the English bullet would fail the check
+ * below (it is bound to the workflows); the Chinese bullet could keep
+ * promising a manual step, and the parity gate would still pass because both
+ * sections were compared before the edit. Binding each language to the
+ * workflows is what makes the promise true in the language the reader chose.
+ *
  * A workflow that *does* package makes the claim merely unnecessary rather than
  * false, so it stays green — the check is about the sentence and the file
  * agreeing, not about how the packaging is done.
  */
 
+type Lang = 'en' | 'zh';
+
+const LANGS: readonly Lang[] = ['en', 'zh'];
+
 /**
- * "CI does not cover it", as the README bullet states it.
+ * "CI does not cover it", as each language's limitation bullet states it.
  *
- * "Does CI package the app" is answered by `workflowsPackageTheApp` in
- * `ci-shape.ts`, which matches every entry in `PACKAGING_COMMANDS` (the three
- * Electron packaging toolchains and their `npm run` scripts) — named there once
- * rather than copied here, because the copy that used to live in this file was
- * narrower than the other one. This file used to answer it with a private regex
- * of its own, so a `npm run dist` step would have passed here while the README
- * went on saying CI does not cover the packaged check. `ci-shape.test.ts` pins
- * the shared vocabulary against the real workflows.
+ * The Chinese pattern quotes the same words `readme-parity.test.ts` keeps in
+ * that bullet (`ci 不覆盖`), so a reworded English sentence cannot pass here
+ * while the keyword table still matches a different claim.
  *
- * It takes the *set* of workflow files, not one file's text — the shared
- * reader was widened because the claim is about CI, and CI is everything under
- * `.github/workflows/`. A `release.yml` with an `electron-builder` step is the
- * same defect as one in `ci.yml`: the sentence stops being true, and the gates
- * here are what make that a red test rather than a stale paragraph.
+ * "Does CI package the app" is answered by `ci-shape.ts`, which matches every
+ * entry in `PACKAGING_COMMANDS` (the three Electron packaging toolchains and
+ * their `npm run` scripts) — named there once rather than copied here, because
+ * the copy that used to live in this file was narrower than the other one.
+ * `packagingCommandsIn` then names the file *and line* of each step, so the
+ * failure says what to change, not just that something changed. It takes the
+ * *set* of workflow files, not one file's text: the claim is about CI, and CI
+ * is everything under `.github/workflows/`.
  */
-const CI_NOT_COVERED = /\bci does not cover\b/iu;
+const CI_NOT_COVERED: Readonly<Record<Lang, RegExp>> = {
+  en: /\bci does not cover\b/iu,
+  zh: /ci 不覆盖/iu,
+};
+
+/** The heading of the limitations section in each language. */
+const LIMITATIONS_HEADINGS: Readonly<Record<Lang, string>> = {
+  en: '### Current limitations',
+  zh: '### 当前局限',
+};
 
 /** A workflow set as `readWorkflowFiles` returns it, for the fixtures below. */
 function workflowFiles(name: string, text: string): WorkflowFile[] {
   return [{ name, text }];
 }
 
-function ciClaimProblems(input: {
-  readonly bullet: string | undefined;
-  readonly workflows: readonly WorkflowFile[];
-}): string[] {
-  if (input.bullet === undefined) {
-    return ['the asar limitation bullet is missing, so its CI claim is unchecked'];
+/**
+ * The top-level bullets under `heading`, with continuation lines joined.
+ *
+ * The same shape `readme-parity.test.ts` reads — a bullet wraps across several
+ * lines and the sentence about CI is on a later one, so a first-line-only read
+ * would find neither language's claim.
+ */
+function limitationBullets(markdown: string, heading: string): string[] | undefined {
+  const lines = markdown.split('\n');
+  const start = lines.findIndex((line) => line.trim() === heading);
+  if (start === -1) return undefined;
+  const end = lines.findIndex((line, index) => index > start && /^#{1,3} /.test(line));
+  const body = lines.slice(start + 1, end === -1 ? undefined : end);
+  const out: string[] = [];
+  for (const line of body) {
+    if (/^- /.test(line)) out.push(line.slice(2).trim());
+    else if (out.length > 0 && /^\s+\S/.test(line)) out[out.length - 1] += ' ' + line.trim();
   }
-  const claimsManual = CI_NOT_COVERED.test(input.bullet);
-  const ciPackages = workflowsPackageTheApp(input.workflows);
-  if (claimsManual && ciPackages) {
-    return [
-      'the README says CI does not cover the packaged asar check, but a workflow under .github/workflows/ runs one; ' +
-        'update the bullet, adapter-resolution.ts and readme-parity.test.ts to say what CI checks',
-    ];
-  }
-  if (!claimsManual && !ciPackages) {
-    return [
-      'no CI job packages the app, and the README does not say the asar check is manual; ' +
-        'state the gap instead of implying a gate',
-    ];
-  }
-  return [];
+  return out;
 }
 
-describe('the README’s asar/CI claim matches what CI actually does', () => {
+/** The asar limitation bullet of one language, or `undefined` if it is gone. */
+function asarBullet(markdown: string, lang: Lang): string | undefined {
+  return limitationBullets(markdown, LIMITATIONS_HEADINGS[lang])?.find((bullet) =>
+    bullet.toLowerCase().includes('asar'),
+  );
+}
+
+/**
+ * Every way a language's bullet and the workflows can disagree.
+ *
+ * A pure function of its inputs so the fixtures below can show it answering
+ * something other than `[]`, per language: a gate that has only ever been
+ * green is indistinguishable from one that reads nothing.
+ */
+function ciClaimProblems(input: {
+  readonly claims: Readonly<Partial<Record<Lang, string>>>;
+  readonly workflows: readonly WorkflowFile[];
+}): string[] {
+  const findings = packagingCommandsIn(input.workflows);
+  const ciPackages = findings.length > 0;
+  const problems: string[] = [];
+
+  for (const lang of LANGS) {
+    const bullet = input.claims[lang];
+    if (bullet === undefined) {
+      problems.push(`${lang}: the asar limitation bullet is missing, so its CI claim is unchecked`);
+      continue;
+    }
+    const claimsManual = CI_NOT_COVERED[lang].test(bullet);
+    if (claimsManual && ciPackages) {
+      problems.push(
+        `${lang}: the README says CI does not cover the packaged asar check, but ` +
+          `${findings.join(', ')}; update that bullet, adapter-resolution.ts and ` +
+          'readme-parity.test.ts to say what CI checks',
+      );
+    }
+    if (!claimsManual && !ciPackages) {
+      problems.push(
+        `${lang}: no CI job packages the app, and the bullet does not say the asar check is ` +
+          'manual; state the gap instead of implying a gate',
+      );
+    }
+  }
+
+  return problems;
+}
+
+/** Both bullets as the README states them. */
+const MANUAL_EN =
+  '**Adapter resolution inside a real `.asar` archive is verified by hand; CI does not cover it.**';
+const MANUAL_ZH =
+  '**从真实 `.asar` 归档内解析适配器只能手动验证：本地打一次包，CI 不覆盖这一步。**';
+/** The historical wording, which promised a run that did not exist. */
+const NOT_MANUAL_EN =
+  '**Adapter resolution inside a real `.asar` archive is verified by the packaged smoke run.**';
+const NOT_MANUAL_ZH = '**从真实 `.asar` 归档内解析适配器由打包冒烟覆盖。**';
+
+/** `ci.yml` running only the gates, as this repository's workflow does. */
+const GATES_ONLY = workflowFiles('ci.yml', 'jobs:\n  gates:\n    steps:\n      - run: npm test\n');
+/** A release workflow that packages the app — the shape that breaks the claim. */
+const PACKAGES_THE_APP = workflowFiles('release.yml', 'steps:\n  - run: npm run package\n');
+
+describe('the README’s asar/CI claim matches what CI actually does, in both languages', () => {
   const WORKFLOWS_DIR = join(REPO_ROOT, '.github', 'workflows');
   const readme = existsSync(join(REPO_ROOT, 'README.md'))
     ? readFileSync(join(REPO_ROOT, 'README.md'), 'utf8')
     : '';
 
-  /** The English "Current limitations" bullets, joined, or `undefined`. */
-  function enLimitationBullets(markdown: string): string[] | undefined {
-    const lines = markdown.split('\n');
-    const start = lines.findIndex((line) => line.trim() === '### Current limitations');
-    if (start === -1) return undefined;
-    const end = lines.findIndex((line, index) => index > start && /^#{1,3} /.test(line));
-    const body = lines.slice(start + 1, end === -1 ? undefined : end);
-    const out: string[] = [];
-    for (const line of body) {
-      if (/^- /.test(line)) out.push(line.slice(2).trim());
-      else if (out.length > 0 && /^\s+\S/.test(line)) out[out.length - 1] += ' ' + line.trim();
-    }
-    return out;
-  }
-
-  it('reads both the workflows and the bullet, so the check is not vacuous', () => {
+  it('reads the workflows and both bullets, so the check is not vacuous', () => {
     expect(existsSync(WORKFLOWS_DIR), `the workflows directory is missing (${WORKFLOWS_DIR})`).toBe(
       true,
     );
@@ -1047,69 +1184,81 @@ describe('the README’s asar/CI claim matches what CI actually does', () => {
       readWorkflowFiles(WORKFLOWS_DIR).length,
       `no workflow was read from ${WORKFLOWS_DIR}`,
     ).toBeGreaterThan(0);
-    const bullets = enLimitationBullets(readme);
-    expect(bullets, 'the README no longer has a "### Current limitations" section').toBeDefined();
-    // The bullet this reads has to be the asar one: reading another limitation
-    // would report "the claim is missing" about a sentence that never made it.
-    const asarBullet = bullets!.find((bullet) => bullet.toLowerCase().includes('asar'));
-    expect(asarBullet, 'no limitation bullet talks about asar').toBeDefined();
+    for (const lang of LANGS) {
+      const heading = LIMITATIONS_HEADINGS[lang];
+      expect(limitationBullets(readme, heading), `the README no longer has a "${heading}" section`)
+        .toBeDefined();
+      // The bullet this reads has to be the asar one: reading another limitation
+      // would report "the claim is missing" about a sentence that never made it.
+      expect(asarBullet(readme, lang), `no ${lang} limitation bullet talks about asar`).toBeDefined();
+    }
   });
 
   it('does not promise a CI gate CI does not have, and does not understate one it does', () => {
-    const bullet = enLimitationBullets(readme)?.find((text) =>
-      text.toLowerCase().includes('asar'),
-    );
     const problems = ciClaimProblems({
-      bullet,
+      claims: { en: asarBullet(readme, 'en'), zh: asarBullet(readme, 'zh') },
       workflows: readWorkflowFiles(WORKFLOWS_DIR),
     });
     expect(problems, problems.join('\n')).toEqual([]);
   });
 
-  it('reports each direction of the disagreement', () => {
+  it('reports each direction of the disagreement, in each language', () => {
     // The historical defect: the prose says the step is covered by a packaged
-    // run, and the workflow has no such job.
+    // run, and the workflow has no such job. Only the language that drifted is
+    // reported, so the fix is local to one section.
     expect(
-      ciClaimProblems({
-        bullet: '**Adapter resolution inside a real `.asar` archive is verified by the packaged smoke run.**',
-        workflows: workflowFiles('ci.yml', 'jobs:\n  gates:\n    steps:\n      - run: npm test\n'),
-      }),
+      ciClaimProblems({ claims: { en: NOT_MANUAL_EN, zh: MANUAL_ZH }, workflows: GATES_ONLY }),
     ).toEqual([
-      'no CI job packages the app, and the README does not say the asar check is manual; ' +
+      'en: no CI job packages the app, and the bullet does not say the asar check is manual; ' +
         'state the gap instead of implying a gate',
     ]);
-    // …and the other direction: a packaging job appeared and the README still
-    // tells the reader nothing checks it.
+
+    // The half the parity gate cannot see: the English bullet is right and the
+    // Chinese one went back to promising coverage. Words-to-words comparison
+    // passes here (both sections still mention CI), and this is the check that
+    // fails.
     expect(
-      ciClaimProblems({
-        bullet: '**Adapter resolution inside a real `.asar` archive is verified by hand; CI does not cover it.**',
-        workflows: workflowFiles('ci.yml', 'steps:\n  - run: npm run package\n'),
-      }),
-    ).toHaveLength(1);
+      ciClaimProblems({ claims: { en: MANUAL_EN, zh: NOT_MANUAL_ZH }, workflows: GATES_ONLY }),
+    ).toEqual([
+      'zh: no CI job packages the app, and the bullet does not say the asar check is manual; ' +
+        'state the gap instead of implying a gate',
+    ]);
+
+    // …and the other direction: a packaging job appeared and both bullets still
+    // tell the reader nothing checks it. Both are reported, and the message
+    // quotes the file *and line* of the step so the edit has an address.
+    const promisesManual = ciClaimProblems({
+      claims: { en: MANUAL_EN, zh: MANUAL_ZH },
+      workflows: PACKAGES_THE_APP,
+    });
+    expect(promisesManual).toHaveLength(2);
+    expect(promisesManual[0]).toContain('en: the README says CI does not cover');
+    expect(promisesManual[0]).toContain('`npm run package` at `release.yml:2`');
+    expect(promisesManual[1]).toContain('zh: the README says CI does not cover');
+
     // …including when the packaging step is in a *different* file. This is the
     // blind spot the shared reader was widened for: `ci.yml` still runs only
     // the gates, so a reader that took one file's text would report agreement
     // while CI packages the app.
     expect(
       ciClaimProblems({
-        bullet:
-          '**Adapter resolution inside a real `.asar` archive is verified by hand; CI does not cover it.**',
+        claims: { en: MANUAL_EN, zh: MANUAL_ZH },
         workflows: [
           ...workflowFiles('ci.yml', 'steps:\n  - run: npm test\n'),
           ...workflowFiles('release.yml', 'steps:\n  - run: npx electron-builder --dir\n'),
         ],
       }),
-    ).toHaveLength(1);
+    ).toHaveLength(2);
+
     // Either claim is fine beside a workflow that really packages.
     expect(
-      ciClaimProblems({
-        bullet: '**Adapter resolution inside a real `.asar` archive is verified from the packaged build.**',
-        workflows: workflowFiles('ci.yml', 'steps:\n  - run: npm run package\n'),
-      }),
+      ciClaimProblems({ claims: { en: NOT_MANUAL_EN, zh: NOT_MANUAL_ZH }, workflows: PACKAGES_THE_APP }),
     ).toEqual([]);
-    // A missing bullet is reported rather than treated as agreement.
-    expect(ciClaimProblems({ bullet: undefined, workflows: [] })).toEqual([
-      'the asar limitation bullet is missing, so its CI claim is unchecked',
+
+    // A missing bullet is reported per language rather than treated as agreement.
+    expect(ciClaimProblems({ claims: {}, workflows: [] })).toEqual([
+      'en: the asar limitation bullet is missing, so its CI claim is unchecked',
+      'zh: the asar limitation bullet is missing, so its CI claim is unchecked',
     ]);
   });
 });
