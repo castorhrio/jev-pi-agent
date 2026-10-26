@@ -63,10 +63,13 @@
  * which only a packaged launch provides.
  *
  * **No automated gate covers that last step.** There is no packaging job in
- * `.github/workflows/ci.yml`: the check is `npm run package`, launch the build,
- * read the `adapters resolved:` line it prints — on Windows from a terminal,
- * because a double-clicked build has no console attached and the line goes to
- * stderr. The README states the same boundary in both languages, and
+ * `.github/workflows/ci.yml`: the check is `npm run package`, then
+ * `node scripts/verify-packaged-adapters.mjs`, which launches the built app,
+ * captures stdout and stderr, and fails unless this module's
+ * `adapters resolved:` summary names `universal`. On Windows that has to be a
+ * terminal, because a double-clicked build has no console attached and the line
+ * goes to stderr. The script is manual on purpose and is not wired into CI; the
+ * README states the same boundary in both languages, and
  * `tests/contract/readme-parity.test.ts` keeps the two saying it — "verified by
  * hand, CI does not cover it" is the claim, so do not restate it as if a gate
  * existed.

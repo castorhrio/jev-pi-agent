@@ -268,11 +268,38 @@ Two fixes, either is enough:
 Do not disable `signAndEditExecutable` to get past this: it also writes the asar integrity
 resource, and weakening the shipped artifact so a dev machine can build is the wrong trade.
 
-**Packaging is not a CI gate, so it is a manual check.** `npm run package`, launch the built
-app, and read the `adapters resolved:` line it prints: which adapters were found, from which
-search paths. Reading a module from *inside* the asar needs Electron's patched `fs`, so it is
-the one adapter-resolution step `npm test` cannot reach — the README states the same boundary,
-and `tests/contract/adapter-resolution.test.ts` keeps that statement true of `ci.yml`.
+**Packaging is not a CI gate, so it is a manual check — with a command.** `npm run package`
+writes `release/`; then run
+
+```bash
+node scripts/verify-packaged-adapters.mjs
+```
+
+which launches the unpacked build, captures its stdout and stderr, and fails unless the
+`adapters resolved:` summary line names `universal`. Three outcomes are told apart, because
+they send you to different places: no build at all (says to run `npm run package`), a launch
+that never printed the line (prints the tail of what the app said), and a launch that resolved
+nothing or the wrong adapters (`adapters resolved: (none)` fails — it looks like success and is
+not). On a headless machine: `xvfb-run node scripts/verify-packaged-adapters.mjs`.
+
+Reading a module from *inside* the asar needs Electron's patched `fs`, so it is the one
+adapter-resolution step `npm test` cannot reach — the README states the same boundary, and
+`tests/contract/adapter-resolution.test.ts` keeps that statement true of `ci.yml`. The script's
+judgement is covered by `tests/contract/verify-packaged-adapters.test.ts`; only the launch needs
+a built app.
+
+### Release preflight
+
+Run these on the machine that produces the artifact, in this order:
+
+- [ ] `npm ci && npm run build && npm test` — the gates CI runs, on the platform that will ship.
+- [ ] `npm run package` — writes `release/`; a failure here is usually the Windows symlink trap
+      above, not the app.
+- [ ] `node scripts/verify-packaged-adapters.mjs` — exits 0, and its summary names `universal`.
+- [ ] install the artifact on a machine that has never run UCAD, launch it, and complete one
+      turn — the parts no gate here can reach (`node-pty`, signing, the asar reads).
+- [ ] say in the release notes which adapter the packaged build resolved: no CI job covered it,
+      so the note is the only record that the check happened.
 
 ## Adding a workspace package
 

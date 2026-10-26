@@ -61,6 +61,28 @@ function recordingLogger(): { log: Logger; sink: MemoryLogSink } {
   return { log: new Logger({ scope: 'adapters', sink }), sink };
 }
 
+/**
+ * "The adapter resolved" only means something once the adapter is built.
+ *
+ * The success cases below resolve `@ucad/adapter-*` through `package.json#main`,
+ * which points at `dist/index.js` — a file `npm test` produces in `pretest`. A
+ * run that skips that step (vitest invoked directly, or a `clean` left behind by
+ * the CI job's clean-build step) fails on the *assertion* instead, and the
+ * message then reads like a resolution bug in `adapter-resolution.ts` while the
+ * actual fix is one command. Checked here, before the interesting assertion, so
+ * the failure names the command.
+ */
+function assertAdapterPackagesBuilt(): void {
+  const missing = Object.keys(ADAPTER_CANDIDATES)
+    .map((id) => join(REPO_ROOT, 'packages', `adapter-${id}`, 'dist', 'index.js'))
+    .filter((dist) => !existsSync(dist));
+  expect(
+    missing,
+    `these adapter builds are missing, so nothing can resolve them:\n  ${missing.join('\n  ')}\n` +
+      'run `npm run build:packages` first (`npm test` does it in `pretest`).',
+  ).toEqual([]);
+}
+
 describe('the search paths cover the layouts that ship', () => {
   it('asks the packaged app root, the workspace root, the desktop package and the cwd', () => {
     // A packaged-shaped context. `dist/main` is where the compiled entry lives
@@ -144,10 +166,12 @@ function writeFakeAdapter(root: string, specifier: string): string {
  * What this does **not** cover: opening a real `.asar` archive. Node's
  * `require.resolve` treats the app path as a directory root, and a directory
  * named `app.asar` exercises exactly that step; reading modules from inside
- * the archive needs Electron's patched `fs`, so it is checked by hand with a
- * local `npm run package` — there is no CI job for it. `adapter-resolution.ts`
- * and both README sections say the same thing, and `readme-parity.test.ts`
- * keeps the two languages saying it.
+ * the archive needs Electron's patched `fs`, so it is checked by hand — a local
+ * `npm run package` followed by `scripts/verify-packaged-adapters.mjs`, whose
+ * judgement `verify-packaged-adapters.test.ts` covers; only the launch needs a
+ * built app, and there is no CI job for it. `adapter-resolution.ts` and both
+ * README sections say the same thing, and `readme-parity.test.ts` keeps the two
+ * languages saying it.
  */
 describe('the packaged app root is a search root in its own right', () => {
   const PACKAGED_ID = 'packaged';
@@ -210,6 +234,10 @@ describe('the packaged app root is a search root in its own right', () => {
 
 describe('resolution reports what it found and what it did not', () => {
   it('resolves every adapter in the table through the development search paths', () => {
+    // Before "it resolved": the packages have to be built. Without this, CI
+    // ordering (or a direct `vitest run`) reports a missing `dist` as a broken
+    // search path, which is the opposite of what happened.
+    assertAdapterPackagesBuilt();
     const { log } = recordingLogger();
     const written: string[] = [];
 
@@ -424,6 +452,7 @@ describe('resolution reports what it found and what it did not', () => {
   it('uses Node resolution when no resolver is injected, and finds a real package', () => {
     // The default is the one production uses; a test that only ever injects a
     // fake resolver would pin the seam and not the app.
+    assertAdapterPackagesBuilt();
     const resolution = resolveAdapterModules({
       candidates: { mock: ADAPTER_CANDIDATES.mock },
       searchPaths: adapterSearchPaths({ appPath: REPO_ROOT, mainDir: MAIN_DIR, cwd: REPO_ROOT }),
@@ -543,6 +572,64 @@ describe('resolveFromProcess turns the process facts into a resolution', () => {
       '[ucad] adapter "ghost" could not be resolved @ucad/adapter-nobody-ships',
       '[ucad] adapters resolved: (none)',
     ]);
+  });
+
+  it('prints to console.error when the caller leaves `write` unset', () => {
+    // The production call shape: `bootstrap.ts` passes the three facts and a
+    // file-backed logger, and *nothing else*. Until now that omission was
+    // checked by scanning bootstrap.ts for `write:` — text, which pins the
+    // spelling and not the consequence. This is the consequence: with no
+    // `write`, both lines still reach the terminal, which is the one channel
+    // that survives an app that starts with no adapter at all (the log file is
+    // opened after the app misbehaves, not during the launch).
+    const { log, sink } = recordingLogger();
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    let failures: string[] = [];
+    let written: string[] = [];
+    try {
+      const resolution = resolveFromProcess({
+        appPath: REPO_ROOT,
+        mainDir: MAIN_DIR,
+        cwd: REPO_ROOT,
+        candidates: { ghost: '@ucad/adapter-nobody-ships' },
+        log,
+        // no `write` — bootstrap.ts's shape, asserted below by the source gate.
+      });
+      failures = resolution.failures.map((failure) => failure.id);
+      written = consoleError.mock.calls.map((call) => String(call[0]));
+    } finally {
+      consoleError.mockRestore();
+    }
+
+    expect(failures).toEqual(['ghost']);
+    expect(written).toEqual([
+      '[ucad] adapter "ghost" could not be resolved @ucad/adapter-nobody-ships',
+      '[ucad] adapters resolved: (none)',
+    ]);
+    // The structured channel is still written as well: the two reach different
+    // readers and one is not a substitute for the other.
+    expect(sink.records.filter((record) => record.level === 'warn')).toHaveLength(1);
+  });
+
+  it('leaves console.error alone when the caller supplies its own channel', () => {
+    // The control for the case above: a composition that always wrote to
+    // `console.error` (ignoring `write`) would pass it, and would double-print
+    // in a packaged app whose stdout is a terminal that is also being logged.
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    try {
+      const written: string[] = [];
+      resolveFromProcess({
+        appPath: REPO_ROOT,
+        mainDir: MAIN_DIR,
+        cwd: REPO_ROOT,
+        candidates: { ghost: '@ucad/adapter-nobody-ships' },
+        write: (line) => written.push(line),
+      });
+      expect(written).toHaveLength(2);
+      expect(consoleError).not.toHaveBeenCalled();
+    } finally {
+      consoleError.mockRestore();
+    }
   });
 });
 
