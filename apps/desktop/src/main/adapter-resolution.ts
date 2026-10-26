@@ -48,9 +48,15 @@
  *
  * It does not open a real `.asar` archive. Node resolves a bare specifier by
  * treating the app path as a directory root — the behaviour the test exercises
- * — but reading modules from inside the archive needs Electron's patched `fs`.
- * That last step is covered by the packaged smoke run, not by `npm test`; the
- * README states the same boundary.
+ * — but reading modules from inside the archive needs Electron's patched `fs`,
+ * which only a packaged launch provides.
+ *
+ * **No automated gate covers that last step.** There is no packaging job in
+ * `.github/workflows/ci.yml`: the check is `npm run package`, launch the build,
+ * read the `adapters resolved:` line it prints. The README states the same
+ * boundary in both languages, and `tests/contract/readme-parity.test.ts` keeps
+ * the two saying it — "verified by hand, CI does not cover it" is the claim, so
+ * do not restate it as if a gate existed.
  */
 
 import { createRequire } from 'node:module';

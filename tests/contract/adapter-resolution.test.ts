@@ -30,7 +30,14 @@
  */
 
 import { describe, expect, it, vi } from 'vitest';
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, sep } from 'node:path';
 import { MemoryLogSink, Logger } from '@ucad/observability';
@@ -42,6 +49,7 @@ import {
 
 const here = import.meta.dirname;
 const REPO_ROOT = join(here, '..', '..');
+const BOOTSTRAP_PATH = join(REPO_ROOT, 'apps', 'desktop', 'src', 'main', 'bootstrap.ts');
 
 /** The real compiled main entry, as Electron would see it. */
 const MAIN_DIR = join(REPO_ROOT, 'apps', 'desktop', 'dist', 'main');
@@ -135,8 +143,10 @@ function writeFakeAdapter(root: string, specifier: string): string {
  * What this does **not** cover: opening a real `.asar` archive. Node's
  * `require.resolve` treats the app path as a directory root, and a directory
  * named `app.asar` exercises exactly that step; reading modules from inside
- * the archive needs Electron's patched `fs` and is left to the packaging smoke
- * run. The limitation is stated in `adapter-resolution.ts` and the README.
+ * the archive needs Electron's patched `fs`, so it is checked by hand with a
+ * local `npm run package` — there is no CI job for it. `adapter-resolution.ts`
+ * and both README sections say the same thing, and `readme-parity.test.ts`
+ * keeps the two languages saying it.
  */
 describe('the packaged app root is a search root in its own right', () => {
   const PACKAGED_ID = 'packaged';
@@ -367,5 +377,316 @@ describe('resolution reports what it found and what it did not', () => {
 
     expect(resolution.failures).toEqual([]);
     expect(resolution.modules['mock']).toContain(join('packages', 'adapter-mock'));
+  });
+});
+
+/**
+ * `bootstrap.ts` supplies the three context fields — and deliberately no
+ * `write`.
+ *
+ * ## Why this file reads source text
+ *
+ * Everything above drives `resolveAdapterModules` directly, so all of it stays
+ * green if the *call site* changes shape: `adapterSearchPaths` handed
+ * `process.cwd()` three times, `__dirname` replaced by a guess, or a `write`
+ * added "for consistency" while someone unifies the logging outlets. None of
+ * those is a visible defect — resolution still succeeds in development, where
+ * every search path points into the same checkout — and the one layout where it
+ * matters is a packaged build, which no test here can open.
+ *
+ * So the call site itself is the subject: `bootstrap.ts` is read as text and
+ * the arguments of the two calls inside `loadAdapterModules` are asserted. It
+ * is a source-level gate rather than a behavioural one because the caller's
+ * inputs are the fact that must not drift, and the function they are passed to
+ * is already covered case by case above.
+ *
+ * The problems are produced by a pure function so the fixtures below can show
+ * it answering something other than `[]` — a gate that has never gone red is
+ * indistinguishable from one that does nothing.
+ */
+
+/**
+ * The argument text of the first `callee(` call in `source`, with parentheses
+ * matched.
+ *
+ * A regex cannot do this: the arguments are two nested object literals, and a
+ * lazy `\)` stops at the first `adapterSearchPaths` call's closing paren.
+ */
+function callArguments(source: string, callee: string): string | undefined {
+  const start = source.indexOf(`${callee}(`);
+  if (start === -1) return undefined;
+  const open = start + callee.length;
+  let depth = 0;
+  for (let index = open; index < source.length; index += 1) {
+    const char = source[index];
+    if (char === '(') depth += 1;
+    else if (char === ')') {
+      depth -= 1;
+      if (depth === 0) return source.slice(open + 1, index);
+    }
+  }
+  return undefined;
+}
+
+/**
+ * The three facts `adapterSearchPaths` requires, spelled as the call passes
+ * them.
+ *
+ * Exact text, not "mentions `getAppPath`": each of these is a *source* of the
+ * running process, and the drift this catches is one source being swapped for
+ * another (`__dirname` → `app.getAppPath()` in both slots looks fine to a
+ * substring check on the field names).
+ */
+const REQUIRED_CONTEXT = [
+  'appPath: app.getAppPath()',
+  'mainDir: __dirname',
+  'cwd: process.cwd()',
+] as const;
+
+/** Every way `loadAdapterModules` can stop naming the real sources, or start writing. */
+function loaderCallProblems(source: string): string[] {
+  const problems: string[] = [];
+  const loaderStart = source.indexOf('function loadAdapterModules');
+  if (loaderStart === -1) {
+    problems.push('bootstrap.ts no longer defines loadAdapterModules');
+    return problems;
+  }
+  const loader = source.slice(loaderStart);
+
+  const contextArgs = callArguments(loader, 'adapterSearchPaths');
+  if (contextArgs === undefined) {
+    problems.push('loadAdapterModules no longer calls adapterSearchPaths');
+  } else {
+    for (const expected of REQUIRED_CONTEXT) {
+      if (!contextArgs.includes(expected)) {
+        problems.push(`adapterSearchPaths is no longer given \`${expected}\``);
+      }
+    }
+  }
+
+  const resolveArgs = callArguments(loader, 'resolveAdapterModules');
+  if (resolveArgs === undefined) {
+    problems.push('loadAdapterModules no longer calls resolveAdapterModules');
+  } else {
+    if (!resolveArgs.includes('adapterSearchPaths(')) {
+      problems.push(
+        'resolveAdapterModules is no longer given the paths adapterSearchPaths produced',
+      );
+    }
+    // The deliberate omission, made a gate. `write` unset means the resolver
+    // prints to `console.error`, the one channel that survives an app which
+    // starts with no adapter at all; passing it here (from `log`, most likely,
+    // as a tidy-up) would leave the failure in a log file nobody opened.
+    if (/[\s{,;]write\s*:/.test(resolveArgs)) {
+      problems.push(
+        'loadAdapterModules passes `write`; leave it unset so the failure reaches console.error',
+      );
+    }
+  }
+
+  return problems;
+}
+
+describe('bootstrap.ts names the real search roots and stays off the `write` channel', () => {
+  it('reads a bootstrap it can actually parse, so the checks below are not vacuous', () => {
+    expect(
+      existsSync(BOOTSTRAP_PATH),
+      `bootstrap.ts is missing (${BOOTSTRAP_PATH})`,
+    ).toBe(true);
+    const source = readFileSync(BOOTSTRAP_PATH, 'utf8');
+    expect(source).toContain('function loadAdapterModules');
+    // The parser is the gate's eyes: a call it cannot find would be reported as
+    // "no longer calls adapterSearchPaths", which sends the editor to a call
+    // that is right there.
+    expect(callArguments(source, 'adapterSearchPaths')).toBeDefined();
+    const loader = source.slice(source.indexOf('function loadAdapterModules'));
+    expect(callArguments(loader, 'resolveAdapterModules')).toBeDefined();
+  });
+
+  it('passes app.getAppPath(), __dirname and process.cwd(), and no write', () => {
+    const source = readFileSync(BOOTSTRAP_PATH, 'utf8');
+    const problems = loaderCallProblems(source);
+    expect(
+      problems,
+      `bootstrap.ts and adapter-resolution.ts disagree about the call:\n  ${problems.join('\n  ')}`,
+    ).toEqual([]);
+  });
+
+  it('reports a unified logging outlet that hands the resolver a `write`', () => {
+    // The edit this exists for: "one logging outlet" is a reasonable-sounding
+    // refactor that removes the only channel a person at a terminal sees.
+    const withWrite = [
+      'function loadAdapterModules(log?: Logger): Record<string, string> {',
+      '  return resolveAdapterModules({',
+      '    searchPaths: adapterSearchPaths({',
+      '      appPath: app.getAppPath(),',
+      '      mainDir: __dirname,',
+      '      cwd: process.cwd(),',
+      '    }),',
+      '    log,',
+      '    write: (line) => log?.error(line),',
+      '  }).modules;',
+      '}',
+    ].join('\n');
+    expect(loaderCallProblems(withWrite)).toEqual([
+      'loadAdapterModules passes `write`; leave it unset so the failure reaches console.error',
+    ]);
+  });
+
+  it('reports a context field that stopped naming the running process', () => {
+    // `cwd` standing in for `__dirname` resolves in development (both point
+    // into the checkout when the app is launched from its root) and looks
+    // wrong only in a packaged build — the drift is invisible without this.
+    const swapped = [
+      'function loadAdapterModules(log?: Logger): Record<string, string> {',
+      '  return resolveAdapterModules({',
+      '    searchPaths: adapterSearchPaths({',
+      '      appPath: app.getAppPath(),',
+      '      mainDir: process.cwd(),',
+      '      cwd: process.cwd(),',
+      '    }),',
+      '    log,',
+      '  }).modules;',
+      '}',
+    ].join('\n');
+    expect(loaderCallProblems(swapped)).toEqual([
+      'adapterSearchPaths is no longer given `mainDir: __dirname`',
+    ]);
+  });
+
+  it('reports a renamed or removed loader instead of passing over it', () => {
+    // A gate whose subject disappeared must be red: `indexOf` returning -1
+    // would otherwise make every check above vacuously true.
+    expect(loaderCallProblems('function loadAdapters() {}\n')).toEqual([
+      'bootstrap.ts no longer defines loadAdapterModules',
+    ]);
+  });
+});
+
+/**
+ * The "CI does not cover it" claim is checked against `ci.yml`.
+ *
+ * The README bullet and the header of `adapter-resolution.ts` both state that
+ * the packaged check is manual. A statement about CI that nothing compares with
+ * CI is exactly the kind of sentence that rots: the previous wording said the
+ * step was "covered by the packaged smoke run" while `.github/workflows/ci.yml`
+ * had no packaging job at all — a promise of a gate that did not exist, which is
+ * worse than naming the gap.
+ *
+ * So the two directions are both red:
+ *
+ *  - the prose says CI does not cover it, and CI has since gained a packaging
+ *    job → the README now understates what is checked; and
+ *  - CI has no such job and the prose does not say so → the README is back to
+ *    implying coverage it does not have.
+ *
+ * A workflow that *does* package makes the claim merely unnecessary rather than
+ * false, so it stays green — the check is about the sentence and the file
+ * agreeing, not about how the packaging is done.
+ */
+
+/** What a packaging step looks like in the workflow: the two commands that build one. */
+const CI_PACKAGING = /\bnpm run package\b|\belectron-builder\b/u;
+
+/** "CI does not cover it", as the README bullet states it. */
+const CI_NOT_COVERED = /\bci does not cover\b/iu;
+
+function ciClaimProblems(input: {
+  readonly bullet: string | undefined;
+  readonly workflow: string;
+}): string[] {
+  if (input.bullet === undefined) {
+    return ['the asar limitation bullet is missing, so its CI claim is unchecked'];
+  }
+  const claimsManual = CI_NOT_COVERED.test(input.bullet);
+  const ciPackages = CI_PACKAGING.test(input.workflow);
+  if (claimsManual && ciPackages) {
+    return [
+      'the README says CI does not cover the packaged asar check, but .github/workflows/ci.yml runs one; ' +
+        'update the bullet, adapter-resolution.ts and readme-parity.test.ts to say what CI checks',
+    ];
+  }
+  if (!claimsManual && !ciPackages) {
+    return [
+      'no CI job packages the app, and the README does not say the asar check is manual; ' +
+        'state the gap instead of implying a gate',
+    ];
+  }
+  return [];
+}
+
+describe('the README’s asar/CI claim matches what CI actually does', () => {
+  const CI_PATH = join(REPO_ROOT, '.github', 'workflows', 'ci.yml');
+  const readme = existsSync(join(REPO_ROOT, 'README.md'))
+    ? readFileSync(join(REPO_ROOT, 'README.md'), 'utf8')
+    : '';
+
+  /** The English "Current limitations" bullets, joined, or `undefined`. */
+  function enLimitationBullets(markdown: string): string[] | undefined {
+    const lines = markdown.split('\n');
+    const start = lines.findIndex((line) => line.trim() === '### Current limitations');
+    if (start === -1) return undefined;
+    const end = lines.findIndex((line, index) => index > start && /^#{1,3} /.test(line));
+    const body = lines.slice(start + 1, end === -1 ? undefined : end);
+    const out: string[] = [];
+    for (const line of body) {
+      if (/^- /.test(line)) out.push(line.slice(2).trim());
+      else if (out.length > 0 && /^\s+\S/.test(line)) out[out.length - 1] += ' ' + line.trim();
+    }
+    return out;
+  }
+
+  it('reads both the workflow and the bullet, so the check is not vacuous', () => {
+    expect(existsSync(CI_PATH), `the CI workflow is missing (${CI_PATH})`).toBe(true);
+    const bullets = enLimitationBullets(readme);
+    expect(bullets, 'the README no longer has a "### Current limitations" section').toBeDefined();
+    // The bullet this reads has to be the asar one: reading another limitation
+    // would report "the claim is missing" about a sentence that never made it.
+    const asarBullet = bullets!.find((bullet) => bullet.toLowerCase().includes('asar'));
+    expect(asarBullet, 'no limitation bullet talks about asar').toBeDefined();
+  });
+
+  it('does not promise a CI gate CI does not have, and does not understate one it does', () => {
+    const bullet = enLimitationBullets(readme)?.find((text) =>
+      text.toLowerCase().includes('asar'),
+    );
+    const problems = ciClaimProblems({
+      bullet,
+      workflow: readFileSync(CI_PATH, 'utf8'),
+    });
+    expect(problems, problems.join('\n')).toEqual([]);
+  });
+
+  it('reports each direction of the disagreement', () => {
+    // The historical defect: the prose says the step is covered by a packaged
+    // run, and the workflow has no such job.
+    expect(
+      ciClaimProblems({
+        bullet: '**Adapter resolution inside a real `.asar` archive is verified by the packaged smoke run.**',
+        workflow: 'jobs:\n  gates:\n    steps:\n      - run: npm test\n',
+      }),
+    ).toEqual([
+      'no CI job packages the app, and the README does not say the asar check is manual; ' +
+        'state the gap instead of implying a gate',
+    ]);
+    // …and the other direction: a packaging job appeared and the README still
+    // tells the reader nothing checks it.
+    expect(
+      ciClaimProblems({
+        bullet: '**Adapter resolution inside a real `.asar` archive is verified by hand; CI does not cover it.**',
+        workflow: 'steps:\n  - run: npm run package\n',
+      }),
+    ).toHaveLength(1);
+    // Either claim is fine beside a workflow that really packages.
+    expect(
+      ciClaimProblems({
+        bullet: '**Adapter resolution inside a real `.asar` archive is verified from the packaged build.**',
+        workflow: 'steps:\n  - run: npm run package\n',
+      }),
+    ).toEqual([]);
+    // A missing bullet is reported rather than treated as agreement.
+    expect(ciClaimProblems({ bullet: undefined, workflow: '' })).toEqual([
+      'the asar limitation bullet is missing, so its CI claim is unchecked',
+    ]);
   });
 });

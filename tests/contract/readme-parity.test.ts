@@ -72,7 +72,15 @@ const LIMITATIONS: readonly Limitation[] = [
   // any feed URL would do.
   { id: 'auto-update reads an `https` feed', en: ['feed', 'cleartext'], zh: ['feed', '明文'] },
   { id: 'the terminal needs `node-pty`', en: ['node-pty'], zh: ['node-pty'] },
-  { id: 'adapter resolution inside a real asar is a packaging check', en: ['asar'], zh: ['asar'] },
+  // Two keywords, because "verified somehow" is not the claim that matters: the
+  // asar step has no CI job at all, so the bullet has to say so. A README that
+  // drifted back to "covered by the packaged smoke run" would promise a gate
+  // that does not exist — the one thing this row exists to prevent.
+  {
+    id: 'adapter resolution inside a real asar is verified by hand, not by CI',
+    en: ['asar', 'ci does not cover'],
+    zh: ['asar', 'ci 不覆盖'],
+  },
 ];
 
 /**

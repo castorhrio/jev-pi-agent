@@ -268,6 +268,12 @@ Two fixes, either is enough:
 Do not disable `signAndEditExecutable` to get past this: it also writes the asar integrity
 resource, and weakening the shipped artifact so a dev machine can build is the wrong trade.
 
+**Packaging is not a CI gate, so it is a manual check.** `npm run package`, launch the built
+app, and read the `adapters resolved:` line it prints: which adapters were found, from which
+search paths. Reading a module from *inside* the asar needs Electron's patched `fs`, so it is
+the one adapter-resolution step `npm test` cannot reach — the README states the same boundary,
+and `tests/contract/adapter-resolution.test.ts` keeps that statement true of `ci.yml`.
+
 ## Adding a workspace package
 
 `tsconfig.build.json` lists the package, **and** the package's own `tsconfig.json` must
