@@ -19,27 +19,49 @@
  *  - the backticked ids named in the provider bullet, in **each** language,
  *    are exactly the keys of `ADAPTER_CANDIDATES` — both directions, so adding
  *    an adapter or removing one is red until the prose says the same thing;
- *  - the count word the bullet states ("Two adapters are registered",
- *    "两个适配器") equals the table's size, because "Two" going stale is the
- *    same defect one sentence earlier;
+ *  - the count the bullet states ("Two adapters are registered",
+ *    "两个适配器", "2 个适配器") equals the table's size, because "Two" going
+ *    stale is the same defect one sentence earlier;
+ *  - the ids named in a `### What it does` / `### 它能做什么` bullet that
+ *    talks about adapters are a **subset** of the table. That prose may name
+ *    fewer adapters than the table registers (it is a summary, not the list),
+ *    but it may not name an id the table has never heard of: that is the
+ *    reader being promised a thing the app does not load, and it is exactly
+ *    the direction `readme-parity.test.ts` cannot see (both languages can
+ *    agree on a name that does not exist);
  *  - every specifier in the table names a package that exists in this repo,
  *    so a candidate cannot point at a package nobody ships; and
  *  - `bootstrap.ts` still reads the table rather than re-inlining it, because
  *    a copied list would leave this gate green while the app loaded something
  *    else.
  *
- * The gate reads identifiers out of one bullet, not the whole README: a
- * backticked token there that is not an adapter id would be reported as an
- * extra adapter, which is the failure mode to keep in mind when editing that
- * paragraph. A whole-README scan would have to guess whether `` `https` `` is
- * an adapter, and a gate that guesses gets switched off.
+ * The gate reads identifiers out of one bullet, and out of the "what it does"
+ * bullets that call the thing an adapter, not the whole README. That last
+ * restriction is not caution, it was measured: scanning the whole feature list
+ * for adapter-shaped backticks reported `` `rationale` `` and `` `confidence` ``
+ * — the decision-record fields in the Chinese summary — as adapters the table
+ * had forgotten. A gate that reports field names as missing adapters gets
+ * switched off within a week, so the rule is "a sentence that says
+ * adapter/适配器 may only name adapters the table knows", and the price is
+ * stated plainly: a summary that names a vendor without calling it an adapter
+ * is left to the reader. A whole-README scan would have to guess whether
+ * `` `node-pty` `` is an adapter, and guessing is how gates die.
+ *
+ * ## Why nothing here skips
+ *
+ * These checks used to run under `it.skipIf(readme === '')`. A deleted, moved
+ * or renamed README was therefore a *green* run in which the only surviving
+ * tests compared fixtures against themselves — the gate's subject could
+ * disappear without a single red test. The file now asserts the inputs it
+ * reads (`beforeAll`) and lets the checks fail: "the README is gone" is a
+ * failure of the promise this file exists to keep, not a reason to be quiet.
  *
  * Deliberately **not** asserted: that the two languages say the same thing
  * about the adapters (that is `readme-parity.test.ts`), or anything about how
  * the sentences read.
  */
 
-import { describe, expect, it } from 'vitest';
+import { beforeAll, describe, expect, it } from 'vitest';
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { ADAPTER_CANDIDATES } from '../../apps/desktop/src/main/adapter-candidates';
@@ -55,6 +77,8 @@ const bootstrap = existsSync(BOOTSTRAP_PATH) ? readFileSync(BOOTSTRAP_PATH, 'utf
 
 const EN_HEADING = '### Current limitations';
 const ZH_HEADING = '### 当前局限';
+const EN_PROSE_HEADING = '### What it does';
+const ZH_PROSE_HEADING = '### 它能做什么';
 
 type Lang = 'en' | 'zh';
 const LANGS: readonly Lang[] = ['en', 'zh'];
@@ -108,6 +132,33 @@ function adapterIdsIn(bullet: string): string[] {
   return [...new Set(ids)].sort();
 }
 
+/** The word that makes a summary bullet a statement about adapters. */
+const ADAPTER_WORD = /adapters?|适配器/i;
+
+/**
+ * Adapter ids named by the bullets of a prose section that talk about adapters,
+ * or `undefined` when the section is gone.
+ *
+ * `undefined` and `[]` mean different things here: the first is "there is no
+ * such paragraph, so this check has nothing to read" and is reported as a
+ * problem; the second is "the paragraph exists and says nothing about
+ * adapters", which is allowed — today's feature summary describes the protocol
+ * and never names a package id.
+ *
+ * Why the bullet has to *say* "adapter": the same sections quote other
+ * identifiers in backticks — `rationale`, `confidence`, the skills path — and
+ * those are shaped exactly like an adapter id. Reading them as adapters makes
+ * the gate red about a field name, which is how a gate loses its audience.
+ */
+function adapterIdsInProse(markdown: string, heading: string): string[] | undefined {
+  const body = sectionBody(markdown, heading);
+  if (body === undefined) return undefined;
+  const named = bullets(body)
+    .filter((bullet) => ADAPTER_WORD.test(bullet))
+    .flatMap((bullet) => adapterIdsIn(bullet));
+  return [...new Set(named)].sort();
+}
+
 /** Number words a limitation bullet can spell its count with, both languages. */
 const NUMBER_WORDS: Record<string, number> = {
   one: 1,
@@ -133,19 +184,30 @@ const NUMBER_WORDS: Record<string, number> = {
   十: 10,
 };
 
+/** What the count check accepts as a number, spelled out for its failure message. */
+const COUNT_SPELLINGS =
+  '"Two adapters are registered" / "两个适配器" / "2 个适配器" (a number word or an Arabic numeral)';
+
 /**
  * The count the bullet states, or `undefined` when it stopped stating one.
  *
  * Two patterns, one per language, because the two sections spell it
  * differently: "Two adapters are registered" counts forward, "两个适配器"
- * counts after the ids. Returns `NaN`-free numbers only; a word outside the
- * table is reported as an unreadable count rather than silently skipped.
+ * counts after the ids.
+ *
+ * Both patterns accept Arabic numerals as well as number words. The Chinese
+ * one used to accept only `[一二两三四五六七八九十]`, so a paragraph edited to
+ * say "2 个适配器" — the same sentence, spelled the way a reader is most likely
+ * to type it — was reported as *not stating a count at all*: a false red whose
+ * message sent the editor looking for a deleted sentence that was still there.
+ * The English pattern's `\w+` already matched digits; this made the two
+ * languages read counts differently for no reason.
  */
 function statedCount(bullet: string, lang: Lang): number | undefined {
   const match =
     lang === 'en'
       ? /(\w+)\s+adapters?\s+(?:are|is)\s+registered/i.exec(bullet)
-      : /([一二两三四五六七八九十]+)\s*个适配器/.exec(bullet);
+      : /(\d+|[一二两三四五六七八九十]+)\s*个适配器/.exec(bullet);
   if (match === null) return undefined;
   const word = match[1]!.toLowerCase();
   if (/^\d+$/.test(word)) return Number(word);
@@ -170,15 +232,16 @@ function workspacePackages(): string[] {
   return names;
 }
 
-/** What the checks read: the two bullets, the table, and the repo's packages. */
+/** What the checks read: the two bullets, the two prose summaries, the table, the packages. */
 interface Facts {
   readonly bullets: Record<Lang, string | undefined>;
+  readonly proseIds: Record<Lang, readonly string[] | undefined>;
   readonly candidates: Readonly<Record<string, string>>;
   readonly packages: readonly string[];
 }
 
 /**
- * Every way the README's adapter paragraph and the table can disagree.
+ * Every way the README's adapter prose and the table can disagree.
  *
  * A pure function of its inputs so the fixtures below can show it answering
  * something other than `[]` — a gate about two copies of one fact has to prove
@@ -212,11 +275,30 @@ function candidateProblems(facts: Facts): string[] {
     const count = statedCount(bullet, lang);
     if (count === undefined) {
       problems.push(
-        `${lang}: the adapter text no longer states how many adapters ship (looked for "N adapters are registered" / "N 个适配器")`,
+        `${lang}: the adapter text no longer states how many adapters ship (looked for ${COUNT_SPELLINGS})`,
       );
     } else if (count !== ids.length) {
       problems.push(
         `${lang}: the adapter text says ${count} adapter(s) ship and the table registers ${ids.length}`,
+      );
+    }
+  }
+
+  // The feature summary, in both languages. Subset, not equality: it may
+  // mention one adapter where the table registers two, but every id it does
+  // mention has to be one the table knows.
+  for (const lang of LANGS) {
+    const named = facts.proseIds[lang];
+    if (named === undefined) {
+      problems.push(
+        `${lang}: the "what it does" section is missing, so the adapter ids it names are unchecked`,
+      );
+      continue;
+    }
+    const stranger = named.filter((id) => !ids.includes(id));
+    if (stranger.length > 0) {
+      problems.push(
+        `${lang}: a "what it does" bullet talks about adapters and names ${stranger.map((id) => `\`${id}\``).join(', ')}, which the table does not register`,
       );
     }
   }
@@ -232,23 +314,41 @@ function candidateProblems(facts: Facts): string[] {
   return problems;
 }
 
-/** The real README, split into the two bullets the gate reads. */
+/** The real README, split into the paragraphs the gate reads. */
 const facts: Facts = {
   bullets: {
     en: providerBullet(readme, EN_HEADING),
     zh: providerBullet(readme, ZH_HEADING),
+  },
+  proseIds: {
+    en: adapterIdsInProse(readme, EN_PROSE_HEADING),
+    zh: adapterIdsInProse(readme, ZH_PROSE_HEADING),
   },
   candidates: ADAPTER_CANDIDATES,
   packages: workspacePackages(),
 };
 
 describe('README adapter paragraph ↔ ADAPTER_CANDIDATES', () => {
-  it.skipIf(readme === '')('reads both paragraphs, so the checks below are not vacuous', () => {
+  // The subject itself. A missing README used to turn this whole block into
+  // skips; now it is the first thing that fails, with the path in the message.
+  beforeAll(() => {
+    expect(readme, `README.md is missing or empty (${README_PATH})`).not.toBe('');
+  });
+
+  it('reads both paragraphs, so the checks below are not vacuous', () => {
     // A renamed heading or a reordered bullet would leave the checks comparing
     // an empty string, which matches nothing — and, with an empty table, it
     // would match everything.
     expect(facts.bullets.en, `the README no longer has a "${EN_HEADING}" section`).toBeDefined();
     expect(facts.bullets.zh, `the README no longer has a "${ZH_HEADING}" section`).toBeDefined();
+    expect(
+      facts.proseIds.en,
+      `the README no longer has a "${EN_PROSE_HEADING}" section`,
+    ).toBeDefined();
+    expect(
+      facts.proseIds.zh,
+      `the README no longer has a "${ZH_PROSE_HEADING}" section`,
+    ).toBeDefined();
     expect(Object.keys(ADAPTER_CANDIDATES).length, 'the table names no adapters').toBeGreaterThan(
       0,
     );
@@ -260,18 +360,53 @@ describe('README adapter paragraph ↔ ADAPTER_CANDIDATES', () => {
       .not.toEqual([]);
   });
 
-  it.skipIf(readme === '')('states the same adapters, in both languages and in the table', () => {
+  it('states the same adapters, in both languages and in the table', () => {
     const problems = candidateProblems(facts);
     expect(
       problems,
       `the README and the adapter table disagree:\n  ${problems.join('\n  ')}`,
     ).toEqual([]);
   });
+});
 
+/**
+ * A stand-in README for the fixtures: one that states what the table says.
+ *
+ * The fixtures are the proof that the checks above can answer anything but
+ * `[]`, so they read this instead of the repository's prose. When the real
+ * README is missing or its paragraphs drift, the gate is red *once*, at the
+ * assertion about the file — not six times with fixture messages about
+ * adapters the fixture never mentioned.
+ */
+const fixtureFacts: Facts = {
+  bullets: {
+    en:
+      'One provider protocol ships. Two adapters are registered — `universal` is the one ' +
+      'that sends real requests, and `mock` is the protocol’s executable specification.',
+    zh:
+      '只随包发布一种厂商协议。随包同时注册 `universal` 与 `mock` 两个适配器：' +
+      '前者是真正发出请求的那一个。',
+  },
+  proseIds: { en: ['universal'], zh: [] },
+  candidates: ADAPTER_CANDIDATES,
+  packages: workspacePackages(),
+};
+
+/** Replace one fixture bullet, leaving the rest as `fixtureFacts` states it. */
+function withBullet(lang: Lang, bullet: string): Facts {
+  return { ...fixtureFacts, bullets: { ...fixtureFacts.bullets, [lang]: bullet } };
+}
+
+/** Replace the ids one fixture prose summary names. */
+function withProse(lang: Lang, ids: readonly string[]): Facts {
+  return { ...fixtureFacts, proseIds: { ...fixtureFacts.proseIds, [lang]: ids } };
+}
+
+describe('the checks can see the README diverge', () => {
   it('reports an adapter added to the table and not to the README', () => {
     // The next vendor adapter: the table grows, the prose does not.
     const problems = candidateProblems({
-      ...facts,
+      ...fixtureFacts,
       candidates: { ...ADAPTER_CANDIDATES, anthropic: '@ucad/adapter-anthropic' },
     });
     expect(problems).toContain(
@@ -290,7 +425,10 @@ describe('README adapter paragraph ↔ ADAPTER_CANDIDATES', () => {
   it('reports an adapter removed from the table and left in the README', () => {
     // The other direction, and the one a reader is worse off for: the README
     // promises an offline reference adapter the app no longer loads.
-    const problems = candidateProblems({ ...facts, candidates: { universal: '@ucad/adapter-universal' } });
+    const problems = candidateProblems({
+      ...fixtureFacts,
+      candidates: { universal: '@ucad/adapter-universal' },
+    });
     expect(problems).toContain(
       'en: the adapter text names `mock`, which the table does not register',
     );
@@ -300,26 +438,79 @@ describe('README adapter paragraph ↔ ADAPTER_CANDIDATES', () => {
     expect(problems).toContain('en: the adapter text says 2 adapter(s) ship and the table registers 1');
   });
 
-  it('reports a paragraph that stopped stating a count', () => {
+  it('reports an adapter named in the feature summary that the table does not register', () => {
+    // The direction the limitation bullets cannot cover: the summary promises
+    // an adapter that was never in the table at all. Both languages can say it
+    // in the same words — `readme-parity.test.ts` stays green — and the reader
+    // still cannot find it in the build.
+    const problems = candidateProblems(withProse('en', [...fixtureFacts.proseIds.en!, 'anthropic']));
+    expect(problems).toContain(
+      'en: a "what it does" bullet talks about adapters and names `anthropic`, which the table does not register',
+    );
+    // And the summary naming *fewer* adapters than the table stays allowed.
+    expect(
+      candidateProblems({ ...fixtureFacts, proseIds: { en: ['universal'], zh: ['mock'] } }),
+    ).toEqual([]);
+    // The rule is the word "adapter", not the shape of the token: this is the
+    // sentence that produced the red this gate must not produce.
+    expect(
+      adapterIdsInProse('### 它能做什么\n\n- **决策可解释。** 记录 `rationale` 与 `confidence`。\n', ZH_PROSE_HEADING),
+    ).toEqual([]);
+    // …while a bullet that does talk about adapters is read.
+    expect(
+      adapterIdsInProse('### 它能做什么\n\n- **任意厂商。** `anthropic` 适配器不在本版本内。\n', ZH_PROSE_HEADING),
+    ).toEqual(['anthropic']);
+  });
+
+  it('reports a feature summary that vanished', () => {
     const problems = candidateProblems({
-      ...facts,
-      bullets: {
-        en: 'The bundled adapter speaks the OpenAI-compatible protocol. `universal` and `mock` ship.',
-        zh: facts.bullets.zh,
-      },
+      ...fixtureFacts,
+      proseIds: { en: undefined, zh: undefined },
     });
     expect(problems).toContain(
-      'en: the adapter text no longer states how many adapters ship (looked for "N adapters are registered" / "N 个适配器")',
+      'en: the "what it does" section is missing, so the adapter ids it names are unchecked',
     );
+    expect(problems).toContain(
+      'zh: the "what it does" section is missing, so the adapter ids it names are unchecked',
+    );
+  });
+
+  it('reports a paragraph that stopped stating a count', () => {
+    const problems = candidateProblems(
+      withBullet(
+        'en',
+        'The bundled adapter speaks the OpenAI-compatible protocol. `universal` and `mock` ship.',
+      ),
+    );
+    expect(problems).toContain(
+      `en: the adapter text no longer states how many adapters ship (looked for ${COUNT_SPELLINGS})`,
+    );
+  });
+
+  it('reads the count whether it is spelled with a word or a numeral', () => {
+    // The false red this used to produce: "2 个适配器" is the same sentence as
+    // "两个适配器", and it was reported as no count at all.
+    expect(statedCount('Two adapters are registered — `universal`, `mock`.', 'en')).toBe(2);
+    expect(statedCount('2 adapters are registered — `universal`, `mock`.', 'en')).toBe(2);
+    expect(statedCount('随包同时注册 `universal` 与 `mock` 两个适配器。', 'zh')).toBe(2);
+    expect(statedCount('随包同时注册 `universal` 与 `mock` 2 个适配器。', 'zh')).toBe(2);
+    expect(statedCount('随包同时注册 `universal` 与 `mock` 2个适配器。', 'zh')).toBe(2);
+    // A count word outside the table is still "a count we cannot read", not a
+    // number the checks then compare.
+    expect(statedCount('Several adapters are registered.', 'en')).toBeUndefined();
   });
 });
 
 describe('bootstrap.ts loads the table, not a copy of it', () => {
-  it.skipIf(bootstrap === '')('reads ADAPTER_CANDIDATES', () => {
+  beforeAll(() => {
+    expect(bootstrap, `bootstrap.ts is missing (${BOOTSTRAP_PATH})`).not.toBe('');
+  });
+
+  it('reads ADAPTER_CANDIDATES', () => {
     expect(bootstrap).toContain('ADAPTER_CANDIDATES');
   });
 
-  it.skipIf(bootstrap === '')('names no adapter package itself', () => {
+  it('names no adapter package itself', () => {
     // A second copy of the list in `bootstrap.ts` would keep this gate green
     // while the app loaded a different set: the table would describe the
     // README, and the code would describe itself.
