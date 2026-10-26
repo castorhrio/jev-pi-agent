@@ -20,7 +20,7 @@ test that does nothing.
 | Handoff | Append-only chain, one-claim-per-handoff, schema-checked bodies |
 | Permissions | Deterministic risk, scoped rules, audit trail written on every outcome |
 | Credentials | A write that cannot be persisted must not report itself as saved; an unreadable vault is never overwritten |
-| Retention | One retention service: the figures the Storage pane reports are measured on the instance that purges, the start-up sweep is that same instance, and a container that has not started refuses to build one over `undefined` |
+| Retention | One retention service: the figures the Storage pane reports are measured on the instance that purges, the start-up sweep is that same instance, and a container that has not started refuses to build one over `undefined` — over a dependency list `tsc` checks, not a comment |
 | Build graph | Every `@ucad/*` dependency is a project reference, and the solution lists each package once |
 | Copy and a11y | No hard-coded UI strings, locale parity, contrast, focus indicators |
 | Menu | Every command Main registers has a renderer handler |

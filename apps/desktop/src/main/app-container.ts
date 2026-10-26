@@ -12,6 +12,7 @@ import * as path from 'node:path';
 import { safeStorage } from 'electron';
 import { Database, EventLog, MessageProjector, SessionSequencer } from '@ucad/storage';
 import { RetentionService, SessionStore } from '@ucad/session';
+import type { RetentionServiceOptions } from '@ucad/session';
 import { PermissionEngine } from '@ucad/permissions';
 import { SafeStorageSecretStore } from '@ucad/secrets';
 import { UsageStore } from '@ucad/usage';
@@ -62,6 +63,57 @@ export interface UcadAppOptions {
   /** compiled adapter entry points, keyed by adapter id */
   adapterModules?: Record<string, string>;
 }
+
+/**
+ * The mark a checked field carries.
+ *
+ * `requireStarted()` is the only thing that hands one out, so a dependency
+ * that reaches a service without passing the guard is a compile error rather
+ * than a runtime surprise: `eventLog: this.eventLog` does not type-check
+ * where a `Started<…>` is expected, and
+ * `eventLog: this.requireStarted('eventLog', this.eventLog)` does.
+ *
+ * The mark is a fiction the type system believes — at runtime the field is
+ * the same object it always was. That is the point: the difference is
+ * invisible to a caller and visible to the compiler.
+ */
+const STARTED = Symbol('ucad.container.started');
+
+/** A field `requireStarted()` has vouched for. */
+type Started<T> = T & { readonly [STARTED]: true };
+
+/**
+ * The container fields the retention service is built from (§8.4).
+ *
+ * The list is the contract, and it is deliberately the *only* place the names
+ * are written down:
+ *
+ *  - it is checked against the container (`keyof UcadApp`), so a name on it
+ *    that is not a real field does not compile;
+ *  - the bag below is typed by it, so a name on it has to be supplied — and
+ *    supplied *through the guard*, because the bag holds `Started<…>` values;
+ *  - the contract test walks it one field at a time, so a field the guard
+ *    forgot is a test that fails.
+ */
+export const RETENTION_DEPENDENCIES = [
+  'db',
+  'sessionStore',
+  'blobs',
+  'logger',
+] as const satisfies readonly (keyof UcadApp)[];
+
+/**
+ * The bag the retention service is built from: one *checked* field per name
+ * on the list.
+ *
+ * If the service gains a dependency, `retentionDeps()` stops satisfying the
+ * service's own options until the dependency is on the list above — and until
+ * it goes through `requireStarted()`. A dependency nobody checks is a
+ * dependency that reaches a subsystem as `undefined`.
+ */
+type RetentionDeps = {
+  readonly [F in (typeof RETENTION_DEPENDENCIES)[number]]: Started<UcadApp[F]>;
+};
 
 export class UcadApp {
   readonly paths: AppPaths;
@@ -142,15 +194,32 @@ export class UcadApp {
       // `usage()`/`purge()` failed somewhere inside the storage layer with a
       // message about SQLite rather than about the container. A refusal here
       // names the field and the call that is missing.
+      const deps = this.retentionDeps();
       this.retentionService = new RetentionService({
-        db: this.requireStarted('db', this.db),
-        sessionStore: this.requireStarted('sessionStore', this.sessionStore),
-        blobs: this.requireStarted('blobs', this.blobs),
-        logger: this.requireStarted('logger', this.logger).child('retention'),
+        ...deps,
+        logger: deps.logger.child('retention'),
         dbPath: this.paths.dbPath,
       });
     }
     return this.retentionService;
+  }
+
+  /**
+   * The checked dependency bag the retention service is built from.
+   *
+   * The return type is the *service's* own dependency set (`dbPath` is the
+   * one option the container does not own), so a dependency the service gains
+   * does not compile here until this bag supplies it — and the bag only
+   * accepts fields that went through `requireStarted()`.
+   */
+  private retentionDeps(): Omit<RetentionServiceOptions, 'dbPath'> {
+    const deps: RetentionDeps = {
+      db: this.requireStarted('db', this.db),
+      sessionStore: this.requireStarted('sessionStore', this.sessionStore),
+      blobs: this.requireStarted('blobs', this.blobs),
+      logger: this.requireStarted('logger', this.logger),
+    };
+    return deps;
   }
 
   /**
@@ -165,8 +234,17 @@ export class UcadApp {
    * fault report about the wrong layer. The code is `STORAGE_ERROR` because
    * that is what the caller's next step would have failed on anyway; the
    * message names the field, which is the part a support report needs.
+   *
+   * `field` is typed as a real field of this class, and the value has to be
+   * the field it names: `requireStarted('db', this.sessionStore)` is a type
+   * error, and so is a name that is not a field at all. The `Started<…>` the
+   * call returns is what makes "this dependency went through the guard" a
+   * compile-time fact instead of a comment.
    */
-  private requireStarted<T>(field: string, value: T | undefined): T {
+  private requireStarted<K extends keyof UcadApp>(
+    field: K,
+    value: UcadApp[K] | undefined | null,
+  ): Started<UcadApp[K]> {
     if (value === undefined || value === null) {
       throw codedError(
         'STORAGE_ERROR',
@@ -174,7 +252,11 @@ export class UcadApp {
         'storage',
       );
     }
-    return value;
+    // The mark is added here and nowhere else. At runtime this is the same
+    // object the field always was; the only thing that changed is that it
+    // came through this function, and that is exactly what the type system
+    // needs to know.
+    return value as Started<UcadApp[K]>;
   }
 
   async start(): Promise<void> {

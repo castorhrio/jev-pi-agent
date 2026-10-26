@@ -46,9 +46,20 @@ import { RetentionService } from '@ucad/session';
 import type { StoragePurgeResult, StorageUsageDto } from '@ucad/contracts';
 import { silentLogger } from '@ucad/observability';
 
-import { UcadApp } from '../../apps/desktop/src/main/app-container';
+import { UcadApp, RETENTION_DEPENDENCIES } from '../../apps/desktop/src/main/app-container';
 import { registerStorageIpc } from '../../apps/desktop/src/main/ipc-storage';
 import type { AppPaths } from '../../apps/desktop/src/main/paths';
+
+/**
+ * The fields the retention service is built from.
+ *
+ * Written out here as well as in the product, and the two are compared
+ * below. The product's list is what the guard is *typed* by; this one is what
+ * a rename has to change as well — so `sessionStore` becoming `sessions`
+ * fails the build and the suite, instead of leaving a guard that checks a
+ * field nothing reads any more.
+ */
+const GUARDED_FIELDS = ['db', 'sessionStore', 'blobs', 'logger'] as const;
 
 const PATHS: AppPaths = {
   userData: '/ucad-test/userData',
@@ -170,6 +181,44 @@ describe('the container owns one retention service (§8.4)', () => {
     const first = app.getRetention();
     expect(first).toBeInstanceOf(RetentionService);
     expect(app.getRetention()).toBe(first);
+  });
+
+  it('names the field that is missing — one field at a time', () => {
+    // The guard checked four fields and the suite only ever exercised `db`,
+    // so three of the four could have been dropped from the guard — or
+    // renamed in the product — and every test here would still have passed.
+    // Each field is now missing on its own, and the refusal has to name
+    // *that* field: a guard that says "not initialised" without saying which
+    // one is a support report that starts with a guess.
+    for (const field of GUARDED_FIELDS) {
+      const app = makeApp();
+      // Only this one is missing: the other three are the real collaborators
+      // `makeApp()` installs, so the refusal cannot come from a neighbour.
+      (app as unknown as Record<string, unknown>)[field] = undefined;
+
+      let thrown: unknown;
+      try {
+        app.getRetention();
+      } catch (error) {
+        thrown = error;
+      }
+
+      expect(thrown, `a container missing only ${field} handed out a retention service`)
+        .toBeInstanceOf(Error);
+      // The same code as the blanket refusal: what the caller would have
+      // failed on anyway.
+      expect((thrown as { code?: string }).code).toBe('STORAGE_ERROR');
+      // And the field itself, so the message is actionable.
+      expect((thrown as Error).message, `the refusal did not name ${field}`).toContain(field);
+    }
+  });
+
+  it('guards exactly the fields the retention service is built from', () => {
+    // The product's list is the contract the guard is typed by; this is the
+    // same list written out, so a field added on one side and forgotten on
+    // the other is a failing test rather than a guard that quietly covers
+    // less than the service needs.
+    expect([...RETENTION_DEPENDENCIES]).toEqual([...GUARDED_FIELDS]);
   });
 
   it('builds one per container, not one per process', () => {
