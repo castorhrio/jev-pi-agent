@@ -155,7 +155,8 @@ contract test. Two rules apply to all of them:
 | Scanner | Lives in | What it reads |
 |---|---|---|
 | Comment blanking | `tests/contract/source-scan.ts`, driven by `source-scan.test.ts` | Comments vs. code: strings, template literals and their `${…}` interpolations, regex literals, division |
-| Container claims | `tests/contract/app-container-started.test.ts` | `field!: T` declarations in `app-container.ts` |
+| Comment blanking (oracle) | `tests/contract/source-scan.ts`, driven by `source-scan.oracle.test.ts` | The same text read by the TypeScript parser: comment ranges must be blanked in place, and every other byte kept |
+| Container claims | `tests/contract/app-container-started.test.ts` | `field!: T` declarations in `app-container.ts`; the checklists live in `container-contract.ts` |
 | Zod messages | `tests/contract/zod-message-scan.ts`, driven by `zod-custom-messages.test.ts` | Custom-message positions inside Zod schema expressions |
 | Bare throws | `tests/contract/bare-throw-scan.ts`, driven by `error-formatting.test.ts` | `throw new Error(…)` / `throw appError(…)` under `apps/desktop/src/main` |
 | Page scripts | `tests/contract/layout-scripts.test.ts` | The scripts in `scripts/layout-page-scripts.mjs` |
@@ -184,6 +185,16 @@ literals, judged by the operand heuristic (a value before the `/` means division
 heuristic is biased so that a mistake can only make a gate *find* something, never lose code.
 If a scan needs a different reading of a shape, add it here with a fixture; a second copy of
 this walk in a gate is the bug this module exists to prevent.
+
+**Comment blanking has an oracle.** Fixtures pin the shapes this walk is known to read;
+`source-scan.oracle.test.ts` asks `@typescript-eslint/typescript-estree` — a parser that knows
+nothing about this heuristic — for the comment ranges in every `.ts`/`.tsx` the repository ships,
+and compares the two readings byte for byte. A disagreement fails with the file, line and column.
+That is how the *next* unanticipated spelling is found on purpose rather than by a downstream gate
+losing a call. A deliberate refusal (the `}` case above) is recorded in `KNOWN_DIFFERENCES` in that
+file, with a reason; the list is checked in both directions, so an entry that no longer differs is
+also a failure. Do not add an entry to get green: either fix the walk and add a fixture, or write
+down why the refusal is deliberate.
 
 **Container claims.** The rule matches `!:`, not `!: ` — `db!:Database` is the same claim
 as `db!: Database` to the compiler, so requiring the space silently skipped a field. It

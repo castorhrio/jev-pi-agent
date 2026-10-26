@@ -51,10 +51,13 @@ import { blankComments as blankCommentsShared } from './source-scan';
 import {
   checkChannelUrl,
   checkFeedUrl,
+  checkOpenStagedInstaller,
   checkStagedFileUnchanged,
+  closeStagedInstaller,
   fileIdentity,
   isUpdateChannelScheme,
   normalizeSha256,
+  openStagedInstallerForLaunch,
   parseUpdateConfig,
   resolveUpdateFeed,
   verifyInstaller,
@@ -1311,6 +1314,106 @@ describe('the launch verifier refuses what the plain verifier refuses', () => {
   });
 });
 
+/**
+ * The descriptor the launch path holds across the hook.
+ *
+ * `verifyStagedInstallerForLaunch()` answers a question and closes; the launch
+ * path cannot do that, because closing and re-opening the path is the window
+ * this work is about. These cases drive the open-handle pair directly, so both
+ * halves of `checkOpenStagedInstaller()` have a failure that can be produced:
+ * a rewrite of the *file object* (the descriptor sees it) and a rename over
+ * the *path* (only a fresh resolution sees it).
+ */
+describe('the launch verifier holds the file object it checked', () => {
+  let dir: string;
+  let file: string;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'ucad-open-verify-'));
+    file = join(dir, 'UCAD-setup.exe');
+  });
+
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('accepts an untouched file and refuses an in-place rewrite', async () => {
+    const genuine = 'the genuine installer';
+    writeFileSync(file, genuine);
+    const opened = await openStagedInstallerForLaunch(file, {
+      sha256: sha256Of(genuine),
+      size: genuine.length,
+    });
+    expect(opened.ok, 'the fixture was not verified in the first place').toBe(true);
+    if (!opened.ok) return;
+
+    try {
+      expect(checkOpenStagedInstaller(file, opened.handle)).toEqual({ ok: true });
+
+      // Keeps the inode, changes the length: `ino` alone cannot see it. The
+      // held descriptor can, because its fstat is the file object that was
+      // hashed rather than a later resolution of the name.
+      writeFileSync(file, 'the evil installer, and then some');
+      expect(checkOpenStagedInstaller(file, opened.handle)).toEqual({
+        ok: false,
+        reason: 'replaced',
+      });
+    } finally {
+      closeStagedInstaller(opened.handle);
+    }
+  });
+
+  it('refuses a rename over the path while the descriptor is open', async () => {
+    const genuine = 'the genuine installer';
+    const swapped = 'the evil installer!!!';
+    expect(swapped.length, 'the size check would be able to take the credit').toBe(genuine.length);
+    writeFileSync(file, genuine);
+
+    const opened = await openStagedInstallerForLaunch(file, {
+      sha256: sha256Of(genuine),
+      size: genuine.length,
+    });
+    expect(opened.ok).toBe(true);
+    if (!opened.ok) return;
+
+    try {
+      // The descriptor still names the genuine file, which is exactly why the
+      // descriptor alone is not enough: the launch resolves the *path*.
+      const replacement = join(dir, 'replacement.exe');
+      writeFileSync(replacement, swapped);
+      renameSync(replacement, file);
+
+      expect(checkOpenStagedInstaller(file, opened.handle)).toEqual({
+        ok: false,
+        reason: 'replaced',
+      });
+    } finally {
+      closeStagedInstaller(opened.handle);
+    }
+  });
+
+  it('reports a file that is gone as unreadable', async () => {
+    const genuine = 'the genuine installer';
+    writeFileSync(file, genuine);
+    const opened = await openStagedInstallerForLaunch(file, {
+      sha256: sha256Of(genuine),
+      size: genuine.length,
+    });
+    expect(opened.ok).toBe(true);
+    if (!opened.ok) return;
+
+    try {
+      rmSync(file);
+      expect(checkOpenStagedInstaller(file, opened.handle)).toEqual({
+        ok: false,
+        reason: 'unreadable',
+      });
+    } finally {
+      closeStagedInstaller(opened.handle);
+    }
+  });
+});
+
 describe('the updater itself', () => {
   let dir: string;
 
@@ -1742,6 +1845,47 @@ describe('the updater itself', () => {
     // The digest that *was* verified travels with the refusal: it is the one
     // fact that says which file the user was about to run.
     expect(refusal!.meta).toMatchObject({ reason: 'replaced', sha256: sha256Of(genuine) });
+  });
+
+  it('refuses an in-place rewrite during the launch window, and never launches it', async () => {
+    // The other substitution shape: the same inode is written again through
+    // the staged path. A path comparison that only looks at `ino` would call
+    // this unchanged; the descriptor held across the hook sees the length.
+    const genuine = 'the genuine installer';
+    const logs = new MemoryLogSink();
+    const { instance, launched } = service({
+      logs,
+      feed: {
+        version: '9.9.9',
+        url: INSTALLER_URL,
+        sha256: sha256Of(genuine),
+        size: genuine.length,
+      },
+      download: async (_url, target) => {
+        writeFileSync(target, genuine);
+      },
+      beforeLaunch: (target) => {
+        writeFileSync(target, 'the evil installer, and then some');
+      },
+    });
+
+    await instance.check();
+    expect((await instance.download()).state).toBe('ready');
+
+    const installed = await instance.installAndRestart();
+
+    expect(installed, 'the updater launched a file it had not verified').toBe(false);
+    expect(launched, 'the rewritten installer was launched').toEqual([]);
+    expect(
+      existsSync(join(dir, 'UCAD-setup.exe')),
+      'the rewritten file was left on disk under the name that means "pending update"',
+    ).toBe(false);
+    expect(instance.current.message).toContain('发生变化');
+    expect(
+      logs.records.find(
+        (record) => record.msg === 'refusing to install an update that changed after it was verified',
+      )!.meta,
+    ).toMatchObject({ reason: 'replaced', sha256: sha256Of(genuine) });
   });
 
   it('asks for a fresh download when the file disappears before the launch', async () => {

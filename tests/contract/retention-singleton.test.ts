@@ -46,7 +46,8 @@ import { RetentionService } from '@ucad/session';
 import type { StoragePurgeResult, StorageUsageDto } from '@ucad/contracts';
 import { silentLogger } from '@ucad/observability';
 
-import { UcadApp, RETENTION_DEPENDENCIES } from '../../apps/desktop/src/main/app-container';
+import { UcadApp } from '../../apps/desktop/src/main/app-container';
+import { RETENTION_DEPENDENCIES } from '../../apps/desktop/src/main/container-contract';
 import { registerStorageIpc } from '../../apps/desktop/src/main/ipc-storage';
 import type { AppPaths } from '../../apps/desktop/src/main/paths';
 

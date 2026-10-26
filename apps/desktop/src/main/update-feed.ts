@@ -39,6 +39,7 @@
 import { createHash } from 'node:crypto';
 import {
   closeSync,
+  constants,
   createReadStream,
   fstatSync,
   openSync,
@@ -526,18 +527,78 @@ export async function verifyStagedInstallerForLaunch(
   filePath: string,
   expected: { sha256?: unknown; size?: unknown },
 ): Promise<StagedInstallerVerification> {
+  const opened = await openStagedInstallerForLaunch(filePath, expected);
+  if (!opened.ok) return opened;
+  try {
+    return {
+      ok: true,
+      sha256: opened.handle.sha256,
+      bytes: opened.handle.bytes,
+      identity: opened.handle.identity,
+    };
+  } finally {
+    closeStagedInstaller(opened.handle);
+  }
+}
+
+/** A verified installer whose descriptor is still open. */
+export interface StagedInstallerHandle {
+  readonly fd: number;
+  readonly identity: FileIdentity;
+  readonly sha256: string;
+  readonly bytes: number;
+}
+
+/** What opening a staged installer for launch answers. */
+export type OpenedStagedInstaller =
+  | { readonly ok: true; readonly handle: StagedInstallerHandle }
+  | Extract<InstallerVerification, { ok: false }>;
+
+/** Closes a descriptor without letting a close failure become a refusal. */
+function closeDescriptor(fd: number): void {
+  try {
+    closeSync(fd);
+  } catch {
+    /* a descriptor we cannot close is a leak, not a refusal */
+  }
+}
+
+/** The flags a staged installer is opened with. */
+function stagedInstallerFlags(): number {
+  // `O_NOFOLLOW` is POSIX-only; on Windows the constant is absent and the
+  // fallback leaves the plain read open. The staged name is a constant under
+  // the user's download directory either way, and a symlink there is a
+  // substitution, not an installer.
+  return constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0);
+}
+
+/**
+ * `verifyStagedInstallerForLaunch()`, leaving the descriptor open.
+ *
+ * The caller owns the handle and must close it with `closeStagedInstaller()`.
+ * That is deliberate: the launch path needs the same file object to stay open
+ * across the `beforeLaunch` seam, so the identity it checked cannot be
+ * replaced by a re-open of the path in between. `verifyStagedInstallerForLaunch()`
+ * is the closed wrapper for callers that only need the answer.
+ */
+export async function openStagedInstallerForLaunch(
+  filePath: string,
+  expected: { sha256?: unknown; size?: unknown },
+): Promise<OpenedStagedInstaller> {
   const expectedHash = normalizeSha256(expected.sha256);
   if (expectedHash === null) return { ok: false, reason: 'no-hash' };
   const expectedSize = expectedSizeOf(expected.size);
 
   let fd: number;
   try {
-    // One `open`, and it answers "is it there" and "can it be read" at once.
-    fd = openSync(filePath, 'r');
+    // One `open`, and it answers "is it there", "can it be read" and "is it
+    // a symlink" at once. The descriptor is held on success.
+    fd = openSync(filePath, stagedInstallerFlags());
   } catch {
     return { ok: false, reason: 'unreadable' };
   }
 
+  let keepOpen = false;
   try {
     // Before the read, not after: the identity has to describe the file the
     // digest is about to be taken from, so anything that changes later — a
@@ -574,14 +635,51 @@ export async function verifyStagedInstallerForLaunch(
     if (actual !== expectedHash) {
       return { ok: false, reason: 'hash-mismatch', expected: expectedHash, actual, bytes };
     }
-    return { ok: true, sha256: actual, bytes, identity };
+    keepOpen = true;
+    return { ok: true, handle: { fd, identity, sha256: actual, bytes } };
   } finally {
-    try {
-      closeSync(fd);
-    } catch {
-      /* a descriptor we cannot close is a leak, not a refusal */
-    }
+    if (!keepOpen) closeDescriptor(fd);
   }
+}
+
+/** Closes the descriptor behind a handle from `openStagedInstallerForLaunch()`. */
+export function closeStagedInstaller(handle: StagedInstallerHandle): void {
+  closeDescriptor(handle.fd);
+}
+
+/**
+ * Whether the file about to launch is still the file the open handle verified.
+ *
+ * Two questions, because one descriptor cannot answer both:
+ *
+ *  - `fstat(handle.fd)` says whether the *verified file object* changed while
+ *    it was held open. An in-place rewrite through the same path keeps the
+ *    inode and is invisible to a path comparison that only looks at `ino`; the
+ *    descriptor's size and mtime see it.
+ *  - `checkStagedFileUnchanged()` asks the *path* what the launch will resolve.
+ *    A rename over the staged name leaves the descriptor pointing at the old,
+ *    untouched file, so the descriptor alone would say "fine" while `openPath`
+ *    ran the substitute. Only a fresh resolution of the path can see that.
+ *
+ * The residual window is the gap between this check and the OS resolving the
+ * same path inside the launcher: a path-based launch cannot be made atomic
+ * with a path check. What this closes is every change that can happen during
+ * `beforeLaunch`, which is the window the test seam exists to open.
+ */
+export function checkOpenStagedInstaller(
+  filePath: string,
+  handle: StagedInstallerHandle,
+): StagedFileCheck {
+  let now: FileIdentity;
+  try {
+    now = fileIdentity(fstatSync(handle.fd));
+  } catch {
+    return { ok: false, reason: 'unreadable' };
+  }
+  if (!sameFileIdentity(handle.identity, now)) {
+    return { ok: false, reason: 'replaced' };
+  }
+  return checkStagedFileUnchanged(filePath, handle.identity);
 }
 
 /**

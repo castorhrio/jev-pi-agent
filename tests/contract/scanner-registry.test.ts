@@ -87,6 +87,15 @@ const SCANNERS: readonly ScannerRule[] = [
     },
   },
   {
+    id: 'Comment blanking (oracle)',
+    lives: ['tests/contract/source-scan.ts', 'tests/contract/source-scan.oracle.test.ts'],
+    driver: 'tests/contract/source-scan.oracle.test.ts',
+    pins: {
+      file: 'tests/contract/source-scan.oracle.test.ts',
+      block: 'the parser is an independent oracle for comment blanking',
+    },
+  },
+  {
     id: 'Container claims',
     lives: ['tests/contract/app-container-started.test.ts'],
     pins: {

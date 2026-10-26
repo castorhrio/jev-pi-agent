@@ -42,13 +42,15 @@ import type { Logger } from '@ucad/observability';
 import {
   checkChannelUrl,
   checkFeedUrl,
-  checkStagedFileUnchanged,
+  checkOpenStagedInstaller,
+  closeStagedInstaller,
   isUpdateChannelScheme,
   normalizeSha256,
+  openStagedInstallerForLaunch,
   verifyInstaller,
-  verifyStagedInstallerForLaunch,
   type InstallerVerification,
   type StagedFileCheck,
+  type StagedInstallerHandle,
   type UpdateFeedDocument,
 } from './update-feed';
 
@@ -474,17 +476,21 @@ export class UpdateService {
    * path, and a path is resolved twice: once by the hash, once by the OS at
    * launch. Everything that happens between them — a rename over the staged
    * name, a rewrite in place, a deletion — is a window, and a window with no
-   * gate is what the previous round of this work was about. So the check
-   * returns the *identity* of the file object it hashed (device, inode, size,
-   * mtime) and it is compared against the path once more, immediately before
-   * the launch. A file that is no longer that file is deleted, and the refusal
-   * is logged with both readings.
+   * gate is what the previous round of this work was about. So the file is
+   * opened once, hashed through that descriptor, and the descriptor is *held
+   * open* across the window. Immediately before the launch, the same
+   * descriptor is `fstat`ed (an in-place rewrite keeps the inode and only the
+   * size or mtime can see it) and the path is resolved once more (a rename
+   * over the staged name leaves the same descriptor pointing at the old file,
+   * so the path has to answer for itself). A file that is no longer that file
+   * is deleted, and the refusal is logged with both readings.
    *
-   * The residual gap is one `stat` call wide, and `FileIdentity` in
-   * `update-feed.ts` says exactly what it does not catch. It is deliberately
-   * not "hash the installer a second time": that would move the window rather
-   * than close it, and it would double the wait on a button the user already
-   * waited on.
+   * The residual gap is the one syscall between that last path check and the
+   * OS resolving the same path inside the launcher. A path-based launch cannot
+   * be atomic with a path check, and `FileIdentity` in `update-feed.ts` says
+   * exactly what it does not catch. It is deliberately not "hash the installer
+   * a second time": that would move the window rather than close it, and it
+   * would double the wait on a button the user already waited on.
    */
   async installAndRestart(): Promise<boolean> {
     const target = this.status.downloadedPath;
@@ -493,39 +499,40 @@ export class UpdateService {
       return false;
     }
 
-    // Verified through a descriptor and answered with the file's identity, so
-    // the launch below can ask whether the path still names that file.
-    const verification = await verifyStagedInstallerForLaunch(target, {
+    // Verified through a descriptor that stays open until the launch decision.
+    // The handle, not the path, is the thing that was hashed: closing and
+    // re-opening the path here would leave a second window in which the name
+    // could resolve somewhere else.
+    const opened = await openStagedInstallerForLaunch(target, {
       sha256: this.feed?.sha256,
       size: this.feed?.size,
     });
-    if (!verification.ok) {
+    if (!opened.ok) {
       removeStagedInstaller(target);
       this.opts.logger.error('refusing to install an unverified update', {
-        reason: verification.reason,
-        expected: verification.expected,
-        actual: verification.actual,
+        reason: opened.reason,
+        expected: opened.expected,
+        actual: opened.actual,
       });
       this.set({
         state: 'error',
         verified: false,
         downloadedPath: undefined,
-        message: verificationMessage(verification),
+        message: verificationMessage(opened),
       });
       return false;
     }
 
     // The window between the hash and the launch. Nothing in production runs
-    // here (see `beforeLaunch`); the check below runs whatever happened in it.
-    await this.opts.beforeLaunch?.(target);
-
-    const unchanged = checkStagedFileUnchanged(target, verification.identity);
+    // here (see `beforeLaunch`); the descriptor is held across it, and both
+    // the file object and the path are asked again once it closes.
+    const unchanged = await this.recheckBeforeLaunch(target, opened.handle);
     if (!unchanged.ok) {
       removeStagedInstaller(target);
       this.opts.logger.error('refusing to install an update that changed after it was verified', {
         reason: unchanged.reason,
-        sha256: verification.sha256,
-        bytes: verification.bytes,
+        sha256: opened.handle.sha256,
+        bytes: opened.handle.bytes,
       });
       this.set({
         state: 'error',
@@ -536,15 +543,21 @@ export class UpdateService {
       return false;
     }
 
-    this.opts.logger.info('installing update', { target, sha256: verification.sha256 });
+    this.opts.logger.info('installing update', {
+      target,
+      sha256: opened.handle.sha256,
+    });
     // Launching must happen before quit, and a failed launch must be visible:
     // after quit() the process is going away, so an unchecked openPath would
     // end the app with the user never seeing an installer.
     const launcher = this.opts.openInstaller ?? ((file: string) => shell.openPath(file));
-    void launcher(target).then((opened) => {
-      if (opened) {
-        this.opts.logger.error('update installer failed to launch', { target, reason: opened });
-        this.set({ state: 'error', message: opened });
+    void launcher(target).then((launchError) => {
+      if (launchError) {
+        this.opts.logger.error('update installer failed to launch', {
+          target,
+          reason: launchError,
+        });
+        this.set({ state: 'error', message: launchError });
       } else {
         // `app` is always present in the real main process; the guard keeps
         // a test that exercises the launch path from taking the process down
@@ -553,6 +566,27 @@ export class UpdateService {
       }
     });
     return true;
+  }
+
+  /**
+   * Runs the test seam and answers whether the open file is still the one it
+   * was verified as.
+   *
+   * The descriptor is closed here, on every path, because the callers either
+   * delete the staged file or hand it to the launcher immediately afterwards.
+   * Keeping it open past the decision would only make `rmSync` fight an open
+   * handle on Windows.
+   */
+  private async recheckBeforeLaunch(
+    target: string,
+    handle: StagedInstallerHandle,
+  ): Promise<StagedFileCheck> {
+    try {
+      await this.opts.beforeLaunch?.(target);
+      return checkOpenStagedInstaller(target, handle);
+    } finally {
+      closeStagedInstaller(handle);
+    }
   }
 
   /** Used by the Settings screen when the user would rather do it themselves. */

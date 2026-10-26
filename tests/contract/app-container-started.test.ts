@@ -30,7 +30,7 @@
  *  - the *guard's scope* is read from the sources rather than from the comment
  *    that describes it: `requireStarted()` is asked for `retentionDeps()`'s
  *    fields and nothing else, in the container and under all of `src/main`.
- *    `STARTED`'s note says widening the guard means widening `retentionDeps()`;
+ *    `Started`'s note says widening the guard means widening `retentionDeps()`;
  *    a comment cannot be wrong, so the note has a failing test behind it.
  *
  * The scan is tested on fixtures first. A scanner that only ever runs over a
@@ -68,12 +68,14 @@ vi.mock('electron', () => ({
 import { RetentionService } from '@ucad/session';
 
 import {
-  RETENTION_DEPENDENCIES,
-  STARTED_FIELDS,
   UcadApp,
   assertStartComplete,
   missingStartedFields,
 } from '../../apps/desktop/src/main/app-container';
+import {
+  RETENTION_DEPENDENCIES,
+  STARTED_FIELDS,
+} from '../../apps/desktop/src/main/container-contract';
 import type { AppPaths } from '../../apps/desktop/src/main/paths';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -534,14 +536,13 @@ function mainSources(dir: string = MAIN_SOURCE): { path: string; source: string 
  * The claims, as the container writes them.
  *
  * The scan above finds whatever the container currently declares; this list is
- * what it is *allowed* to declare, and it now lives in `app-container.ts` —
- * next to `start()`, which is the only thing that can make it true. That move
- * is the whole point of this paragraph: the list used to be written here, and
- * `tests/` belongs to no tsc project (the contract suite carries pre-existing
- * type errors), so its `satisfies readonly ContainerField[]` was an editor
- * check while CI ran only the runtime assertions. In the product file it is
- * part of `apps/desktop/tsconfig.main.json`, so a name that is not a field —
- * a rename carried through the class only, a typo — fails
+ * what it is *allowed* to declare, and it lives in `container-contract.ts` —
+ * beside `start()`, which is the only thing that can make it true. It used to
+ * be written here, and `tests/` belongs to no tsc project (the contract suite
+ * carries pre-existing type errors), so its `satisfies readonly ContainerField[]`
+ * was an editor check while CI ran only the runtime assertions. In the product
+ * file it is part of `apps/desktop/tsconfig.main.json`, so a name that is not a
+ * field — a rename carried through the class only, a typo — fails
  * `npm run typecheck`. Same rule, a gate that is actually run.
  *
  * Nothing about the contract changed by moving it. The list is still
@@ -882,7 +883,7 @@ describe('the guard’s scope, as the sources write it', () => {
   });
 
   it('guards nothing outside retentionDeps()', () => {
-    // `STARTED`'s scope note says the guard is not a blanket wrapper and that
+    // `Started`'s scope note says the guard is not a blanket wrapper and that
     // "adding a field to the guard's scope means widening `retentionDeps()`".
     // That is a claim about the source, and nothing checked it: a call added
     // anywhere else in the class — or in another main-process file — kept the
