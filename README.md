@@ -145,8 +145,10 @@ that does not.
 - **Auto-update needs a feed URL.** Releases publish one, and the released
   build carries it — nothing to configure. To point at another feed, set
   `UCAD_UPDATE_FEED=https://github.com/castorhrio/jev-pi-agent/releases/latest/download/update-feed.json`
-  and the update check (Settings → 检查更新) reads it instead. With no feed
-  the app says so rather than failing quietly.
+  and the update check (Settings → 检查更新) reads it instead. The variable
+  must be `https`: a cleartext address is refused, and the app does not fall
+  back to the bundled feed. With no feed the app says so rather than failing
+  quietly.
 - **The interactive terminal needs `node-pty`.** It is an optional dependency;
   without it the terminal panel reports that it is unavailable instead of
   pretending to work. The command channel still runs.
