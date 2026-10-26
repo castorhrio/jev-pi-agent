@@ -34,15 +34,36 @@
  * it true is the point: a new limitation is added to both languages *and* to
  * the table, or this file goes red.
  *
+ * ## Why nothing here skips
+ *
+ * Every case in this file used to sit behind `it.skipIf(readme === '')`. A
+ * deleted, moved or renamed README therefore produced a green run: the one case
+ * that could say "the sections are gone" was skipped by the same condition that
+ * made it true, and the rest compared fixtures against themselves. That is the
+ * house rule this repository already states for its other document gates — a
+ * check that cannot fail is not a check — so the file now asserts its own
+ * subject first, unconditionally, and lets every later case fail when the
+ * README is not there. `readme.test.ts` next door had the same guard and got the
+ * same fix in the same commit.
+ *
  * Deliberately **not** asserted: that the two sentences mean the same thing,
  * that they are the same length, or anything else about how they read.
  */
 
 import { describe, expect, it } from 'vitest';
 import { existsSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
 
-const README = 'README.md';
-const readme = existsSync(README) ? readFileSync(README, 'utf8') : '';
+/**
+ * The README this file reads, anchored at the repository rather than the cwd.
+ *
+ * `readFileSync('README.md')` resolved against whatever directory the runner
+ * was started in. From the repository root that is the same file; from
+ * anywhere else the gate silently read *nothing* — and, with a `skipIf` guard in
+ * front of every case, reported a green run about a document it never opened.
+ */
+const README_PATH = join(import.meta.dirname, '..', '..', 'README.md');
+const readme = existsSync(README_PATH) ? readFileSync(README_PATH, 'utf8') : '';
 
 const EN_HEADING = '### Current limitations';
 const ZH_HEADING = '### 当前局限';
@@ -190,7 +211,17 @@ const sections: Record<Lang, readonly string[]> = {
 };
 
 describe('README limitations, English and Chinese', () => {
-  it.skipIf(readme === '')('finds both sections, so the checks below are not vacuous', () => {
+  it('finds README.md and both sections, so the checks below are not vacuous', () => {
+    // Unconditional, and first. Every other case here reads `readme`, and all of
+    // them used to sit behind a `skipIf` guard on `readme === ''` — including
+    // this one, which asserted `existsSync` from behind the same skip. A
+    // deleted, moved or renamed README was therefore a *green* run in which the
+    // only surviving assertions compared fixtures with themselves: a gate that
+    // switches itself off when its subject disappears is not a gate.
+    // `adapter-candidates.test.ts` and `scanner-registry.test.ts` already follow
+    // this rule; this file was the remaining place that did not.
+    expect(existsSync(README_PATH), `README.md is missing (${README_PATH})`).toBe(true);
+    expect(readme.trim().length, `README.md is empty (${README_PATH})`).toBeGreaterThan(0);
     // A section that was renamed or deleted would make every assertion below
     // trivially green, which is the shape of a gate that has stopped gating.
     expect(en, `the README no longer has a "${EN_HEADING}" section`).toBeDefined();
@@ -201,13 +232,13 @@ describe('README limitations, English and Chinese', () => {
     expect(sections.zh.length).toBeGreaterThan(1);
   });
 
-  it.skipIf(readme === '')('names a limitation in the table at all', () => {
+  it('names a limitation in the table at all', () => {
     // Same anti-vacuity rule, applied to the table: an empty list would make
     // `parityProblems` return `[]` whatever the README says.
     expect(LIMITATIONS.length).toBeGreaterThan(2);
   });
 
-  it.skipIf(readme === '')('states each limitation in both languages', () => {
+  it('states each limitation in both languages', () => {
     const problems = parityProblems(sections, LIMITATIONS);
     expect(
       problems,

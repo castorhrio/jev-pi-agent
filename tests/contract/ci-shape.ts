@@ -292,9 +292,23 @@ export function workflowsPackageTheApp(workflows: readonly WorkflowFile[]): bool
  * is not findable by `grep`-ing the command alone once the reader is told only
  * "this file".
  *
+ * ## The two fixes, and the one non-fix
+ *
+ * The message names the *two* edits that resolve a red run — reword the prose,
+ * or update the documents that claim CI packages nothing — and then forbids the
+ * third, which is the one a hurried reader reaches for: narrowing
+ * {@link PACKAGING_COMMANDS}, or teaching the matcher to skip `#` comments, so
+ * that the alarm stops ringing. That edit turns a one-line prose change into a
+ * gate that no longer sees a real step, which is the failure this module exists
+ * to prevent (see "What the matching cannot tell apart" above). Printing the
+ * prohibition next to the failure is the only place it can be read at the moment
+ * it matters: the module doc is not open when the gate goes red.
+ *
  * The exact wording is asserted in `ci-shape.test.ts` (*reports the file, the
- * line and the fix*), because advice nobody tests is advice that quietly stops
- * being printed.
+ * line and the fix* and *tells the reader not to narrow the vocabulary*),
+ * because advice nobody tests is advice that quietly stops being printed — and a
+ * deletion that keeps the assertions compiling is exactly how this file's
+ * predecessor lost its `line`.
  */
 export function packagingProblem(workflows: readonly WorkflowFile[]): string | undefined {
   const findings = packagingCommandsIn(workflows);
@@ -302,9 +316,12 @@ export function packagingProblem(workflows: readonly WorkflowFile[]): string | u
   return [
     `a workflow under \`.github/workflows/\` names a packaging command: ${findings.join(', ')}.`,
     'The packaged asar check is documented as manual, so one of these lines is now false.',
-    'If it is a comment or a `name:` string — the match is textual and cannot tell a comment ' +
-      'from a step — reword that line; no document needs to change.',
-    'If it is a real step, update README.md (both languages), CONTRIBUTING.md and ' +
+    'Fix it one of two ways:',
+    '  1. If the line is prose — a `#` comment or a `name:` string, which this textual match ' +
+      'cannot tell from a step — reword that line; no document needs to change.',
+    '  2. If it is a real step, update README.md (both languages), CONTRIBUTING.md and ' +
       'adapter-resolution.ts to say what CI checks instead of only adding the job.',
+    'Do not narrow PACKAGING_COMMANDS and do not add a comment exemption to silence this: ' +
+      'that trades a one-line reword for a gate that misses a real packaging step.',
   ].join('\n');
 }

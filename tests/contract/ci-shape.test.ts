@@ -281,12 +281,43 @@ describe('the packaging match is textual, and errs toward a false alarm', () => 
         expect(problem).toContain('reword that line');
         expect(problem).toContain('README.md (both languages)');
         expect(problem).toContain('CONTRIBUTING.md');
+        // The third document is named because it repeats the claim in prose:
+        // the header of `adapter-resolution.ts` says the asar check is manual
+        // too, and a real step would make it stale there as well.
+        expect(problem).toContain('adapter-resolution.ts');
+        // Order matters as much as presence: the cheap reading is offered
+        // first, so a contributor whose comment tripped the gate is not sent to
+        // rewrite three documents for nothing.
+        expect(problem.indexOf('reword that line')).toBeLessThan(
+          problem.indexOf('README.md (both languages)'),
+        );
       },
     );
 
     // The clean direction, so the hint is not printed over a tree that passes:
     // a gate whose message always fires is a message nobody reads.
     expect(packagingProblem([{ name: 'ci.yml', text: CLEAN_CI }])).toBeUndefined();
+  });
+
+  it('tells the reader not to narrow the vocabulary, so a false alarm is not "fixed" by weakening the gate', () => {
+    // The edit this forbids is the tempting one: the gate is red over a comment,
+    // so the next reader narrows `PACKAGING_COMMANDS` or teaches the matcher to
+    // skip `#` lines, the red goes away — and so does the ability to see a real
+    // packaging step. `ci-shape.ts` argues that asymmetry at length; a reader
+    // staring at a red run is not reading that argument, so the failure itself
+    // has to say it. Asserted rather than trusted to the string staying put:
+    // the sentence is one `join` edit away from silently disappearing, and the
+    // only thing that would notice is a reader who already knew.
+    const problem = packagingProblem([{ name: 'release.yml', text: PACKAGING_RELEASE }]);
+    expect(problem, 'a packaging step did not produce a failure').toBeDefined();
+    expect(problem).toContain('Do not narrow PACKAGING_COMMANDS');
+    expect(problem).toContain('comment exemption');
+    // …and the ban is stated as a trade, so it reads as advice rather than as
+    // an unexplained rule: the cost of the edit is named in the same sentence.
+    expect(problem).toContain('misses a real packaging step');
+    // The ban is not the only advice: both real fixes are still in the message.
+    expect(problem).toContain('reword that line');
+    expect(problem).toContain('README.md (both languages)');
   });
 });
 

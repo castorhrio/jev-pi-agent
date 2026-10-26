@@ -17,7 +17,10 @@
  * It was deleted once, for a real reason: the code-only release removed
  * every root markdown file, and a gate whose subject does not exist cannot
  * fail — it is the appearance of coverage rather than coverage. It came back
- * with the README.
+ * with the README, and the `skipIf(readme === '')` guard that came with it made
+ * the same mistake a second way: with the README gone, every case here — the
+ * assertion that the file exists included — was *skipped*, and the run was
+ * green. The guard is gone; a missing README is now the first red.
  *
  * Deliberately **not** asserted here:
  *  - the numbers in prose (they are gone from the README for this reason, and a
@@ -29,8 +32,18 @@ import { describe, expect, it } from 'vitest';
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 
-const README = 'README.md';
-const readme = existsSync(README) ? readFileSync(README, 'utf8') : '';
+/**
+ * Every path below is anchored at the repository, not at the process cwd.
+ *
+ * `existsSync('tests/contract/foo.test.ts')` and `readdirSync('tests')` were
+ * relative, so the gate only checked the right tree when the runner happened to
+ * be started in the repository root — and the `skipIf` in front of every case
+ * turned any other start directory into a green run about a README that was
+ * never read.
+ */
+const REPO_ROOT = join(import.meta.dirname, '..', '..');
+const README_PATH = join(REPO_ROOT, 'README.md');
+const readme = existsSync(README_PATH) ? readFileSync(README_PATH, 'utf8') : '';
 
 /**
  * Top-level directories a repo-relative path in this README can start with.
@@ -53,7 +66,8 @@ function testFilesByBasename(): Set<string> {
       else out.add(entry.name);
     }
   };
-  if (existsSync('tests')) walk('tests');
+  const testsDir = join(REPO_ROOT, 'tests');
+  if (existsSync(testsDir)) walk(testsDir);
   return out;
 }
 
@@ -104,11 +118,19 @@ const paths = citations.filter((c) => c.kind === 'path');
 const tests = citations.filter((c) => c.kind === 'test');
 
 describe('README', () => {
-  it.skipIf(readme === '')('is present', () => {
-    expect(readme.length).toBeGreaterThan(0);
+  it('is present, so the checks below have a subject', () => {
+    // Unconditional on purpose. This case used to assert `readme.length`, which
+    // is `0` for a missing file — and it was skipped in exactly that case, so
+    // the one assertion that could have said "the README is gone" was the one
+    // the missing README switched off. The file is the subject of every case
+    // here; its absence is a failure of the promise this gate keeps, not a
+    // reason to be quiet. `adapter-candidates.test.ts` and
+    // `scanner-registry.test.ts` already state the same rule.
+    expect(existsSync(README_PATH), `README.md is missing (${README_PATH})`).toBe(true);
+    expect(readme.length, `README.md is empty (${README_PATH})`).toBeGreaterThan(0);
   });
 
-  it.skipIf(readme === '')('cites files, so the checks below are not vacuous', () => {
+  it('cites files, so the checks below are not vacuous', () => {
     expect(
       paths.length + tests.length,
       'no file citations were recognised in the README, so the existence checks ' +
@@ -116,8 +138,10 @@ describe('README', () => {
     ).toBeGreaterThan(0);
   });
 
-  it.skipIf(readme === '')('only cites repo-relative paths that exist', () => {
-    const missing = paths.filter((c) => !existsSync(c.text)).map((c) => c.text);
+  it('only cites repo-relative paths that exist', () => {
+    const missing = paths
+      .filter((c) => !existsSync(join(REPO_ROOT, c.text)))
+      .map((c) => c.text);
     expect(
       missing,
       `the README points at ${missing.length} path(s) that do not exist:\n  ` +
@@ -125,7 +149,7 @@ describe('README', () => {
     ).toEqual([]);
   });
 
-  it.skipIf(readme === '')('only names tests that still exist', () => {
+  it('only names tests that still exist', () => {
     const known = testFilesByBasename();
     const missing = tests.filter((c) => !known.has(c.text)).map((c) => c.text);
     expect(
@@ -135,7 +159,7 @@ describe('README', () => {
     ).toEqual([]);
   });
 
-  it.skipIf(readme === '')('states no test count, which is the claim that rots', () => {
+  it('states no test count, which is the claim that rots', () => {
     // The failure this guards against is specific and already happened once:
     // "npm test  # 121 个契约 / 集成测试" sat there long after the number was
     // three times larger. The fix was to delete the number, not to update it.
