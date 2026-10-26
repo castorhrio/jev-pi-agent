@@ -113,6 +113,21 @@ function shouldPreventClose(): boolean {
  * Electron boot — and this function only supplies the three facts about *this*
  * process that the search depends on. Nothing else in Main knows where an
  * adapter is loaded from.
+ *
+ * **`write` is deliberately not passed.** The resolver's `write` option is the
+ * diagnostic channel for the "could not be resolved" line and the
+ * "adapters resolved:" summary; left unset, it defaults to `console.error`,
+ * which is where a person who launched the app from a terminal is already
+ * looking. Adapter resolution runs *before* the container exists, so the only
+ * logger available here is `bootLog`, a file-plus-memory sink — and a failure
+ * that lands only in `app.log` is a failure nobody sees until they go looking.
+ * Passing `write` here (or defaulting it from `log`) would quietly remove the
+ * one channel that survives "the app started with no adapter at all". See the
+ * `write` field in `adapter-resolution.ts` for why both channels exist.
+ *
+ * `bootLog` itself is bootstrap-scoped: it exists only until the container is
+ * constructed below, after which `ucad.logger` (and its `appLog` child) takes
+ * over every diagnostic in this file.
  */
 function loadAdapterModules(log?: Logger): Record<string, string> {
   return resolveAdapterModules({

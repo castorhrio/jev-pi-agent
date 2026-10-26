@@ -41,7 +41,7 @@
 
 import { createRequire } from 'node:module';
 import * as path from 'node:path';
-import { describeError } from '@ucad/contracts';
+import { codedError, describeError } from '@ucad/contracts';
 import type { Logger } from '@ucad/observability';
 import { ADAPTER_CANDIDATES } from './adapter-candidates';
 
@@ -78,8 +78,15 @@ export interface AdapterSearchContext {
  * `path.resolve` with segments rather than a `../../../..` string: the same
  * path, but a reader can count the hops, and the mapping is what the gate
  * asserts.
+ *
+ * The return type is a non-empty tuple, so "this list has at least one entry" is
+ * a fact the compiler carries into `resolveAdapterModules` rather than something
+ * that function has to hope for. Every layout above is therefore always asked,
+ * including a packaged one.
  */
-export function adapterSearchPaths(context: AdapterSearchContext): string[] {
+export function adapterSearchPaths(
+  context: AdapterSearchContext,
+): readonly [string, ...string[]] {
   return [
     context.appPath,
     path.resolve(context.mainDir, '..', '..', '..', '..'),
@@ -113,8 +120,20 @@ export interface AdapterResolution {
 }
 
 export interface ResolveAdapterModulesOptions {
-  /** the directories to resolve against, from {@link adapterSearchPaths} */
-  searchPaths: readonly string[];
+  /**
+   * The directories to resolve against, from {@link adapterSearchPaths}.
+   *
+   * A non-empty tuple, not `string[]`: an empty list is not a weaker version of
+   * this argument, it is an undefined one. Resolution anchors on
+   * `searchPaths[0]` and hands the whole list to `require.resolve`, so `[]`
+   * would silently anchor at `process.cwd()` and let Node fall back to its own
+   * default paths — the resolution would then depend on the directory the app
+   * happened to be launched from, which is the class of bug this module exists
+   * to remove (see {@link nodeResolve}). The tuple stops a future caller at
+   * compile time; the assertion at the top of {@link resolveAdapterModules}
+   * stops one that arrived through `as any`.
+   */
+  searchPaths: readonly [string, ...string[]];
   /** the table; `ADAPTER_CANDIDATES` unless a test says otherwise */
   candidates?: Readonly<Record<string, string>>;
   /**
@@ -122,7 +141,7 @@ export interface ResolveAdapterModulesOptions {
    * injected by tests so a failure path can be produced without inventing a
    * missing package.
    */
-  resolve?: (specifier: string, searchPaths: readonly string[]) => string;
+  resolve?: (specifier: string, searchPaths: readonly [string, ...string[]]) => string;
   /** where the per-failure warning and the summary line go */
   log?: Logger;
   /**
@@ -146,9 +165,19 @@ export interface ResolveAdapterModulesOptions {
  * transformed to ESM (the test run). The anchor filename only sets the base
  * directory, and every call passes `paths` explicitly, so the anchor itself
  * never has to exist.
+ *
+ * The first path is read without a `?? process.cwd()` fallback: that fallback
+ * was the one way an empty list could still "work", anchored wherever the
+ * process was started, and it made the promise of this module — "the search
+ * paths are the list you passed" — untrue exactly when the list was empty. The
+ * tuple type and the assertion in {@link resolveAdapterModules} are what make
+ * the fallback unnecessary.
  */
-function nodeResolve(specifier: string, searchPaths: readonly string[]): string {
-  const anchor = path.join(searchPaths[0] ?? process.cwd(), 'adapter-resolution-probe.cjs');
+function nodeResolve(
+  specifier: string,
+  searchPaths: readonly [string, ...string[]],
+): string {
+  const anchor = path.join(searchPaths[0], 'adapter-resolution-probe.cjs');
   return createRequire(anchor).resolve(specifier, { paths: [...searchPaths] });
 }
 
@@ -163,10 +192,29 @@ function nodeResolve(specifier: string, searchPaths: readonly string[]): string 
 export function resolveAdapterModules(
   options: ResolveAdapterModulesOptions,
 ): AdapterResolution {
+  const searchPaths = options.searchPaths;
+  // The tuple in the options type already refuses this at compile time; this is
+  // for the caller that got here through `as any` or through a spread. It
+  // throws *before* the first resolve and before anything is written, because
+  // an empty list is not a resolution that found nothing — it is a question
+  // that was never asked, and reporting it as `(none)` would blame the adapters
+  // for a broken caller.
+  if (searchPaths.length === 0) {
+    // Coded, not a bare `Error`: §4.11 makes a refusal name a reason, and the
+    // gate in `tests/contract/error-formatting.test.ts` scans `main/*.ts` for
+    // exactly this. `INVALID_INPUT` is the honest code — the *caller* passed a
+    // list that cannot be resolved against, which is not an adapter being
+    // unavailable and must not read like one in a support report.
+    throw codedError(
+      'INVALID_INPUT',
+      'adapter resolution needs at least one search path',
+      'container',
+    );
+  }
+
   const candidates = options.candidates ?? ADAPTER_CANDIDATES;
   const resolve = options.resolve ?? nodeResolve;
   const write = options.write ?? ((line: string) => console.error(line));
-  const searchPaths = options.searchPaths;
 
   const modules: Record<string, string> = {};
   const failures: AdapterFailure[] = [];

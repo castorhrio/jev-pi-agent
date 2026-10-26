@@ -142,14 +142,35 @@ function backticked(text: string): string[] {
 }
 
 /**
+ * What an adapter id looks like: lower-case ASCII, dashes allowed, digit not
+ * first.
+ *
+ * This is a **shape convention**, not a list of the ids the table happens to
+ * have. It has to be, or the gate below would be circular: the whole point of
+ * `adapterIdsIn` is to read ids out of the README so they can be compared with
+ * the table *in both directions*, and a filter derived from the table would
+ * make "the README names an adapter the table does not register" — the red the
+ * removed-adapter fixture produces — unreachable.
+ *
+ * The price of a hardcoded shape is that a table entry whose id does not fit it
+ * becomes invisible to every README check: the bullet naming it would be read
+ * as naming nothing, so the gate would go red with "the adapter text does not
+ * name `foo_bar`" and send the editor to the README, which might be correct.
+ * That is why the shape is asserted against the table (below) rather than
+ * trusted: change the shape of an id and the *convention* has to change here,
+ * and in the README's prose, in the same edit.
+ */
+const ADAPTER_ID_SHAPE = /^[a-z][a-z0-9-]*$/u;
+
+/**
  * Adapter ids named by a bullet: the backticked tokens shaped like one.
  *
- * An id is lower-case ASCII with dashes — the spelling `ADAPTER_CANDIDATES`
- * uses. Everything else a bullet might quote is excluded by shape rather than
- * by a list of exceptions.
+ * Everything else a bullet might quote is excluded by shape rather than by a
+ * list of exceptions — see {@link ADAPTER_ID_SHAPE} for why it is a shape and
+ * not the table's keys.
  */
 function adapterIdsIn(bullet: string): string[] {
-  const ids = backticked(bullet).filter((token) => /^[a-z][a-z0-9-]*$/.test(token));
+  const ids = backticked(bullet).filter((token) => ADAPTER_ID_SHAPE.test(token));
   return [...new Set(ids)].sort();
 }
 
@@ -395,6 +416,27 @@ describe('README adapter paragraph ↔ ADAPTER_CANDIDATES', () => {
       .not.toEqual([]);
   });
 
+  it('reads every id in the table, so the shape convention is not stale', () => {
+    // `adapterIdsIn` decides what counts as an adapter id by shape. An entry
+    // whose id does not fit that shape would be invisible to every README check
+    // in this file: the bullet naming it would be read as naming nothing, and
+    // the gate would blame the prose. This pins the other end — the shape
+    // convention covers the table exactly.
+    const unreadable = Object.keys(ADAPTER_CANDIDATES).filter(
+      (id) => !ADAPTER_ID_SHAPE.test(id),
+    );
+    expect(
+      unreadable,
+      'these ids are not shaped like an adapter id, so the README checks cannot read them; ' +
+        'change ADAPTER_ID_SHAPE (and the README prose) to match',
+    ).toEqual([]);
+    // Every key reads back through the reader itself, not just through the
+    // regex: a change to how ids are extracted shows up here too.
+    expect(adapterIdsIn(Object.keys(ADAPTER_CANDIDATES).map((id) => `\`${id}\``).join(', '))).toEqual(
+      Object.keys(ADAPTER_CANDIDATES).sort(),
+    );
+  });
+
   it('states the same adapters, in both languages and in the table', () => {
     const problems = candidateProblems(facts);
     expect(
@@ -471,6 +513,33 @@ describe('the checks can see the README diverge', () => {
       'zh: the adapter text names `mock`, which the table does not register',
     );
     expect(problems).toContain('en: the adapter text says 2 adapter(s) ship and the table registers 1');
+  });
+
+  it('reports an adapter id written into the README that the table never registered', () => {
+    // The forward direction: the *prose* grew an id, the table did not. The
+    // fixture above gets here by mutating the table, which proves the two lists
+    // are compared; this one starts from a README-shaped bullet and proves the
+    // reader actually sees a stranger in it, rather than silently reading
+    // nothing because the token was filtered out by shape.
+    const grown =
+      'Two adapters are registered — `universal`, `mock` and `anthropic`.';
+    expect(adapterIdsIn(grown)).toEqual(['anthropic', 'mock', 'universal']);
+
+    const problems = candidateProblems(withBullet('en', grown));
+    expect(problems).toContain(
+      'en: the adapter text names `anthropic`, which the table does not register',
+    );
+    // The count is still right (the bullet says two), so the *only* red is the
+    // stranger — a reader is promised a third adapter that does not ship.
+    expect(problems.filter((problem) => problem.startsWith('en: the adapter text says'))).toEqual(
+      [],
+    );
+    // A token in the same sentence that is not shaped like an id is not read as
+    // an adapter, which is what keeps this check off `stimulus`-style words.
+    expect(adapterIdsIn('Two adapters are registered: `universal`, `mock` (see `UCAD`).')).toEqual([
+      'mock',
+      'universal',
+    ]);
   });
 
   it('reports an adapter named in the feature summary that the table does not register', () => {

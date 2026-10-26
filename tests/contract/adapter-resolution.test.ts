@@ -29,7 +29,7 @@
  * there to be found.
  */
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { existsSync } from 'node:fs';
 import { join, sep } from 'node:path';
 import { MemoryLogSink, Logger } from '@ucad/observability';
@@ -186,6 +186,75 @@ describe('resolution reports what it found and what it did not', () => {
     expect(resolution.modules).toEqual({});
     expect(resolution.failures.map((failure) => failure.id)).toEqual(['ghost']);
     expect(written[written.length - 1]).toBe('[ucad] adapters resolved: (none)');
+  });
+
+  it('reports failures in the table order, not in whatever order they failed', () => {
+    // `Object.entries` walks the table, so a failure list is a *table*-ordered
+    // list: the first line of a bug report names the adapter the app tried
+    // first. Nothing else pins that, and "the order they are tried" is stated in
+    // `adapter-candidates.ts` as behaviour rather than presentation — the same
+    // claim the resolved list is already checked against.
+    const written: string[] = [];
+    const resolution = resolveAdapterModules({
+      candidates: {
+        first: '@ucad/adapter-nobody-ships',
+        second: '@ucad/adapter-nobody-either',
+      },
+      searchPaths: [REPO_ROOT],
+      write: (line) => written.push(line),
+    });
+
+    expect(resolution.failures.map((failure) => failure.id)).toEqual(['first', 'second']);
+    expect(resolution.failures.map((failure) => failure.specifier)).toEqual([
+      '@ucad/adapter-nobody-ships',
+      '@ucad/adapter-nobody-either',
+    ]);
+    expect(written).toEqual([
+      '[ucad] adapter "first" could not be resolved @ucad/adapter-nobody-ships',
+      '[ucad] adapter "second" could not be resolved @ucad/adapter-nobody-either',
+      '[ucad] adapters resolved: (none)',
+    ]);
+  });
+
+  it('refuses an empty search path list instead of resolving against the cwd', () => {
+    // The one input the type forbids but a runtime can still receive: `[]`
+    // used to anchor `nodeResolve` at `process.cwd()` and let Node fall back to
+    // its own default paths, so "the directories in this list are the only ones
+    // asked" quietly stopped being true — and the caller was told
+    // `adapters resolved: (none)`, as if the adapters were at fault.
+    const { log, sink } = recordingLogger();
+    // `write` is left at its default (`console.error`) on purpose: the channel
+    // the person at a terminal watches is the one that must stay quiet, and
+    // injecting a `write` here would test the injection instead of the default.
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    let caught: unknown;
+    try {
+      resolveAdapterModules({
+        // `as unknown as …`: reaching this call is exactly what the assertion
+        // is for, and a test cannot reach it through the type.
+        searchPaths: [] as unknown as readonly [string, ...string[]],
+        candidates: { ghost: '@ucad/adapter-ghost' },
+        log,
+      });
+    } catch (error) {
+      caught = error;
+    } finally {
+      consoleError.mockRestore();
+    }
+
+    expect(caught, 'the empty list was accepted').toBeInstanceOf(Error);
+    // §4.11: a refusal names a code. A bare `Error` here would reach the log as
+    // `UNKNOWN`, which is indistinguishable from a crash — and this is the one
+    // failure that must read as "the caller is broken", not "an adapter is".
+    expect((caught as { code?: unknown }).code).toBe('INVALID_INPUT');
+    expect((caught as Error).message).toMatch(/at least one search path/u);
+
+    // It fails before it resolves anything and before it says anything: a
+    // half-walked table reported as `(none)` would look like a successful run
+    // that found no adapters.
+    expect(consoleError).not.toHaveBeenCalled();
+    expect(sink.records).toEqual([]);
   });
 
   it('uses Node resolution when no resolver is injected, and finds a real package', () => {
