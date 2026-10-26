@@ -69,6 +69,86 @@ function schemaFailureFields(error: ZodError): string[] {
 }
 
 /**
+ * Whether an issue's message is Zod's own wording rather than a sentence this
+ * app wrote.
+ *
+ * Zod writes its messages in English (`Expected string, received number`), and
+ * `toUserError` pasted that straight into the line a person reads. Two schemas
+ * in this app do spell their refusal out in Chinese — the purge confirmation and
+ * its unknown-field refusal — and those sentences must survive, so the two have
+ * to be told apart rather than blindly replaced.
+ *
+ * The test is language, because that is what actually separates them: every
+ * sentence this app shows a person is Chinese, and Zod's are not. The second
+ * check exists because Zod quotes the value it received, so a default message
+ * can end up with CJK inside it (`Invalid enum value. Expected 'a' | 'b',
+ * received '值'`); its openings are named rather than guessed at.
+ */
+const ZOD_OWN_OPENING =
+  /^(Expected|Invalid|Required|Unrecognized key|String must|Number must|Array must|Date must|Set must|Value must|Too small|Too big|Not )/;
+
+function isZodOwnText(message: string): boolean {
+  if (!/[\u4e00-\u9fff]/.test(message)) return true;
+  return ZOD_OWN_OPENING.test(message);
+}
+
+/**
+ * The reason half of 「输入无效」, in Chinese.
+ *
+ * A schema failure reaches a person as one sentence — `输入无效 (cols)：…` — and
+ * the part after the field name was `issue.message`: Zod's English, on every
+ * schema that did not write its own. That is almost all of them, so the whole
+ * IPC surface told a user things like `Expected number, received string` while
+ * §7.2 promised a user-safe sentence. The field name was translated and the
+ * reason was the library's diagnostics.
+ *
+ * Giving every schema a custom message is the other fix, and the one that rots:
+ * a sentence to repeat on forty schemas, and English again the moment one is
+ * added without it. So the translation is keyed by the issue `code` — always
+ * present, and the only stable thing across Zod's wording — while a schema that
+ * *did* write a sentence keeps it (`isZodOwnText`).
+ *
+ * The value the caller sent is never part of it: Zod's own messages quote it,
+ * and a refusal is not a place to echo an input back.
+ */
+function zodReason(issue: z.ZodIssue): string {
+  if (!isZodOwnText(issue.message)) return issue.message;
+  switch (issue.code) {
+    case 'invalid_type':
+      // `received: 'undefined'` is how Zod spells "the field was not sent" — a
+      // different mistake from a wrong type, and one the caller can fix.
+      return issue.received === 'undefined' ? '缺少必填字段' : '类型不正确';
+    case 'too_small':
+      if (issue.type === 'array') return '至少需要一项';
+      if (issue.type === 'number' || issue.type === 'date') return '数值太小';
+      return '内容太短';
+    case 'too_big':
+      if (issue.type === 'array') return '项目太多';
+      if (issue.type === 'number' || issue.type === 'date') return '数值太大';
+      return '内容太长';
+    case 'invalid_string':
+      return '格式不正确';
+    case 'invalid_enum_value':
+    case 'invalid_literal':
+      return '取值不在允许的范围内';
+    case 'invalid_union':
+    case 'invalid_union_discriminator':
+      return '格式不匹配';
+    case 'invalid_date':
+      return '日期无效';
+    case 'unrecognized_keys':
+      return '包含未知字段';
+    case 'not_finite':
+    case 'not_multiple_of':
+      return '数值无效';
+    default:
+      // `custom` lands here when a schema added an issue without a message of
+      // its own; anything else is a Zod code this build does not translate.
+      return '不符合要求';
+  }
+}
+
+/**
  * The last narrowing before the bridge: one user-safe sentence, and no fields.
  *
  * The `code` was already logged by `handle()`; it is dropped here on purpose.
@@ -80,12 +160,12 @@ function schemaFailureFields(error: ZodError): string[] {
 function toUserError(error: unknown): Error {
   // A ZodError's .message is a multi-line JSON dump of every issue — valid in
   // a log, hostile in a toast, and it echoes the raw input. One line naming
-  // the first failing field is what §7.2 means by user-safe; the full issues
-  // stay in the log above.
+  // the first failing field, and why in Chinese, is what §7.2 means by
+  // user-safe; the full issues stay in the log above.
   if (error instanceof ZodError) {
     const first = error.issues[0];
     const where = first && first.path.length > 0 ? ` (${first.path.join('.')})` : '';
-    return new Error(`输入无效${where}${first ? `: ${first.message}` : ''}`);
+    return new Error(`输入无效${where}${first ? `：${zodReason(first)}` : ''}`);
   }
   const appError = toAppError(error, 'ipc');
   return new Error(appError.message);

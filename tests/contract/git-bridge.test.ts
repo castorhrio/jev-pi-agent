@@ -404,6 +404,64 @@ describe('git diffSummary — the bounds', () => {
     expect(h.diffs).toEqual([]);
   });
 
+  it('writes the late-status line with the same fields as the deadline line', async () => {
+    // The two lines are the same story told twice — a snapshot at the deadline,
+    // and what became of the subprocess that snapshot left out there — so a
+    // reader (or a support report) compares them field by field. Which fields
+    // each one carries was only held together by a comment in `git-bridge.ts`
+    // ("the same shape as the deadline line"): nothing failed if a field was
+    // added to one and not the other, and the reader would then be comparing
+    // `undefined` against a number and drawing a conclusion from it.
+    //
+    // So the sets are pinned exactly, not as a subset. The two fields that
+    // legitimately belong to one line only are named here, which is what makes
+    // a *third* one a decision someone has to make out loud:
+    //  - `deadlineMs` is about the budget, which the late answer knows nothing
+    //    about;
+    //  - `outcome` is about the late answer, which the deadline does not have.
+    const h = harness({ statusSlowMs: 60, diffDeadlineMs: 25 });
+
+    await h.bridge.diffSummary({ workspaceId: 'ws_1' });
+    await after(120, undefined);
+
+    const stopped = h.logs.find((line) => line.event === 'git diff summary stopped at its deadline');
+    const discarded = h.logs.find(
+      (line) => line.event === 'git diff summary discarded a late status answer',
+    );
+    expect(stopped, 'the deadline line was not written').toBeDefined();
+    expect(discarded, 'the late-status line was not written').toBeDefined();
+
+    /** everything both lines must carry, sorted so a diff reads as a diff */
+    const shared = [
+      'abandoned',
+      'collected',
+      'failed',
+      'inFlight',
+      'requested',
+      'stage',
+      'statusInFlight',
+      'workspaceId',
+    ];
+    expect(Object.keys(stopped!.fields ?? {}).sort()).toEqual([...shared, 'deadlineMs'].sort());
+    expect(Object.keys(discarded!.fields ?? {}).sort()).toEqual([...shared, 'outcome'].sort());
+
+    // The shared fields mean the same thing on both lines: a summary with
+    // nothing in it. Only the subprocess counts may differ, and they must.
+    for (const key of shared) {
+      if (key === 'inFlight' || key === 'statusInFlight') continue;
+      expect(discarded!.fields?.[key], `${key} disagrees between the two lines`).toEqual(
+        stopped!.fields?.[key],
+      );
+    }
+    // The one pair that is *supposed* to differ, and the whole reason the
+    // second line exists: still out there at the deadline, gone by the time
+    // the answer arrived.
+    expect(stopped!.fields?.statusInFlight).toBe(true);
+    expect(stopped!.fields?.inFlight).toBe(1);
+    expect(discarded!.fields?.statusInFlight).toBe(false);
+    expect(discarded!.fields?.inFlight).toBe(0);
+  });
+
   it('accounts for every requested path in the deadline log', async () => {
     // The log used to carry `abandoned` as a number nobody could check. It is
     // an arithmetic claim — every requested path is in exactly one bucket —

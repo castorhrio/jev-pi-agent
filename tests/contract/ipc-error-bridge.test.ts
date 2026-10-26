@@ -162,6 +162,110 @@ describe('input mistakes are not refusals with codes', () => {
 });
 
 /**
+ * The sentence is Chinese — including the reason, not just the label.
+ *
+ * ## Why this file exists
+ *
+ * `toUserError` built its line as 「输入无效 (field): <issue.message>」, and
+ * `issue.message` is Zod's own text unless the schema wrote one. Two schemas in
+ * this app write theirs (the purge confirmation and its unknown-field refusal);
+ * the rest do not, which is nearly all of the IPC surface. So a user who sent
+ * the wrong type to `terminal:ptyResize` was shown
+ *
+ *     输入无效 (cols): Expected number, received string
+ *
+ * — the field name translated, the reason left in the library's English, and
+ * arguably the wrong half translated. §7.2 promises a *user-safe* sentence;
+ * "the diagnostics of a validation library" is not one, and a person cannot act
+ * on `Expected number`.
+ *
+ * The fix belongs in the wrapper, not on forty schemas: the reason is now
+ * derived from the issue `code` (see `zodReason`), and a schema that did write a
+ * sentence keeps it. Both halves are asserted below, because the fix for the
+ * first is one line away from destroying the second.
+ */
+describe('a schema failure reaches the person in Chinese', () => {
+  /**
+   * One failing payload per shape, each refused by the schema before its handler
+   * touches a service — the container in this file only has a logger, so any
+   * case that got further would throw something other than a schema failure and
+   * fail the `输入无效` assertion rather than pass quietly.
+   */
+  const cases: Array<{ name: string; channel: string; args: unknown[]; reason: string }> = [
+    // whole payload of the wrong type: no field to name, so the reason is all
+    { name: 'wrong type', channel: IPC_CHANNELS.app.setLocale, args: [42], reason: '类型不正确' },
+    // an enum field: Zod's own message would quote the value back
+    {
+      name: 'value outside an enum',
+      channel: IPC_CHANNELS.workspace.setTrust,
+      args: ['sure'],
+      reason: '取值不在允许的范围内',
+    },
+    // a string that is too short
+    { name: 'empty string', channel: IPC_CHANNELS.sessions.resume, args: [''], reason: '内容太短' },
+    // a field inside an object, which is what the `(field)` part is for
+    {
+      name: 'wrong type in a field',
+      channel: IPC_CHANNELS.terminal.ptyResize,
+      args: [{ terminalId: 't1', cols: '80', rows: 24 }],
+      reason: '类型不正确',
+    },
+    // a number below its minimum
+    {
+      name: 'number below its minimum',
+      channel: IPC_CHANNELS.events.since,
+      args: [{ sessionId: 's1', afterSeq: -1 }],
+      reason: '数值太小',
+    },
+    // "the field was not sent" is a different mistake from "the wrong type"
+    {
+      name: 'missing field',
+      channel: IPC_CHANNELS.events.since,
+      args: [{ afterSeq: 0 }],
+      reason: '缺少必填字段',
+    },
+  ];
+
+  for (const item of cases) {
+    it(`keeps ${item.name} in Chinese, and names the reason`, async () => {
+      log.length = 0;
+      const rejection = (await invoke(item.channel, ...item.args)) as Error;
+
+      expect(rejection, `${item.name} was not refused`).toBeInstanceOf(Error);
+      expect(rejection.message).toContain('输入无效');
+      expect(rejection.message).toContain(item.reason);
+      // The boundary: no English reaching the Renderer. Zod's own wording is
+      // what this guards against, so the check is for the words Zod uses, not
+      // for "some translation happened" — a schema failure that says
+      // `Expected string` has failed a person whether or not 「输入无效」 leads
+      // the line.
+      expect(rejection.message).not.toMatch(/expected|invalid|required|must contain/i);
+      // And still one line: the multi-line JSON dump stays in the log.
+      expect(rejection.message).not.toContain('\n');
+    });
+  }
+
+  it('keeps a sentence the schema wrote itself', async () => {
+    // The purge refusal is Chinese at the source, and it is the case the
+    // wrapper must not overwrite: `PURGE_UNCONFIRMED` is a sentence about
+    // confirming a deletion, which no phrase keyed by an issue code can say.
+    const unconfirmed = (await invoke(IPC_CHANNELS.storage.purge, { scope: 'all' })) as Error;
+    expect(unconfirmed.message).toContain('确认');
+
+    // `strict(msg)` is the same shape with a different code
+    // (`unrecognized_keys`), and the same requirement: the field list it spells
+    // out survives the wrapper.
+    const unknownField = (await invoke(IPC_CHANNELS.storage.purge, {
+      scope: 'all',
+      confirm: true,
+      force: true,
+    })) as Error;
+    expect(unknownField.message).toContain('未知的字段');
+    expect(unknownField.message).not.toMatch(/unrecognized/i);
+  });
+});
+
+/**
  * The code of a malformed request, on the log side of the bridge.
  *
  * ## Why this file exists

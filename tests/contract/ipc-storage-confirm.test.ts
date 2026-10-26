@@ -91,7 +91,7 @@ describe('storage:purge refuses an unconfirmed request at the schema', () => {
     const issue = (error as ValidationFailure).issues[0];
     expect(issue?.path).toEqual(['confirm']);
     // The message a person sees: `toUserError` renders a ZodError as
-    // 「输入无效 (confirm): …」 with this text after the colon.
+    // 「输入无效 (confirm)：…」 with this text after the colon.
     expect(issue?.message).toContain('确认');
   });
 
