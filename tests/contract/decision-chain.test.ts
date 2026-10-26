@@ -718,6 +718,62 @@ describe('a combination chain: every entry, its reason, and the order', () => {
     // pruned to something, it was emptied.
     expect(sink.records.some((record) => record.msg === 'engine chain pruned')).toBe(false);
   });
+
+  it('calls a self-contradicting engine a contradiction, both times, and never a duplicate', () => {
+    // The one combination the three-reason test above cannot reach: the same id
+    // twice *and* a manifest that may not run. Two questions apply to the
+    // second entry — "is it allowed to run?" and "is it already in the chain?"
+    // — and this product answers the first one, twice.
+    //
+    // What makes that a decision rather than an accident is that the duplicate
+    // check consults the ids *kept so far* (`ids.includes`), not a `seen` set
+    // of the requested ids. Swap that for the usual `seen` set and the first
+    // copy is still refused, but the second becomes a `duplicate` — which
+    // tells the user to delete a line from Settings when the engine is the
+    // thing that is broken. That is the edit this test catches.
+    const sink = new MemoryLogSink();
+    const logger = new Logger({ scope: 'chain', sink });
+    const { facade } = makeFacade({
+      engines: [stubEngine('jev', { sideEffects: ['none', 'network'] })],
+      logger,
+    });
+
+    const running = facade.setChain(['jev', 'jev']);
+
+    // Nothing may run, so the rule engine is the last resort (D-2).
+    expect(running).toEqual([RULE_ENGINE_ID]);
+    expect(facade.chain).toEqual([RULE_ENGINE_ID]);
+
+    // One line per dropped entry — the chain has two entries, and a reader of
+    // the log can match each line to a line in Settings.
+    const refused = sink.records.filter(
+      (record) => record.msg === 'engine chain: dropping an engine whose effects may not run',
+    );
+    expect(refused).toHaveLength(2);
+    expect(refused.map((record) => record.meta?.reason)).toEqual([
+      'contradiction',
+      'contradiction',
+    ]);
+    expect(refused.map((record) => record.meta?.engineId)).toEqual(['jev', 'jev']);
+    // Every line is a warning and each explains itself: a reader who has never
+    // opened `decision-facade.ts` must not have to look up the token.
+    for (const record of refused) {
+      expect(record.level).toBe('warn');
+      expect(record.meta?.reasonExplanation).toBe(SIDE_EFFECT_REFUSAL_EXPLANATION.contradiction);
+    }
+
+    // And no duplicate line exists at all. This is the assertion that fails if
+    // the duplicate check is ever rewritten to a `seen` set built from the
+    // request: the first copy is still refused, but the second would arrive as
+    // `duplicate`, and the user would be told to delete a line instead of to
+    // fix an engine.
+    expect(sink.records.some((record) => record.meta?.reason === 'duplicate')).toBe(false);
+    expect(sink.records.map((record) => record.msg)).toEqual([
+      'engine chain: dropping an engine whose effects may not run',
+      'engine chain: dropping an engine whose effects may not run',
+      'engine chain: nothing may run from the requested chain; using the rule engine',
+    ]);
+  });
 });
 
 /**

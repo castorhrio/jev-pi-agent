@@ -153,6 +153,29 @@ export class DecisionFacade {
    * rather than only in the event string: a report counts the reasons without
    * matching on the messages, and the two refusals that used to share one
    * line are told apart.
+   *
+   * ## Duplicate is asked against the chain that runs, not the chain requested
+   *
+   * The duplicate check below is `ids.includes(id)` — the ids *kept so far* —
+   * and deliberately not a `seen` set of everything the request named. The
+   * difference shows up on `['jev', 'jev']` when `jev`'s manifest contradicts
+   * itself, and it is the whole reason `ids` is the list consulted:
+   *
+   * - as written, both entries are refused with `contradiction`;
+   * - with a `seen` set, the first would be refused and the second logged as
+   *   `duplicate`.
+   *
+   * The first is the honest one. "Listed twice" is tidiness in the user's own
+   * chain — delete a line and it is over — while a self-contradicting
+   * manifest is a bug in an engine this build shipped, which nothing in
+   * Settings can fix. A `duplicate` line about an engine that can never run
+   * reads as "your chain is nearly fine", and sends the person who reads it to
+   * the wrong place. So a refused id never enters `ids`, and every copy of it
+   * is refused on its own terms.
+   *
+   * `tests/contract/decision-chain.test.ts` pins this: the same contradictory
+   * engine twice is two `contradiction` lines and no `duplicate` line, which is
+   * exactly what a refactor to the usual `seen`-set spelling would break.
    */
   private resolveChainIds(engineIds: readonly string[]): string[] {
     const ids: string[] = [];

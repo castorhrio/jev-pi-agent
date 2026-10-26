@@ -30,7 +30,7 @@
  * function, over a provider that blocks until it is aborted.
  */
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type {
   CodeIntelligenceManifest,
   CodeIntelligenceProvider,
@@ -326,6 +326,63 @@ describe('the bridge answers with the operation, not with the provider', () => {
     expect(envelope.providerId).toBe('probe');
   });
 
+  it('falls back to `basic` when neither the caller nor the app names a provider', async () => {
+    // Both fallbacks are silent: the panel with no picker value, and a settings
+    // file with no provider. The envelope has to name the provider that
+    // answered, because the caller never chose one and cannot infer it.
+    const manager = makeManager();
+    const envelope = await runIntelligenceQuery({ intelligence: manager }, {
+      workspaceId: 'ws_1',
+      kind: 'search',
+      input: { query: 'needle' },
+    });
+
+    expect(envelope.providerId).toBe('basic');
+    // The id of the operation is not the provider id, even in the fallback
+    // case — that confusion is the bug this file exists for.
+    expect(envelope.operationId).not.toBe('basic');
+  });
+
+  it('reports the provider that answered when the caller names one this build does not know', async () => {
+    // A settings file written by a newer build, or a typo. The manager falls
+    // back to `basic` and says so in its log; the envelope has to echo the
+    // *fallback*, not the id it asked for, or the panel would label the
+    // answer with a provider that never ran.
+    const manager = makeManager();
+    const envelope = await runIntelligenceQuery({ intelligence: manager }, {
+      workspaceId: 'ws_1',
+      kind: 'search',
+      input: { query: 'needle' },
+      providerId: 'not-installed',
+    });
+
+    expect(envelope.providerId).toBe('basic');
+    expect(envelope.result.providerId).toBe('basic');
+  });
+
+  it('lets the caller cancel through the id the request carried', async () => {
+    // The whole point of a caller-allocated id, from the bridge's side: the
+    // panel starts the query, does not await it, and cancels by the id it
+    // already has. A bridge that renumbered the operation would leave this
+    // `cancel` reaching nothing — the old behaviour, in one assertion.
+    const manager = makeManager();
+    const pending = runIntelligenceQuery({ intelligence: manager }, {
+      workspaceId: 'ws_1',
+      kind: 'search',
+      input: { query: 'needle' },
+      providerId: 'blocking',
+      operationId: 'uiq_cancel_from_the_panel',
+    });
+
+    const cancel = await manager.cancel('uiq_cancel_from_the_panel');
+    expect(cancel.cancelled).toBe(true);
+
+    const envelope = await pending;
+    expect(envelope.operationId).toBe('uiq_cancel_from_the_panel');
+    expect(envelope.result.status).toBe('cancelled');
+    expect(envelope.result.result).toBeNull();
+  });
+
   it('carries the caller’s operation id through to the manager', async () => {
     const manager = makeManager();
     const envelope = await runIntelligenceQuery({ intelligence: manager }, {
@@ -431,6 +488,27 @@ describe('the payload the provider receives', () => {
     // Error, and the panels branch on `instanceof Error`.
     expect(failure).toBeInstanceOf(Error);
     expect(provider.lastInput).toBeUndefined();
+  });
+
+  it('refuses a mismatched payload before it asks the manager at all', async () => {
+    // The recording provider above proves nothing reached the *provider*. This
+    // asks the narrower question at the boundary the bridge owns: the call
+    // `runIntelligenceQuery` itself makes. "No query ran" is the claim — "the
+    // provider was handed nothing" is weaker, and a manager that logged the
+    // attempt or pre-allocated an operation id would still satisfy it.
+    const manager = makeManager();
+    const query = vi.spyOn(manager, 'query');
+
+    await expect(
+      runIntelligenceQuery({ intelligence: manager }, {
+        workspaceId: 'ws_1',
+        kind: 'search',
+        input: { query: 'needle', workspaceId: 'ws_other' },
+      }),
+    ).rejects.toThrow(/项目/);
+
+    expect(query).not.toHaveBeenCalled();
+    query.mockRestore();
   });
 
   it('accepts a payload that repeats the request’s workspace id', async () => {
