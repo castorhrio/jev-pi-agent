@@ -291,6 +291,67 @@ describe('toUserError — the one line that crosses the bridge', () => {
   });
 });
 
+/**
+ * The two halves of a refusal are built from different questions, and are
+ * allowed to answer differently — but never to be spliced together.
+ *
+ * `toUserError` names the first issue's path, and `schemaFailureFields` names
+ * 「整体」 when an issue has none. Each has its own case above; what none of them
+ * asserted is that the placeholder cannot reach the sentence, and that the
+ * sentence's parentheses appear exactly when there is a field to put in them.
+ * The failure that shape allows is specific and ugly: `输入无效 (整体)：格式不匹配`,
+ * read as a field called 「整体」, which is the same misreading `schemaFailureFields`
+ * replaced `invalid_union` to avoid — moved one layer out, into the line a
+ * person sees.
+ */
+describe('the sentence and the log’s field list never contaminate each other', () => {
+  it('keeps the placeholder out of the sentence, for every kind of failure', () => {
+    // Every code this build of Zod can raise, each asked twice: with a field to
+    // name and without. `unrecognized_keys` is left out because its field list
+    // comes from `keys` and not from the path (pinned in its own case above) —
+    // it is the one code where the two questions do not even have the same
+    // input, and it cannot produce the placeholder at all.
+    for (const code of ZOD_ISSUE_CODES) {
+      if (code === 'unrecognized_keys') continue;
+
+      const withField = toUserError(
+        new ZodError([issue({ code, path: ['cols'] })]),
+      ).message;
+      const wholeRequest = toUserError(new ZodError([issue({ code })])).message;
+
+      // The field is named, in parentheses, and only there.
+      expect(withField, `${code}: field form`).toMatch(/^输入无效 \(cols\)：/);
+      // No field => no parentheses at all: `输入无效 (整体)` would read as a field
+      // called 整体, and `输入无效 ()` as a field with no name.
+      expect(wholeRequest, `${code}: whole-request form`).toMatch(/^输入无效：/);
+      expect(wholeRequest, `${code}: brackets without a field`).not.toContain('(');
+      for (const message of [withField, wholeRequest]) {
+        expect(message, `${code}: the placeholder leaked into the sentence`).not.toContain(
+          '整体',
+        );
+        expect(message, `${code}: the sentence is not one line`).not.toContain('\n');
+      }
+    }
+  });
+
+  it('names the first issue’s field even when the list also says 整体', () => {
+    // The two answers, side by side, on one error: the list says a field *and*
+    // "the request as a whole" (the second issue has no path), while the
+    // sentence names the first issue's field. Neither is wrong — they answer
+    // different questions — but the placeholder staying in the list is what
+    // makes "the sentence never carries it" a real constraint rather than a
+    // side effect of the placeholder never being produced.
+    const error = new ZodError([
+      issue({ code: 'invalid_type', received: 'string', path: ['cols'] }),
+      issue({ code: 'invalid_union' }),
+    ]);
+
+    expect(schemaFailureFields(error)).toEqual(['cols', '整体']);
+    expect(toUserError(error).message).toBe('输入无效 (cols)：类型不正确');
+    expect(toUserError(error).message).not.toContain('输入无效 (整体)');
+  });
+});
+
 describe('zodReasonSource — where the reason in the sentence came from', () => {
   it('says "schema" for a sentence the schema wrote itself', () => {
     // The purge confirmation is the reason this rule exists: its message says
@@ -531,6 +592,74 @@ describe('ZOD_OWN_OPENINGS — the list of wordings Zod writes itself', () => {
     expect([...covered].sort()).toEqual(
       ZOD_ISSUE_CODES.filter((code) => code !== 'custom').sort(),
     );
+  });
+
+  /**
+   * One real schema per opening, so no entry can be speculation.
+   *
+   * The forward test asks "is every message this build of Zod writes in the
+   * list". This is the other question — "does this build of Zod say every entry
+   * in the list" — and it needs a schema per entry, because no single schema
+   * covers them: `Required` is what an absent root object says, `Date must` a
+   * bounded date, `Intersection` a merged-and-unmergeable pair.
+   */
+  const OPENING_SAMPLES: Record<string, () => unknown> = {
+    Expected: () => z.object({ cols: z.number() }).safeParse({ cols: 'red' }),
+    Invalid: () => z.literal('a').safeParse('b'),
+    // Not `Expected object, received undefined`: an undefined root object is
+    // the one `invalid_type` Zod words as `Required`.
+    Required: () => z.object({ cols: z.number() }).safeParse(undefined),
+    'Unrecognized key': () =>
+      z.object({ cols: z.number() }).strict().safeParse({ cols: 1, extra: 2 }),
+    'String must': () => z.string().min(5).safeParse('ab'),
+    'Number must': () => z.number().multipleOf(3).safeParse(4),
+    'Array must': () => z.array(z.string()).min(2).safeParse([]),
+    'Date must': () =>
+      z.date().min(new Date('2030-01-01')).safeParse(new Date('2020-01-01')),
+    Intersection: () =>
+      z
+        .object({ n: z.number().transform(() => 'x') })
+        .and(z.object({ n: z.number().transform(() => 1) }))
+        .parse({ n: 1 }),
+  };
+
+  it('makes this build of Zod say every opening in the list', () => {
+    // The failure this test exists for: an entry nothing can confirm. Five of
+    // them stood here — `Too small`, `Too big`, `Value must`, `Set must`,
+    // `Not ` — wordings this build's Zod never produces, written in case an
+    // upgrade started saying them. A prefix no message matches is
+    // indistinguishable from a prefix that matches, so a typo in one, or a
+    // sixth added "just in case", would never have been noticed: the list was
+    // only ever checked in one direction, and only a list checked both ways can
+    // be wrong.
+    for (const opening of ZOD_OWN_OPENINGS) {
+      const run = OPENING_SAMPLES[opening];
+      if (run === undefined) {
+        expect.fail(
+          `${JSON.stringify(opening)} is in the list but no sample makes Zod say it — delete the entry or add a sample`,
+        );
+      }
+
+      const [first] = issuesFrom(run);
+
+      expect(first, `${opening}: the sample raised no issue`).toBeDefined();
+      // The sample has to say *this* opening, not merely fail: a `Date must`
+      // entry "confirmed" by a sample that says `Expected` would pass a check
+      // that only asks "did something fail".
+      expect(
+        first?.message.startsWith(opening),
+        `${opening}: the sample says ${JSON.stringify(first?.message)} instead`,
+      ).toBe(true);
+      // And a sample is not proof the *list* knows the wording: this is the
+      // judgement the app actually makes, on the message the sample produced.
+      expect(zodReasonSource(first as z.ZodIssue), `${opening}: not read as Zod's`).toBe(
+        'table',
+      );
+    }
+
+    // The samples do not outnumber the list either: a sample left behind for a
+    // deleted entry is a test that no longer tests anything.
+    expect(Object.keys(OPENING_SAMPLES).sort()).toEqual([...ZOD_OWN_OPENINGS].sort());
   });
 
   it('keeps a Chinese sentence this app wrote out of the list', () => {

@@ -35,8 +35,14 @@ import type {
   DecisionRequest,
   DecisionResult,
 } from '@ucad/contracts';
-import { DecisionFacade } from '../../apps/desktop/src/main/decision-facade';
-import type { EngineChainDropReason } from '../../apps/desktop/src/main/decision-facade';
+import {
+  DecisionFacade,
+  SIDE_EFFECT_REFUSAL_EXPLANATION,
+} from '../../apps/desktop/src/main/decision-facade';
+import type {
+  EngineChainDropReason,
+  SideEffectRefusal,
+} from '../../apps/desktop/src/main/decision-facade';
 
 /**
  * An engine that answers with its own id, so a decision says which engine
@@ -711,5 +717,93 @@ describe('a combination chain: every entry, its reason, and the order', () => {
     // And the "pruned" summary is not written as well: the chain was not
     // pruned to something, it was emptied.
     expect(sink.records.some((record) => record.msg === 'engine chain pruned')).toBe(false);
+  });
+});
+
+/**
+ * Every refusal has a case that produces it — and says what it means.
+ *
+ * The refusals above are pinned one shape at a time, and each of them asserts
+ * *its own* reason. What none of them asks is whether the reasons they name
+ * are all the reasons there are: a third member added to `SideEffectRefusal`
+ * (with `refusalReason` returning it) would have kept every one of those tests
+ * green, because a test cannot enumerate the members of a type at runtime any
+ * more than it can typecheck them.
+ *
+ * The table in `decision-facade.ts` is what makes the type growable only on
+ * purpose: `Record<SideEffectRefusal, string>` fails `tsc` for a member with no
+ * explanation, and this is the same check made by a test run — one sample
+ * declaration per member, and the log asked whether it produced that reason at
+ * all. The mirror of `ZOD_OWN_OPENINGS` in `ipc-errors.test.ts`: an entry
+ * nothing can confirm is indistinguishable from an entry that is right.
+ */
+describe('every side-effect refusal has a case, and an explanation', () => {
+  /**
+   * One declaration that produces each refusal.
+   *
+   * Typed `Record<SideEffectRefusal, …>` so a member with no sample is a
+   * `tsc` error here too, and matched against the exported table below so that
+   * a sample left behind for a deleted member fails as well.
+   */
+  const SAMPLES: Record<SideEffectRefusal, DecisionEngineManifest['sideEffects']> = {
+    // Says "no effects" and "network" at once — the manifest contradicts
+    // itself, and no setting can make that declaration true.
+    contradiction: ['none', 'network'],
+    // An effect this build has a checkbox for nowhere: a plain request the
+    // user never agreed to, which is not the same thing as a contradiction.
+    unauthorized: ['process'],
+  };
+
+  it('produces each refusal exactly as its sample declares, and explains it', () => {
+    // The network is authorised, so no sample is refused for want of a setting:
+    // what the lines record is the declaration, not the checkbox.
+    const ids = Object.keys(SAMPLES) as SideEffectRefusal[];
+    const sink = new MemoryLogSink();
+    const logger = new Logger({ scope: 'chain', sink });
+    const { facade } = makeFacade({
+      engines: ids.map((id) => stubEngine(id, { sideEffects: SAMPLES[id] })),
+      logger,
+      allowNetworkEngines: true,
+    });
+
+    // Every sample is refused, so nothing but the rule engine may run.
+    expect(facade.setChain(ids)).toEqual([RULE_ENGINE_ID]);
+
+    const refusals = sink.records.filter(
+      (record) => record.msg === 'engine chain: dropping an engine whose effects may not run',
+    );
+
+    // One line per member, and the engine id is the reason it was refused — so
+    // a sample that produced the *other* refusal is visible rather than
+    // silently accepted.
+    expect(refusals.map((record) => record.meta?.['engineId'])).toEqual(ids);
+    expect(refusals.map((record) => record.meta?.['reason'])).toEqual(ids);
+
+    // And the line carries the explanation the table holds, not the bare token.
+    // A member whose sentence was forgotten would have logged `undefined`
+    // before `tsc` had a chance to run.
+    for (const record of refusals) {
+      const reason = record.meta?.['reason'] as SideEffectRefusal;
+      const explanation = record.meta?.['reasonExplanation'];
+
+      expect(explanation, `${reason}: the line has no explanation`).toBe(
+        SIDE_EFFECT_REFUSAL_EXPLANATION[reason],
+      );
+      expect(String(explanation).length, `${reason}: the explanation is empty`).toBeGreaterThan(0);
+    }
+
+    // The two explanations are not one sentence reused: the refusals need
+    // different fixes, which is why they are told apart at all.
+    expect(new Set(Object.values(SIDE_EFFECT_REFUSAL_EXPLANATION)).size).toBe(ids.length);
+  });
+
+  it('has a sample for every member of the union, and no sample for a member that is gone', () => {
+    // The other direction, at runtime: the suite transpiles without
+    // typechecking, so the `Record` type above has to be asked the same
+    // question it is supposed to answer. A member with no sample would land
+    // here; so would a sample left behind.
+    expect(Object.keys(SAMPLES).sort()).toEqual(
+      Object.keys(SIDE_EFFECT_REFUSAL_EXPLANATION).sort(),
+    );
   });
 });

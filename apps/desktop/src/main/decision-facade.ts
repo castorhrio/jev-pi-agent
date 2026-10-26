@@ -60,6 +60,28 @@ export type EngineChainDropReason = 'unknown' | 'duplicate' | 'contradiction' | 
 export type SideEffectRefusal = 'contradiction' | 'unauthorized';
 
 /**
+ * What each refusal means, in the log line.
+ *
+ * `EngineChainDropReason` has had this shape since the reason became a log
+ * field: `satisfies Record<…>` turns "add a reason" into a `tsc` error at the
+ * table. `SideEffectRefusal` did not, so a third refusal was a change `tsc`
+ * had nothing to say about — `refusalReason` would return it, the log line
+ * would print the bare token, and every test would still pass, because none
+ * of them could enumerate the members of a type.
+ *
+ * So the members of the union now have a table of their own: adding one to
+ * {@link SideEffectRefusal} fails `npm run typecheck` until it is explained
+ * here, and the log reads the sentence from it rather than leaving a reader to
+ * look the token up in this file. Exported for the runtime half of the same
+ * check (`tests/contract/decision-chain.test.ts`), because the suite
+ * transpiles without typechecking and a test cannot enumerate a type either.
+ */
+export const SIDE_EFFECT_REFUSAL_EXPLANATION: Record<SideEffectRefusal, string> = {
+  contradiction: 'the manifest contradicts itself, so no setting can make it runnable',
+  unauthorized: 'no setting in this build authorises an effect it declares',
+};
+
+/**
  * The reasons, as the log writes them.
  *
  * A map rather than bare literals so that `tsc` checks every one of them
@@ -156,6 +178,10 @@ export class DecisionFacade {
         // and a setting to switch.
         this.opts.logger.warn('engine chain: dropping an engine whose effects may not run', {
           reason: refusal,
+          // The token is what a report counts; this is what a person reading
+          // the line can act on without opening this file. Read from the table
+          // so a refusal added without an explanation is a `tsc` error.
+          reasonExplanation: SIDE_EFFECT_REFUSAL_EXPLANATION[refusal],
           engineId: id,
           sideEffects: engine.manifest.sideEffects ?? [],
           allowNetworkEngines: this.opts.allowNetworkEngines,

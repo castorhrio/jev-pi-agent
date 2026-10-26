@@ -95,10 +95,21 @@ export function schemaFailureFields(error: ZodError): string[] {
  * these sentences, so a bump can reword one, and the only symptom would be a
  * library sentence in English reaching a person through the branch that keeps
  * CJK. A test cannot read Zod's *future* wordings, but it can make this
- * build's Zod raise one issue per code and check that every message it wrote
- * is recognised here — see `tests/contract/ipc-errors.test.ts`. Without that
- * test the list is a reminder; with it, an upgrade that rewords a message is
- * a red test that names the message.
+ * build's Zod raise an issue per opening and check both directions — see
+ * `tests/contract/ipc-errors.test.ts`: every message Zod writes is recognised
+ * here, *and* every entry here is one this build's Zod actually says. Without
+ * that test the list is a reminder; with it, an upgrade that rewords a message
+ * is a red test that names the message.
+ *
+ * The reverse direction is why the list is only as long as it needs to be.
+ * Five entries once stood here for wordings this build's Zod never produces —
+ * `Too small` / `Too big` / `Value must` / `Set must` / `Not ` — written in case
+ * an upgrade started saying them. Nothing could confirm them: each was a prefix
+ * no message ever matched, so a typo in one would have been invisible and the
+ * list was only ever checked in one direction. They are gone, and the guesswork
+ * is what the forward check replaced — an upgrade that starts saying
+ * `Too small` fails a test that names the message, which is a better reminder
+ * than an entry lying in wait.
  */
 export const ZOD_OWN_OPENINGS: readonly string[] = [
   'Expected',
@@ -109,18 +120,10 @@ export const ZOD_OWN_OPENINGS: readonly string[] = [
   'Number must',
   'Array must',
   'Date must',
-  'Set must',
-  'Value must',
-  'Too small',
-  'Too big',
   // `Intersection results could not be merged` — raised by `.and()` when two
   // branches produce values that cannot be combined. Found by the test below
   // rather than by reading Zod's source, which is the point of the test.
   'Intersection',
-  // `Not a number`-shaped messages. The trailing space is load-bearing: it
-  // keeps `Nothing` — a word this app could plausibly start a sentence with —
-  // out of the match.
-  'Not ',
 ];
 
 function isZodOwnText(message: string): boolean {
