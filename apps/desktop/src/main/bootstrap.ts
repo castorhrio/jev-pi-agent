@@ -12,7 +12,8 @@ import * as path from 'node:path';
 import { IPC_PUSH, describeError, type CloseBehaviour, type TurnEvent } from '@ucad/contracts';
 import type { Logger } from '@ucad/observability';
 import { FileLogSink, Logger as UcadLogger, MemoryLogSink, MultiLogSink } from '@ucad/observability';
-import { ADAPTER_CANDIDATES, ADAPTER_LOAD_ORDER } from './adapter-candidates';
+import { ADAPTER_LOAD_ORDER } from './adapter-candidates';
+import { adapterSearchPaths, resolveAdapterModules } from './adapter-resolution';
 import { UcadApp } from './app-container';
 import { resolvePaths } from './paths';
 import { registerIpc } from './ipc';
@@ -105,63 +106,23 @@ function shouldPreventClose(): boolean {
 }
 
 /**
- * Adapters are resolved through Node's module resolution rather than by
- * counting `../` hops out of `dist/main`. A relative path silently breaks when
- * the build layout changes — and it cannot work at all once the app is
- * packaged, where the workspace layout no longer exists. `require.resolve`
- * follows the workspace symlink in development and the packaged `node_modules`
- * in a build, so one call covers both.
+ * The adapters this build could load, by id.
  *
- * V1 ships the mock adapter as the executable reference. A real vendor adapter
- * is added by adding an entry to `ADAPTER_CANDIDATES` (ADR-017: the product
- * must not depend on any single adapter being present) — and the README's
- * limitation paragraph, which names that list, is checked against it.
+ * Resolution lives in `adapter-resolution.ts` — where the search paths can be
+ * asserted from a Node test instead of discovered from a log line after an
+ * Electron boot — and this function only supplies the three facts about *this*
+ * process that the search depends on. Nothing else in Main knows where an
+ * adapter is loaded from.
  */
-function resolveAdapterModules(log?: Logger): Record<string, string> {
-  // The table itself is in `adapter-candidates.ts`, where the README gate can
-  // reach it: the same two ids are stated to a reader in both languages, and a
-  // list inlined here could change without the prose changing with it.
-  //
-  // No annotation on purpose. `const candidates: Record<string, string> =
-  // ADAPTER_CANDIDATES` compiled to the same object, but it told every reader —
-  // and every later refactor — that this is a mutable, arbitrary map rather
-  // than *the* table. The one place the app loads adapters is the last place
-  // that should look like a second copy; the ids and specifiers stay the
-  // literal types `as const` gave them.
-  const candidates = ADAPTER_CANDIDATES;
-  // Electron resolves bare specifiers against the ASAR-appended app path, which
-  // is not the workspace root, so a plain `require.resolve` silently finds only
-  // what the packaged app contains. Search the usual roots explicitly and give
-  // every failure a search path set that can be acted on.
-  const searchPaths = [
-    app.getAppPath(),
-    path.resolve(__dirname, '../../../..'),
-    path.resolve(__dirname, '../../..'),
-    process.cwd(),
-  ];
-  const out: Record<string, string> = {};
-  for (const [id, specifier] of Object.entries(candidates)) {
-    try {
-      out[id] = require.resolve(specifier, { paths: searchPaths });
-    } catch (error) {
-      // A missing adapter must not stop the app from starting (ADR-017), but it
-      // MUST be visible: a silently absent adapter is indistinguishable from a
-      // broken product.
-      const message = `adapter "${id}" could not be resolved`;
-      // Written to stdout as well as the log: adapter resolution failing is the
-      // difference between "the product is broken" and "this vendor is not
-      // installed", and that distinction has to survive a log file nobody opened.
-      log?.warn(message, {
-        specifier,
-        searched: searchPaths,
-        error: describeError(error),
-      });
-      console.error(`[ucad] ${message}`, specifier);
-    }
-  }
-  log?.info('adapters resolved', { resolved: Object.keys(out) });
-  console.log('[ucad] adapters resolved:', Object.keys(out).join(', ') || '(none)');
-  return out;
+function loadAdapterModules(log?: Logger): Record<string, string> {
+  return resolveAdapterModules({
+    searchPaths: adapterSearchPaths({
+      appPath: app.getAppPath(),
+      mainDir: __dirname,
+      cwd: process.cwd(),
+    }),
+    log,
+  }).modules;
 }
 
 async function createWindow(): Promise<BrowserWindow> {
@@ -344,7 +305,7 @@ async function bootstrap(): Promise<void> {
       new MemoryLogSink(200),
     ]),
   });
-  ucad = new UcadApp({ paths, adapterModules: resolveAdapterModules(bootLog) });
+  ucad = new UcadApp({ paths, adapterModules: loadAdapterModules(bootLog) });
   await ucad.start();
   appLog = ucad.logger.child('bootstrap');
 

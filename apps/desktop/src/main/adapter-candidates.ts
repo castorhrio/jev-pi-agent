@@ -4,8 +4,9 @@
  * The table lives here, away from Electron, for the same reason
  * `tray-icon.ts` does: the README states this list to a reader — "Two adapters
  * are registered — `universal` … and `mock` …", and 中文 to the same effect —
- * and a fact written twice with nothing comparing the two drifts. `bootstrap.ts`
- * is the only production consumer, so an inlined table there could be deleted
+ * and a fact written twice with nothing comparing the two drifts. The resolver
+ * (`adapter-resolution.ts`) is the only production consumer, so an inlined
+ * table there could be deleted
  * or extended without any test noticing, while the README went on describing
  * the old set. The contract gate
  * (`tests/contract/adapter-candidates.test.ts`) imports this constant and
@@ -19,13 +20,21 @@
  * "adapters resolved", and in the README. The specifier is a bare package name
  * resolved through Node, not a relative path, because the workspace layout is
  * gone once the app is packaged.
+ *
+ * Both constants below are `Object.freeze`d. Nothing in this repo writes to
+ * them, and that is the point: `as const` is a *compile-time* claim, so
+ * `(ADAPTER_CANDIDATES as any).mock = '@somewhere/else'` compiles, runs, and
+ * changes what the app loads while this file, the resolver and the README all
+ * go on describing the table above. Freezing turns that into a runtime failure
+ * at the line that does it; the contract gate asserts the objects are frozen,
+ * so a later edit cannot quietly drop the wrapper either.
  */
-export const ADAPTER_CANDIDATES = {
+export const ADAPTER_CANDIDATES = Object.freeze({
   // The reference adapter that actually talks to a model.
   universal: '@ucad/adapter-universal',
   // The executable specification of the protocol, for offline work and CI.
   mock: '@ucad/adapter-mock',
-} as const satisfies Record<string, string>;
+} as const satisfies Record<string, string>);
 
 /**
  * The ids of `ADAPTER_CANDIDATES`, in the order the app tries them.
@@ -55,7 +64,7 @@ export const ADAPTER_CANDIDATES = {
  * If you add an adapter, add its id here in the position it should be tried;
  * if you move one, move it here too.
  */
-export const ADAPTER_LOAD_ORDER: readonly (keyof typeof ADAPTER_CANDIDATES)[] = [
+export const ADAPTER_LOAD_ORDER = Object.freeze([
   'universal',
   'mock',
-];
+] as const satisfies readonly (keyof typeof ADAPTER_CANDIDATES)[]);

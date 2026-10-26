@@ -80,10 +80,21 @@ const here = import.meta.dirname;
 const REPO_ROOT = join(here, '..', '..');
 const README_PATH = join(REPO_ROOT, 'README.md');
 const BOOTSTRAP_PATH = join(REPO_ROOT, 'apps', 'desktop', 'src', 'main', 'bootstrap.ts');
+const RESOLVER_PATH = join(REPO_ROOT, 'apps', 'desktop', 'src', 'main', 'adapter-resolution.ts');
 const PACKAGES_DIR = join(REPO_ROOT, 'packages');
 
 const readme = existsSync(README_PATH) ? readFileSync(README_PATH, 'utf8') : '';
 const bootstrap = existsSync(BOOTSTRAP_PATH) ? readFileSync(BOOTSTRAP_PATH, 'utf8') : '';
+/**
+ * The module that actually resolves the table — `adapter-resolution.ts`.
+ *
+ * Resolution used to be a function inside `bootstrap.ts`, so the "does the app
+ * read the table or a copy of it" scan only had one file to read. It now has
+ * two, and both are scanned: the table read has to be in the resolver, and
+ * neither file may spell out an id or a package name. A check that only looked
+ * at `bootstrap.ts` would go green on an id list re-inlined next door.
+ */
+const resolver = existsSync(RESOLVER_PATH) ? readFileSync(RESOLVER_PATH, 'utf8') : '';
 
 const EN_HEADING = '### Current limitations';
 const ZH_HEADING = '### 当前局限';
@@ -604,6 +615,48 @@ describe('ADAPTER_CANDIDATES is tried in the order ADAPTER_LOAD_ORDER states', (
 });
 
 /**
+ * The table is frozen, so "the app loads this list" survives `as any`.
+ *
+ * Every check in this file compares *copies* of the table: the README against
+ * it, the resolver against it, `ADAPTER_LOAD_ORDER` against its keys. All of
+ * those hold for as long as the object is the object this file imported, and
+ * `as const` says nothing about runtime — it is a type-level claim that is
+ * erased before the code runs. One line of a future refactor,
+ * `(ADAPTER_CANDIDATES as any).mock = '@somewhere/else'`, would compile, run,
+ * and change what the app loads while every gate here went on passing and the
+ * README went on describing the old set.
+ *
+ * `Object.freeze` is what makes that line fail at the line that does it. These
+ * cases pin both halves: the objects are frozen, and a write to them really
+ * does throw (a frozen object nobody tries to write to is an unverified
+ * belief).
+ */
+describe('the adapter table is frozen', () => {
+  it('freezes both the table and the order list', () => {
+    expect(Object.isFrozen(ADAPTER_CANDIDATES), 'ADAPTER_CANDIDATES is writable').toBe(true);
+    expect(Object.isFrozen(ADAPTER_LOAD_ORDER), 'ADAPTER_LOAD_ORDER is writable').toBe(true);
+  });
+
+  it('makes a later write throw instead of changing what the app loads', () => {
+    // The concrete edit the freeze is for. `Reflect.set` is used rather than an
+    // assignment so the check can say *what* happened: a frozen target refuses
+    // and returns `false`, and an assignment in strict mode throws.
+    expect(Reflect.set(ADAPTER_CANDIDATES, 'mock', '@somewhere/else')).toBe(false);
+    expect(ADAPTER_CANDIDATES.mock).toBe('@ucad/adapter-mock');
+    expect(() => {
+      (ADAPTER_CANDIDATES as unknown as Record<string, string>).mock = '@somewhere/else';
+    }).toThrow();
+    // The same for the order list: appending to it would change the attempt
+    // order without touching the table.
+    expect(Reflect.set(ADAPTER_LOAD_ORDER, 0, 'mock')).toBe(false);
+    expect(() => {
+      (ADAPTER_LOAD_ORDER as unknown as string[]).push('mock');
+    }).toThrow();
+    expect([...ADAPTER_LOAD_ORDER]).toEqual(Object.keys(ADAPTER_CANDIDATES));
+  });
+});
+
+/**
  * Adapter ids written as *string literals* in a source file.
  *
  * Quoted with `'` or `"` only. The doc comments in these files name the ids in
@@ -619,13 +672,43 @@ function quotedAdapterIds(source: string, ids: readonly string[]): string[] {
     .sort();
 }
 
-describe('bootstrap.ts loads the table, not a copy of it', () => {
+describe('the adapter loader reads the table, not a copy of it', () => {
   beforeAll(() => {
     expect(bootstrap, `bootstrap.ts is missing (${BOOTSTRAP_PATH})`).not.toBe('');
+    expect(resolver, `adapter-resolution.ts is missing (${RESOLVER_PATH})`).not.toBe('');
   });
 
-  it('reads ADAPTER_CANDIDATES', () => {
-    expect(bootstrap).toContain('ADAPTER_CANDIDATES');
+  it('reads ADAPTER_CANDIDATES in the resolver, and only there', () => {
+    // The table has one reader, and it is the module a Node test can drive.
+    // `bootstrap.ts` reading it again would be a second place where the loaded
+    // set is decided — the exact drift this gate exists to catch.
+    expect(
+      resolver,
+      'adapter-resolution.ts no longer reads ADAPTER_CANDIDATES',
+    ).toContain('ADAPTER_CANDIDATES');
+    // Matched on the import, not on the whole file: `bootstrap.ts` legitimately
+    // *names* the table in the comment that explains why its start loop reads
+    // `ADAPTER_LOAD_ORDER`, and a substring check would report that prose.
+    expect(
+      bootstrap.match(/import \{[^}]*\bADAPTER_CANDIDATES\b[^}]*\}/),
+      'bootstrap.ts imports the table directly again; resolution belongs to adapter-resolution.ts',
+    ).toBeNull();
+  });
+
+  it('keeps resolution free of Electron, so the search paths can be tested', () => {
+    // The reason `adapter-resolution.ts` exists at all: as a function inside
+    // `bootstrap.ts`, "does the search path list cover a packaged app and a
+    // development tree" could only be answered by booting Electron and reading
+    // a log line. An `electron` import here would put that back.
+    expect(
+      resolver.match(/from ['"]electron['"]/g) ?? [],
+      'adapter-resolution.ts imports Electron; the search paths are no longer testable in Node',
+    ).toEqual([]);
+    // …and the resolving itself is not duplicated back into the lifecycle file.
+    expect(
+      bootstrap,
+      'bootstrap.ts resolves adapters itself again; call resolveAdapterModules instead',
+    ).not.toContain('require.resolve');
   });
 
   it('starts adapters from ADAPTER_LOAD_ORDER, not from a literal list', () => {
@@ -653,6 +736,10 @@ describe('bootstrap.ts loads the table, not a copy of it', () => {
       bootstrap.match(/@ucad\/adapter-[a-z-]+/g) ?? [],
       'bootstrap.ts spells out an adapter package; add it to ADAPTER_CANDIDATES instead',
     ).toEqual([]);
+    expect(
+      resolver.match(/@ucad\/adapter-[a-z-]+/g) ?? [],
+      'adapter-resolution.ts spells out an adapter package; read ADAPTER_CANDIDATES instead',
+    ).toEqual([]);
   });
 
   it('spells no adapter id as a string literal', () => {
@@ -660,10 +747,15 @@ describe('bootstrap.ts loads the table, not a copy of it', () => {
     // Neither catches the shape that actually drifted: the id list itself. This
     // one does, for every id the table knows — so renaming an adapter reddens
     // here if the old name is still written down in `bootstrap.ts`.
-    expect(
-      quotedAdapterIds(bootstrap, Object.keys(ADAPTER_CANDIDATES)),
-      'bootstrap.ts writes adapter ids as string literals; use ADAPTER_LOAD_ORDER',
-    ).toEqual([]);
+    for (const [file, source] of [
+      ['bootstrap.ts', bootstrap],
+      ['adapter-resolution.ts', resolver],
+    ] as const) {
+      expect(
+        quotedAdapterIds(source, Object.keys(ADAPTER_CANDIDATES)),
+        `${file} writes adapter ids as string literals; use ADAPTER_LOAD_ORDER`,
+      ).toEqual([]);
+    }
   });
 
   it('is what the id scan can see', () => {
