@@ -67,8 +67,9 @@ import { RetentionService } from '@ucad/session';
 
 import {
   RETENTION_DEPENDENCIES,
+  STARTED_FIELDS,
   UcadApp,
-  type ContainerField,
+  missingStartedFields,
 } from '../../apps/desktop/src/main/app-container';
 import type { AppPaths } from '../../apps/desktop/src/main/paths';
 
@@ -216,6 +217,21 @@ function overCheckedFields(calls: readonly string[]): string[] {
     .filter(([, count]) => count > 1)
     .map(([field]) => field)
     .sort();
+}
+
+/**
+ * The body of `start()`, as a text slice.
+ *
+ * Same call as `methodBody()` above and for the same reason: what is being
+ * asserted is *where* one line sits relative to the steps it checks, and that
+ * is a fact about the source. `start()` is `async start(): Promise<void> {`,
+ * so it needs its own signature rather than `methodBody()`'s `private` one.
+ */
+function startBody(source: string): string {
+  const start = source.indexOf('\n  async start(): Promise<void> {');
+  if (start === -1) return '';
+  const end = source.indexOf('\n  }\n', start);
+  return end === -1 ? '' : source.slice(start, end);
 }
 
 /** The main-process sources the guard's scope is read from. */
@@ -389,54 +405,31 @@ function mainSources(dir: string = MAIN_SOURCE): { path: string; source: string 
 }
 
 /**
- * The claims, written out.
+ * The claims, as the container writes them.
  *
- * The scan above finds whatever the container currently declares; this list
- * is what it is *allowed* to declare. A new subsystem has to be added here on
- * purpose, and a renamed one has to be renamed in both places — which is the
- * point: the promise is a decision, not a side effect of editing a class
- * body.
+ * The scan above finds whatever the container currently declares; this list is
+ * what it is *allowed* to declare, and it now lives in `app-container.ts` —
+ * next to `start()`, which is the only thing that can make it true. That move
+ * is the whole point of this paragraph: the list used to be written here, and
+ * `tests/` belongs to no tsc project (the contract suite carries pre-existing
+ * type errors), so its `satisfies readonly ContainerField[]` was an editor
+ * check while CI ran only the runtime assertions. In the product file it is
+ * part of `apps/desktop/tsconfig.main.json`, so a name that is not a field —
+ * a rename carried through the class only, a typo — fails
+ * `npm run typecheck`. Same rule, a gate that is actually run.
  *
- * `satisfies readonly ContainerField[]` puts the same rule on these names as
- * `RETENTION_DEPENDENCIES` has: an entry that is not a field of the container
- * — a rename carried through the class only, a typo — is reported at the line
- * instead of as a mismatch between two lists. Be precise about which gate that
- * is, though: `tests/` belongs to no tsc project (the contract suite carries
- * pre-existing type errors), so the `satisfies` is an editor / on-demand `tsc`
- * check. CI still catches the same mistake at runtime — a name the class does
- * not declare is reported by `checklistEntriesNotPromised`, and a name that is
- * not a field reads `undefined` after `start()` — later, and less directly
- * than the type would.
+ * Nothing about the contract changed by moving it. The list is still
+ * hand-written and still has to be extended on purpose when a subsystem is
+ * added, and the scan below still fails when a `field!: T` is not on it. What
+ * changed is that `start()` now checks the same list before it returns
+ * (`#assertStartComplete()`), so a forgotten assignment is refused by the
+ * container instead of being discovered by a test — or by a user.
+ *
+ * Read as the local name below (`PROMISED_FIELDS`) everywhere in this file,
+ * because that is what the assertion messages say: these are the fields
+ * `start()` promises.
  */
-const PROMISED_FIELDS = [
-  'logger',
-  'blobs',
-  'memoryLog',
-  'secrets',
-  'db',
-  'eventLog',
-  'sequencer',
-  'projector',
-  'sessionStore',
-  'permissions',
-  'usage',
-  'mcp',
-  'intelligence',
-  'files',
-  'git',
-  'terminal',
-  'pty',
-  'estimator',
-  'ledger',
-  'renderer',
-  'broker',
-  'tools',
-  'decisions',
-  'runtime',
-  'providerClient',
-  'modelRegistry',
-  'skills',
-] as const satisfies readonly ContainerField[];
+const PROMISED_FIELDS = STARTED_FIELDS;
 
 let dir: string;
 let app: UcadApp | undefined;
@@ -924,6 +917,46 @@ describe('the container keeps every promise start() made', () => {
     // second time, and a double close throws ("Database already closed"),
     // which is the same class of misattributed failure this test exists for.
     expect(() => db.schemaVersion, 'dispose() left the SQLite database open').toThrow();
+  });
+
+  it('names every promised field before start(), and none after', async () => {
+    // `missingStartedFields()` is the function `start()` refuses to finish
+    // with, so it is asserted from both ends. A check that can only ever answer
+    // "nothing is missing" proves nothing — a fresh container has none of the
+    // fields, and the answer has to say so, field by field.
+    const fresh = new UcadApp({
+      paths: {
+        userData: dir,
+        dbPath: path.join(dir, 'ucad.db'),
+        blobDir: path.join(dir, 'blobs'),
+        logDir: path.join(dir, 'logs'),
+        cacheDir: path.join(dir, 'cache'),
+        downloadDir: path.join(dir, 'downloads'),
+      },
+    });
+    expect(missingStartedFields(fresh), 'a fresh container reported nothing missing').toEqual([
+      ...PROMISED_FIELDS,
+    ]);
+
+    app = await startApp();
+    expect(missingStartedFields(app), 'start() finished with a field still missing').toEqual([]);
+  });
+
+  it('checks its own promises as the last thing start() does', () => {
+    // The runtime half of the promise is only a guarantee while `start()`
+    // actually calls it, and it is only *correct* while it runs after every
+    // step: a check placed before `#initRuntime()` would report the fields that
+    // step assigns. Both halves are read from the source, because there is no
+    // way to make a real `start()` skip a step.
+    const body = startBody(fs.readFileSync(CONTAINER_SOURCE, 'utf8'));
+    expect(body, 'start() could not be found, so this gate is reading nothing').not.toBe('');
+    expect(body, 'start() no longer runs #assertStartComplete()').toContain(
+      'this.#assertStartComplete();',
+    );
+    expect(
+      body.indexOf('this.#assertStartComplete();'),
+      'the completeness check runs before the steps it is checking',
+    ).toBeGreaterThan(body.indexOf('this.#initRuntime();'));
   });
 
   it('builds the retention service over those same fields', async () => {

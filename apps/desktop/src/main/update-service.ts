@@ -41,9 +41,12 @@ import { describeError } from '@ucad/contracts';
 import type { Logger } from '@ucad/observability';
 import {
   checkFeedUrl,
+  checkStagedFileUnchanged,
   normalizeSha256,
   verifyInstaller,
+  verifyStagedInstallerForLaunch,
   type InstallerVerification,
+  type StagedFileCheck,
   type UpdateFeedDocument,
 } from './update-feed';
 
@@ -110,6 +113,19 @@ export interface UpdateServiceOptions {
    * when the launch failed, and with an empty string when it started.
    */
   openInstaller?: (target: string) => Promise<string>;
+  /**
+   * test seam: runs after the staged installer has been verified and before
+   * it is launched.
+   *
+   * It exists for one assertion — "a file replaced *after* the hash was taken
+   * is not launched" — because that window has nothing a test can interleave
+   * with: the product code goes from the last chunk of the digest to
+   * `openPath` with nothing in between. A promise about a window that no gate
+   * can open is the shape this repository keeps finding and deleting, so the
+   * window is openable on purpose. Production passes nothing; the check that
+   * follows it runs either way.
+   */
+  beforeLaunch?: (target: string) => void | Promise<void>;
 }
 
 /** The HTTP GET a download uses. Structurally `https.get`/`http.get`. */
@@ -424,6 +440,24 @@ export class UpdateService {
    * in the user's own profile directory, and the promise that it was the
    * file the feed named was made at a different moment. A file that no
    * longer matches is deleted and never launched.
+   *
+   * **The verification is not the same question as the launch.** A digest says
+   * "these bytes are the bytes the feed published"; it does not say "the file
+   * about to run is the file those bytes came from". Those are two reads of one
+   * path, and a path is resolved twice: once by the hash, once by the OS at
+   * launch. Everything that happens between them — a rename over the staged
+   * name, a rewrite in place, a deletion — is a window, and a window with no
+   * gate is what the previous round of this work was about. So the check
+   * returns the *identity* of the file object it hashed (device, inode, size,
+   * mtime) and it is compared against the path once more, immediately before
+   * the launch. A file that is no longer that file is deleted, and the refusal
+   * is logged with both readings.
+   *
+   * The residual gap is one `stat` call wide, and `FileIdentity` in
+   * `update-feed.ts` says exactly what it does not catch. It is deliberately
+   * not "hash the installer a second time": that would move the window rather
+   * than close it, and it would double the wait on a button the user already
+   * waited on.
    */
   async installAndRestart(): Promise<boolean> {
     const target = this.status.downloadedPath;
@@ -432,7 +466,9 @@ export class UpdateService {
       return false;
     }
 
-    const verification = await verifyInstaller(target, {
+    // Verified through a descriptor and answered with the file's identity, so
+    // the launch below can ask whether the path still names that file.
+    const verification = await verifyStagedInstallerForLaunch(target, {
       sha256: this.feed?.sha256,
       size: this.feed?.size,
     });
@@ -448,6 +484,27 @@ export class UpdateService {
         verified: false,
         downloadedPath: undefined,
         message: verificationMessage(verification),
+      });
+      return false;
+    }
+
+    // The window between the hash and the launch. Nothing in production runs
+    // here (see `beforeLaunch`); the check below runs whatever happened in it.
+    await this.opts.beforeLaunch?.(target);
+
+    const unchanged = checkStagedFileUnchanged(target, verification.identity);
+    if (!unchanged.ok) {
+      removeStagedInstaller(target);
+      this.opts.logger.error('refusing to install an update that changed after it was verified', {
+        reason: unchanged.reason,
+        sha256: verification.sha256,
+        bytes: verification.bytes,
+      });
+      this.set({
+        state: 'error',
+        verified: false,
+        downloadedPath: undefined,
+        message: changedMessage(unchanged),
       });
       return false;
     }
@@ -612,6 +669,22 @@ function verificationMessage(verification: Extract<InstallerVerification, { ok: 
     case 'unreadable':
       return '安装包校验失败：无法读取已下载的文件';
   }
+}
+
+/**
+ * What the user is told when the file stopped being the file that was checked.
+ *
+ * Its own message rather than a verification failure, because nothing was
+ * found wrong with the bytes: the download was fine and the file it produced
+ * was fine, and *then* the path changed under it. "校验失败" would send the
+ * reader looking for a broken release; the truth is that the file in the
+ * download directory was replaced or removed after it was checked, which is
+ * what the sentence says.
+ */
+function changedMessage(check: Extract<StagedFileCheck, { ok: false }>): string {
+  return check.reason === 'replaced'
+    ? '安装包在启动前发生变化，已删除该文件，请重新下载'
+    : '安装包在启动前已无法读取，请重新下载';
 }
 
 /**

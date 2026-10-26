@@ -79,11 +79,11 @@ export interface UcadAppOptions {
  * **Scope.** The guard protects the dependencies of lazily built services
  * (today only `retentionDeps()`). It is deliberately not a blanket wrapper
  * around every `!` field: callers of the other subsystems only exist after
- * `start()`. Those fields are covered at runtime instead: the scanner in
- * `tests/contract/app-container-started.test.ts` requires every `field!: T`
- * to be on its checklist and to be non-null after a real `start()`. Adding a
- * field to the guard's scope therefore means widening `retentionDeps()`, not
- * assuming this mark already reaches it.
+ * `start()`. Those fields are covered instead by `STARTED_FIELDS`, which `start()`
+ * itself checks once it is done (`#assertStartComplete()`) and which the
+ * scanner in `tests/contract/app-container-started.test.ts` requires every
+ * `field!: T` to be on. Adding a field to the guard's scope therefore means
+ * widening `retentionDeps()`, not assuming this mark already reaches it.
  *
  * That scope is a test, not a promise: `tests/contract/app-container-started.test.ts`
  * reads the sources and fails when the guard is asked for a field outside
@@ -97,23 +97,30 @@ const STARTED = Symbol('ucad.container.started');
 type Started<T> = T & { readonly [STARTED]: true };
 
 /**
- * The container's field names, as a type.
+ * The container's *value* field names, as a type.
  *
  * Every list of container fields is written against this, so a name that is
  * not a field — a rename that was not carried through, a typo — does not
- * compile instead of being discovered at runtime. `RETENTION_DEPENDENCIES`
- * below is one such list; the scan-and-run contract test's checklist is the
- * other, declared `satisfies readonly ContainerField[]`.
+ * compile instead of being discovered at runtime.
  *
- * The two lists are not enforced by the same gate, and that is worth knowing
- * when reading the test. This file is part of
- * `apps/desktop/tsconfig.main.json`, so a bad name on
- * `RETENTION_DEPENDENCIES` fails `npm run typecheck`. `tests/` belongs to no
- * tsc project (the contract suite carries pre-existing type errors), so for
- * the test's checklist the `satisfies` is an editor/on-demand check and the
- * runtime assertions are what CI actually runs.
+ * Methods are excluded on purpose, and the exclusion is what makes the name
+ * mean "a field `start()` is responsible for": `start`/`dispose`/`activateWorkspace`
+ * are functions the class always has, so putting one on a list of things to
+ * check after start-up would be a checklist entry that can never be wrong.
+ * `keyof UcadApp` alone would have accepted it.
+ *
+ * **Where the lists live is the point.** Both of them
+ * (`RETENTION_DEPENDENCIES` and `STARTED_FIELDS`) are declared in this file,
+ * which belongs to `apps/desktop/tsconfig.main.json` — so a bad name fails
+ * `npm run typecheck`. The checklist used to live in the contract test, and
+ * `tests/` belongs to no tsc project (the contract suite carries pre-existing
+ * type errors), which made its `satisfies` an editor-only check while CI ran
+ * only the runtime assertions. A claim about this class is type-checked where
+ * the class is, or it is type-checked in some runs and not others.
  */
-export type ContainerField = keyof UcadApp;
+export type ContainerField = {
+  [K in keyof UcadApp]-?: UcadApp[K] extends (...args: never[]) => unknown ? never : K;
+}[keyof UcadApp];
 
 /**
  * The container fields the retention service is built from (§8.4).
@@ -147,6 +154,60 @@ export const RETENTION_DEPENDENCIES = [
 type RetentionDeps = {
   readonly [F in (typeof RETENTION_DEPENDENCIES)[number]]: Started<UcadApp[F]>;
 };
+
+/**
+ * Every field `start()` is responsible for — the list the `field!: T`
+ * declarations on `UcadApp` are a promise about.
+ *
+ * The container declares its subsystems with `!` because `start()` builds them
+ * in order; the `!` is a claim, and this is the list of claims. Two things read
+ * it, and they answer different questions:
+ *
+ *  - `start()` itself, as its last act (`#assertStartComplete()`): a field that
+ *    is still missing is a container that was never finished, and it is
+ *    reported as *that* — with the field's name — instead of as a SQLite error
+ *    three layers down. Before this, a forgotten assignment surfaced as
+ *    `undefined` behind a type that said `Database`, and the first caller to
+ *    touch it failed somewhere else entirely.
+ *  - the scanner in `tests/contract/app-container-started.test.ts`, which reads
+ *    the class body and fails when a `field!: T` is not named here. A list
+ *    nobody maintains goes stale silently; a list the source is checked
+ *    against goes red.
+ *
+ * A new subsystem is added here on purpose, next to `start()` assigning it.
+ * `satisfies readonly ContainerField[]` (checked by `npm run typecheck`, since
+ * this file is part of the main-process project) rejects a name that is not a
+ * field, so a rename carried through the class alone does not compile.
+ */
+export const STARTED_FIELDS = [
+  'logger',
+  'blobs',
+  'memoryLog',
+  'secrets',
+  'db',
+  'eventLog',
+  'sequencer',
+  'projector',
+  'sessionStore',
+  'permissions',
+  'usage',
+  'mcp',
+  'intelligence',
+  'files',
+  'git',
+  'terminal',
+  'pty',
+  'estimator',
+  'ledger',
+  'renderer',
+  'broker',
+  'tools',
+  'decisions',
+  'runtime',
+  'providerClient',
+  'modelRegistry',
+  'skills',
+] as const satisfies readonly ContainerField[];
 
 export class UcadApp {
   readonly paths: AppPaths;
@@ -316,6 +377,33 @@ export class UcadApp {
     // Built here so the first sweep has one to use — and so it is the same
     // instance the storage IPC layer asks for.
     this.getRetention();
+    // Last, deliberately: everything above is what it checks.
+    this.#assertStartComplete();
+  }
+
+  /**
+   * `start()`'s own last word on its promise.
+   *
+   * The `!` on each field says "assigned somewhere else, trust me", and the
+   * somewhere else is this method's caller. Until now the only thing that
+   * checked was a test, which means a build whose `start()` forgot a step
+   * would have shipped and failed in the field — the failure being a report
+   * about whichever subsystem the first caller touched, not about the
+   * container.
+   *
+   * Throwing rather than logging: `bootstrap()` already treats a failed start
+   * as fatal (`app.exit(1)`), and a half-initialised app that keeps running is
+   * the outcome this is here to prevent. The message names the missing fields,
+   * because that is the one fact a support report needs.
+   */
+  #assertStartComplete(): void {
+    const missing = missingStartedFields(this);
+    if (missing.length === 0) return;
+    throw codedError(
+      'CONTAINER_NOT_STARTED',
+      `容器初始化不完整：${missing.join('、')} 在 start() 之后仍未赋值。`,
+      'container',
+    );
   }
 
   /**
@@ -1058,4 +1146,25 @@ export class UcadApp {
     }
     this.db?.close();
   }
+}
+
+/**
+ * The fields on `STARTED_FIELDS` that are still missing on `app`.
+ *
+ * Exported because the answer is worth asserting from both ends: a container
+ * that has not run `start()` must report *every* field (a check that cannot
+ * name anything is a check that proves nothing), and one that has just
+ * finished must report none. `#assertStartComplete()` is the production
+ * caller; the contract test is the other, and it drives this over a real
+ * container rather than over a fixture.
+ *
+ * The read goes through `unknown` on purpose: the fields are typed as their
+ * subsystems, so `value === undefined` would be a comparison the compiler
+ * correctly calls impossible — which is exactly the fiction `!` maintains.
+ */
+export function missingStartedFields(app: UcadApp): ContainerField[] {
+  return STARTED_FIELDS.filter((field) => {
+    const value: unknown = (app as unknown as Record<string, unknown>)[field];
+    return value === undefined || value === null;
+  });
 }

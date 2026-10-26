@@ -30,7 +30,15 @@
 
 import { describe, expect, it, beforeEach, afterEach } from 'vitest';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Readable } from 'node:stream';
@@ -38,10 +46,13 @@ import type * as http from 'node:http';
 import { Logger, MemoryLogSink, silentLogger } from '@ucad/observability';
 import {
   checkFeedUrl,
+  checkStagedFileUnchanged,
+  fileIdentity,
   normalizeSha256,
   parseUpdateConfig,
   resolveUpdateFeed,
   verifyInstaller,
+  verifyStagedInstallerForLaunch,
 } from '../../apps/desktop/src/main/update-feed';
 import {
   UpdateService,
@@ -583,6 +594,146 @@ describe('proving a downloaded file is the one the feed named', () => {
   });
 });
 
+/**
+ * "The file that was hashed" and "the file that runs" are two readings of one
+ * path, and `FileIdentity` is the type that lets them be compared.
+ *
+ * The signature these four cases defend is the one `installAndRestart()` makes
+ * its last decision on, so each case is stated with the *neighbour* it must not
+ * be confused with: a rename-over at the same length (a size check cannot see
+ * it, an inode can), an in-place rewrite (the inode stays, the size does not),
+ * and a deletion (nothing to compare, and "replaced" would be a lie about a
+ * file that is not there). The untouched case is what keeps the other three
+ * from being satisfied by a check that always refuses.
+ */
+describe('whether the file about to run is the file that was hashed', () => {
+  let dir: string;
+  let file: string;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'ucad-identity-'));
+    file = join(dir, 'UCAD-setup.exe');
+  });
+
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('says an untouched file is still that file', () => {
+    writeFileSync(file, 'the genuine installer');
+    const identity = fileIdentity(statSync(file));
+
+    expect(checkStagedFileUnchanged(file, identity)).toEqual({ ok: true });
+  });
+
+  it('notices a rename over the staged name, even when the length is identical', () => {
+    const genuine = 'the genuine installer';
+    const swapped = 'the evil installer!!!';
+    expect(swapped.length, 'the size check would be able to take the credit').toBe(genuine.length);
+
+    writeFileSync(file, genuine);
+    const identity = fileIdentity(statSync(file));
+
+    // What a substitution actually looks like: a new file is written somewhere
+    // and moved onto the staged name. The path then names a different file
+    // object — the inode changes, the length does not.
+    const replacement = join(dir, 'replacement.exe');
+    writeFileSync(replacement, swapped);
+    renameSync(replacement, file);
+
+    expect(checkStagedFileUnchanged(file, identity)).toEqual({ ok: false, reason: 'replaced' });
+  });
+
+  it('notices an in-place rewrite, which keeps the inode', () => {
+    writeFileSync(file, 'the genuine installer');
+    const identity = fileIdentity(statSync(file));
+
+    // The same file object, rewritten through the same path. `ino` cannot see
+    // this one — the size and the timestamp are what do — which is why the
+    // identity carries more than a pair of numbers.
+    writeFileSync(file, 'the evil installer, and then some');
+
+    expect(checkStagedFileUnchanged(file, identity)).toEqual({ ok: false, reason: 'replaced' });
+  });
+
+  it('reports a file that is gone as unreadable, not as replaced', () => {
+    writeFileSync(file, 'the genuine installer');
+    const identity = fileIdentity(statSync(file));
+    rmSync(file);
+
+    expect(checkStagedFileUnchanged(file, identity)).toEqual({ ok: false, reason: 'unreadable' });
+  });
+});
+
+/**
+ * The two verifiers answer the same refusals, and differ only in what a
+ * success carries.
+ *
+ * `verifyInstaller()` hashes a path; `verifyStagedInstallerForLaunch()` hashes
+ * an open descriptor and returns the identity of the file object it hashed.
+ * The point of asking both is that the second must not have *relaxed* anything
+ * on the way: the refusal vocabulary is what the user-facing message is chosen
+ * from, and a copy that grew its own would be the two-copies-of-one-rule
+ * problem this file already fixed for the feed URL.
+ */
+describe('the launch verifier refuses what the plain verifier refuses', () => {
+  let dir: string;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'ucad-launch-verify-'));
+  });
+
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('gives a matching file the same digest, plus the identity it hashed', async () => {
+    const file = join(dir, 'installer.exe');
+    const bytes = 'the genuine installer';
+    writeFileSync(file, bytes);
+    const expected = { sha256: sha256Of(bytes), size: bytes.length };
+
+    const plain = await verifyInstaller(file, expected);
+    const launch = await verifyStagedInstallerForLaunch(file, expected);
+
+    expect(plain).toEqual({ ok: true, sha256: sha256Of(bytes), bytes: bytes.length });
+    // The success is the same answer *plus* the file it came from — the
+    // identity of the descriptor that was read, not of a later `stat` of the
+    // path.
+    expect(launch.ok && { ...launch, identity: undefined }).toEqual({
+      ok: true,
+      sha256: sha256Of(bytes),
+      bytes: bytes.length,
+      identity: undefined,
+    });
+    expect(launch.ok && launch.identity).toEqual(fileIdentity(statSync(file)));
+  });
+
+  it('answers every refusal in the same words', async () => {
+    const genuine = 'the genuine installer';
+    const swapped = 'the evil installer!!!';
+    const file = join(dir, 'installer.exe');
+
+    // Four fixtures, one per refusal: a file that is not the file, a file the
+    // size disagrees with, a feed that published no hash, and a path that
+    // cannot be read at all.
+    const cases: ReadonlyArray<readonly [string, string, { sha256?: string; size?: number }]> = [
+      [file, swapped, { sha256: sha256Of(genuine), size: genuine.length }],
+      [file, 'short', { sha256: sha256Of('short'), size: 999 }],
+      [file, genuine, {}],
+      [join(dir, 'absent.exe'), genuine, { sha256: sha256Of(genuine) }],
+    ];
+
+    for (const [path, bytes, expected] of cases) {
+      writeFileSync(file, bytes);
+      const plain = await verifyInstaller(path, expected);
+      const launch = await verifyStagedInstallerForLaunch(path, expected);
+      expect(launch, `${bytes} / ${path}`).toEqual(plain);
+      expect(plain.ok, 'a refusal fixture answered ok').toBe(false);
+    }
+  });
+});
+
 describe('the updater itself', () => {
   let dir: string;
 
@@ -605,6 +756,8 @@ describe('the updater itself', () => {
     open?: (target: string) => Promise<string>;
     /** a sink the test can read, for asserting what was *said* was refused */
     logs?: MemoryLogSink;
+    /** runs between the verification and the launch, for the window below */
+    beforeLaunch?: (target: string) => void | Promise<void>;
   }) {
     const fetched = feedFetchSteps(options.steps ?? [{ status: 200, document: options.feed ?? {} }]);
     const downloads: string[] = [];
@@ -629,6 +782,7 @@ describe('the updater itself', () => {
             },
           }),
       ...(options.downloadGet === undefined ? {} : { downloadGet: options.downloadGet }),
+      ...(options.beforeLaunch === undefined ? {} : { beforeLaunch: options.beforeLaunch }),
       openInstaller: async (target) => {
         launched.push(target);
         return options.open ? options.open(target) : '';
@@ -941,6 +1095,148 @@ describe('the updater itself', () => {
     expect(launched).toEqual([]);
     expect(instance.current.state).toBe('error');
     expect(instance.current.message).toContain('请重新下载');
+  });
+
+  /**
+   * The rest of the window, from the other side.
+   *
+   * The test above replaces the file *before* the click, so the re-verification
+   * at the top of `installAndRestart()` is what refuses it. That leaves the
+   * smaller window open, and it is the one no digest can close: the hash is a
+   * fact about bytes that were read at one moment, and the launch resolves the
+   * *path* at a later one. So the verification now hands back the identity of
+   * the file object it hashed, and the path is asked once more immediately
+   * before `openPath`. `beforeLaunch` is the seam that opens that window in a
+   * test; the three cases below are what the check does when it is open.
+   */
+  it('refuses a file substituted after it was verified, and never launches it', async () => {
+    const genuine = 'the genuine installer';
+    // Same length as the genuine file: this refusal cannot be the size check's,
+    // and the substitution is a `rename` over the staged name — a different
+    // file object behind an identical-looking path.
+    const swapped = 'the evil installer!!!';
+    expect(swapped.length).toBe(genuine.length);
+
+    const logs = new MemoryLogSink();
+    const { instance, launched } = service({
+      logs,
+      feed: {
+        version: '9.9.9',
+        url: INSTALLER_URL,
+        sha256: sha256Of(genuine),
+        size: genuine.length,
+      },
+      download: async (_url, target) => {
+        writeFileSync(target, genuine);
+      },
+      beforeLaunch: (target) => {
+        const replacement = join(dir, 'replacement.exe');
+        writeFileSync(replacement, swapped);
+        renameSync(replacement, target);
+      },
+    });
+
+    await instance.check();
+    const downloaded = await instance.download();
+    expect(downloaded.state).toBe('ready');
+
+    const installed = await instance.installAndRestart();
+
+    expect(installed, 'the updater launched a file it had not verified').toBe(false);
+    expect(launched, 'the file that replaced the installer was launched').toEqual([]);
+    expect(
+      existsSync(join(dir, 'UCAD-setup.exe')),
+      'the substitute was left on disk under the name that means "pending update"',
+    ).toBe(false);
+
+    const status = instance.current;
+    expect(status.state).toBe('error');
+    expect(status.verified, 'the status still claims the file was checked').toBe(false);
+    expect(status.downloadedPath, 'the status still points at a deleted file').toBeUndefined();
+    // Its own message: nothing was found wrong with the bytes, so a "校验失败"
+    // here would send the reader looking for a broken release.
+    expect(status.message).toContain('发生变化');
+
+    const refusal = logs.records.find(
+      (record) => record.msg === 'refusing to install an update that changed after it was verified',
+    );
+    expect(refusal, 'the refusal was not logged at all').toBeDefined();
+    expect(refusal!.level).toBe('error');
+    // The digest that *was* verified travels with the refusal: it is the one
+    // fact that says which file the user was about to run.
+    expect(refusal!.meta).toMatchObject({ reason: 'replaced', sha256: sha256Of(genuine) });
+  });
+
+  it('asks for a fresh download when the file disappears before the launch', async () => {
+    // The other way the path can stop naming the verified file, and it gets a
+    // different reason: "replaced" would be a claim about a file that is not
+    // there.
+    const genuine = 'the genuine installer';
+    const logs = new MemoryLogSink();
+    const { instance, launched } = service({
+      logs,
+      feed: {
+        version: '9.9.9',
+        url: INSTALLER_URL,
+        sha256: sha256Of(genuine),
+        size: genuine.length,
+      },
+      download: async (_url, target) => {
+        writeFileSync(target, genuine);
+      },
+      beforeLaunch: (target) => {
+        rmSync(target, { force: true });
+      },
+    });
+
+    await instance.check();
+    expect((await instance.download()).state).toBe('ready');
+
+    const installed = await instance.installAndRestart();
+
+    expect(installed).toBe(false);
+    expect(launched).toEqual([]);
+    expect(instance.current.state).toBe('error');
+    expect(instance.current.message).toContain('请重新下载');
+    expect(
+      logs.records.find(
+        (record) => record.msg === 'refusing to install an update that changed after it was verified',
+      )!.meta,
+    ).toMatchObject({ reason: 'unreadable' });
+  });
+
+  it('launches when the file is still the file it verified', async () => {
+    // The positive control. Without it, the two cases above would also pass for
+    // a check that always refuses — and a launcher that never launches is a
+    // worse defect than the one this window is about.
+    const genuine = 'the genuine installer';
+    const checked: string[] = [];
+    const { instance, launched } = service({
+      feed: {
+        version: '9.9.9',
+        url: INSTALLER_URL,
+        sha256: sha256Of(genuine),
+        size: genuine.length,
+      },
+      download: async (_url, target) => {
+        writeFileSync(target, genuine);
+      },
+      beforeLaunch: (target) => {
+        checked.push(target);
+      },
+    });
+
+    await instance.check();
+    expect((await instance.download()).state).toBe('ready');
+
+    const installed = await instance.installAndRestart();
+
+    expect(installed).toBe(true);
+    // The seam ran, so the refusal above is a decision rather than a step that
+    // was skipped.
+    expect(checked).toEqual([join(dir, 'UCAD-setup.exe')]);
+    expect(launched).toEqual([join(dir, 'UCAD-setup.exe')]);
+    expect(instance.current.state, 'a launched update left an error behind').not.toBe('error');
   });
 
   /**

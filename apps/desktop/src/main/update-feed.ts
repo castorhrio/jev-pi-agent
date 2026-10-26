@@ -37,7 +37,15 @@
  */
 
 import { createHash } from 'node:crypto';
-import { createReadStream, readFileSync, statSync } from 'node:fs';
+import {
+  closeSync,
+  createReadStream,
+  fstatSync,
+  openSync,
+  readFileSync,
+  statSync,
+  type Stats,
+} from 'node:fs';
 
 /**
  * The document a release publishes for the app to read.
@@ -251,6 +259,19 @@ function sha256OfFile(filePath: string): Promise<string> {
 }
 
 /**
+ * The size a feed published, or null when it published something that is not
+ * one.
+ *
+ * A feed that carries `size: "91234567"` (a string, which JSON release tooling
+ * writes more often than one would like) has said nothing about the file: the
+ * comparison is against a number, and comparing against a coerced one would
+ * turn a documentation bug into a failed install.
+ */
+function expectedSizeOf(size: unknown): number | null {
+  return typeof size === 'number' && Number.isFinite(size) && size >= 0 ? size : null;
+}
+
+/**
  * Proves that a downloaded file is the one the feed named.
  *
  * A match and a mismatch are different outcomes and are returned as such.
@@ -265,10 +286,7 @@ export async function verifyInstaller(
   const expectedHash = normalizeSha256(expected.sha256);
   if (expectedHash === null) return { ok: false, reason: 'no-hash' };
 
-  const expectedSize =
-    typeof expected.size === 'number' && Number.isFinite(expected.size) && expected.size >= 0
-      ? expected.size
-      : null;
+  const expectedSize = expectedSizeOf(expected.size);
 
   let bytes: number;
   try {
@@ -298,3 +316,184 @@ export async function verifyInstaller(
   }
   return { ok: true, sha256: actual, bytes };
 }
+
+/**
+ * The identity of a file object, as `stat` reports it.
+ *
+ * It exists to answer one question: *is this still the file that was hashed?*
+ * A digest is a fact about bytes that were read at one moment; the staged
+ * installer is a *path*, and the launch is a later moment that the OS resolves
+ * again. Between the two, the path can come to point at a different file — and
+ * hashing again does not close that window, it only moves it.
+ *
+ * `dev` + `ino` change when the path is made to name a different file
+ * (`rename` over it is what a substitution actually looks like, and it does
+ * so even when the new bytes are the same length, which is the case a size
+ * check cannot see). `size` + `mtimeMs` are the belt for an in-place rewrite,
+ * which keeps the inode.
+ *
+ * **What this does not promise** is worth writing down rather than implying:
+ * an in-place rewrite that keeps the inode, the length *and* the timestamp is
+ * the same file as far as any `stat` can tell. That residual window is one
+ * syscall wide. Re-hashing the installer immediately before the launch would
+ * not close it either — it would make the window "hash → launch" instead of
+ * "hash → stat", and for a 100 MB installer it would add seconds to a button
+ * the user already waited on. The claim this type makes is therefore precise:
+ * *the file about to be launched is the file object that was hashed*, which
+ * is the strongest statement a path-based launch allows.
+ */
+export interface FileIdentity {
+  readonly dev: number;
+  readonly ino: number;
+  readonly size: number;
+  readonly mtimeMs: number;
+}
+
+/** The `FileIdentity` of a `stat` result — from a path or from a descriptor. */
+export function fileIdentity(stats: Stats): FileIdentity {
+  // `Number(...)` because the bigint stats form returns `bigint` for these
+  // fields; the values still compare exactly for anything a user's disk holds.
+  return {
+    dev: Number(stats.dev),
+    ino: Number(stats.ino),
+    size: Number(stats.size),
+    mtimeMs: stats.mtimeMs,
+  };
+}
+
+/** Whether two identity readings describe the same file in the same state. */
+export function sameFileIdentity(a: FileIdentity, b: FileIdentity): boolean {
+  return a.dev === b.dev && a.ino === b.ino && a.size === b.size && a.mtimeMs === b.mtimeMs;
+}
+
+/** What a second look at a verified file says. */
+export type StagedFileCheck =
+  | { readonly ok: true }
+  | { readonly ok: false; readonly reason: 'replaced' | 'unreadable' };
+
+/**
+ * Whether the file at `filePath` is still the one `identity` was read from.
+ *
+ * Asking the path, not the descriptor, is the point: the launch is going to
+ * resolve the path, so the question that matters is what the path resolves to
+ * *now*. A file that is gone is `unreadable` rather than `replaced` because the
+ * two need different words in the UI ("download it again" either way, but one
+ * of them means somebody deleted it).
+ */
+export function checkStagedFileUnchanged(
+  filePath: string,
+  identity: FileIdentity,
+): StagedFileCheck {
+  let now: FileIdentity;
+  try {
+    now = fileIdentity(statSync(filePath));
+  } catch {
+    return { ok: false, reason: 'unreadable' };
+  }
+  return sameFileIdentity(identity, now) ? { ok: true } : { ok: false, reason: 'replaced' };
+}
+
+/**
+ * The SHA-256 of an open file, read through its descriptor.
+ *
+ * The descriptor is the reason this exists next to `sha256OfFile`: a stream
+ * opened on the *file object* cannot be redirected to another file while it is
+ * being read, so the digest describes one file rather than whatever the path
+ * happened to resolve to between two chunks. `autoClose: false` because the
+ * caller owns the descriptor and closes it once — the identity it read before
+ * hashing and the digest it read after belong to the same open file.
+ */
+function sha256OfDescriptor(fd: number, filePath: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const hash = createHash('sha256');
+    const stream = createReadStream(filePath, { fd, autoClose: false });
+    stream.on('error', reject);
+    stream.on('data', (chunk) => hash.update(chunk));
+    stream.on('end', () => resolve(hash.digest('hex')));
+  });
+}
+
+/**
+ * `verifyInstaller()`, plus the identity of the file object it hashed.
+ *
+ * The updater launches by path, so verification has to end with something the
+ * launch can be compared against, and a digest is not that thing: it says the
+ * bytes were the right bytes, not that the file about to run is the file they
+ * came from. The identity is captured from the *open descriptor* before the
+ * first chunk is read and handed back with the digest, so
+ * `checkStagedFileUnchanged()` can ask the path one question afterwards: is
+ * this still that file?
+ *
+ * Same four refusals as `verifyInstaller()`, in the same words, because the
+ * caller's message to the user is the same for both. The difference is what a
+ * success carries.
+ */
+export async function verifyStagedInstallerForLaunch(
+  filePath: string,
+  expected: { sha256?: unknown; size?: unknown },
+): Promise<StagedInstallerVerification> {
+  const expectedHash = normalizeSha256(expected.sha256);
+  if (expectedHash === null) return { ok: false, reason: 'no-hash' };
+  const expectedSize = expectedSizeOf(expected.size);
+
+  let fd: number;
+  try {
+    // One `open`, and it answers "is it there" and "can it be read" at once.
+    fd = openSync(filePath, 'r');
+  } catch {
+    return { ok: false, reason: 'unreadable' };
+  }
+
+  try {
+    // Before the read, not after: the identity has to describe the file the
+    // digest is about to be taken from, so anything that changes later — a
+    // rename over the path, an in-place rewrite that moves the size — is a
+    // difference from *this* reading rather than a new baseline.
+    let identity: FileIdentity;
+    try {
+      identity = fileIdentity(fstatSync(fd));
+    } catch {
+      return { ok: false, reason: 'unreadable' };
+    }
+
+    let actual: string;
+    try {
+      actual = await sha256OfDescriptor(fd, filePath);
+    } catch {
+      return { ok: false, reason: 'unreadable' };
+    }
+
+    const bytes = identity.size;
+    if (expectedSize !== null && expectedSize !== bytes) {
+      return {
+        ok: false,
+        reason: 'size-mismatch',
+        expected: String(expectedSize),
+        actual: String(bytes),
+        bytes,
+      };
+    }
+    if (actual !== expectedHash) {
+      return { ok: false, reason: 'hash-mismatch', expected: expectedHash, actual, bytes };
+    }
+    return { ok: true, sha256: actual, bytes, identity };
+  } finally {
+    try {
+      closeSync(fd);
+    } catch {
+      /* a descriptor we cannot close is a leak, not a refusal */
+    }
+  }
+}
+
+/**
+ * What `verifyStagedInstallerForLaunch()` answers: the same refusals as
+ * `verifyInstaller()`, and a success that carries the file's identity.
+ *
+ * Derived from `InstallerVerification` rather than written out again, so a new
+ * refusal reason cannot appear on one of them and not the other — the two
+ * functions differ in what a *success* carries, not in what a refusal says.
+ */
+export type StagedInstallerVerification =
+  | (Extract<InstallerVerification, { ok: true }> & { readonly identity: FileIdentity })
+  | Extract<InstallerVerification, { ok: false }>;
