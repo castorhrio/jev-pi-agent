@@ -17,30 +17,54 @@
  *
  * ## What it recognises
  *
- *  - `message: '…'`, `required_error: '…'`, `invalid_type_error: '…'` in any
- *    file that imports `zod` (the schema options object form);
+ * A message position is only scanned inside a Zod schema expression: a `z.…(…)`
+ * call, one of the method calls listed below, or `ctx.addIssue({…})`. A
+ * `message:` key in a file that merely imports Zod — a log record, an error
+ * payload, an interface field — is not a sentence a person reads as a refusal,
+ * and judging its language made the scan report shapes that were never
+ * schemas. (The earlier version scanned every `message:` key in a
+ * Zod-importing file; it stayed green only because those other sentences
+ * happened to be Chinese too.)
+ *
+ * Within a schema expression it recognises:
+ *
+ *  - `message: '…'`, `required_error: '…'`, `invalid_type_error: '…'` in
+ *    schema options;
  *  - the second argument of the methods that take a custom message positionally
  *    (`min`, `max`, `regex`, `refine`, `strict`, …), when that argument is a
  *    string literal;
  *  - `message: SOME_CONSTANT`, resolved to a `const SOME_CONSTANT = '…'` in the
  *    same file — the form `ipc-storage.ts` uses for its two sentences.
  *
- * ## What it does not recognise — the limits, stated
+ * ## What it cannot judge — reported, not ignored
  *
- *  - a message built at runtime (a template literal with an expression, a
- *    function call) — there is no sentence to judge;
- *  - a message imported from another module, or assigned without `const`
- *    (the purge constants live beside their schemas, which is why the one-hop
- *    lookup is enough today);
+ * The shapes below sit in a message position but have no sentence the scan can
+ * read without a parser. They are returned as `unresolved`, with a reason and
+ * the source text at that position, and the app-wide test asserts that list is
+ * empty. A blind spot is therefore a failing test with a name instead of a
+ * silent pass:
+ *
+ *  - a template literal with `${…}` in it (the sentence is assembled at runtime);
+ *  - a literal concatenated with `+` (the scan can read one half, not the whole);
+ *  - a name this file does not define as a `const` (an imported sentence, a
+ *    `let`, a helper result);
+ *  - a call, member access, conditional or other expression.
+ *
+ * The remaining limits are shapes the scan does not even reach:
+ *
+ *  - a schema built through a destructured or renamed Zod namespace
+ *    (`const { string } = z; string({ message })`) — only `z.…` calls open a
+ *    schema context;
+ *  - a message attached through a helper that is not itself a Zod call;
  *  - a positional message that follows an argument containing a comma inside a
  *    regular-expression literal (`/a,b/`), because the argument walk does not
  *    parse regexes.
  *
- * Each of those is a false *negative*: a shape the scan cannot judge. They are
- * listed rather than fixed because the alternative — a JavaScript parser in a
- * contract test — is a much larger thing to keep correct than the rule it
- * guards. The false *positive* direction is the one that must not happen: a
- * test that fails on code which is fine stops being run.
+ * Listing them is not the same as fixing them: the alternative is a JavaScript
+ * parser in a contract test, which is a much larger thing to keep correct than
+ * the rule it guards. The false *positive* direction is still the one that
+ * must not happen — a test that fails on code which is fine stops being run —
+ * which is why messages outside schema expressions are not judged at all.
  *
  * Comments are blanked before scanning (`codeOnly` from `bare-throw-scan.ts`):
  * this repo *discusses* messages and wording in prose at length, and a scan
@@ -58,6 +82,39 @@ export interface ZodCustomMessage {
   key: string;
   /** the sentence itself, with a same-file constant already resolved */
   message: string;
+}
+
+/**
+ * Why a message position could not be read as a sentence.
+ *
+ * The reasons are separate because the fixes are: a template or a
+ * concatenation needs the message written as one literal, a name needs a
+ * same-file `const`, and anything else needs a person to look at the shape.
+ */
+export type ZodUnresolvedReason =
+  | 'template-with-expression'
+  | 'concatenated-literal'
+  | 'unknown-constant'
+  | 'not-a-literal';
+
+/** A message position the scan can see but cannot judge. */
+export interface ZodUnresolvedMessage {
+  file: string;
+  /** 1-based line the message position starts on */
+  at: number;
+  /** how it was attached: an option key, or a positional argument */
+  key: string;
+  reason: ZodUnresolvedReason;
+  /** the value's source text, so a reader can see which shape was not judged */
+  expression: string;
+}
+
+/** Everything one file contributes to the invariant. */
+export interface ZodMessageScan {
+  /** messages read as sentences; language is judged by the caller */
+  messages: ZodCustomMessage[];
+  /** message positions the scan could not read; the caller asserts this is empty */
+  unresolved: ZodUnresolvedMessage[];
 }
 
 /**
@@ -203,42 +260,187 @@ function firstArgument(text: string, openParen: number): number {
   return next;
 }
 
+/** The `)` that closes the call opened at `openParen`. */
+function matchingParen(text: string, openParen: number): number | undefined {
+  let depth = 0;
+  let i = openParen;
+  while (i < text.length) {
+    const ch = text[i] as string;
+    if (ch === "'" || ch === '"' || ch === '`') {
+      const literal = readLiteral(text, i);
+      if (literal) {
+        i = literal.end;
+        continue;
+      }
+    }
+    if (ch === '(') depth += 1;
+    else if (ch === ')') {
+      depth -= 1;
+      if (depth === 0) return i;
+    }
+    i += 1;
+  }
+  return undefined;
+}
+
 /**
- * Every custom message in one file.
+ * The spans of the calls that can hold a schema message option.
  *
- * Returns *all* of them, Chinese or not, so a caller can check language and a
- * test can also assert the scanner sees real sentences — a scan that finds
- * nothing passes every "no English" assertion vacuously.
+ * A `message:` key is only a schema option when it sits inside one of these:
+ * a `z.…(…)` constructor, a method that takes a message positionally (their
+ * options-object form is the same key), or `ctx.addIssue({…})`. Without this,
+ * a log record in a file that imports Zod (`{ message: appError.message }`)
+ * would be judged as a schema sentence, and an unreadable one would be
+ * reported as a blind spot in the invariant that does not exist.
+ *
+ * Spans are computed once per file. Nested calls produce nested spans; the
+ * membership test only needs "inside any", so that is harmless.
  */
-export function customMessages(file: string, text: string): ZodCustomMessage[] {
-  if (!importsZod(text)) return [];
+function schemaCallSpans(text: string): Array<{ open: number; close: number }> {
+  const call = new RegExp(
+    [
+      // z.string(, z.object(, z.coerce.number(, … — the namespace itself.
+      String.raw`\bz(?:\.[A-Za-z_$][\w$]*)+?\s*\(`,
+      // The options form of the positional methods: .min(1, { message: … }).
+      String.raw`\.(?:${[...SECOND_ARG_METHODS, ...FIRST_ARG_METHODS].join('|')})\s*\(`,
+      // ctx.addIssue({ message: … }) under a superRefine callback.
+      String.raw`\.addIssue\s*\(`,
+    ].join('|'),
+    'g',
+  );
+
+  const spans: Array<{ open: number; close: number }> = [];
+  let match: RegExpExecArray | null;
+  while ((match = call.exec(text)) !== null) {
+    const open = match.index + match[0].length - 1;
+    const close = matchingParen(text, open);
+    if (close !== undefined) spans.push({ open, close });
+  }
+  return spans;
+}
+
+/** Is `at` inside one of the schema call spans? */
+function insideSchemaSpan(
+  spans: ReadonlyArray<{ open: number; close: number }>,
+  at: number,
+): boolean {
+  return spans.some((span) => at > span.open && at < span.close);
+}
+
+/**
+ * The source text at a message position, first line only.
+ *
+ * This is for an unresolved record: the reason says the scan could not read
+ * it, and this says *what* it could not read. Long expressions are cut so one
+ * finding stays one readable line.
+ */
+function expressionAt(text: string, at: number): string {
+  let end = at;
+  while (end < text.length && text[end] !== '\n' && text[end] !== '\r') end += 1;
+  const raw = text.slice(at, end).trim();
+  if (raw === '') return '(empty)';
+  return raw.length > 80 ? `${raw.slice(0, 79)}…` : raw;
+}
+
+/**
+ * Every message position in one file, and the ones the scan cannot judge.
+ *
+ * `messages` contains *all* readable messages, Chinese or not, so a caller can
+ * check language and a test can also assert the scanner sees real sentences — a
+ * scan that finds nothing passes every "no English" assertion vacuously.
+ *
+ * A position that is visible but unreadable goes to `unresolved` instead of
+ * disappearing. That is the point of the split: the earlier version returned
+ * only what it could read, so a message the scan failed to resolve was
+ * indistinguishable from a file with no custom messages at all.
+ */
+export function scanZodMessages(file: string, text: string): ZodMessageScan {
+  if (!importsZod(text)) return { messages: [], unresolved: [] };
 
   const code = codeOnly(text);
   const consts = constants(code);
-  const found: ZodCustomMessage[] = [];
+  const spans = schemaCallSpans(code);
+  const messages: ZodCustomMessage[] = [];
+  const unresolved: ZodUnresolvedMessage[] = [];
 
-  const push = (offset: number, key: string, literalAt: number): void => {
-    const literal = readLiteral(code, literalAt);
+  const record = (offset: number, key: string, valueAt: number): void => {
+    const at = lineOf(code, offset);
+    const literal = readLiteral(code, valueAt);
+
     if (literal) {
-      found.push({ file, at: lineOf(code, offset), key, message: literal.value });
+      // A template literal with `${…}` is not one sentence; the scan can read
+      // the static parts and not the rest, and the sentence a person sees is
+      // the one built at runtime.
+      if (literal.quote === '`' && literal.value.includes('${')) {
+        unresolved.push({
+          file,
+          at,
+          key,
+          reason: 'template-with-expression',
+          expression: expressionAt(code, valueAt),
+        });
+        return;
+      }
+      // `'half' + rest` — the literal is only half of the sentence, so judging
+      // its language would judge the wrong thing.
+      if (/^\s*\+/.test(code.slice(literal.end))) {
+        unresolved.push({
+          file,
+          at,
+          key,
+          reason: 'concatenated-literal',
+          expression: expressionAt(code, valueAt),
+        });
+        return;
+      }
+      messages.push({ file, at, key, message: literal.value });
       return;
     }
-    const identifier = readIdentifier(code, literalAt);
-    if (!identifier) return;
-    const value = consts.get(identifier.name);
-    // A name this file does not define is imported or built elsewhere; the
-    // scan cannot see its text, which is a documented limit rather than a
-    // reason to fail.
-    if (value !== undefined) {
-      found.push({ file, at: lineOf(code, offset), key: `${key} (via ${identifier.name})`, message: value });
+
+    // A field *named* `message` whose value is a schema (`message: z.string()`)
+    // is a shape, not a sentence option. A custom message is always a string.
+    if (/^z\.[A-Za-z_$]/.test(code.slice(valueAt))) return;
+
+    const identifier = readIdentifier(code, valueAt);
+    if (!identifier) {
+      unresolved.push({
+        file,
+        at,
+        key,
+        reason: 'not-a-literal',
+        expression: expressionAt(code, valueAt),
+      });
+      return;
     }
+
+    const value = consts.get(identifier.name);
+    if (value !== undefined) {
+      messages.push({ file, at, key: `${key} (via ${identifier.name})`, message: value });
+      return;
+    }
+
+    // A bare name is a constant this file does not define (imported, or
+    // assigned without `const`); anything that continues the expression is not
+    // a name at all. Both are unreadable here, and both are reported.
+    const compound = /^\s*(?:\.|\?\.|\(|\[)/.test(code.slice(identifier.end));
+    unresolved.push({
+      file,
+      at,
+      key,
+      reason: compound ? 'not-a-literal' : 'unknown-constant',
+      expression: expressionAt(code, valueAt),
+    });
   };
 
+  // Only a key inside a schema expression is a message position. The key
+  // pattern alone also matches log records and type declarations, which is
+  // why the span check comes before `record`.
   const keys = new RegExp(`\\b(${MESSAGE_KEYS.join('|')})\\s*:\\s*`, 'g');
   let match: RegExpExecArray | null;
   while ((match = keys.exec(code)) !== null) {
     const key = match[1] as string;
-    push(match.index, key, keys.lastIndex);
+    if (!insideSchemaSpan(spans, match.index)) continue;
+    record(match.index, key, keys.lastIndex);
   }
 
   const positional = new RegExp(
@@ -252,10 +454,19 @@ export function customMessages(file: string, text: string): ZodCustomMessage[] {
     const argument = secondArg.has(method)
       ? secondArgument(code, openParen)
       : firstArgument(code, openParen);
-    if (argument !== undefined) push(match.index, `${method}() argument`, argument);
+    if (argument === undefined) continue;
+    // `.email()` and `.min(3, )` have no argument in the message position;
+    // there is nothing to read and nothing to report.
+    if (code[argument] === ')' || code[argument] === ',') continue;
+    record(match.index, `${method}() argument`, argument);
   }
 
-  return found;
+  return { messages, unresolved };
+}
+
+/** The messages the scan could read, in source order. */
+export function customMessages(file: string, text: string): ZodCustomMessage[] {
+  return scanZodMessages(file, text).messages;
 }
 
 /** 1-based line number of an offset. */

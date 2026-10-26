@@ -30,7 +30,7 @@ import { describe, expect, it } from 'vitest';
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 
-import { customMessages, englishMessages } from './zod-message-scan';
+import { customMessages, englishMessages, scanZodMessages } from './zod-message-scan';
 
 /** Every `.ts` / `.tsx` file under a directory, recursively. */
 function sourceFiles(dir: string): string[] {
@@ -112,6 +112,76 @@ z.unknown().superRefine((value, ctx) => {
     expect(found[0]?.message).toContain('清理未确认');
   });
 
+  it('reports a message position it cannot read, with the reason and the expression', () => {
+    // The old scanner returned only what it could read. Every shape here sits
+    // in a message position and was silently ignored, so a schema could write
+    // an English sentence in one of them and the app-wide scan would stay
+    // green. The list is the visible half of the same defence.
+    const scan = scanZodMessages('fixture.ts', `${ZOD_FILE}
+z.string({ message: IMPORTED_SENTENCE });
+z.string().min(3, IMPORTED_SENTENCE);
+z.string({ message: \`字段 \${name} 必填\` });
+z.string({ message: MESSAGES.required });
+z.string({ message: buildSentence() });
+z.string({ message: 'half of it' + rest });
+`);
+
+    // Source order, so a failure names the shape in the fixture a reader
+    // scrolls to. The two scan passes (keys, then positional arguments)
+    // otherwise return findings in two groups.
+    const findings = [...scan.unresolved].sort((a, b) => a.at - b.at);
+    expect(findings.map((one) => [one.key, one.reason])).toEqual([
+      ['message', 'unknown-constant'],
+      ['min() argument', 'unknown-constant'],
+      ['message', 'template-with-expression'],
+      ['message', 'not-a-literal'],
+      ['message', 'not-a-literal'],
+      ['message', 'concatenated-literal'],
+    ]);
+    expect(findings.map((one) => one.expression)).toEqual([
+      expect.stringContaining('IMPORTED_SENTENCE'),
+      expect.stringContaining('IMPORTED_SENTENCE'),
+      expect.stringContaining('${name}'),
+      expect.stringContaining('MESSAGES.required'),
+      expect.stringContaining('buildSentence()'),
+      expect.stringContaining("'half of it' + rest"),
+    ]);
+    // Nothing was judged: a half-read sentence is not a sentence.
+    expect(scan.messages).toEqual([]);
+  });
+
+  it('does not treat a `message` field outside a schema as a message position', () => {
+    // A file that imports Zod also has log records and type declarations, and
+    // both can have a field named `message`. Judging their language made the
+    // scan police sentences that are not refusals — and, worse, report them as
+    // unreadable schema messages once `unresolved` existed. Only a key inside
+    // a schema expression is a message position; a field *named* message whose
+    // value is itself a schema (`message: z.string()`) is a shape, not a
+    // sentence option.
+    const text = `${ZOD_FILE}
+const schema = z.object({ message: z.string() });
+logger.warn('x', { message: appError.message });
+logger.warn('x', { message: 'an English log sentence' });
+interface Warning { message: string }
+`;
+
+    expect(scanZodMessages('fixture.ts', text)).toEqual({ messages: [], unresolved: [] });
+  });
+
+  it('does not report a method call with no message argument', () => {
+    // `.email()` and `.strict()` have no argument, and `.min(3)` has no
+    // second one. There is no message position, so there is nothing to read
+    // and nothing to report; an `unresolved` entry here would be noise that
+    // makes the app-wide assertion impossible to keep at zero.
+    const text = `${ZOD_FILE}
+z.string().email();
+z.string().min(3);
+z.string().strict();
+`;
+
+    expect(scanZodMessages('fixture.ts', text)).toEqual({ messages: [], unresolved: [] });
+  });
+
   it('keeps Chinese messages and reports English ones', () => {
     const text = `${ZOD_FILE}
 z.string({ required_error: '必填' });
@@ -146,11 +216,12 @@ z.string().min(3, 'must be longer');
 });
 
 describe('no schema in this app writes an English sentence', () => {
-  it('finds the app’s one custom message, so the scan is not vacuous', () => {
-    // The purge confirmation is the only custom message this app ships, and it
-    // is Chinese. Asserting it is *found* is what distinguishes "nothing is
-    // English" from "the scanner stopped recognising messages", which is the
-    // failure this file would otherwise hide.
+  it('finds the app’s custom messages, so the scan is not vacuous', () => {
+    // The purge schema's two sentences are the only custom messages this app
+    // ships, and both are Chinese. Asserting they are *found* is what
+    // distinguishes "nothing is English" from "the scanner stopped
+    // recognising messages", which is the failure this file would otherwise
+    // hide.
     const file = 'apps/desktop/src/main/ipc-storage.ts';
     const found = customMessages(file, readFileSync(file, 'utf8'));
 
@@ -158,6 +229,25 @@ describe('no schema in this app writes an English sentence', () => {
       '清理未确认：请先预览要删除的内容，再确认一次。',
       '请求里有未知的字段：请只发送 scope、workspaceId 和 confirm。',
     ]);
+  });
+
+  it('can read every message position in shipping source', () => {
+    // The English assertion only covers messages the scan can *read*. A shape
+    // it cannot read is a hole in the rule, so the hole is asserted empty
+    // rather than left as a comment. A new runtime-built message must either
+    // become one Chinese literal, or this assertion must learn about that
+    // shape explicitly — with a test for the language it assembles.
+    const files = shippedSource();
+    expect(files.length).toBeGreaterThan(50);
+
+    const unresolved = files
+      .flatMap((file) => scanZodMessages(file, readFileSync(file, 'utf8')).unresolved)
+      .map((one) => `${one.file}:${one.at}: ${one.key} [${one.reason}] = ${one.expression}`);
+
+    expect(
+      unresolved,
+      'the scan saw a message position it could not judge, so the English check does not cover it — write the message as one Chinese literal, or put the constant beside the schema',
+    ).toEqual([]);
   });
 
   it('passes over every shipping source file', () => {
