@@ -156,7 +156,7 @@ export class DecisionFacade {
    *
    * ## Duplicate is asked against the chain that runs, not the chain requested
    *
-   * The duplicate check below is `ids.includes(id)` — the ids *kept so far* —
+   * The duplicate check below is `ids.includes(id)` — the ids **kept so far** —
    * and deliberately not a `seen` set of everything the request named. The
    * difference shows up on `['jev', 'jev']` when `jev`'s manifest contradicts
    * itself, and it is the whole reason `ids` is the list consulted:

@@ -4,8 +4,9 @@
  * ## Why this file exists
  *
  * It used to be a function inside `bootstrap.ts`, next to the Electron app
- * lifecycle, and that placement had one visible cost: the *search path list* —
- * the part that actually breaks between a development tree and a packaged app —
+ * lifecycle, and that placement had one visible cost: the **search path list**
+ * — the part that actually breaks between a development tree and a packaged app
+ * —
  * could only be checked by booting Electron and reading a log line afterwards.
  * A missing hop does not throw, it does not fail a build, and it does not fail
  * any test: it prints `adapter "<id>" could not be resolved` into a log
@@ -61,8 +62,8 @@
  * is what `__dirname` is in a release, and pins where the two upward hops then
  * land: on the install root and its `resources/` directory, not on the
  * workspace root they were counted for. Both directions are asserted — the
- * same fixture package resolves from a clone's `mainDir` and is *reported
- * missing* from the packaged one. Read that case before trusting
+ * same fixture package resolves from a clone's `mainDir` and is **reported
+ * missing** from the packaged one. Read that case before trusting
  * {@link MAIN_DIR_TO_WORKSPACE_ROOT} to mean "the checkout": when the app is
  * packaged the hops stop meaning that, and `appPath` (entry 1) is the only
  * search root that is still the app.

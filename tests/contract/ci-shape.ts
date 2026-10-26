@@ -19,9 +19,9 @@
  * "Every entry point" is not "every command that produces a package" — that
  * claim was in this paragraph and no test could hold it. A step that hides the
  * command behind a script (`run: ./scripts/package.sh`) is outside any text
- * match, and `tests/contract/ci-shape.test.ts` pins that boundary (see *cannot
- * see a command hidden behind a script*) instead of leaving the stronger
- * sentence in a comment.
+ * match, and `tests/contract/ci-shape.test.ts` pins that boundary with a case
+ * (`it('cannot see a command hidden behind a script')`) instead of leaving the
+ * stronger sentence in a comment.
  *
  * ## Why the directory, not `ci.yml`
  *
@@ -47,21 +47,26 @@
  * whole treatment until now, and a paragraph cannot fail: the next reader who
  * moves a step into an action would leave the gate green and the documents
  * promising CI packages nothing. `tests/contract/ci-shape.test.ts` therefore
- * asserts the gap — *does not read a composite action* and *cannot see a
- * reusable workflow in another repository* show the command present and the
- * reader answering `[]` — and a third case asserts that this repository
- * installs neither shape today, so extending the readers is a red test with
- * these names in it rather than a comment somebody may notice.
+ * asserts the gap — `it('does not read a composite action')` and
+ * `it('cannot see a reusable workflow in another repository')` show the command
+ * present and the reader answering `[]` — and a third case asserts that this
+ * repository installs neither shape today, so extending the readers is a red
+ * test with these names in it rather than a comment somebody may notice.
  *
  * One narrowing worth knowing, because it makes the second gap smaller than it
  * sounds: a reusable workflow **in this repository** is a top-level file under
  * `.github/workflows/`, so it *is* read, and a packaging step inside it is
- * caught. Only the remote case is invisible. *does read a reusable workflow
- * that lives in this directory* pins that half.
+ * caught. Only the remote case is invisible, and
+ * `it('does read a reusable workflow that lives in this directory')` pins that
+ * half.
  *
- * A *symlinked* workflow file is the third declared gap — see
- * {@link readWorkflowFiles}. If any of these lands, extend the readers and the
- * cases together; do not narrow this list.
+ * A *symlinked* workflow file used to be the third declared gap: `isFile()` is
+ * false for a link, so the reader walked past it and the gate answered "nothing
+ * packages the app" about a file it never opened. It is no longer a gap — see
+ * {@link readWorkflowFiles} — because the reader now follows the link and reads
+ * what it points at, and refuses (with both fixes in the message) a `.yml`
+ * entry that does not resolve to a regular file. If either shape above lands,
+ * extend the readers and the cases together; do not narrow this list.
  *
  * ## What the matching cannot tell apart, and why it does not need to
  *
@@ -89,15 +94,15 @@
  * add an exemption for comments — a comment matcher is a one-line parser whose
  * own blind spots (block scalars, quoted strings that look like comments) would
  * be new. `tests/contract/ci-shape.test.ts` records the current behaviour with
- * a case, so "comments match too" is asserted rather than left to be
- * rediscovered: see *matches a comment that names a packaging command*.
+ * a case — `it('matches a comment that names a packaging command')` — so
+ * "comments match too" is asserted rather than left to be rediscovered.
  *
  * One more thing this gate is not: a YAML validator. It never fails a workflow
  * for being malformed, and it cannot tell a `run:` from a `uses:`. CI's ability
  * to run at all is GitHub's answer to that question, not this module's.
  */
 
-import { readFileSync, readdirSync } from 'node:fs';
+import { lstatSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 
 /** One way the workflow could package the app, and the command that betrays it. */
@@ -130,13 +135,13 @@ interface PackagingCommand {
  * asymmetry argues for it — a false alarm is reworded in a minute, while a
  * packaging step nobody recognised is the failure this module exists to
  * prevent. `tests/contract/ci-shape.test.ts` asserts each entry is matched
- * (*recognises the other ways an Electron packaging step is written*), so
+ * (`it('recognises the other ways an Electron packaging step is written')`), so
  * adding a toolchain is a line here plus a case there.
  *
  * What the list still cannot see is a step whose command is in a file:
- * `run: ./scripts/package.sh`. No pattern can, and the case *cannot see a
- * command hidden behind a script* pins that boundary rather than leaving it
- * implied by an absent line.
+ * `run: ./scripts/package.sh`. No pattern can, and
+ * `it('cannot see a command hidden behind a script')` pins that boundary rather
+ * than leaving it implied by an absent line.
  */
 export const PACKAGING_COMMANDS: readonly PackagingCommand[] = [
   { command: 'npm run package', pattern: /\bnpm run package\b/u },
@@ -153,6 +158,17 @@ export interface WorkflowFile {
   readonly name: string;
   /** The file's raw text. */
   readonly text: string;
+  /**
+   * Whether the entry was reached through a symlink, i.e. whether the text was
+   * read from the link's target.
+   *
+   * Carried so a failure can say so: a red gate over `release.yml` sends its
+   * reader to a line of a file that may be a one-line link, and the fix for a
+   * link (materialise it) is different from the fix for a copy (reword it).
+   * Optional, and only set when true, so a fixture that builds a workflow from
+   * a string literal stays a two-field object.
+   */
+  readonly symlinked?: boolean;
 }
 
 /**
@@ -170,24 +186,71 @@ export interface WorkflowFile {
  * failure this module exists to prevent. The caller asserts the directory
  * first, so the red names the path.
  *
- * **A symlinked workflow file is skipped**, because `isFile()` is false for a
- * link and this function does not follow it. That is a declared gap rather than
- * a decision: GitHub does not document whether it reads a symlinked workflow,
- * so the honest options are "read it" or "say it is not read", and the second is
- * the one that can be stated without guessing. The cost is real and it falls in
- * the failing direction — a `release.yml` that is a symlink to a packaging job
- * would leave this gate green while the documents go on promising CI packages
- * nothing. `tests/contract/ci-shape.test.ts` pins the current behaviour in
- * *skips a symlinked workflow file*; if a symlink is ever installed under
- * `.github/workflows/`, extend this reader (`entry.isSymbolicLink()` plus
- * `statSync`) before relying on the gate.
+ * **A symlinked workflow file is followed, not skipped.** `isFile()` is false
+ * for a link, so the previous version of this reader walked past one — and the
+ * gate then answered "nothing packages the app" about a file it never opened,
+ * which is the one direction this module may not fail in. The link is therefore
+ * resolved and the target's text is read: a `release.yml` that points at a
+ * packaging job is a red gate, and the `symlinked` flag on {@link WorkflowFile}
+ * lets the failure say which kind of file tripped it. GitHub does not document
+ * whether it runs a symlinked workflow, so the reverse case — a link GitHub
+ * ignores that this reader still reds on — is the harmless one: its fix is a
+ * reword or a materialised copy, not a missed packaging step.
+ *
+ * A `.yml` / `.yaml` entry that does not resolve to a regular file (a broken
+ * link, or a link to a directory) **throws** instead of being skipped, and the
+ * message carries both fixes: materialise the workflow at that name, or extend
+ * this reader. `tests/contract/ci-shape.test.ts` pins the whole rule in
+ * `it('follows a symlinked workflow file, so a link cannot hide a packaging step')`
+ * and `it('refuses a workflow entry it cannot read, instead of skipping it')`.
  */
 export function readWorkflowFiles(dir: string): WorkflowFile[] {
-  return readdirSync(dir, { withFileTypes: true })
-    .filter((entry) => entry.isFile() && /\.ya?ml$/u.test(entry.name))
-    .map((entry) => entry.name)
-    .sort()
-    .map((name) => ({ name, text: readFileSync(join(dir, name), 'utf8') }));
+  return (
+    readdirSync(dir, { withFileTypes: true })
+      // A directory is not a workflow GitHub runs, even when it is named
+      // `ci.yml` — there is no text to match a packaging command against.
+      .filter((entry) => !entry.isDirectory() && /\.ya?ml$/u.test(entry.name))
+      .map((entry) => entry.name)
+      .sort()
+      .map((name) => readWorkflowEntry(dir, name))
+  );
+}
+
+/**
+ * One workflow entry's text, or a throw that says what to do about it.
+ *
+ * Every `.yml` / `.yaml` entry that is not a directory reaches this function, so
+ * there is no third answer: a link is resolved and read, and an entry that
+ * resolves to nothing readable is a red gate naming the file. The silence this
+ * replaces was the module's declared gap — a symlinked `release.yml` packaging
+ * the app left every document promising CI does not, and nothing failed.
+ *
+ * `lstatSync` marks the link so {@link packagingProblem} can say the file was
+ * reached through one; `statSync` with `throwIfNoEntry: false` answers the
+ * question the old `isFile()` check answered wrongly, without turning a broken
+ * link into an `ENOENT` from `readFileSync` (which names the path but not the
+ * rule, the link, or the fix).
+ */
+function readWorkflowEntry(dir: string, name: string): WorkflowFile {
+  const file = join(dir, name);
+  const symlinked = lstatSync(file).isSymbolicLink();
+  const target = statSync(file, { throwIfNoEntry: false });
+  if (target?.isFile() === true) {
+    return { name, text: readFileSync(file, 'utf8'), ...(symlinked ? { symlinked: true } : {}) };
+  }
+  throw new Error(
+    [
+      `\`${name}\` under \`${dir}\` is not a readable workflow file: ${file} ` +
+        (target === undefined ? 'does not exist (a broken symlink?),' : 'is not a regular file,'),
+      'and this reader will not skip it — a skipped `.yml` is a gate answering "CI packages nothing"',
+      'about a file it never opened, which is the one direction this gate may not fail in.',
+      'Fix it one of two ways:',
+      '  1. Materialise the workflow: copy the file it points at to this name, so the workflow',
+      '     GitHub runs and the text this gate reads are the same file.',
+      '  2. Extend readWorkflowFiles() to read this shape, and update the cases in',
+      '     `tests/contract/ci-shape.test.ts` that pin what the reader does with a link.',
+    ].join('\n'),
+  );
 }
 
 /**
@@ -304,15 +367,31 @@ export function workflowsPackageTheApp(workflows: readonly WorkflowFile[]): bool
  * prohibition next to the failure is the only place it can be read at the moment
  * it matters: the module doc is not open when the gate goes red.
  *
- * The exact wording is asserted in `ci-shape.test.ts` (*reports the file, the
- * line and the fix* and *tells the reader not to narrow the vocabulary*),
- * because advice nobody tests is advice that quietly stops being printed — and a
- * deletion that keeps the assertions compiling is exactly how this file's
- * predecessor lost its `line`.
+ * The exact wording is asserted in `ci-shape.test.ts`
+ * (`it('reports the file, the line and the fix')` and
+ * `it('tells the reader not to narrow the vocabulary')`), because advice nobody
+ * tests is advice that quietly stops being printed — and a deletion that keeps
+ * the assertions compiling is exactly how this file's predecessor lost its
+ * `line`.
+ *
+ * ## And the line a symlink adds
+ *
+ * A finding whose file was read through a symlink carries one more sentence,
+ * because its fix is one step longer: the reader is looking at a line of a
+ * *link*, and GitHub does not document that it runs a symlinked workflow. The
+ * file GitHub would execute and the text matched above may therefore not be the
+ * same file, and "reword line 5" is not the whole answer — materialising the
+ * workflow is. Naming it only when the finding came through a link keeps the
+ * common message short: `tests/contract/ci-shape.test.ts` asserts both the
+ * presence (link) and absence (plain file) of that sentence.
  */
 export function packagingProblem(workflows: readonly WorkflowFile[]): string | undefined {
+  const found = packagingFindings(workflows);
+  if (found.length === 0) return undefined;
   const findings = packagingCommandsIn(workflows);
-  if (findings.length === 0) return undefined;
+  // Which of the files that tripped the gate were reached through a symlink.
+  const linked = new Set(workflows.filter((file) => file.symlinked === true).map((file) => file.name));
+  const viaLink = [...new Set(found.map(({ workflow }) => workflow).filter((name) => linked.has(name)))];
   return [
     `a workflow under \`.github/workflows/\` names a packaging command: ${findings.join(', ')}.`,
     'The packaged asar check is documented as manual, so one of these lines is now false.',
@@ -321,6 +400,14 @@ export function packagingProblem(workflows: readonly WorkflowFile[]): string | u
       'cannot tell from a step — reword that line; no document needs to change.',
     '  2. If it is a real step, update README.md (both languages), CONTRIBUTING.md and ' +
       'adapter-resolution.ts to say what CI checks instead of only adding the job.',
+    ...(viaLink.length === 0
+      ? []
+      : [
+          `Note that ${viaLink.map((name) => `\`${name}\``).join(', ')} was read through a symlink, ` +
+            'and GitHub does not document that it runs one: the file GitHub would execute and the ' +
+            'text matched above may not be the same file. Materialise it (copy the target to that ' +
+            'name) as part of the fix.',
+        ]),
     'Do not narrow PACKAGING_COMMANDS and do not add a comment exemption to silence this: ' +
       'that trades a one-line reword for a gate that misses a real packaging step.',
   ].join('\n');

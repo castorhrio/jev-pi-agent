@@ -297,6 +297,10 @@ describe('the packaging match is textual, and errs toward a false alarm', () => 
     // The clean direction, so the hint is not printed over a tree that passes:
     // a gate whose message always fires is a message nobody reads.
     expect(packagingProblem([{ name: 'ci.yml', text: CLEAN_CI }])).toBeUndefined();
+    // And the symlink sentence is conditional: a red over a plain file must not
+    // suggest the reader materialise something that is already a file.
+    const plain = packagingProblem([{ name: 'release.yml', text: PACKAGING_RELEASE }]);
+    expect(plain).not.toContain('symlink');
   });
 
   it('tells the reader not to narrow the vocabulary, so a false alarm is not "fixed" by weakening the gate', () => {
@@ -411,13 +415,13 @@ describe('the readers cover the directory, not one file', () => {
     );
   });
 
-  it('skips a symlinked workflow file, which is the gap the module declares', () => {
-    // `isFile()` is false for a link, so a workflow installed as a symlink is
-    // not read — and the consequence is not neutral: it is a gate answering
-    // "nothing packages the app" about a file it never opened. The behaviour is
-    // pinned here rather than left as a surprise, and `ci-shape.ts` says what to
-    // do about it (`isSymbolicLink()` plus `statSync`) if a symlink ever lands in
-    // `.github/workflows/`.
+  it('follows a symlinked workflow file, so a link cannot hide a packaging step', () => {
+    // This case used to pin the opposite behaviour: `isFile()` is false for a
+    // link, so a workflow installed as a symlink was silently skipped and the
+    // gate answered "nothing packages the app" about a file it never opened.
+    // That is the direction this whole module may not fail in, so the reader now
+    // resolves the link and reads the target — and the same fixture that used to
+    // be green is the one that proves it.
     const dir = mkdtempSync(join(tmpdir(), 'ucad-workflows-'));
     try {
       writeFileSync(join(dir, 'ci.yml'), CLEAN_CI);
@@ -427,17 +431,53 @@ describe('the readers cover the directory, not one file', () => {
       symlinkSync('release.yml.template', join(dir, 'release.yml'));
 
       const workflows = readWorkflowFiles(dir);
-      expect(workflows.map((workflow) => workflow.name)).toEqual(['ci.yml']);
-      expect(packagingCommandsIn(workflows)).toEqual([]);
-      // The cost, asserted: the gate is green over a file that packages.
-      expect(workflowsPackageTheApp(workflows)).toBe(false);
-      // And the control, so this is a statement about links rather than about
-      // the target not being read at all: the same body under a `.yml` name is
-      // caught.
-      writeFileSync(join(dir, 'copied.yml'), PACKAGING_RELEASE);
-      expect(packagingCommandsIn(readWorkflowFiles(dir))).toEqual([
-        '`npm run dist` at `copied.yml:5`',
-      ]);
+      // Read, not skipped: the link is a workflow entry as far as the gate is
+      // concerned, and the flag records *how* it was reached so the failure can
+      // say so.
+      expect(workflows.map((workflow) => workflow.name)).toEqual(['ci.yml', 'release.yml']);
+      expect(workflows.find((workflow) => workflow.name === 'release.yml')?.symlinked).toBe(true);
+      // The plain file is not marked, so the flag is a statement about the link
+      // rather than a constant.
+      expect(workflows.find((workflow) => workflow.name === 'ci.yml')?.symlinked).toBeUndefined();
+      // The match, and the address, are the same as for a copied file: the line
+      // number is the target's, which is the reword the reader needs.
+      expect(packagingCommandsIn(workflows)).toEqual(['`npm run dist` at `release.yml:5`']);
+      expect(workflowsPackageTheApp(workflows)).toBe(true);
+      // The failure names the link as a link: the fix for a symlink is one step
+      // longer than a reword (GitHub does not document that it runs one), so a
+      // message that only says "reword line 5" would send the reader into the
+      // link's target and leave the link in place.
+      const problem = packagingProblem(workflows);
+      expect(problem).toContain('`release.yml` was read through a symlink');
+      expect(problem).toContain('Materialise it');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('refuses a workflow entry it cannot read, instead of skipping it', () => {
+    // The other half of following a link: a link that resolves to nothing, or to
+    // a directory, has no text to match — and a reader that skipped it would be
+    // back to answering "nothing packages" about a file it could not open. So
+    // both shapes throw, and the message carries the two fixes rather than only
+    // the path.
+    const dir = mkdtempSync(join(tmpdir(), 'ucad-workflows-'));
+    try {
+      writeFileSync(join(dir, 'ci.yml'), CLEAN_CI);
+      // A broken link: the name says workflow, the target is not there.
+      symlinkSync('gone.yml.template', join(dir, 'release.yml'));
+      expect(() => readWorkflowFiles(dir)).toThrow(/release\.yml/);
+      expect(() => readWorkflowFiles(dir)).toThrow(/does not exist/);
+      expect(() => readWorkflowFiles(dir)).toThrow(/Materialise the workflow/);
+
+      // A link to a directory is the same class: an entry with a workflow name
+      // whose text this reader would otherwise quietly not have.
+      rmSync(join(dir, 'release.yml'));
+      mkdirSync(join(dir, 'shared'));
+      symlinkSync('shared', join(dir, 'release.yml'));
+      expect(() => readWorkflowFiles(dir)).toThrow(/not a regular file/);
+      // …and the message says how to extend the reader, not only that it failed.
+      expect(() => readWorkflowFiles(dir)).toThrow(/Extend readWorkflowFiles\(\)/);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
