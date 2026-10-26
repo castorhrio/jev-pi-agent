@@ -43,7 +43,7 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -136,6 +136,62 @@ describe('the CI workflows package nothing', () => {
 });
 
 /**
+ * The match is textual, and it errs in one direction on purpose.
+ *
+ * These cases exist because the first version of this module said "reads the
+ * *commands* in the workflow files", which is a stronger claim than the code
+ * makes: the patterns see `#` comments, `name:` strings and every other line of
+ * the file. That was documented in a sentence and nothing else, so the next
+ * reader who hit a red gate from a comment would have to work out whether they
+ * were looking at a bug. Here the behaviour is asserted, which turns "comments
+ * count too" from an accident into a rule with a test behind it.
+ *
+ * The direction matters more than the behaviour: a comment that trips the gate
+ * is a false positive a contributor can fix by rephrasing, while a packaging
+ * step nobody recognised is the failure the whole module exists to catch. A
+ * comment matcher would be able to produce the second kind of error — a
+ * `#`-stripping regex is itself a small parser with its own blind spots (block
+ * scalars, a `#` inside a quoted `run:`), and each of them is a way to stop
+ * seeing a real command.
+ */
+describe('the packaging match is textual, and errs toward a false alarm', () => {
+  it('matches a comment that names a packaging command', () => {
+    // The shape a careful contributor writes: a note saying the step is manual
+    // *by design*. The gate still goes red, and the fix is to reword the note —
+    // `ci-shape.ts` says so where the reader of a failure will look.
+    expect(packagingCommands('# do not run npm run dist here\n')).toEqual(['`npm run dist`']);
+    expect(packagingCommands('      # npm run package is the manual step\n')).toEqual([
+      '`npm run package`',
+    ]);
+    // Nor does the position in the file matter: matching is over the whole text,
+    // not per line or per step.
+    expect(packagingCommands([CLEAN_CI, '# was: npx electron-builder --dir'].join('\n'))).toEqual([
+      '`electron-builder`',
+    ]);
+  });
+
+  it('does not distinguish a comment from a step, so neither may be used as a hiding place', () => {
+    // The same text, once as a step and once as a comment: identical verdicts.
+    // A gate that could tell them apart would be a YAML parser, and the module
+    // doc says why this one is not.
+    const asStep = '      - run: npm run dist\n';
+    const asComment = '      # npm run dist\n';
+    expect(packagingCommands(asComment)).toEqual(packagingCommands(asStep));
+  });
+
+  it('reports the file a comment tripped it in, so the reword has an address', () => {
+    withWorkflowsDir(
+      { 'ci.yml': CLEAN_CI, 'release.yml': '# we do not run npm run dist; see CONTRIBUTING\n' },
+      (dir) => {
+        expect(packagingCommandsIn(readWorkflowFiles(dir))).toEqual([
+          '`npm run dist` in `release.yml`',
+        ]);
+      },
+    );
+  });
+});
+
+/**
  * A throwaway workflows directory, and a helper that always cleans it up.
  *
  * The real directory is read by the cases above; these fixtures exist so the
@@ -218,6 +274,36 @@ describe('the readers cover the directory, not one file', () => {
         expect(workflowsPackageTheApp(readWorkflowFiles(dir))).toBe(false);
       },
     );
+  });
+
+  it('skips a symlinked workflow file, which is the gap the module declares', () => {
+    // `isFile()` is false for a link, so a workflow installed as a symlink is
+    // not read — and the consequence is not neutral: it is a gate answering
+    // "nothing packages the app" about a file it never opened. The behaviour is
+    // pinned here rather than left as a surprise, and `ci-shape.ts` says what to
+    // do about it (`isSymbolicLink()` plus `statSync`) if a symlink ever lands in
+    // `.github/workflows/`.
+    const dir = mkdtempSync(join(tmpdir(), 'ucad-workflows-'));
+    try {
+      writeFileSync(join(dir, 'ci.yml'), CLEAN_CI);
+      // The target is a real workflow body with a packaging step; the name is
+      // not a workflow extension, so only the link is in question.
+      writeFileSync(join(dir, 'release.yml.template'), PACKAGING_RELEASE);
+      symlinkSync('release.yml.template', join(dir, 'release.yml'));
+
+      const workflows = readWorkflowFiles(dir);
+      expect(workflows.map((workflow) => workflow.name)).toEqual(['ci.yml']);
+      expect(packagingCommandsIn(workflows)).toEqual([]);
+      // The cost, asserted: the gate is green over a file that packages.
+      expect(workflowsPackageTheApp(workflows)).toBe(false);
+      // And the control, so this is a statement about links rather than about
+      // the target not being read at all: the same body under a `.yml` name is
+      // caught.
+      writeFileSync(join(dir, 'copied.yml'), PACKAGING_RELEASE);
+      expect(packagingCommandsIn(readWorkflowFiles(dir))).toEqual(['`npm run dist` in `copied.yml`']);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it('fails rather than answering "nothing packages" when the directory is gone', () => {

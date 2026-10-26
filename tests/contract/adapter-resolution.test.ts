@@ -175,10 +175,19 @@ function writeFakeAdapter(root: string, specifier: string): string {
  * packaged app is the layout where that matters: `app.getAppPath()` is the only
  * root that exists in a release, and the asar suffix is attached to it.
  *
- * The two cases below put a package only under an asar-shaped `appPath` and
- * then move `appPath` away while keeping the development hops unchanged. The
- * package resolves in the first case and is reported missing in the second, so
- * both directions are pinned without inventing a failure in a fixture.
+ * The first two cases below put a package only under an asar-shaped `appPath`
+ * and then move `appPath` away while keeping the development hops unchanged.
+ * The package resolves in the first case and is reported missing in the second,
+ * so both directions are pinned without inventing a failure in a fixture.
+ *
+ * The third case fills the gap those two left: they always passed a *clone's*
+ * `mainDir`, where the upward hops do reach the workspace root. A packaged
+ * process has `__dirname` inside the archive (`…/app.asar/dist/main`), and the
+ * same four hops then answer "the install root" instead — so a release that
+ * carries its adapters only inside the asar resolves through `appPath` alone.
+ * That is the claim this suite makes in its header ("the packaged root is a
+ * search root in its own right"), and it was true on paper one `mainDir` too
+ * few.
  *
  * What this does **not** cover: opening a real `.asar` archive. Node's
  * `require.resolve` treats the app path as a directory root, and a directory
@@ -243,6 +252,73 @@ describe('the packaged app root is a search root in its own right', () => {
       expect(resolution.modules).toEqual({});
       expect(resolution.failures.map((failure) => failure.id)).toEqual([PACKAGED_ID]);
       expect(resolution.searchPaths[0]).toBe(emptyAppPath);
+    } finally {
+      rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('lands the upward hops inside the asar, so they cannot see the checkout', () => {
+    // The layout the two cases above do not build: `__dirname` inside the
+    // archive. A packaged main entry is `…/resources/app.asar/dist/main`, so
+    // the four hops counted for a clone (`dist/main` → workspace root) land on
+    // the *install* root and its `resources/` directory instead. Both still
+    // exist and are still searched — they are simply not the checkout, and a
+    // release that ships its adapters only inside the archive resolves nothing
+    // through them.
+    //
+    // The pair matters: the same specifier resolves in the development context
+    // and fails in the packaged one, from fixtures written by the same helper.
+    // That is what "the search paths are not one layout wearing two hats"
+    // means, and it is why `appPath` is asked first.
+    const tempRoot = mkdtempSync(join(tmpdir(), 'ucad-adapter-asar-maindir-'));
+    try {
+      const checkout = join(tempRoot, 'checkout');
+      const devMainDir = join(checkout, 'apps', 'desktop', 'dist', 'main');
+      mkdirSync(devMainDir, { recursive: true });
+      // Only in the checkout: a development run finds it, a release must not.
+      writeFakeAdapter(checkout, PACKAGED_SPECIFIER);
+
+      const develop = adapterSearchPaths({
+        appPath: join(checkout, 'apps', 'desktop'),
+        mainDir: devMainDir,
+        cwd: checkout,
+      });
+      expect(develop).toContain(checkout);
+      const developed = resolveAdapterModules({
+        candidates: { [PACKAGED_ID]: PACKAGED_SPECIFIER },
+        searchPaths: develop,
+        write: () => undefined,
+      });
+      expect(developed.failures).toEqual([]);
+
+      const release = join(tempRoot, 'release');
+      const appPath = join(release, 'resources', 'app.asar');
+      const packaged = adapterSearchPaths({
+        appPath,
+        // What Electron's `__dirname` is once packaged: the same two segments
+        // below a path that now ends in `app.asar`.
+        mainDir: join(appPath, 'dist', 'main'),
+        cwd: release,
+      });
+
+      // The hops did not fail, they answered a different question: the install
+      // root and its `resources/`, neither of which is the workspace root.
+      expect(packaged[1]).toBe(release);
+      expect(packaged[2]).toBe(join(release, 'resources'));
+      expect(packaged).not.toContain(checkout);
+      expect(packaged).not.toContain(join(checkout, 'apps'));
+
+      const resolution = resolveAdapterModules({
+        candidates: { [PACKAGED_ID]: PACKAGED_SPECIFIER },
+        searchPaths: packaged,
+        write: () => undefined,
+      });
+
+      // Reported, not thrown (ADR-017) — and reported *here*, because the
+      // release really does not contain this adapter.
+      expect(resolution.modules).toEqual({});
+      expect(resolution.failures.map((failure) => failure.id)).toEqual([PACKAGED_ID]);
+      expect(resolution.searchPaths[0]).toBe(appPath);
     } finally {
       rmSync(tempRoot, { recursive: true, force: true });
     }

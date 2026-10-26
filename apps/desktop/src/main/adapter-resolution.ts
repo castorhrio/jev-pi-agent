@@ -57,6 +57,16 @@
  * development hops stay put. That pins the part that actually drifts: the app
  * root is a real search root, not a string the resolver carries and ignores.
  *
+ * A third case builds the packaged `mainDir` as `…/app.asar/dist/main`, which
+ * is what `__dirname` is in a release, and pins where the two upward hops then
+ * land: on the install root and its `resources/` directory, not on the
+ * workspace root they were counted for. Both directions are asserted — the
+ * same fixture package resolves from a clone's `mainDir` and is *reported
+ * missing* from the packaged one. Read that case before trusting
+ * {@link MAIN_DIR_TO_WORKSPACE_ROOT} to mean "the checkout": when the app is
+ * packaged the hops stop meaning that, and `appPath` (entry 1) is the only
+ * search root that is still the app.
+ *
  * It does not open a real `.asar` archive. Node resolves a bare specifier by
  * treating the app path as a directory root — the behaviour the test exercises
  * — but reading modules from inside the archive needs Electron's patched `fs`,

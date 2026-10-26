@@ -30,8 +30,42 @@
  * What is still a blind spot, stated rather than implied: a packaging step
  * hidden inside a composite action (`.github/actions/**`) or a reusable
  * workflow invoked with `uses: owner/repo/.github/workflows/x.yml@ref`. Neither
- * is a file in this directory, so neither is read here. If that refactor
- * lands, extend the readers — do not narrow this list.
+ * is a file in this directory, so neither is read here — and a *symlinked*
+ * workflow file is skipped by {@link readWorkflowFiles}, which is the third
+ * declared gap. If that refactor lands, extend the readers — do not narrow
+ * this list.
+ *
+ * ## What the matching cannot tell apart, and why it does not need to
+ *
+ * The patterns read the workflow's raw text. They are not YAML parsers and they
+ * do not know a `run:` from a `#`: a comment that spells out the command —
+ * "we do not run `npm run dist` here, the asar check is manual" — matches, and a
+ * gate consuming this module goes red on a workflow that packages nothing.
+ *
+ * That is the safe direction, and it is the reason this is a text match rather
+ * than a parse:
+ *
+ *  - A **false positive** costs a sentence in a comment and a minute of
+ *    confusion; the fix is to reword the comment, and the gate's message names
+ *    the file, so the reader knows where to look.
+ *  - A **false negative** — a packaging step this vocabulary did not recognise
+ *    — leaves every document promising "CI does not cover it" beside a CI run
+ *    that does. That is the failure this module exists to prevent, and no
+ *    amount of parsing buys back the certainty, because the step can hide in a
+ *    script file (`run: ./scripts/package.sh`) that no pattern in either
+ *    approach would see.
+ *
+ * So the rule for a reader is: if the gate names your workflow and the only
+ * occurrence is prose, reword the prose. Do not narrow the pattern, and do not
+ * add an exemption for comments — a comment matcher is a one-line parser whose
+ * own blind spots (block scalars, quoted strings that look like comments) would
+ * be new. `tests/contract/ci-shape.test.ts` records the current behaviour with
+ * a case, so "comments match too" is asserted rather than left to be
+ * rediscovered: see *matches a comment that names a packaging command*.
+ *
+ * One more thing this gate is not: a YAML validator. It never fails a workflow
+ * for being malformed, and it cannot tell a `run:` from a `uses:`. CI's ability
+ * to run at all is GitHub's answer to that question, not this module's.
  */
 
 import { readFileSync, readdirSync } from 'node:fs';
@@ -41,7 +75,12 @@ import { join } from 'node:path';
 interface PackagingCommand {
   /** The literal command, as a workflow step writes it. */
   readonly command: string;
-  /** Matched against the workflow's raw text. */
+  /**
+   * Matched against the workflow's raw text — a step's `run:`, a `name:`, and a
+   * `#` comment alike. See "What the matching cannot tell apart" above: the
+   * blind spot that costs is a missed command, not a comment that trips the
+   * gate.
+   */
   readonly pattern: RegExp;
 }
 
@@ -96,6 +135,18 @@ export interface WorkflowFile {
  * satisfy "no workflow packages the app" for the wrong reason, which is the
  * failure this module exists to prevent. The caller asserts the directory
  * first, so the red names the path.
+ *
+ * **A symlinked workflow file is skipped**, because `isFile()` is false for a
+ * link and this function does not follow it. That is a declared gap rather than
+ * a decision: GitHub does not document whether it reads a symlinked workflow,
+ * so the honest options are "read it" or "say it is not read", and the second is
+ * the one that can be stated without guessing. The cost is real and it falls in
+ * the failing direction — a `release.yml` that is a symlink to a packaging job
+ * would leave this gate green while the documents go on promising CI packages
+ * nothing. `tests/contract/ci-shape.test.ts` pins the current behaviour in
+ * *skips a symlinked workflow file*; if a symlink is ever installed under
+ * `.github/workflows/`, extend this reader (`entry.isSymbolicLink()` plus
+ * `statSync`) before relying on the gate.
  */
 export function readWorkflowFiles(dir: string): WorkflowFile[] {
   return readdirSync(dir, { withFileTypes: true })

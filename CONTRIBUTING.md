@@ -215,6 +215,53 @@ the renderer itself: a false positive is a source line that should use the i18n 
 the spacing scale. Do not add an allowlist entry for a one-off string; name the control
 or move the copy into the locale files.
 
+### Which facts get a behaviour test, and which fall back to source text
+
+**Run the code when the fact is about what the code does.** A gate that executes the thing it
+describes survives a refactor; a gate that reads its text does not. The move this repository
+keeps making is taking a piece of logic out of a file that can only be scanned and into a
+function that can be called, then asserting on the call: adapter search paths, the composition
+that turns process facts into a resolution, the parse/tail/release-directory helpers behind the
+manual packaged check and its `spawn`/`kill` seams all live on that side of the line. Those
+gates read as statements about behaviour — "this specifier resolves from these directories",
+"an empty search path list is refused with this code", "a launch that never prints the line is
+a failure" — and they keep working after a rename.
+
+**Scan the source only when the fact *is* about the source.** Some promises are not
+observable from a test process at all, and pretending otherwise is how a gate becomes a
+comment:
+
+- *Absence of a thing nobody wrote yet* — an adapter id list re-inlined in the boot path, a
+  bare `throw` in `apps/desktop/src/main`, a packaging step in a workflow. There is no call to
+  make; the fact is the shape of the file.
+- *Electron-only call sites* — three getters that need a real `app` and `__dirname` inside an
+  asar. The composition around them is testable (that is the point of moving it), but the
+  getters themselves can only be read.
+- *CI's own configuration* — `electron-builder` appearing in a workflow is a property of a YAML
+  file, and the honest gate is a scan of that file, not a simulation of GitHub.
+
+**Then say where the scan is blind.** Every text-scanning gate here names its own boundary in
+its module doc, and records it with a failing-case fixture where one can exist — a scan whose
+blind spot has no test drifts silently the moment somebody edits the pattern. The boundaries you
+will meet, and where each is written down:
+
+- **Comments count as matches.** `tests/contract/ci-shape.ts` matches the raw text of a workflow,
+  so a comment that spells out a packaging command trips the gate. That is deliberate: a false
+  alarm is reworded in a minute, while a missed step makes this document lie. Do not narrow the
+  pattern to remove the false alarm.
+- **Symlinked workflow files are not read**, for the same reason: `isFile()` is false for a link.
+  The module doc says what to extend if that ever matters.
+- **Composite actions and reusable workflows are not read at all** — they are not files in
+  `.github/workflows/`, so the gate cannot see a packaging step that lives there.
+- **Template-literal block names are not recognised** by `tests/contract/scanner-registry.test.ts`,
+  and that miss is itself asserted.
+- **String literals are not stripped** by the bare-throw scan, so a quoted example fails loudly
+  instead of passing quietly.
+
+The rule of thumb: if you cannot write a fixture that makes the scan fail, the scan is not yet a
+gate — either widen it, or assert the shape's absence instead and say in the doc which of the two
+you did.
+
 ## Working on the interface
 
 ```bash
