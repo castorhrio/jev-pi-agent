@@ -36,7 +36,9 @@ import {
   ZOD_REASON_GENERIC,
   schemaFailureFields,
   toUserError,
+  zodFailureSource,
   zodReason,
+  zodReasonSource,
 } from '../../apps/desktop/src/main/ipc-errors';
 
 /**
@@ -285,5 +287,86 @@ describe('toUserError — the one line that crosses the bridge', () => {
     expect(thrown).toBeInstanceOf(Error);
     expect(Object.keys(thrown)).toEqual([]);
     expect(JSON.parse(JSON.stringify(thrown))).toEqual({});
+  });
+});
+
+describe('zodReasonSource — where the reason in the sentence came from', () => {
+  it('says "schema" for a sentence the schema wrote itself', () => {
+    // The purge confirmation is the reason this rule exists: its message says
+    // what the person has to do, and it is the only sentence in the app that
+    // can. So the app has to know it kept it — not guess it from the log.
+    expect(zodReasonSource(issue({ code: 'custom', message: '请先确认要清空的项目' }))).toBe('schema');
+  });
+
+  it('says "table" for a message Zod wrote', () => {
+    // Almost every schema in this app writes no message at all, so almost every
+    // refusal in the log has its reason from the table.
+    expect(zodReasonSource(issue({ code: 'invalid_type', received: 'number' }))).toBe('table');
+  });
+
+  it('says "table" for a Zod message that happens to quote a Chinese value', () => {
+    // The same case `zodReason` handles: CJK inside the message does not make
+    // it the app's sentence. The source has to agree with the wording, or the
+    // log would claim a schema wrote a sentence it did not write.
+    const quoted = issue({
+      code: 'invalid_enum_value',
+      message: "Invalid enum value. Expected 'a', received '红色'",
+    });
+
+    expect(zodReasonSource(quoted)).toBe('table');
+  });
+
+  it('never disagrees with the sentence it explains', () => {
+    // The point of the field: it is the same decision the wording makes, and
+    // not a second one that could drift. A `schema` source means the schema's
+    // own words reached the person; a `table` source means they did not.
+    const issues = [
+      issue({ code: 'custom', message: '请先确认要清空的项目' }),
+      issue({ code: 'invalid_type', received: 'number' }),
+      issue({ code: 'unrecognized_keys', message: '有未知的字段' }),
+      issue({
+        code: 'invalid_enum_value',
+        message: "Invalid enum value. Expected 'a', received '红色'",
+      }),
+    ];
+
+    for (const one of issues) {
+      const source = zodReasonSource(one);
+      if (source === 'schema') {
+        expect(zodReason(one)).toBe(one.message);
+      } else {
+        expect(zodReason(one)).not.toBe(one.message);
+      }
+    }
+  });
+});
+
+describe('zodFailureSource — the source of the sentence that actually crosses', () => {
+  it('follows the first issue, the one the sentence is built from', () => {
+    // `toUserError` names the first failing field and nothing else, so the
+    // log's `reasonSource` has to describe *that* sentence. Reporting the
+    // source of a later issue would claim a sentence the person never saw.
+    const error = new ZodError([
+      issue({ code: 'custom', message: '请先确认要清空的项目', path: ['confirm'] }),
+      issue({ code: 'invalid_type', received: 'number', path: ['cols'] }),
+    ]);
+
+    expect(zodFailureSource(error)).toBe('schema');
+    expect(toUserError(error).message).toBe('输入无效 (confirm)：请先确认要清空的项目');
+  });
+
+  it('says "table" when the first issue carried Zod’s wording', () => {
+    const error = new ZodError([
+      issue({ code: 'invalid_type', received: 'number', path: ['cols'] }),
+      issue({ code: 'custom', message: '请先确认要清空的项目', path: ['confirm'] }),
+    ]);
+
+    expect(zodFailureSource(error)).toBe('table');
+  });
+
+  it('has no source for a failure that reported no issues', () => {
+    // The one case where there is no sentence to explain: `toUserError` says
+    // 「输入无效」 alone, so there is no reason, and none may be invented.
+    expect(zodFailureSource(new ZodError([]))).toBeUndefined();
   });
 });

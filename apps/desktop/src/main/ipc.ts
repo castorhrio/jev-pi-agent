@@ -18,9 +18,12 @@ import { IPC_CHANNELS, codedError, toAppError } from '@ucad/contracts';
 import type { UcadApp } from './app-container';
 // The wording of a refusal lives in its own module: which fields were wrong
 // (`schemaFailureFields`, for the log) and why, in Chinese (`zodReason`, for
-// the sentence). It imports `zod` and nothing of Electron, so both rules are
+// the sentence), plus where that reason came from (`zodFailureSource`, for the
+// log again — a schema's own message that got swallowed leaves no other
+// trace). It imports `zod` and nothing of Electron, so both rules are
 // tested directly instead of through a registered handler.
-import { schemaFailureFields, toUserError } from './ipc-errors';
+import { schemaFailureFields, toUserError, zodFailureSource } from './ipc-errors';
+import type { ZodReasonSource } from './ipc-errors';
 import { requestHighRiskPermission } from './local-permission';
 import type { UpdateService } from './update-service';
 import { registerStorageIpc } from './ipc-storage';
@@ -90,6 +93,7 @@ export function registerIpc(
         const userError = toUserError(error);
         let appError = toAppError(error, 'ipc');
         let invalidFields: string[] | undefined;
+        let reasonSource: ZodReasonSource | undefined;
         if (error instanceof ZodError) {
           // A schema failure is a malformed request, and it has a code for
           // that. `toAppError` cannot tell a `ZodError` from a crash — it has
@@ -98,6 +102,12 @@ export function registerIpc(
           // person can fix) from "the app fell over" (which they cannot).
           appError = codedError('INVALID_INPUT', userError.message, 'ipc');
           invalidFields = schemaFailureFields(error);
+          // Where the sentence's reason came from: the schema's own sentence,
+          // or the table's Chinese. The sentence itself says which one the
+          // person got, but not whether a schema that *wrote* a message had
+          // it swallowed — and that is a question only the log can answer,
+          // because nothing in the request says which schema failed.
+          reasonSource = zodFailureSource(error);
         }
         ucad.logger.error('ipc handler failed', {
           channel,
@@ -107,6 +117,10 @@ export function registerIpc(
           // failure is the one refusal whose cause is a handful of field
           // names, and the log is where a field name belongs.
           ...(invalidFields ? { invalidFields } : {}),
+          // And where the reason came from, for the same reason: a report that
+          // wants to know why a schema's own message did not appear needs to
+          // see that the reason came from the table.
+          ...(reasonSource ? { reasonSource } : {}),
         });
         throw userError;
       }

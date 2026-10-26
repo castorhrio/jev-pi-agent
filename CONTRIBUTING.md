@@ -71,6 +71,37 @@ assertions away from the cause — while the geometry checks above it passed ove
 an empty list. The gate now asserts that it measured something, first, and says
 so by name.
 
+## Upgrading zod or Electron
+
+An upgrade of either one is an **explicit decision**, not a version bump: both
+change behaviour the suite pins, and both fail in a way that looks like
+something else. These are the gates that decide the upgrade for you.
+
+**zod** — `npm i zod@<version>`, then:
+
+| Gate | What it decides |
+|---|---|
+| `tests/contract/ipc-errors.test.ts` | Every issue code the *new* Zod can raise has a Chinese reason of its own. The list is taken from the running Zod's own enum, so a new code fails here rather than silently answering 「不符合要求」. |
+| `tests/contract/ipc-error-bridge.test.ts` | The exact set of codes that answer with the generic reason, the sentence that crosses the bridge, and the `reasonSource` that says whether the reason came from the schema or from the table — so a schema whose own message was swallowed cannot pass as a wording change. |
+| `npm run typecheck` | The reason table is `Record<z.ZodIssueCode, string>`, so a new code fails the build before the app can ship a generic sentence for it. |
+
+A new code is not finished until it is **translated**. Adding it to
+`ZOD_REASON_BY_CODE` with the generic reason is a decision to record — the
+bridge test names the codes that are allowed to answer 「不符合要求」, and adding
+one is a change to that list, not a way to get the gate green.
+
+**Electron** — `npm i -D electron@<version>`, then:
+
+| Gate | What it decides |
+|---|---|
+| `tests/contract/layout.test.ts` | Geometry in a real Chromium window at seven widths: nothing overflows, collapses, overlaps, falls outside its scroll container, or gets cut off. A new Chromium moves fonts and default box metrics, so this is the gate that says whether the interface still fits. |
+| `tests/contract/layout-scripts.test.ts` | The page scripts the layout gate runs in the browser still parse, and no script body contains a backtick — the mistake that has broken the probe three times. |
+| `npm run test:e2e` | The real `App` in a DOM against the fixture bridge, including every surface's crash boundary. |
+
+Both upgrades want a **clean** run of the whole suite. An incremental
+`tsc --build` can satisfy a stale `dist` and hide a broken import — the same
+trap the clean rebuild at the end of CI exists to catch.
+
 ## House rules
 
 These are the ones this codebase actually enforces, rather than preferences.

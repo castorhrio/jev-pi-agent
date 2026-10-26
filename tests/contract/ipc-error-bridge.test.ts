@@ -332,6 +332,38 @@ describe('a malformed request is logged as INVALID_INPUT, not as a crash', () =>
     expect(entry!.fields?.invalidFields).toEqual(['confirm']);
   });
 
+  it('says where the reason in the sentence came from', async () => {
+    // The sentence does not say *why* it reads the way it does — it is Chinese
+    // either way. So the log has to answer that, or a support report cannot
+    // tell "this schema wrote no message" from "this schema's message was
+    // swallowed and replaced by the table's Chinese". The second is a bug in
+    // the wording rule and the first is not, and only the second is invisible
+    // in the sentence: both refusals look identical to the person reading
+    // them.
+    log.length = 0;
+    await invoke(IPC_CHANNELS.app.setLocale, 42);
+
+    const entry = log.find((line) => line.fields?.channel === IPC_CHANNELS.app.setLocale);
+    expect(entry, 'the refusal produced no log line').toBeDefined();
+    // The locale schema writes no message, so Zod's own wording was replaced
+    // by the table's Chinese.
+    expect(entry!.fields?.reasonSource).toBe('table');
+  });
+
+  it('says "schema" when the schema wrote the sentence itself', async () => {
+    // The purge confirmation is the one sentence in this app that says what
+    // the person has to do, and the log has to be able to say that it
+    // survived rather than infer it.
+    log.length = 0;
+    await invoke(IPC_CHANNELS.storage.purge, { scope: 'all' });
+
+    const entry = log.find((line) => line.fields?.channel === IPC_CHANNELS.storage.purge);
+    expect(entry, 'the refusal produced no log line').toBeDefined();
+    expect(entry!.fields?.reasonSource).toBe('schema');
+    // And the sentence it explains is that sentence, not a table entry.
+    expect(String(entry!.fields?.message)).toContain('清理未确认');
+  });
+
   it('names the request as a whole when no one field is at fault', async () => {
     log.length = 0;
     // `storage:setRetention` takes a union: a positive day count, or `null` for

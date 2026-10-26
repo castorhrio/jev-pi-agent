@@ -86,10 +86,10 @@ export function schemaFailureFields(error: ZodError): string[] {
  * This is a heuristic, and a heuristic is the weakest thing in this file: the
  * cases that matter are an English sentence (overridden), a Zod default that
  * happens to contain CJK (still Zod's, so overridden) and a sentence this app
- * wrote (kept). It stays module-private and is exercised through `zodReason`,
- * which is the only caller — the wording a person sees is the thing worth
- * asserting, and it is asserted through the registered handlers in
- * `tests/contract/ipc-error-bridge.test.ts`.
+ * wrote (kept). It stays module-private and is exercised through
+ * {@link zodReason} and {@link zodReasonSource} — the wording a person sees
+ * is the thing worth asserting, and it is asserted through the registered
+ * handlers in `tests/contract/ipc-error-bridge.test.ts`.
  */
 const ZOD_OWN_OPENING =
   /^(Expected|Invalid|Required|Unrecognized key|String must|Number must|Array must|Date must|Set must|Value must|Too small|Too big|Not )/;
@@ -97,6 +97,49 @@ const ZOD_OWN_OPENING =
 function isZodOwnText(message: string): boolean {
   if (!/[\u4e00-\u9fff]/.test(message)) return true;
   return ZOD_OWN_OPENING.test(message);
+}
+
+/**
+ * Where the reason in a refusal's sentence came from.
+ *
+ * - `schema` — the schema wrote its own sentence and it was kept;
+ * - `table` — the sentence came from {@link ZOD_REASON_BY_CODE}, because the
+ *   issue carried Zod's own English wording.
+ *
+ * The refusal itself says which sentence the person got, but not *why* that
+ * sentence reads the way it does — and a support report has to answer "why
+ * does this schema's carefully written message not appear?" There are two
+ * possible answers: the schema wrote no message at all, or the heuristic
+ * mistook a Chinese sentence for Zod's English. They need different fixes —
+ * one is a missing message, the other a wrong rule — and before this field
+ * the only way to tell them apart was to read the code and work out which
+ * schemas had messages.
+ */
+export type ZodReasonSource = 'schema' | 'table';
+
+/**
+ * Where the reason for this issue's refusal came from.
+ *
+ * The same decision {@link zodReason} makes, exposed on its own so that the
+ * log can say it: a schema's own sentence is kept (`schema`), and anything
+ * Zod wrote is replaced by the table's Chinese (`table`).
+ */
+export function zodReasonSource(issue: z.ZodIssue): ZodReasonSource {
+  return isZodOwnText(issue.message) ? 'table' : 'schema';
+}
+
+/**
+ * Where the reason in the sentence for this failure came from.
+ *
+ * The sentence a person reads is built from the *first* issue (see
+ * `toUserError`), so this is that issue's source and not a second, separate
+ * decision: the log must not claim a source the sentence does not have.
+ * `undefined` when the failure reported no issues at all — the one case where
+ * there is no reason to explain.
+ */
+export function zodFailureSource(error: ZodError): ZodReasonSource | undefined {
+  const first = error.issues[0];
+  return first === undefined ? undefined : zodReasonSource(first);
 }
 
 /**
@@ -175,7 +218,9 @@ export const ZOD_ISSUE_CODES: readonly z.ZodIssueCode[] = Object.keys(
  * and a refusal is not a place to echo an input back.
  */
 export function zodReason(issue: z.ZodIssue): string {
-  if (!isZodOwnText(issue.message)) return issue.message;
+  // The same test the log's `reasonSource` reports, so the sentence and the
+  // record of where it came from cannot drift apart.
+  if (zodReasonSource(issue) === 'schema') return issue.message;
   switch (issue.code) {
     case 'invalid_type':
       // `received: 'undefined'` is how Zod spells "the field was not sent" — a
