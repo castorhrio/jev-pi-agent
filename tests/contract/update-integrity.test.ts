@@ -37,6 +37,7 @@ import { Readable } from 'node:stream';
 import type * as http from 'node:http';
 import { silentLogger } from '@ucad/observability';
 import {
+  checkFeedUrl,
   normalizeSha256,
   parseUpdateConfig,
   resolveUpdateFeed,
@@ -56,13 +57,36 @@ function sha256Of(text: string): string {
   return createHash('sha256').update(text).digest('hex');
 }
 
-/** A fetch stand-in that answers with one document, and counts its calls. */
-function feedFetch(document: unknown): { fetchImpl: typeof fetch; calls: number } {
+/** One scripted answer to a feed request. */
+interface FetchStep {
+  readonly status: number;
+  /** the JSON body; absent for a response that carries none (an error page) */
+  readonly document?: unknown;
+}
+
+/**
+ * A fetch stand-in that answers requests from a script, in order, and counts
+ * its calls.
+ *
+ * A queue rather than one answer because the feed lifecycle is the thing under
+ * test: "the check said 9.9.9 is available, then a second check failed" is a
+ * sequence, not a document. A test that scripted one response could only ever
+ * describe the first half.
+ */
+function feedFetchSteps(steps: readonly FetchStep[]): {
+  fetchImpl: typeof fetch;
+  calls: number;
+} {
   const state = { calls: 0 };
+  const queue = [...steps];
   const fetchImpl = (async () => {
     state.calls += 1;
-    return new Response(JSON.stringify(document), {
-      status: 200,
+    const step = queue.shift();
+    if (step === undefined) {
+      throw new Error('the feed was fetched more times than the test scripted');
+    }
+    return new Response(step.document === undefined ? '' : JSON.stringify(step.document), {
+      status: step.status,
       headers: { 'content-type': 'application/json' },
     });
   }) as unknown as typeof fetch;
@@ -177,17 +201,22 @@ describe('resolving the feed', () => {
     // The override used to be returned verbatim, which made an environment
     // variable the one way to point the updater at a cleartext — or `file:`, or
     // nonsense — feed. The rule the configuration file is held to is the rule
-    // for the whole channel, so it is checked here.
-    for (const envValue of [
-      'http://example.test/feed.json',
-      'file:///etc/passwd',
-      'example.test/feed.json',
-      'not a url',
-    ]) {
+    // for the whole channel, so it is checked here. Each refusal carries the
+    // reason it was refused: "you typed a URL wrong" and "you tried to downgrade
+    // the channel" are different problems with different fixes, and flattening
+    // both into one value would make the log line say "invalid" about a value
+    // that is perfectly well-formed.
+    const refused: ReadonlyArray<readonly [string, 'invalid-url' | 'not-https']> = [
+      ['http://example.test/feed.json', 'not-https'],
+      ['file:///etc/passwd', 'not-https'],
+      ['example.test/feed.json', 'invalid-url'],
+      ['not a url', 'invalid-url'],
+    ];
+    for (const [envValue, reason] of refused) {
       const resolved = resolveUpdateFeed({ envValue });
       expect(resolved.url, `${envValue} produced a feed`).toBeNull();
       expect(resolved.source, `${envValue} was not reported as the override`).toBe('env');
-      expect(resolved.rejected, `${envValue} was refused without saying why`).toBe('not-https');
+      expect(resolved.rejected, `${envValue} was refused with the wrong reason`).toBe(reason);
     }
   });
 
@@ -235,6 +264,109 @@ describe('resolving the feed', () => {
       const resolved = resolveUpdateFeed({ configPaths: [configPath] });
       expect(resolved.url, `${configPath} produced a feed`).toBeNull();
       expect(resolved.source).toBe('none');
+    }
+  });
+});
+
+/**
+ * One rule, three entry points.
+ *
+ * A feed URL reaches the updater three ways — the `UCAD_UPDATE_FEED`
+ * override, the packaged `update-config.json`, and whatever `getFeedUrl` hands
+ * `UpdateService` — and the rule "it must be a URL, and it must be https" was
+ * written out once per entry point. Copies of a security rule drift silently:
+ * each one passes the tests written for it, so nothing is red when they start
+ * disagreeing. `checkFeedUrl()` is now the single implementation; the table
+ * below is what keeps it that way, by asking all three the same questions.
+ */
+describe('the feed rule has one implementation', () => {
+  let dir: string;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'ucad-feed-rule-'));
+  });
+
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  /** Accepted or refused, and why — the whole truth about one candidate URL. */
+  interface Verdict {
+    readonly input: string;
+    readonly accepted: boolean;
+    readonly reason?: 'invalid-url' | 'not-https';
+  }
+
+  const CASES: readonly Verdict[] = [
+    // Accepted: the two shapes a release writes, plus a URL written in
+    // capitals, which `URL` normalises rather than refuses.
+    { input: 'https://example.test/feed.json', accepted: true },
+    { input: '  https://example.test/feed.json\n', accepted: true },
+    { input: 'HTTPS://Example.TEST/feed.json', accepted: true },
+    // Refused: cleartext, another scheme, and two not-a-URL spellings.
+    { input: 'http://example.test/feed.json', accepted: false, reason: 'not-https' },
+    { input: 'file:///etc/passwd', accepted: false, reason: 'not-https' },
+    { input: 'ftp://example.test/feed.json', accepted: false, reason: 'not-https' },
+    { input: 'example.test/feed.json', accepted: false, reason: 'invalid-url' },
+    { input: 'not a url', accepted: false, reason: 'invalid-url' },
+    // Nothing configured is not a refusal.
+    { input: '', accepted: false },
+    { input: '   ', accepted: false },
+  ];
+
+  it('accepts and refuses the same values in every entry point', async () => {
+    for (const { input, accepted, reason } of CASES) {
+      const label = JSON.stringify(input);
+
+      // 1. the shared predicate itself
+      const verdict = checkFeedUrl(input);
+      expect(verdict.ok, `checkFeedUrl accepted ${label} it should refuse`).toBe(accepted);
+      if (!verdict.ok && reason !== undefined) {
+        expect(verdict.reason, `checkFeedUrl gave ${label} the wrong reason`).toBe(reason);
+      }
+
+      // 2. the override
+      const fromEnv = resolveUpdateFeed({ envValue: input });
+      expect(Boolean(fromEnv.url), `the override accepted ${label}`).toBe(accepted);
+      if (!accepted && reason !== undefined) {
+        // A blank variable is no override, so only a written-and-refused one
+        // has a reason.
+        expect(fromEnv.rejected, `the override gave ${label} the wrong reason`).toBe(reason);
+      }
+
+      // 3. the packaged configuration file, which must agree with the override
+      //    even though it is read from disk rather than the environment.
+      const configPath = join(dir, `${sha256Of(input)}.json`);
+      writeFileSync(configPath, JSON.stringify({ feedUrl: input }));
+      const fromConfig = resolveUpdateFeed({ configPaths: [configPath] });
+      expect(Boolean(fromConfig.url), `the packaged file accepted ${label}`).toBe(accepted);
+      expect(fromConfig.rejected, `the packaged file reported ${label} as refused`).toBeUndefined();
+
+      // 4. the service, which used to carry its own copy of the protocol check
+      //    and is handed a URL by a caller that may never have looked at it.
+      const fetched = feedFetchSteps([{ status: 200, document: {} }]);
+      const instance = new UpdateService({
+        logger: silentLogger('test'),
+        getFeedUrl: () => input,
+        downloadDir: dir,
+        currentVersion: '1.0.0',
+        fetchImpl: fetched.fetchImpl,
+      });
+      const status = await instance.check();
+      // Accepted means the request was made; refused means it was not, and the
+      // app says so instead of reporting an empty update.
+      expect(fetched.calls, `the service fetched ${label}`).toBe(accepted ? 1 : 0);
+      expect(status.feedConfigured, `the service reported ${label} as configured`).toBe(accepted);
+      if (!accepted) expect(status.state).toBe('unsupported');
+
+      // The URL the two resolvers hand on is the same normalised string, not
+      // merely "both truthy": a rule that agreed on the decision but not on
+      // the value would still send the download somewhere else than the
+      // override named.
+      if (accepted) {
+        expect(fromEnv.url, `the override normalised ${label}`).toBe(verdict.ok && verdict.url);
+        expect(fromConfig.url).toBe(fromEnv.url);
+      }
     }
   });
 });
@@ -322,14 +454,16 @@ describe('the updater itself', () => {
   });
 
   function service(options: {
-    feed: unknown;
+    feed?: unknown;
+    /** a script of feed answers, for the tests that need more than one check */
+    steps?: readonly FetchStep[];
     getFeedUrl?: () => string | null;
     download?: (url: URL, target: string) => Promise<void>;
     /** drive the real downloader through a scripted transport instead */
     downloadGet?: DownloadGet;
     open?: (target: string) => Promise<string>;
   }) {
-    const fetched = feedFetch(options.feed);
+    const fetched = feedFetchSteps(options.steps ?? [{ status: 200, document: options.feed ?? {} }]);
     const downloads: string[] = [];
     const launched: string[] = [];
     const download = options.download;
@@ -539,6 +673,84 @@ describe('the updater itself', () => {
     expect(installed).toBe(false);
     expect(launched).toEqual([]);
     expect(instance.current.state).toBe('error');
+  });
+
+  /**
+   * Forgets the document the update check read.
+   *
+   * The field is private because nothing outside the service may write it —
+   * which is also why no public path can produce the state below: `available`
+   * and the document are written in one statement block, and every path that
+   * clears the document moves the status off `available` in the same block. A
+   * test that wants the branch has to write the field, and reaching a branch
+   * only a corrupt status can reach is the point of the assertion.
+   */
+  function forgetCheckedFeed(instance: UpdateService): void {
+    (instance as unknown as { feed: unknown }).feed = null;
+  }
+
+  it('takes the pending download with it when a later check fails', async () => {
+    // Reachable, and the reason the status and the document are read together:
+    // the user clicks 检查更新 a second time while the first result is on
+    // screen. That check fails — a blip, a feed that went away — so the
+    // document the download would have been made against is gone with it.
+    // Downloading anyway would stage a file for a version the app can no
+    // longer say anything about, and the version the user was shown would be
+    // a claim about a feed that was never read.
+    const genuine = 'the genuine installer';
+    const { instance, downloads, fetchCalls } = service({
+      steps: [
+        { status: 200, document: { version: '9.9.9', url: INSTALLER_URL, sha256: sha256Of(genuine) } },
+        { status: 503 },
+      ],
+      download: async (_url, target) => {
+        writeFileSync(target, genuine);
+      },
+    });
+
+    expect((await instance.check()).state).toBe('available');
+
+    const rechecked = await instance.check();
+    expect(rechecked.state).toBe('error');
+    expect(rechecked.message).toContain('503');
+
+    const status = await instance.download();
+    expect(status.state).toBe('error');
+    expect(downloads, 'a failed re-check still downloaded the stale version').toEqual([]);
+    // Two checks and no third request: the download did not rescue itself by
+    // reading the feed again.
+    expect(fetchCalls.calls).toBe(2);
+    expect(existsSync(join(dir, 'UCAD-setup.exe'))).toBe(false);
+  });
+
+  it('refuses a download whose checked document is gone, instead of reading the feed again', async () => {
+    // The branch `download()` keeps for a status that disagrees with itself.
+    // It cannot be produced today, and what is asserted is what happens *if* it
+    // ever can: the download stops, says so, and above all does not fetch the
+    // feed a second time. An earlier build did exactly that here, which
+    // reopened the window the stored document exists to close — a second read
+    // can name a different file than the version the user was shown, and the
+    // hash that `installAndRestart()` re-checks comes from that same document.
+    const genuine = 'the genuine installer';
+    const { instance, downloads, fetchCalls } = service({
+      feed: { version: '9.9.9', url: INSTALLER_URL, sha256: sha256Of(genuine) },
+      download: async (_url, target) => {
+        writeFileSync(target, genuine);
+      },
+    });
+
+    await instance.check();
+    expect(instance.current.state).toBe('available');
+
+    forgetCheckedFeed(instance);
+    const status = await instance.download();
+
+    expect(status.state).toBe('error');
+    expect(status.message).toContain('重新检查');
+    expect(downloads).toEqual([]);
+    // One read of the feed — the check's. The fallback used to make this two.
+    expect(fetchCalls.calls).toBe(1);
+    expect(existsSync(join(dir, 'UCAD-setup.exe'))).toBe(false);
   });
 
   it('writes every byte it reports as downloaded', async () => {

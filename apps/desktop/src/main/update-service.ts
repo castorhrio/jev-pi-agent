@@ -40,6 +40,7 @@ import * as http from 'node:http';
 import { describeError } from '@ucad/contracts';
 import type { Logger } from '@ucad/observability';
 import {
+  checkFeedUrl,
   normalizeSha256,
   verifyInstaller,
   type InstallerVerification,
@@ -141,6 +142,14 @@ export class UpdateService {
    * different file than the one the user was shown; and the comparison the
    * user was shown — "1.1.0 is available" — is the comparison the download
    * is made against.
+   *
+   * **Lifetime.** Written by `check()` and by nothing else, in the same
+   * statement block that sets `available`; cleared by the paths that take the
+   * status away from `available` because the check failed. It is not cleared
+   * by `download()`, which keeps it for `installAndRestart()` — the hash the
+   * staged file is re-verified against is this document's. So
+   * `state === 'available'` implies this is non-null, which is why `download()`
+   * refuses rather than re-reads when it is missing.
    */
   private feed: UpdateFeedDocument | null = null;
 
@@ -163,23 +172,31 @@ export class UpdateService {
     return () => this.listeners.delete(cb);
   }
 
-  /** Feeds that are not plain HTTPS are refused: an update channel is a
-   *  remote-code-execution surface and must not be downgradeable to cleartext. */
+  /**
+   * Feeds that are not plain HTTPS are refused: an update channel is a
+   * remote-code-execution surface and must not be downgradeable to cleartext.
+   *
+   * The rule itself is `checkFeedUrl()`'s, not a copy of it. This service is
+   * handed its feed by a caller (`getFeedUrl`) and used to re-implement the
+   * protocol check here — the third implementation of one rule, next to the
+   * packaged file's and the override's. Two copies of a security rule drift
+   * quietly, so the second gate a caller can reach is now the same function,
+   * and `tests/contract/update-integrity.test.ts` asserts all three entry
+   * points accept and refuse the same values.
+   */
   private resolveFeed(): string | null {
-    const raw = this.opts.getFeedUrl()?.trim();
-    if (!raw) return null;
-    let parsed: URL;
-    try {
-      parsed = new URL(raw);
-    } catch {
-      this.opts.logger.warn('update feed is not a valid URL; ignoring');
-      return null;
-    }
-    if (parsed.protocol !== 'https:') {
-      this.opts.logger.warn('update feed must be https; ignoring', { protocol: parsed.protocol });
-      return null;
-    }
-    return parsed.toString();
+    const verdict = checkFeedUrl(this.opts.getFeedUrl());
+    if (verdict.ok) return verdict.url;
+    // Nothing configured is not a refusal: the app says "未配置更新源" and
+    // that is the whole story.
+    if (verdict.reason === 'empty') return null;
+    this.opts.logger.warn(
+      verdict.reason === 'invalid-url'
+        ? 'update feed is not a valid URL; ignoring'
+        : 'update feed must be https; ignoring',
+      { reason: verdict.reason },
+    );
+    return null;
   }
 
   private set(patch: Partial<UpdateStatus>): UpdateStatus {
@@ -280,16 +297,22 @@ export class UpdateService {
     // The document the check read, not a second read of the feed: the hash
     // and the URL the installer is fetched from must be the ones the version
     // the user was shown was compared against.
-    let info = this.feed;
+    //
+    // `available` is only ever set by `check()`, in the same statement block
+    // that stores this document, and every path that clears the document also
+    // moves the state off `available` — so the two cannot disagree today.
+    // That makes the branch below unreachable *by construction*, and it is
+    // kept as a refusal rather than a second read of the feed: an earlier
+    // build re-fetched here, which reopened exactly the window this field
+    // exists to close (a feed that changed between the check and the download
+    // could name a different file than the one the user was shown), and a
+    // fallback is also what would let the two disagree silently the day a
+    // caller starts writing to the status. `tests/contract/update-integrity.test.ts`
+    // drives this branch and asserts the feed is not read again.
+    const info = this.feed;
     if (!info) {
-      info = await this.fetchLatest();
-      // A document read here has to be kept, or the install step would have
-      // no hash to check the staged file against and would refuse its own
-      // download.
-      if (info) this.feed = info;
-    }
-    if (!info) {
-      return this.set({ state: 'error', message: '更新源不可用' });
+      this.opts.logger.error('update download without the document the update check read');
+      return this.set({ state: 'error', message: '更新信息已失效，请重新检查更新' });
     }
     if (!info.url) {
       return this.set({ state: 'error', message: '更新源未提供下载地址' });
@@ -391,35 +414,6 @@ export class UpdateService {
       verified: true,
       message: undefined,
     });
-  }
-
-  private async fetchLatest(): Promise<UpdateFeedDocument | null> {
-    const feed = this.resolveFeed();
-    if (!feed) return null;
-    try {
-      const doFetch = this.opts.fetchImpl ?? fetch;
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), CHECK_TIMEOUT_MS);
-      try {
-        const response = await doFetch(feed, {
-          signal: controller.signal,
-          headers: { accept: 'application/json' },
-        });
-        // A feed that answers 404 is not a feed. Without this check the error
-        // page's body was parsed as a document, and the failure surfaced as
-        // "更新源缺少 version 字段" — true, but about the wrong thing.
-        if (!response.ok) {
-          this.opts.logger.warn('update feed request failed', { status: response.status });
-          return null;
-        }
-        return (await response.json()) as UpdateFeedDocument;
-      } finally {
-        clearTimeout(timer);
-      }
-    } catch (error) {
-      this.opts.logger.warn('update feed unreadable', { message: describeError(error) });
-      return null;
-    }
   }
 
   /**

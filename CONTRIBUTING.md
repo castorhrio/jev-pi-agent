@@ -26,7 +26,7 @@ test that does nothing.
 | Copy and a11y | No hard-coded UI strings, locale parity, contrast, focus indicators |
 | Menu | Every command Main registers has a renderer handler |
 | Versions | Shipped manifests pin exact versions; the installed engine matches what is declared |
-| Updates | The shipped feed is `https`; an override that is not `https` is refused without falling back; a feed with no `sha256` installs nothing; a mismatch deletes the staged file instead of launching it; every download redirect must stay `https`; and a download follows at most five redirects — the fifth succeeds, the sixth is refused before a seventh request |
+| Updates | The shipped feed is `https`; an override that is not `https` is refused without falling back; every feed URL — override, packaged file and the service's own wiring — is judged by one function, and the three entry points are asserted to accept and refuse the same values with the same reason; a download is made against the document the check read, never a second read of the feed, so a feed that changes between the check and the download cannot point at a different file than the one the user was shown, and a download whose checked document is gone is refused rather than re-fetched; a feed with no `sha256` installs nothing; a mismatch deletes the staged file instead of launching it; every download redirect must stay `https`; and a download follows at most five redirects — the fifth succeeds, the sixth is refused before a seventh request |
 
 **Interface** — `tests/e2e`, run by `npm run test:e2e`: the real `App` in a DOM
 against the real fixture bridge, covering the conversation, navigation, the

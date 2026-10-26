@@ -534,9 +534,15 @@ function readUpdateFeed(): string | null {
   });
   if (resolved.rejected && !updateFeedRejectedLogged) {
     updateFeedRejectedLogged = true;
-    ucad?.logger.warn('UCAD_UPDATE_FEED ignored: the feed must be an https URL', {
-      reason: resolved.rejected,
-    });
+    // Two refusals, two lines: "not a URL" is a typo to fix, "not https" is a
+    // downgrade this app will not take. The reason travels with the message
+    // rather than being flattened into "invalid", so the log names the fix.
+    ucad?.logger.warn(
+      resolved.rejected === 'invalid-url'
+        ? 'UCAD_UPDATE_FEED ignored: the value is not a URL'
+        : 'UCAD_UPDATE_FEED ignored: the feed must be an https URL',
+      { reason: resolved.rejected },
+    );
   }
   if (resolved.url && !updateFeedLogged) {
     updateFeedLogged = true;

@@ -76,29 +76,65 @@ export function normalizeSha256(value: unknown): string | null {
 }
 
 /**
- * A feed URL the updater is willing to fetch, or null.
+ * Why a configured feed URL is not usable.
  *
- * Both sources of a feed go through this one gate — the packaged configuration
- * file and the `UCAD_UPDATE_FEED` override. The override used to skip it, which
- * made an environment variable the only way to point the updater at a
- * `http://` (or `file:`, or garbage) feed: the exact surface the configuration
- * file is not allowed to reach, reachable instead by whoever can set a variable
- * in the environment the app is launched from. Development is not a reason to
- * keep the hole — a private feed is a static JSON document and can be served
- * over https; what a developer gains from cleartext is a shorter URL, and what
- * they lose is the property that the bytes came from the place they named.
+ * `invalid-url` and `not-https` are different values because they are
+ * different fixes: a typo in a variable versus a channel somebody tried to
+ * downgrade. One is a person to tell, the other is a decision to refuse.
  */
-function parseFeedUrl(value: unknown): string | null {
-  if (typeof value !== 'string') return null;
-  const trimmed = value.trim();
-  if (trimmed.length === 0) return null;
+type FeedUrlRejection = 'invalid-url' | 'not-https';
 
+/**
+ * What a configured feed URL is, or why it cannot be used.
+ *
+ * `empty` is not a rejection: it means nothing was configured, which is a
+ * development build rather than a mistake.
+ */
+export type FeedUrlCheck =
+  | { readonly ok: true; readonly url: string }
+  | { readonly ok: false; readonly reason: FeedUrlRejection | 'empty' };
+
+/**
+ * A feed URL the updater is willing to fetch, judged once for the whole
+ * channel.
+ *
+ * Three things point at a feed and all three are held to this one rule: the
+ * packaged configuration file, the `UCAD_UPDATE_FEED` override, and
+ * `UpdateService` itself (which re-judged the URL it was handed, because a
+ * caller can hand it anything). The override used to skip the rule entirely,
+ * which made an environment variable the only way to point the updater at a
+ * `http://` (or `file:`, or garbage) feed — the exact surface the
+ * configuration file is not allowed to reach, reachable instead by whoever
+ * can set a variable in the environment the app is launched from. Development
+ * is not a reason to keep the hole: a private feed is a static JSON document
+ * and can be served over https; what a developer gains from cleartext is a
+ * shorter URL, and what they lose is the property that the bytes came from the
+ * place they named.
+ *
+ * **One implementation, deliberately.** The service used to carry its own copy
+ * of the protocol check. Two copies of one security rule drift — a scheme, a
+ * normalisation, a whitespace rule added to one and not the other — and the
+ * drift is invisible, because each copy passes the tests written for it.
+ * `tests/contract/update-integrity.test.ts` asserts the three entry points
+ * accept and refuse the same values, so a fourth copy would have to disagree
+ * with this function on purpose to be red.
+ */
+export function checkFeedUrl(value: unknown): FeedUrlCheck {
+  if (typeof value !== 'string') return { ok: false, reason: 'empty' };
+  const trimmed = value.trim();
+  if (trimmed.length === 0) return { ok: false, reason: 'empty' };
+
+  let url: URL;
   try {
-    const url = new URL(trimmed);
-    return url.protocol === 'https:' ? url.toString() : null;
+    url = new URL(trimmed);
   } catch {
-    return null;
+    return { ok: false, reason: 'invalid-url' };
   }
+  // The whole channel is https-only, and this is the one place that decides it:
+  // the feed, the installer URL the feed names, and every redirect hop the
+  // download follows.
+  if (url.protocol !== 'https:') return { ok: false, reason: 'not-https' };
+  return { ok: true, url: url.toString() };
 }
 
 /**
@@ -118,13 +154,14 @@ export function parseUpdateConfig(raw: string): string | null {
   }
   if (typeof parsed !== 'object' || parsed === null) return null;
 
-  return parseFeedUrl((parsed as { feedUrl?: unknown }).feedUrl);
+  const verdict = checkFeedUrl((parsed as { feedUrl?: unknown }).feedUrl);
+  return verdict.ok ? verdict.url : null;
 }
 
 type UpdateFeedSource = 'env' | 'config' | 'none';
 
 /** Why a configured feed was not used, when it was configured but refused. */
-type UpdateFeedRejection = 'not-https';
+type UpdateFeedRejection = FeedUrlRejection;
 
 export interface ResolvedUpdateFeed {
   /** the feed URL, or null when no feed is configured */
@@ -154,21 +191,24 @@ export interface ResolvedUpdateFeed {
  *  3. nothing, and the updater says "未配置更新源" instead of pretending to
  *     check.
  *
- * An override that is set but not usable stops here (`rejected: 'not-https'`)
- * instead of falling through to the packaged file. Falling through would mean
- * a typo in the variable silently reinstalls from the public feed the operator
- * was trying to leave, which is the opposite of what an override is for.
+ * An override that is set but not usable stops here (`rejected`, with the
+ * reason `checkFeedUrl()` gave) instead of falling through to the packaged
+ * file. Falling through would mean a typo in the variable silently reinstalls
+ * from the public feed the operator was trying to leave, which is the opposite
+ * of what an override is for. A blank variable is not an override at all — it
+ * is the shape a shell script leaves behind — so it falls through like an
+ * unset one.
  */
 export function resolveUpdateFeed(options: {
   envValue?: string | undefined;
   configPaths?: readonly string[];
 }): ResolvedUpdateFeed {
-  const fromEnv = options.envValue?.trim();
-  if (fromEnv) {
-    const url = parseFeedUrl(fromEnv);
-    return url
-      ? { url, source: 'env' }
-      : { url: null, source: 'env', rejected: 'not-https' };
+  const fromEnv = checkFeedUrl(options.envValue);
+  if (fromEnv.ok) return { url: fromEnv.url, source: 'env' };
+  // `empty` means nothing was configured; anything else means something was
+  // configured and refused. Only the second kind stops the search.
+  if (fromEnv.reason !== 'empty') {
+    return { url: null, source: 'env', rejected: fromEnv.reason };
   }
 
   for (const configPath of options.configPaths ?? []) {
