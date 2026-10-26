@@ -294,6 +294,61 @@ describe('a declared side effect is a permission question, answered one case at 
     expect(facade.setChain(['mixed'])).toEqual(['rule']);
   });
 
+  it('says which engine was refused, and which chain asked for it', () => {
+    // The verdict is in the chain, but the *reason* is only in the log — and a
+    // log line that says "an engine was dropped" without naming the engine or
+    // the chain cannot tell a person which setting to change. Three shapes are
+    // refused for three different reasons: a contradiction (`none` beside a
+    // real effect), an authorised effect beside an unauthorised one, and an
+    // effect this build has no setting for at all. Each has its own case
+    // above; what this one pins is the line they share.
+    const sink = new MemoryLogSink();
+    const logger = new Logger({ scope: 'chain', sink });
+    const shapes: Array<{ id: string; sideEffects: DecisionEngineManifest['sideEffects'] }> = [
+      { id: 'confused', sideEffects: ['none', 'network'] },
+      { id: 'mixed', sideEffects: ['network', 'process'] },
+      { id: 'proc', sideEffects: ['process'] },
+    ];
+    const { facade } = makeFacade({
+      engines: shapes.map((shape) => stubEngine(shape.id, { sideEffects: shape.sideEffects })),
+      logger,
+      // Authorised on purpose: none of the three is refused for want of the
+      // network checkbox, so what the line records is the manifest, not the
+      // setting.
+      allowNetworkEngines: true,
+    });
+
+    expect(facade.setChain(shapes.map((shape) => shape.id))).toEqual(['rule']);
+
+    const refusals = sink.records.filter(
+      (record) => record.msg === 'engine chain: dropping an engine whose effects are not authorised',
+    );
+    // One line per engine, in the order the chain asked for them, and none for
+    // a shape that was allowed — the count is how a reader knows nothing was
+    // dropped silently.
+    expect(refusals.map((record) => record.meta?.['engineId'])).toEqual(['confused', 'mixed', 'proc']);
+    for (const record of refusals) {
+      // The chain the user set, not only the engine: the same engine may be
+      // authorised in one chain and not another (the setting is per build, the
+      // chain is per user), so "who asked for it" is part of the record.
+      expect(record.meta?.['requested']).toEqual(['confused', 'mixed', 'proc']);
+      // The setting that was in force when the refusal happened. Without it a
+      // later reader cannot tell "the user never authorised the network" from
+      // "the network was authorised and the manifest still did not match".
+      expect(record.meta?.['allowNetworkEngines']).toBe(true);
+    }
+    expect(refusals.map((record) => record.meta?.['sideEffects'])).toEqual([
+      ['none', 'network'],
+      ['network', 'process'],
+      ['process'],
+    ]);
+    // And the chain falls back, once, with the reason on record.
+    const fallback = sink.records.find(
+      (record) => record.msg === 'engine chain: nothing may run from the requested chain; using the rule engine',
+    );
+    expect(fallback?.meta?.['requested']).toEqual(['confused', 'mixed', 'proc']);
+  });
+
   it('refuses an effect this build has no setting for', () => {
     // A manifest from a newer build naming an effect this one cannot offer a
     // checkbox for. Fail closed: it is not run, and it does not crash the app.

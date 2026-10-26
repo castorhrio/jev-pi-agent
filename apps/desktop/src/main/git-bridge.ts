@@ -160,6 +160,11 @@ export class GitLikeBridge {
         inFlight: 0,
         // The same shape as the deadline line, so the two can be read
         // side by side: both of them describe a summary with nothing in it.
+        // `requested` is 0 here by construction, not by measurement: `status`
+        // is what produces the path list, so a summary that gave up on
+        // `status` never had a path to request a diff for. A reader adding
+        // these numbers up gets a zero row and should read it as "this
+        // summary never started", which is exactly what happened.
         collected: 0,
         requested: 0,
         abandoned: 0,

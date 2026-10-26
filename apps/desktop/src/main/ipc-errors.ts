@@ -216,6 +216,13 @@ export function toUserError(error: unknown): Error {
   // a log, hostile in a toast, and it echoes the raw input. One line naming
   // the first failing field, and why in Chinese, is what §7.2 means by
   // user-safe; the full issues stay in the log above.
+  //
+  // A request with several bad fields therefore names only the *first* one.
+  // That is deliberate and is what the sentence is allowed to say: one
+  // sentence, no field list, because the Renderer shows the message and has
+  // nothing to parse it with. The whole list is the log line's
+  // `invalidFields` (`schemaFailureFields`), which is where a support report
+  // reads it — see `tests/contract/ipc-errors.test.ts`.
   if (error instanceof ZodError) {
     const first = error.issues[0];
     const where = first && first.path.length > 0 ? ` (${first.path.join('.')})` : '';

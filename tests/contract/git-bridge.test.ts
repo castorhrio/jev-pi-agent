@@ -68,6 +68,15 @@ function harness(options: {
   statusHangs?: boolean;
   /** `status` returns, but only after this many ms — the deadline may beat it */
   statusSlowMs?: number;
+  /**
+   * `status` *fails*, but only after this many ms — the deadline may beat it.
+   *
+   * Slow is not hung, and a slow failure is not a fast one: `statusFails`
+   * rejects before the deadline is anywhere near, so it is refused and never
+   * reaches the late-status log; this option is the rejected promise that
+   * lands after the summary was already returned.
+   */
+  statusSlowFailsMs?: number;
   diffConcurrency?: number;
   diffDeadlineMs?: number;
 }): Harness {
@@ -97,6 +106,13 @@ function harness(options: {
     // different case from a lock that never lets go, and the log has to tell
     // them apart.
     if (options.statusSlowMs !== undefined) return after(options.statusSlowMs, dto);
+    // A rejection that arrives too late to be refused: the summary has already
+    // returned, and there is no caller left to hand the error to.
+    if (options.statusSlowFailsMs !== undefined) {
+      return after(options.statusSlowFailsMs, undefined).then(() => {
+        throw new Error('fatal: unable to read index.lock');
+      });
+    }
     return dto;
   };
 
@@ -396,17 +412,88 @@ describe('git diffSummary — the bounds', () => {
     // here at all — so nothing of it is still out there.
     expect(discarded!.fields?.statusInFlight).toBe(false);
     expect(discarded!.fields?.inFlight).toBe(0);
-    // The summary is still the empty one it was.
+    // The summary is still the empty one it was. Every count is a number a
+    // reader can add up, and on this path they are all zero *by construction*:
+    // the status never listed a path, so nothing was requested, nothing was
+    // collected, nothing was abandoned and nothing failed. Pinned rather than
+    // left to the arithmetic, because "0" here is a claim about the summary
+    // ("it requested nothing"), not a missing measurement.
     expect(discarded!.fields?.collected).toBe(0);
+    expect(discarded!.fields?.requested).toBe(0);
+    expect(discarded!.fields?.abandoned).toBe(0);
+    expect(discarded!.fields?.failed).toBe(0);
     expect(discarded!.fields?.outcome).toBe('answered');
+    // No `error` field on a late *answer*: there was nothing wrong with it
+    // except its timing.
+    expect(discarded!.fields && 'error' in discarded!.fields).toBe(false);
 
     // The deadline line is not rewritten. It was a snapshot, and the two
     // lines together are the whole story: still running at the deadline,
     // finished a moment later.
     expect(h.logs.filter((line) => line.event === 'git diff summary stopped at its deadline')).toHaveLength(1);
+    // And in that order: a reader who finds the late line first must not read
+    // it as the *cause* of an empty summary. The giving-up line is the one
+    // that explains the summary; the late line is what became of the
+    // subprocess afterwards.
+    expect(
+      h.logs.findIndex((line) => line.event === 'git diff summary stopped at its deadline'),
+    ).toBeLessThan(
+      h.logs.findIndex((line) => line.event === 'git diff summary discarded a late status answer'),
+    );
     // And the late answer still changed nothing about the summary: no diff
     // was spawned for a path nobody listed.
     expect(h.diffs).toEqual([]);
+  });
+
+  it('records a `git status` that failed after the deadline, with the error', async () => {
+    // The other ending of the same story. A `git status` that comes back late
+    // and *fails* (a stale `index.lock`, a repository that went away, a git
+    // binary that died) is not the same event as one that comes back late with
+    // an answer: the first is a workspace that needs a person, the second is
+    // just a slow machine. The `outcome` field is what tells them apart, and
+    // before it existed both vanished — the rejection landed on a race nobody
+    // was waiting on any more.
+    const h = harness({ statusSlowFailsMs: 60, diffDeadlineMs: 25 });
+
+    await expect(h.bridge.diffSummary({ workspaceId: 'ws_1' })).resolves.toEqual([]);
+
+    const stopped = h.logs.find((line) => line.event === 'git diff summary stopped at its deadline');
+    expect(stopped, 'the deadline line was not written').toBeDefined();
+    expect(stopped!.fields?.stage).toBe('status');
+    expect(stopped!.fields?.statusInFlight).toBe(true);
+
+    // The rejection lands, late, and is written down instead of disappearing.
+    await after(120, undefined);
+
+    const discarded = h.logs.find(
+      (line) => line.event === 'git diff summary discarded a late status answer',
+    );
+    expect(discarded, 'a late `git status` failure left no trace at all').toBeDefined();
+    expect(discarded!.fields?.stage).toBe('status-late');
+    expect(discarded!.fields?.outcome).toBe('failed');
+    // The error is named, in one line: without it "failed" is a report that
+    // something went wrong with no way to find out what.
+    expect(discarded!.fields?.error).toBe('fatal: unable to read index.lock');
+    // The subprocess is gone — the failure is its return — so the closed
+    // counts hold here too, and all of them are zero because nothing was ever
+    // listed.
+    expect(discarded!.fields?.statusInFlight).toBe(false);
+    expect(discarded!.fields?.inFlight).toBe(0);
+    expect(discarded!.fields?.requested).toBe(0);
+    expect(discarded!.fields?.collected).toBe(0);
+    expect(discarded!.fields?.abandoned).toBe(0);
+    expect(discarded!.fields?.failed).toBe(0);
+    // Nothing was spawned for a path nobody listed, before or after the
+    // failure.
+    expect(h.diffs).toEqual([]);
+    expect(h.statusCalls()).toBe(1);
+    // Same order as the answering case: the summary gave up first, and the
+    // subprocess reported afterwards.
+    expect(
+      h.logs.findIndex((line) => line.event === 'git diff summary stopped at its deadline'),
+    ).toBeLessThan(
+      h.logs.findIndex((line) => line.event === 'git diff summary discarded a late status answer'),
+    );
   });
 
   it('writes the late-status line with the deadline line\'s fields, and a stage of its own', async () => {
