@@ -130,6 +130,77 @@ instead.
 **Do not widen the scope.** Unrelated cleanup in a change is how a review turns into an
 archaeology dig. File it separately.
 
+## How the source scans are written
+
+Several gates read source text rather than execute it. Each one is a small, deliberately
+unambitious parser, so its blind spots are the price of not carrying a real parser in a
+contract test. Two rules apply to all of them:
+
+- **Test the scan on fixtures first.** A scanner that has only ever run over a passing
+  code base has an unknown failure mode. Every file below feeds its scanner the spellings
+  a real call site takes — and the spellings it is known to miss.
+- **When the scan misses a spelling, fix the scanner and add a fixture.** Do not fix only
+  the source line that was missed; the next one will be written the same way. If the scan
+  is going to *keep* missing a spelling, assert that shape's absence instead, so the blind
+  spot is a red test rather than a comment.
+
+| Scanner | Lives in | What it reads |
+|---|---|---|
+| Container claims | `tests/contract/app-container-started.test.ts` | `field!: T` declarations in `app-container.ts` |
+| Zod messages | `tests/contract/zod-message-scan.ts`, driven by `zod-custom-messages.test.ts` | Custom-message positions inside Zod schema expressions |
+| Bare throws | `tests/contract/bare-throw-scan.ts`, driven by `error-formatting.test.ts` | `throw new Error(…)` / `throw appError(…)` under `apps/desktop/src/main` |
+| Page scripts | `tests/contract/layout-scripts.test.ts` | The scripts in `scripts/layout-page-scripts.mjs` |
+| Renderer markup | `tests/contract/ui-copy.test.ts`, `layout.test.ts` | Hard-coded copy, unnamed controls, inline spacing/type sizes |
+
+**Container claims.** The rule matches `!:`, not `!: ` — `db!:Database` is the same claim
+as `db!: Database` to the compiler, so requiring the space silently skipped a field. It
+reads the modifiers in front of the name (`private`, `readonly`, …) because `static` and
+`declare` claims are skipped on purpose: neither exists on an instance `start()` can
+answer for. The container is separately asserted to declare neither, so a field written
+that way fails loudly. If a new declaration spelling appears (a decorator, a generic, a
+different modifier), add it to the fixture block `the scan that reads the container’s
+promises`; if the scan should keep skipping it, add an assertion under `declares no claim
+the scan deliberately skips` rather than an explanatory comment.
+
+**Zod messages.** The scan reads `message` / `required_error` / `invalid_type_error` in
+schema options, a positional second argument (`min`, `max`, `regex`, `refine`, …), the
+first argument of `.strict(…)`, and a same-file `const` reference. It reports anything
+else in a message position as `unresolved` (`template-with-expression`,
+`concatenated-literal`, `unknown-constant`, `not-a-literal`), and the app-wide test
+requires that list to be empty. The accepted blind spots are pinned in
+`zod-custom-messages.test.ts`: a renamed or destructured Zod namespace, and a positional
+message after a regex literal containing a comma (`/a,b/`), where the comma reads as an
+argument separator. Write the sentence as one Chinese literal, or as a `const` beside the
+schema; if a new spelling must be read, add it to the scanner's fixture block **and** to
+the scanner (`customMessages()` / `scanZodMessages()`) — an unreadable shape is not
+acceptable unless it lands in `unresolved` with a reason. The scan's roots are
+`packages/*/src` and `apps/*/src`; a source root the rule does not reach is a failing
+test, and the fix is `EXTRA_SCAN_ROOTS` in `zod-message-scan.ts` (see "Adding a workspace
+package").
+
+**Bare throws.** The scan strips comments (including a trailing `//`) before matching,
+and matches over the whole text rather than line by line, so a `throw` whose argument
+wraps onto the next line is still counted and is reported where `throw` starts. String
+literals are deliberately not stripped: stripping them would also hide the messages the
+gate is about, so a quoted example fails loudly instead of passing silently. Add a new
+allowed call site to the `ALLOWED` ledger in `error-formatting.test.ts` — the comparison
+is equality, so a fixed entry must leave the ledger — and add its spelling to the
+fixture block `the bare-throw scan`.
+
+**Page scripts.** Every entry in `PAGE_SCRIPTS` must parse as a *script* (compiled with
+`vm.Script`, not `new Function`) and must contain no backtick, even in a comment: a
+backtick ends the template literal and the rest is parsed as the host module, which
+surfaces as an error naming an unrelated identifier. New page scripts go in
+`scripts/layout-page-scripts.mjs` and get a name in `PAGE_SCRIPTS`; write `'quoted'`
+rather than a backtick anywhere in the body.
+
+**Renderer markup.** These scans read `.tsx` under `apps/desktop/src/renderer/src` and
+look for hard-coded user-visible strings, controls with no accessible name, and inline
+`marginTop` / `marginBottom` / `marginLeft` / `fontSize` / `lineHeight`. Their fixture is
+the renderer itself: a false positive is a source line that should use the i18n table or
+the spacing scale. Do not add an allowlist entry for a one-off string; name the control
+or move the copy into the locale files.
+
 ## Working on the interface
 
 ```bash

@@ -134,7 +134,11 @@ Stated plainly, because a tool that hides its edges is harder to trust than one
 that does not.
 
 - **One provider protocol ships.** The bundled adapter speaks the
-  OpenAI-compatible protocol. Native vendor adapters are not implemented.
+  OpenAI-compatible protocol. Native vendor adapters are not implemented. Two
+  adapters are registered — `universal` is the one that sends real requests,
+  and `mock` is the protocol's executable specification for offline development
+  and CI. `mock` calls no vendor, so an answer from it is not a real model's
+  answer.
 - **The installer is unsigned.** Windows SmartScreen warns on first run. The
   download is still checked: the feed publishes a SHA-256, and the app
   refuses to launch an installer whose digest does not match.
