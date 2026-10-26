@@ -128,18 +128,53 @@ export class UcadApp {
    * ran in one and a retention sweep that ran in the other would each believe
    * they had the last word about what is left on disk. Main owns the
    * instance; everybody else asks for it.
+   *
+   * A container that has not run `start()` is refused rather than served a
+   * service built over `undefined` — see `requireStarted()`.
    */
   getRetention(): RetentionService {
     if (this.retentionService === null) {
+      // Every dependency is checked, not assumed. The fields are `db!: Database`
+      // declarations whose initialisation order is a promise `start()` keeps,
+      // so before that call they are `undefined` at runtime while the type
+      // system says otherwise. Building the service from them produced a
+      // RetentionService over `undefined`: nothing threw, and every later
+      // `usage()`/`purge()` failed somewhere inside the storage layer with a
+      // message about SQLite rather than about the container. A refusal here
+      // names the field and the call that is missing.
       this.retentionService = new RetentionService({
-        db: this.db,
-        sessionStore: this.sessionStore,
-        blobs: this.blobs,
-        logger: this.logger.child('retention'),
+        db: this.requireStarted('db', this.db),
+        sessionStore: this.requireStarted('sessionStore', this.sessionStore),
+        blobs: this.requireStarted('blobs', this.blobs),
+        logger: this.requireStarted('logger', this.logger).child('retention'),
         dbPath: this.paths.dbPath,
       });
     }
     return this.retentionService;
+  }
+
+  /**
+   * A field `start()` is responsible for, refused rather than passed on as
+   * `undefined`.
+   *
+   * The container declares its subsystems as `field!: T` because they are
+   * built in order by `start()`; the `!` is a claim, not a guarantee, and any
+   * caller that reaches a subsystem before `start()` (a test, a second entry
+   * point, a future main-process path that constructs the container early)
+   * gets `undefined` with a `Database` type on it. Downstream that becomes a
+   * fault report about the wrong layer. The code is `STORAGE_ERROR` because
+   * that is what the caller's next step would have failed on anyway; the
+   * message names the field, which is the part a support report needs.
+   */
+  private requireStarted<T>(field: string, value: T | undefined): T {
+    if (value === undefined || value === null) {
+      throw codedError(
+        'STORAGE_ERROR',
+        `容器尚未初始化：${field} 在 start() 之前被读取。`,
+        'storage',
+      );
+    }
+    return value;
   }
 
   async start(): Promise<void> {

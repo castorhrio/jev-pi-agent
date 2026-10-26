@@ -77,10 +77,10 @@ const PURGED: StoragePurgeResult = {
  */
 function makeApp(): UcadApp {
   const app = new UcadApp({ paths: PATHS });
-  // Only the collaborators `getRetention()` reads; the constructor takes them
-  // from the fields, which is what lets a test build the real service without
-  // a real SQLite file. Nothing here is touched unless a test stubs the method
-  // that would read it.
+  // Exactly the collaborators `getRetention()` reads — no more, no less. The
+  // guard added to the container checks precisely these four, so a hand-built
+  // container is still the real code path into the service: a fake that
+  // satisfied fewer of them would be testing a container that cannot exist.
   app.db = {} as UcadApp['db'];
   app.sessionStore = {} as UcadApp['sessionStore'];
   app.blobs = {} as UcadApp['blobs'];
@@ -121,6 +121,55 @@ describe('the container owns one retention service (§8.4)', () => {
     // remember to call the method; a getter that built its own would be a
     // second answer to the same question.
     expect(app.retention).toBe(first);
+  });
+
+  it('refuses to build a service on a container that has not started', () => {
+    // `db`/`sessionStore`/`blobs`/`logger` are `field!: T` declarations whose
+    // order is a promise `start()` keeps. Before that call they are
+    // `undefined` at runtime while the type system still calls them a
+    // `Database`, so the service used to be constructed *over* `undefined`.
+    // Nothing threw: the first `usage()` or `purge()` failed somewhere inside
+    // the storage layer with a message about SQLite, and the report named the
+    // wrong layer entirely.
+    const app = new UcadApp({ paths: PATHS });
+
+    let thrown: unknown;
+    try {
+      app.getRetention();
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(thrown, 'an unstarted container handed out a retention service').toBeInstanceOf(Error);
+    // The code is the one a support report filters on; without it the refusal
+    // is `UNKNOWN`, which is indistinguishable from a crash.
+    expect((thrown as { code?: string }).code).toBe('STORAGE_ERROR');
+    // The message names *which* field was missing, so "call start() first" is
+    // actionable rather than a guess about the container's whole state.
+    expect((thrown as Error).message).toContain('db');
+    expect((thrown as Error).message).toContain('start()');
+  });
+
+  it('does not cache the refusal once the container has its storage', () => {
+    // A guard that threw *after* assigning a half-built service, or that left
+    // the field set to a placeholder, would make the second call return the
+    // broken instance — the failure would then be permanent for a container
+    // that is perfectly usable a moment later.
+    const app = new UcadApp({ paths: PATHS });
+    // The same refusal as above, not some incidental `TypeError`: without the
+    // guard the service is built over `undefined` and the throw comes from
+    // inside the constructor, which would make this test pass for the wrong
+    // reason.
+    expect(() => app.getRetention()).toThrow(/尚未初始化/);
+
+    app.db = {} as UcadApp['db'];
+    app.sessionStore = {} as UcadApp['sessionStore'];
+    app.blobs = {} as UcadApp['blobs'];
+    app.logger = silentLogger('container');
+
+    const first = app.getRetention();
+    expect(first).toBeInstanceOf(RetentionService);
+    expect(app.getRetention()).toBe(first);
   });
 
   it('builds one per container, not one per process', () => {
