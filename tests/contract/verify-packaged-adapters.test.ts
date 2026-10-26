@@ -39,6 +39,15 @@
  * escalation asks is "is the group still there?". The group signal is a seam
  * too: a test that signalled whatever group happened to carry that id on the
  * machine could hit something else entirely.
+ *
+ * That question turns out to have three answers, not two, and the third one is
+ * the dangerous one: a probe can be *refused* (`EPERM` — a pid recycled onto
+ * another user's process, a sandboxed syscall) and a refusal is not "the group
+ * is gone". Reading it as gone would send `SIGKILL` to a process this one has
+ * just been told it may not signal. So the escalation gives up on a refusal and
+ * writes down why; the tests pin both the give-up and its message, because a
+ * cleanup that quietly stops cleaning up is indistinguishable from one that
+ * never ran.
  */
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -207,8 +216,18 @@ class FakeGroup {
   signals: Array<{ pid: number; signal: string | number }> = [];
   /** Whether the group still has a member in it. */
   alive = true;
+  /**
+   * The error the existence probe (signal 0) throws, when the test wants one.
+   *
+   * `alive = false` is the ordinary ESRCH case; this is the other failure a
+   * probe can produce — a permission refusal, which is what a recycled pid or
+   * another user's group looks like through `kill(2)`. The two have to be
+   * separable, because the code's decision depends on which one it got.
+   */
+  probeError: NodeJS.ErrnoException | undefined;
 
   kill = vi.fn((pid: number, signal: string | number) => {
+    if (signal === 0 && this.probeError !== undefined) throw this.probeError;
     if (!this.alive) {
       const error = new Error('kill ESRCH');
       (error as NodeJS.ErrnoException).code = 'ESRCH';
@@ -222,6 +241,13 @@ class FakeGroup {
   get sent(): Array<{ pid: number; signal: string | number }> {
     return this.signals.filter((entry) => entry.signal !== 0);
   }
+}
+
+/** An error shaped like the one `kill(2)` surfaces, with a `code` to branch on. */
+function errnoError(code: string): NodeJS.ErrnoException {
+  const error: NodeJS.ErrnoException = new Error(`kill ${code}`);
+  error.code = code;
+  return error;
 }
 
 /** The state `interruptRun` reads and writes. */
@@ -302,6 +328,40 @@ describe('the launch, driven through an injected spawn', () => {
       expect.objectContaining({ stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true }),
     );
     // The build is stopped through its group, so its Chromium children go too.
+    expect(group.sent).toEqual([{ pid: -4242, signal: 'SIGTERM' }]);
+  });
+
+  it('judges the launch on the line, so output that arrives later changes nothing', async () => {
+    // A packaged UCAD is a tray app: it keeps printing after the summary line
+    // (update-feed chatter, renderer warnings), and it stays alive until it is
+    // stopped. So the verdict is taken at the line and everything after it is
+    // dropped on purpose — first line wins, and later output cannot replace it.
+    // That is a trade, not an accident of statement order, and the case below
+    // is what keeps it one: it rules out a *second* summary line arriving after
+    // a good one and re-deciding whether the check passed. What is observable
+    // from outside is the verdict and the captured output; the `settled` guard
+    // in `collect` is what makes both of them a snapshot of the line.
+    const child = new FakeChild();
+    const group = new FakeGroup();
+    const pending = launch('/opt/ucad', {
+      spawnFn: () => child,
+      killFn: group.kill,
+      timeoutMs: 1000,
+    });
+
+    child.say('[ucad] adapters resolved: universal\n');
+    const { output, reason } = await pending;
+
+    // The app keeps talking after the verdict was reached.
+    child.say('[ucad] adapters resolved: (none)\nError: renderer went away\n');
+
+    expect(reason).toBe('resolved-line');
+    expect(verifyResolution(output)).toEqual([]);
+    // `(none)` is the passing-looking failure this whole script exists for; if
+    // late output could reach the verdict it would replace a good line with it.
+    expect(output).not.toContain('(none)');
+    expect(output).not.toContain('renderer went away');
+    // And the late output did not trigger a second stop of the tree.
     expect(group.sent).toEqual([{ pid: -4242, signal: 'SIGTERM' }]);
   });
 
@@ -506,6 +566,53 @@ describe('the stop that keeps a failed run from leaving an orphan', () => {
 
     await vi.advanceTimersByTimeAsync(200);
     expect(group.sent).toEqual([{ pid: -4242, signal: 'SIGTERM' }]);
+  });
+
+  it('does not read a refused probe as "the group is gone"', async () => {
+    // `EPERM` from the probe is not an answer about existence: the group is
+    // there and is not this process's to signal. The realistic way to get here
+    // is a pid recycled between the launch and the probe (the app died and its
+    // id went to someone else's process), or a sandbox refusing the syscall.
+    // The old code answered "not alive" to every error, so it read the refusal
+    // as an empty group and sent SIGKILL to a pid it had just been told it may
+    // not touch. Two things are asserted instead: nothing further is signalled,
+    // and the give-up is written down rather than silent.
+    vi.useFakeTimers();
+    const child = new FakeChild();
+    const group = new FakeGroup();
+    const warn = vi.fn();
+    stop(child, { platform: 'linux', graceMs: 200, killFn: group.kill, warn });
+    expect(group.sent).toEqual([{ pid: -4242, signal: 'SIGTERM' }]);
+
+    group.probeError = errnoError('EPERM');
+    await vi.advanceTimersByTimeAsync(200);
+
+    // Not even the group's own SIGKILL: the refusal is the reason to stop.
+    expect(group.sent).toEqual([{ pid: -4242, signal: 'SIGTERM' }]);
+    // Nor a SIGKILL aimed at the app on the strength of "the group must be
+    // empty" — that inference is exactly what the probe failed to establish.
+    expect(child.signals).toEqual([]);
+    expect(warn).toHaveBeenCalledTimes(1);
+    const message = String(warn.mock.calls[0]?.[0]);
+    expect(message).toContain('EPERM');
+    expect(message).toContain('4242');
+  });
+
+  it('gives up the escalation on a probe that failed for want of a code too', async () => {
+    // The error need not be an errno at all (a seam may throw anything), and an
+    // unrecognised failure is no more an answer about existence than `EPERM`.
+    vi.useFakeTimers();
+    const child = new FakeChild();
+    const group = new FakeGroup();
+    const warn = vi.fn();
+    stop(child, { platform: 'linux', graceMs: 200, killFn: group.kill, warn });
+
+    group.probeError = new Error('kill ESOMETHINGNEW') as NodeJS.ErrnoException;
+    await vi.advanceTimersByTimeAsync(200);
+
+    expect(group.sent).toEqual([{ pid: -4242, signal: 'SIGTERM' }]);
+    expect(child.signals).toEqual([]);
+    expect(String(warn.mock.calls[0]?.[0])).toContain('unknown error');
   });
 
   it('falls back to the app itself when there is no group to signal', async () => {

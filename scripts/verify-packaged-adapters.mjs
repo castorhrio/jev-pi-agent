@@ -69,6 +69,13 @@
  * Leading a group has one consequence worth naming: the build no longer
  * receives the terminal's own `SIGINT`, so the script stops it itself when
  * the operator interrupts the check.
+ *
+ * The escalation after `SIGTERM` asks the group whether anything is left in it,
+ * and that answer has three forms rather than two: `ESRCH` (nothing is there),
+ * a delivered probe, and a refused one (`EPERM`). A refusal means the group
+ * exists and is not this process's to signal, which is *not* evidence that
+ * nothing is running — so the escalation stops and prints why instead of
+ * SIGKILLing a pid that may since have been handed to someone else.
  */
 
 import { spawn } from 'node:child_process';
@@ -279,6 +286,15 @@ export function launch(
     };
 
     const collect = (chunk) => {
+      // First line wins, and that is a deliberate trade: a packaged UCAD is a
+      // tray app, so it keeps printing after the summary line — update-feed
+      // chatter, renderer warnings, later attempts. None of it is collected,
+      // because the verdict is a judgement on the resolution *this* launch
+      // performed, and a second `adapters resolved:` line arriving later must
+      // not be able to overwrite it. The trade is pinned by a test rather than
+      // left as a silent property of the order these statements happen to be
+      // in ("output that arrives after the line does not change the verdict").
+      if (settled) return;
       output += String(chunk);
       if (RESOLVED_LINE.test(output)) finish('resolved-line');
     };
@@ -307,7 +323,7 @@ const KILL_GRACE_MS = 5_000;
 const defaultKill = (pid, signal) => process.kill(pid, signal);
 
 /**
- * Signal a whole process group, and say whether the signal was delivered.
+ * Signal a whole process group, and say what `kill(2)` answered.
  *
  * A negative pid means "every process in that group" to `kill(2)`, and that
  * group is the only way to reach the Chromium children a packaged build
@@ -319,19 +335,41 @@ const defaultKill = (pid, signal) => process.kill(pid, signal);
  * anything. That is the question the escalation needs, because the app can be
  * gone while a child of its tree is not.
  *
+ * The answer is three-valued, and the two failure modes are *not* the same
+ * kind of fact. `ESRCH` says nothing is there. `EPERM` says something *is*
+ * there and is not ours to signal — a pid recycled between the launch and the
+ * probe, a group owned by another user, a sandbox refusing the syscall. This
+ * function used to answer `false` to both, and the escalation read a
+ * permission refusal as "the group is empty": it then sent `SIGKILL` to a pid
+ * it had just been told it may not signal, which is the one outcome worse
+ * than leaving an orphan. Only `ESRCH` is an answer about existence.
+ *
  * `killFn` is the seam the tests use: a real group signal needs a real
  * process group, and a test that signals whatever group happens to carry that
  * id on the machine is a test that can hit something else.
+ *
+ * @returns {{ outcome: 'delivered' | 'gone' | 'unreachable', code?: string }}
+ *   `delivered` when `kill(2)` accepted the signal; `gone` on `ESRCH`;
+ *   `unreachable` for every other error, with its `code` when it has one.
  */
 function signalGroup(killFn, pid, signal) {
   try {
     killFn(-pid, signal);
-    return true;
-  } catch {
-    // ESRCH: nothing is there. EPERM: it is there, and not ours to signal.
-    return false;
+    return { outcome: 'delivered' };
+  } catch (error) {
+    const code = typeof error?.code === 'string' ? error.code : undefined;
+    return { outcome: code === 'ESRCH' ? 'gone' : 'unreachable', code };
   }
 }
+
+/**
+ * Where a stopped escalation is recorded: the terminal, since that is the only
+ * channel a CLI has, and an operator cannot act on a decision nobody wrote
+ * down.
+ */
+const warnToStderr = (message) => {
+  process.stderr.write(message);
+};
 
 /**
  * Stop the launched app, and its children on the platforms that need it.
@@ -353,6 +391,12 @@ function signalGroup(killFn, pid, signal) {
  * same move for the same reason (§11.1: killing a process must kill what it
  * started). Windows has no process groups, so `taskkill /T /F` walks the tree
  * there instead.
+ *
+ * The escalation decides on the *probe*, not on a boolean: `ESRCH` means the
+ * group is gone, `EPERM` means it is there and is not ours. The second case
+ * gives up the escalation and reports it through `warn` instead of signalling
+ * — a pid recycled onto a stranger's group is exactly when "the probe failed,
+ * so the group must be dead" turns a cleanup into an incident.
  */
 export function stop(
   child,
@@ -361,6 +405,7 @@ export function stop(
     platform = process.platform,
     graceMs = KILL_GRACE_MS,
     killFn = defaultKill,
+    warn = warnToStderr,
   } = {},
 ) {
   // The app is already gone — its pid may have been reaped and handed to
@@ -376,10 +421,11 @@ export function stop(
     return;
   }
   const pid = typeof child.pid === 'number' ? child.pid : null;
-  const groupSignalled = pid === null ? false : signalGroup(killFn, pid, 'SIGTERM');
-  if (!groupSignalled) {
-    // There is no group to signal — the build was not spawned detached, or it
-    // is already gone. The app itself is all there is to reach.
+  const term = pid === null ? { outcome: 'gone' } : signalGroup(killFn, pid, 'SIGTERM');
+  if (term.outcome !== 'delivered') {
+    // No group to reach: the build was not spawned detached, it is already
+    // gone, or the group is not ours to signal. The app itself is still ours —
+    // it is the process this check spawned — so it is what gets asked to stop.
     child.kill('SIGTERM');
   }
   const escalate = setTimeout(() => {
@@ -387,10 +433,25 @@ export function stop(
     // while a child of its tree is not, and that child is the orphan this
     // function exists to prevent. So the group is probed instead — inside the
     // grace period, while the pid is still the one this check started.
-    if (pid !== null && signalGroup(killFn, pid, 0)) {
-      if (!signalGroup(killFn, pid, 'SIGKILL')) child.kill('SIGKILL');
+    const probe = pid === null ? { outcome: 'gone' } : signalGroup(killFn, pid, 0);
+    if (probe.outcome === 'delivered') {
+      if (signalGroup(killFn, pid, 'SIGKILL').outcome !== 'delivered') child.kill('SIGKILL');
       return;
     }
+    if (probe.outcome === 'unreachable') {
+      // The probe was refused, so the group's existence is unknown — and
+      // `SIGKILL` at a group this process may not signal is the wrong gamble:
+      // it lands on whatever owns the pid now. The escalation stops here and
+      // the reason is written down, because a build left running has to be
+      // visible to the operator rather than inferred from silence.
+      warn(
+        `[verify-packaged-adapters] could not probe the process group of pid ${pid} ` +
+          `(${probe.code ?? 'unknown error'}); it is not ours to signal, so the app was not ` +
+          `escalated to SIGKILL — check that no UCAD process from this run is still running.\n`,
+      );
+      return;
+    }
+    // ESRCH: nothing is left in the group, so the app itself is all there is.
     if (child.exitCode === null) child.kill('SIGKILL');
   }, graceMs);
   // A safety net, not work: it must never be the reason the script stays alive.
