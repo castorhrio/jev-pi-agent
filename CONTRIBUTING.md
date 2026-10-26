@@ -26,6 +26,7 @@ test that does nothing.
 | Copy and a11y | No hard-coded UI strings, locale parity, contrast, focus indicators |
 | Menu | Every command Main registers has a renderer handler |
 | Versions | Shipped manifests pin exact versions; the installed engine matches what is declared |
+| Updates | The shipped feed is `https`; an override that is not `https` is refused without falling back; a feed with no `sha256` installs nothing; and a mismatch deletes the staged file instead of launching it |
 
 **Interface** — `tests/e2e`, run by `npm run test:e2e`: the real `App` in a DOM
 against the real fixture bridge, covering the conversation, navigation, the
@@ -251,8 +252,14 @@ will meet, and where each is written down:
   pattern to remove the false alarm — the failure (`packagingProblem`) names the file **and line**
   it matched, and says both fixes: reword the comment, or, if it is a real step, update README.md
   in both languages, this file and `adapter-resolution.ts` to describe what CI now checks.
-- **Symlinked workflow files are not read**, for the same reason: `isFile()` is false for a link.
-  The module doc says what to extend if that ever matters.
+- **A workflow file reached through a symlink is followed, not skipped.** The reader
+  resolves the link and reads the target's text, so a `release.yml` that points at a
+  packaging job is still a red gate. A `.yml` / `.yaml` entry that does not resolve to a
+  regular file (a broken link, or a link to a directory) throws with both fixes in the
+  message: materialise the workflow, or extend the reader. `ci-shape.ts` records the
+  rule, and `ci-shape.test.ts` pins it in *follows a symlinked workflow file, so a link
+  cannot hide a packaging step* and *refuses a workflow entry it cannot read, instead
+  of skipping it*.
 - **Composite actions, and reusable workflows in *other* repositories, are not read** — they are
   not files in `.github/workflows/`, so a packaging step that lives there is invisible. The gap
   is asserted twice in `tests/contract/ci-shape.test.ts` (*what this reader deliberately does not

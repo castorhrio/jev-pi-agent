@@ -39,23 +39,30 @@ const AVAILABLE: UpdateStatus = {
 type Fixture = ReturnType<typeof createFixtureApi>;
 
 /**
- * Mounts the real App against a fixture whose update check answers
- * "a new version is available".
+ * Mounts the real App against a fixture whose update status is `status`.
  */
-function mountWithUpdateAvailable() {
+function mountWithUpdateStatus(status: UpdateStatus) {
   const fixture: Fixture = createFixtureApi('default');
-  const downloadUpdate = vi.fn(async (): Promise<UpdateStatus> => AVAILABLE);
+  const downloadUpdate = vi.fn(async (): Promise<UpdateStatus> => status);
   const api = {
     ...fixture.api,
     app: {
       ...fixture.api.app,
-      updateStatus: async (): Promise<UpdateStatus> => AVAILABLE,
-      checkUpdate: async (): Promise<UpdateStatus> => AVAILABLE,
+      updateStatus: async (): Promise<UpdateStatus> => status,
+      checkUpdate: async (): Promise<UpdateStatus> => status,
       downloadUpdate,
     },
   };
   (window as unknown as Record<string, unknown>).ucad = api;
   return { ...render(<App />), downloadUpdate };
+}
+
+/**
+ * Mounts the real App against a fixture whose update check answers
+ * "a new version is available".
+ */
+function mountWithUpdateAvailable() {
+  return mountWithUpdateStatus(AVAILABLE);
 }
 
 async function settle() {
@@ -133,5 +140,24 @@ describe('the update surface, when a new version exists', () => {
     await user.click(download);
 
     await waitFor(() => expect(downloadUpdate).toHaveBeenCalledTimes(1));
+  });
+});
+
+describe('the update surface, when no feed is configured', () => {
+  it('says so instead of reporting nothing to do', async () => {
+    // README, both languages: "With no feed the app says so rather than failing
+    // quietly" / "没有配置时应用会直说，而不是静默失败". The service answers
+    // `unsupported`; this is the surface where a person reads the sentence, so
+    // the assertion is on the rendered card rather than on the status object.
+    const user = userEvent.setup();
+    mountWithUpdateStatus({
+      state: 'unsupported',
+      currentVersion: '1.0.0',
+      feedConfigured: false,
+    });
+    await settle();
+    await openSettings(user);
+
+    expect(await within(updateCard()).findByText('未配置更新源')).toBeTruthy();
   });
 });

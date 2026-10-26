@@ -465,6 +465,57 @@ export class UpdateService {
   }
 }
 
+/** What a redirect may not be, and what the user is told about it. */
+export type DownloadRedirect =
+  | { readonly ok: true; readonly url: URL; readonly depth: number }
+  | {
+      readonly ok: false;
+      readonly reason: 'too-many-redirects' | 'invalid-location' | 'not-https';
+    };
+
+const REDIRECT_MESSAGE: Readonly<Record<Extract<DownloadRedirect, { ok: false }>['reason'], string>> =
+  {
+    'too-many-redirects': '下载重定向次数过多',
+    'invalid-location': '下载重定向地址无效',
+    'not-https': '下载重定向必须使用 https',
+  };
+
+/**
+ * Where one redirect hop is allowed to go, or why it is not.
+ *
+ * This used to live inline in the response listener, and the parse was
+ * unguarded: `new URL(location, url)` threw inside an event callback, outside
+ * the promise's executor, so a malformed `Location` header escaped as an
+ * uncaught exception instead of failing the download. Two rules were checked
+ * and one was not; the missing one is the one a broken or hostile server
+ * controls. Keeping the decision here makes all three refusal cases
+ * (`too-many-redirects`, `invalid-location`, `not-https`) assertable without a
+ * server, a certificate, or a network.
+ */
+export function resolveDownloadRedirect(
+  location: string,
+  base: URL,
+  depth: number,
+): DownloadRedirect {
+  // A feed that points at a redirect loop used to be followed forever, which
+  // turned a broken update into a download that never ends and never fails.
+  if (depth >= MAX_DOWNLOAD_REDIRECTS) {
+    return { ok: false, reason: 'too-many-redirects' };
+  }
+  let next: URL;
+  try {
+    next = new URL(location, base);
+  } catch {
+    return { ok: false, reason: 'invalid-location' };
+  }
+  // Same rule as the feed itself: the bytes being downloaded are the RCE
+  // surface, so no hop may downgrade to cleartext.
+  if (next.protocol !== 'https:') {
+    return { ok: false, reason: 'not-https' };
+  }
+  return { ok: true, url: next, depth: depth + 1 };
+}
+
 async function downloadTo(
   url: URL,
   target: string,
@@ -476,22 +527,12 @@ async function downloadTo(
     const request = client.get(url, { timeout: DOWNLOAD_TIMEOUT_MS }, (response) => {
       if (response.statusCode && response.statusCode >= 300 && response.headers.location) {
         response.resume();
-        // A feed that points at a redirect loop used to be followed forever,
-        // which turned a broken update into a download that never ends and
-        // never fails. The number of hops is now bounded, and exceeding it is
-        // an error like any other.
-        if (depth >= MAX_DOWNLOAD_REDIRECTS) {
-          reject(new Error('下载重定向次数过多'));
+        const redirect = resolveDownloadRedirect(response.headers.location, url, depth);
+        if (!redirect.ok) {
+          reject(new Error(REDIRECT_MESSAGE[redirect.reason]));
           return;
         }
-        const next = new URL(response.headers.location, url);
-        // Same rule as the feed itself: the bytes being downloaded are the RCE
-        // surface, so no hop may downgrade to cleartext.
-        if (next.protocol !== 'https:') {
-          reject(new Error('下载重定向必须使用 https'));
-          return;
-        }
-        void downloadTo(next, target, onProgress, depth + 1).then(resolve, reject);
+        void downloadTo(redirect.url, target, onProgress, redirect.depth).then(resolve, reject);
         return;
       }
       if (response.statusCode !== 200) {

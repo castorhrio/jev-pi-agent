@@ -40,7 +40,7 @@ import {
   resolveUpdateFeed,
   verifyInstaller,
 } from '../../apps/desktop/src/main/update-feed';
-import { UpdateService } from '../../apps/desktop/src/main/update-service';
+import { UpdateService, resolveDownloadRedirect } from '../../apps/desktop/src/main/update-service';
 import { buildFeedDocument, installerUrlFor } from '../../scripts/make-update-feed.mjs';
 
 const FEED_URL = 'https://example.test/update-feed.json';
@@ -272,6 +272,7 @@ describe('the updater itself', () => {
 
   function service(options: {
     feed: unknown;
+    getFeedUrl?: () => string | null;
     download?: (url: URL, target: string) => Promise<void>;
     open?: (target: string) => Promise<string>;
   }) {
@@ -280,7 +281,7 @@ describe('the updater itself', () => {
     const launched: string[] = [];
     const instance = new UpdateService({
       logger: silentLogger('test'),
-      getFeedUrl: () => FEED_URL,
+      getFeedUrl: options.getFeedUrl ?? (() => FEED_URL),
       downloadDir: dir,
       currentVersion: '1.0.0',
       fetchImpl: fetched.fetchImpl,
@@ -296,6 +297,84 @@ describe('the updater itself', () => {
     });
     return { instance, downloads, launched, fetchCalls: fetched };
   }
+
+  it('says no feed is configured instead of reporting an empty update', async () => {
+    // README, both languages: "With no feed the app says so rather than failing
+    // quietly" / "没有配置时应用会直说，而不是静默失败". An updater that
+    // answered `up-to-date` here would tell the user there is nothing to do
+    // when it never asked a question.
+    const { instance, fetchCalls } = service({ feed: {}, getFeedUrl: () => null });
+
+    const status = await instance.check();
+
+    expect(status.state).toBe('unsupported');
+    expect(status.message).toBe('未配置更新源');
+    expect(status.feedConfigured).toBe(false);
+    expect(fetchCalls.calls).toBe(0);
+  });
+
+  it('never fetches a cleartext feed, even if the wiring hands it one', async () => {
+    // `resolveUpdateFeed` refuses a cleartext override before the service sees
+    // it, and the service refuses it again. This is the second gate: a caller
+    // that bypassed the resolver must not turn the download into cleartext.
+    const { instance, fetchCalls } = service({
+      feed: { version: '9.9.9' },
+      getFeedUrl: () => 'http://example.test/feed.json',
+    });
+
+    const status = await instance.check();
+
+    expect(status.state).toBe('unsupported');
+    expect(status.feedConfigured).toBe(false);
+    expect(fetchCalls.calls).toBe(0);
+  });
+
+  it('refuses an installer URL that is not https before fetching it', async () => {
+    // The feed is https and hashed, but the file it names is not. The hash
+    // proves the bytes match what the feed named; it does not make a cleartext
+    // transfer acceptable, and an http URL is refused before a request is made
+    // — the same rule the feed and every redirect hop are held to.
+    const { instance, downloads } = service({
+      feed: {
+        version: '9.9.9',
+        url: 'http://example.test/UCAD-Setup-9.9.9.exe',
+        sha256: sha256Of('installer'),
+      },
+    });
+
+    await instance.check();
+    expect(instance.current.state).toBe('available');
+
+    const status = await instance.download();
+
+    expect(status.state).toBe('error');
+    expect(status.message).toContain('https');
+    expect(downloads).toEqual([]);
+    expect(existsSync(join(dir, 'UCAD-setup.exe'))).toBe(false);
+  });
+
+  it('refuses a feed version that cannot be compared or displayed safely', async () => {
+    // Nine-point-something outranks 1.0.0, so the version check reports
+    // `available` — the comparison stops at the first non-digit. The path in
+    // the string is why staging is a constant and why the version is gated
+    // before download, not after.
+    const { instance, downloads } = service({
+      feed: {
+        version: '9.9.9/../../Startup',
+        url: INSTALLER_URL,
+        sha256: sha256Of('installer'),
+      },
+    });
+
+    await instance.check();
+    expect(instance.current.state).toBe('available');
+
+    const status = await instance.download();
+
+    expect(status.state).toBe('error');
+    expect(status.message).toContain('版本号无效');
+    expect(downloads).toEqual([]);
+  });
 
   it('refuses to download from a feed that carries no hash', async () => {
     const { instance, downloads, fetchCalls } = service({
@@ -401,6 +480,55 @@ describe('the updater itself', () => {
     expect(installed).toBe(false);
     expect(launched).toEqual([]);
     expect(instance.current.state).toBe('error');
+  });
+});
+
+describe('a download redirect is a second URL the feed did not name', () => {
+  const base = new URL('https://example.test/releases/update-feed.json');
+
+  it('resolves a relative Location against the redirecting URL and counts the hop', () => {
+    const redirect = resolveDownloadRedirect('UCAD-Setup-9.9.9.exe', base, 0);
+
+    expect(redirect.ok).toBe(true);
+    expect(redirect.ok === true && redirect.url.toString()).toBe(
+      'https://example.test/releases/UCAD-Setup-9.9.9.exe',
+    );
+    expect(redirect.ok === true && redirect.depth).toBe(1);
+  });
+
+  it('refuses a hop that downgrades to cleartext', () => {
+    expect(resolveDownloadRedirect('http://example.test/installer.exe', base, 0)).toEqual({
+      ok: false,
+      reason: 'not-https',
+    });
+  });
+
+  it('refuses a Location that does not parse instead of throwing out of the listener', () => {
+    // This is the defect the helper was extracted for: `new URL()` used to run
+    // inside the response callback, where a throw escapes the promise executor
+    // and becomes an uncaught exception in the main process. A server that
+    // sends `Location: https://[` could take the updater down instead of
+    // failing the download.
+    expect(resolveDownloadRedirect('https://[', base, 0)).toEqual({
+      ok: false,
+      reason: 'invalid-location',
+    });
+    expect(resolveDownloadRedirect('http://', base, 0)).toEqual({
+      ok: false,
+      reason: 'invalid-location',
+    });
+  });
+
+  it('stops after the hop limit rather than following a loop forever', () => {
+    expect(resolveDownloadRedirect('https://example.test/next', base, 4)).toEqual({
+      ok: true,
+      url: new URL('https://example.test/next'),
+      depth: 5,
+    });
+    expect(resolveDownloadRedirect('https://example.test/next', base, 5)).toEqual({
+      ok: false,
+      reason: 'too-many-redirects',
+    });
   });
 });
 

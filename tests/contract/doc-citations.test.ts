@@ -37,6 +37,15 @@
  * (`*reported*`); a phrase is either emphasis (write it as "…" or **…**) or a
  * citation (write it as `it(…)`).
  *
+ * **Chinese has no spaces between words.** The first version of this gate
+ * decided "multi-word" with `\s`, which sees `*跳过软链接*` as a single token —
+ * so every Chinese italic phrase was exempt, in a bilingual repository whose
+ * comments are written in both languages. A run of two or more Han characters
+ * now counts as a phrase the same way a space does. The cost is that a
+ * two-character word in italics is refused too; the fix is the reword the rule
+ * already asks for. The alternative is a gate that silently stops reading half
+ * the comments it claims to read.
+ *
  * ## What is deliberately not read
  *
  * Only `/** … *&#47;` blocks in the five sources listed below, and only the
@@ -147,6 +156,22 @@ function citationsIn(source: string, block: DocBlock): Citation[] {
 }
 
 /**
+ * A run of two or more Han characters.
+ *
+ * `\s` is the obvious way to tell a phrase from a word, and it is wrong for
+ * this repository's Chinese half: Chinese puts no space between words, so
+ * `*跳过软链接*` would read as one token and every Chinese citation would be
+ * exempt. A Han run is the equivalent signal. One Han character is still
+ * allowed as emphasis (`*见*`), matching the one-word allowance for English.
+ */
+const HAN_RUN = /[\p{Script=Han}]{2,}/u;
+
+/** Whether an italic span is a phrase rather than one word of emphasis. */
+function isPhrase(text: string): boolean {
+  return /\s/u.test(text) || HAN_RUN.test(text);
+}
+
+/**
  * The multi-word italic phrases in one doc comment.
  *
  * Code spans are masked first, so a `*` inside a glob or a path (`*.yml`) cannot
@@ -162,7 +187,7 @@ function italicPhrasesIn(source: string, block: DocBlock): ItalicPhrase[] {
       text: (match[1] ?? '').replace(/\s+/gu, ' ').trim(),
       line: block.line + newlinesBefore(masked, match.index ?? 0),
     }))
-    .filter((phrase) => /\s/u.test(phrase.text));
+    .filter((phrase) => isPhrase(phrase.text));
 }
 
 /** The failure a stale citation reports. */
@@ -185,7 +210,8 @@ function italicPhraseProblem(phrase: ItalicPhrase): string {
     'In these files an italic phrase is either emphasis or a citation of a test case, and nothing',
     'can tell the two apart — which is exactly the shape a stale citation takes. So pick one:',
     '  1. Emphasis of more than one word: use quotes or bold — "…" or **…** — and leave italics for',
-    '     a single word.',
+    '     a single word. This file is bilingual: Chinese writes phrases without spaces, so a run',
+    '     of two or more Han characters counts as a phrase too.',
     '  2. A citation: write `it(\'part of the case name\')` (or `describe(\'…\')`), which',
     '     `tests/contract/doc-citations.test.ts` then checks against the suite.',
     'Do not leave the phrase in italics "just this once": it is the one form this gate cannot see.',
@@ -456,6 +482,38 @@ describe('the citation check can fail', () => {
     expect(problem).toContain('"skips a symlinked workflow file"');
     expect(problem).toContain('use quotes or bold');
     expect(problem).toContain("write `it('part of the case name')`");
+  });
+
+  it('reports a Chinese italic phrase, which has no space to give it away', () => {
+    // The blind spot this case exists for: `\s` was the whole test for
+    // "more than one word", and Chinese writes phrases without spaces. Every
+    // Chinese italic citation was therefore exempt — in the language half the
+    // comments are written in.
+    const report = citationReport(
+      { [SOURCE]: '/**\n * 这条规则由 *跳过软链接* 证明。\n */' },
+      names,
+    );
+    expect(report.citations).toEqual([]);
+    expect(report.italicPhrases).toEqual([
+      { source: SOURCE, text: '跳过软链接', line: 2 },
+    ]);
+    expect(report.problems).toHaveLength(1);
+    const problem = report.problems[0]!;
+    expect(problem).toContain(`${SOURCE}:2`);
+    expect(problem).toContain('"跳过软链接"');
+    expect(problem).toContain('two or more Han characters');
+  });
+
+  it('leaves one Han character of emphasis alone, the same way it leaves one English word', () => {
+    // The control for the case above. Without it, the fix could be "any Han
+    // character in italics is red", which would ban emphasis in Chinese
+    // entirely and be the first rule a reader disables.
+    const report = citationReport(
+      { [SOURCE]: '/**\n * 细节见 *下*，结论见 **正文**。\n */' },
+      names,
+    );
+    expect(report.italicPhrases).toEqual([]);
+    expect(report.problems).toEqual([]);
   });
 
   it('leaves emphasis alone: one italic word, bold, and code spans are not citations', () => {
