@@ -53,12 +53,20 @@
  * The remaining limits are shapes the scan does not even reach:
  *
  *  - a schema built through a destructured or renamed Zod namespace
- *    (`const { string } = z; string({ message })`) — only `z.…` calls open a
- *    schema context;
+ *    (`const { string } = z; string({ message })`, or `import { z as zod }`
+ *    and `zod.string({ message })`) — only a literal `z.…` call opens a
+ *    schema context, so the scan cannot tell a Zod call from any other call
+ *    written in the same file;
  *  - a message attached through a helper that is not itself a Zod call;
  *  - a positional message that follows an argument containing a comma inside a
  *    regular-expression literal (`/a,b/`), because the argument walk does not
  *    parse regexes.
+ *
+ * Those limits are *pinned*, not merely listed: `zod-custom-messages.test.ts`
+ * asserts that the renamed and destructured shapes are invisible to the scan,
+ * so a blind spot is a contract with a name instead of a gap in a comment. If
+ * the scan ever learns to see them, that assertion fails and says so — the
+ * limit has to be lifted on purpose, not by accident.
  *
  * Listing them is not the same as fixing them: the alternative is a JavaScript
  * parser in a contract test, which is a much larger thing to keep correct than
@@ -70,6 +78,9 @@
  * this repo *discusses* messages and wording in prose at length, and a scan
  * that counted prose would be red permanently.
  */
+
+import { existsSync, readdirSync } from 'node:fs';
+import { join } from 'node:path';
 
 import { codeOnly } from './bare-throw-scan';
 
@@ -481,4 +492,67 @@ function lineOf(text: string, offset: number): number {
 /** The messages that are not Chinese — the findings this scan exists for. */
 export function englishMessages(file: string, text: string): ZodCustomMessage[] {
   return customMessages(file, text).filter((found) => !CJK.test(found.message));
+}
+
+/* ------------------------------------------------------------------------- *
+ * The scope of the scan in this repository
+ * ------------------------------------------------------------------------- */
+
+/**
+ * Source roots outside `packages/` and `apps/`.
+ *
+ * Empty today: every workspace in this repository lives under one of those
+ * two directories, and a workspace added there is picked up automatically. A
+ * *top-level* workspace — a new directory beside `packages/` — is not, and has
+ * to be listed here.
+ */
+const EXTRA_SCAN_ROOTS: readonly string[] = [];
+
+/** The `src` directory of every workspace directly under `parent`. */
+function rootsUnder(parent: string): string[] {
+  if (!existsSync(parent)) return [];
+  return readdirSync(parent, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => join(parent, entry.name, 'src'));
+}
+
+/**
+ * The directories this repository's schemas live in — everything that ships.
+ *
+ * A scan needs a scope, and a scope that is only implied is a scope that can
+ * shrink by accident: a workspace added as a new top-level directory would
+ * carry schemas the English check never reads, and the check would keep
+ * passing.
+ *
+ * The list is explicit here, and `zod-custom-messages.test.ts` asks two
+ * questions about it — that every root exists and holds source, and that
+ * every source root this repository has is in this list. A new top-level
+ * workspace therefore fails a test until it is added to
+ * {@link EXTRA_SCAN_ROOTS}: the omission becomes a decision instead of a
+ * silence. `CONTRIBUTING.md` says the same in prose, under "Adding a
+ * workspace package".
+ */
+export const SCAN_ROOTS: readonly string[] = [
+  ...rootsUnder('packages'),
+  ...rootsUnder('apps'),
+  ...EXTRA_SCAN_ROOTS,
+];
+
+/** Every `.ts` / `.tsx` file under a directory, recursively. */
+export function sourceFilesIn(root: string): string[] {
+  const out: string[] = [];
+  const walk = (current: string): void => {
+    for (const entry of readdirSync(current, { withFileTypes: true })) {
+      const full = join(current, entry.name);
+      if (entry.isDirectory()) walk(full);
+      else if (/\.tsx?$/.test(entry.name)) out.push(full);
+    }
+  };
+  if (existsSync(root)) walk(root);
+  return out;
+}
+
+/** Every source file the invariant covers: the files under {@link SCAN_ROOTS}. */
+export function shippedSourceFiles(): string[] {
+  return SCAN_ROOTS.flatMap(sourceFilesIn);
 }

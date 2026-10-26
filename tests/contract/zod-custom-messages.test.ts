@@ -24,40 +24,25 @@
  * listed in the scanner). It reports a custom message it cannot resolve, and
  * it reports every message that has no Chinese in it; the one thing it must
  * never do is stay silent about a sentence a person would read in English.
+ *
+ * Two things about the scan itself are pinned here, because both were only
+ * true in a comment: the shapes it *cannot* read (a blind spot the scan has
+ * no way to report), and the directories it covers (a scan over the wrong
+ * roots passes just as greenly as one over the right ones).
  */
 
 import { describe, expect, it } from 'vitest';
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 
-import { customMessages, englishMessages, scanZodMessages } from './zod-message-scan';
-
-/** Every `.ts` / `.tsx` file under a directory, recursively. */
-function sourceFiles(dir: string): string[] {
-  const out: string[] = [];
-  const walk = (current: string): void => {
-    for (const entry of readdirSync(current, { withFileTypes: true })) {
-      const full = join(current, entry.name);
-      if (entry.isDirectory()) walk(full);
-      else if (/\.tsx?$/.test(entry.name)) out.push(full);
-    }
-  };
-  if (existsSync(dir)) walk(dir);
-  return out;
-}
-
-/** The directories the invariant covers: everything that ships. */
-function shippedSource(): string[] {
-  const roots = [
-    ...readdirSync('packages', { withFileTypes: true })
-      .filter((entry) => entry.isDirectory())
-      .map((entry) => join('packages', entry.name, 'src')),
-    ...readdirSync('apps', { withFileTypes: true })
-      .filter((entry) => entry.isDirectory())
-      .map((entry) => join('apps', entry.name, 'src')),
-  ];
-  return roots.flatMap(sourceFiles);
-}
+import {
+  SCAN_ROOTS,
+  customMessages,
+  englishMessages,
+  scanZodMessages,
+  shippedSourceFiles,
+  sourceFilesIn,
+} from './zod-message-scan';
 
 /** A file that imports Zod, since a file that does not cannot define a schema. */
 const ZOD_FILE = `import { z } from 'zod';`;
@@ -194,6 +179,35 @@ z.string().min(3, 'must be longer');
     ]);
   });
 
+  it('does not see a schema written through a renamed or destructured Zod', () => {
+    // A KNOWN LIMIT, and a contract from now on.
+    //
+    // The scan opens a schema context on a literal `z.…` call, so a namespace
+    // bound to another name is invisible to it: the message never enters a
+    // schema span, so it is neither read nor reported as unreadable. An
+    // English sentence in either of these shapes would reach a person
+    // unchallenged.
+    //
+    // The alternative is a JavaScript parser in a contract test, which is a
+    // much larger thing to keep correct than the rule it guards — so the limit
+    // is accepted and *pinned* instead: this assertion is what a reader (and
+    // a future change) can point at. If the scan ever learns to see these
+    // shapes, this test fails and says the limit is gone, so the rule can be
+    // lifted on purpose rather than by accident.
+    const renamed = scanZodMessages('fixture.ts', `import { z as zod } from 'zod';
+const schema = zod.string({ message: 'an English sentence' });
+`);
+
+    expect(renamed).toEqual({ messages: [], unresolved: [] });
+
+    const destructured = scanZodMessages('fixture.ts', `${ZOD_FILE}
+const { string } = z;
+const schema = string({ message: 'an English sentence' });
+`);
+
+    expect(destructured).toEqual({ messages: [], unresolved: [] });
+  });
+
   it('ignores prose, other files, and messages it cannot read as a sentence', () => {
     const prose = `${ZOD_FILE}
 // z.string({ message: 'this is a comment, not a schema' });
@@ -237,7 +251,7 @@ describe('no schema in this app writes an English sentence', () => {
     // rather than left as a comment. A new runtime-built message must either
     // become one Chinese literal, or this assertion must learn about that
     // shape explicitly — with a test for the language it assembles.
-    const files = shippedSource();
+    const files = shippedSourceFiles();
     expect(files.length).toBeGreaterThan(50);
 
     const unresolved = files
@@ -251,7 +265,7 @@ describe('no schema in this app writes an English sentence', () => {
   });
 
   it('passes over every shipping source file', () => {
-    const files = shippedSource();
+    const files = shippedSourceFiles();
     // A scan over zero files is a gate that cannot fail.
     expect(files.length).toBeGreaterThan(50);
 
@@ -262,6 +276,80 @@ describe('no schema in this app writes an English sentence', () => {
     expect(
       offenders,
       'a custom message without Chinese is read as Zod’s own wording and replaced by 「不符合要求」 — write the sentence in Chinese, or the person who sees the refusal gets the generic one',
+    ).toEqual([]);
+  });
+});
+
+/**
+ * The scan's scope, asked of the repository rather than of the scan.
+ *
+ * A scan over the wrong files is as green as a scan over the right ones: an
+ * English sentence in a workspace the scan never opens is invisible, and the
+ * invariant still passes. The scope therefore has to be checked against what
+ * the repository actually contains — otherwise "we scan everything that
+ * ships" is a claim about a list in a source file, which is the kind of claim
+ * this repository keeps turning into a gate.
+ */
+describe('the scan covers every workspace in this repository', () => {
+  /**
+   * The `src` directories this repository has, wherever they are.
+   *
+   * Two levels: a workspace is either a top-level directory with its own
+   * `src`, or a directory of workspaces (`packages/one/src`). `node_modules`
+   * and dot-directories are not the repository's source and are left out.
+   */
+  function repositorySourceRoots(): string[] {
+    const roots: string[] = [];
+
+    for (const entry of readdirSync('.', { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue;
+      if (entry.name.startsWith('.') || entry.name === 'node_modules') continue;
+
+      const own = join(entry.name, 'src');
+      if (existsSync(own)) {
+        roots.push(own);
+        continue;
+      }
+
+      for (const child of readdirSync(entry.name, { withFileTypes: true })) {
+        if (!child.isDirectory()) continue;
+        const nested = join(entry.name, child.name, 'src');
+        if (existsSync(nested)) roots.push(nested);
+      }
+    }
+
+    return roots;
+  }
+
+  it('scans a root for every workspace, and every root holds source', () => {
+    // A root that does not exist is a typo; a root with no source in it is a
+    // workspace that moved. Either way the scan is not reading what it claims
+    // to read, and nothing else here would say so.
+    expect(SCAN_ROOTS.length, 'the scan has no roots at all').toBeGreaterThan(0);
+
+    for (const root of SCAN_ROOTS) {
+      expect(existsSync(root), `${root} is listed as a root but does not exist`).toBe(true);
+      expect(sourceFilesIn(root).length, `${root} is listed as a root but holds no source`).toBeGreaterThan(
+        0,
+      );
+    }
+  });
+
+  it('scans every source root the repository has', () => {
+    // The question that keeps the scope honest: not "does the scan read what
+    // it lists", but "is there source the scan does not list". A workspace
+    // added as a new top-level directory would not be in `SCAN_ROOTS` — the
+    // roots are derived from `packages/` and `apps/` — and would carry
+    // schemas the English check never reads.
+    const roots = repositorySourceRoots();
+
+    expect(roots.length, 'the repository has no source roots at all').toBeGreaterThan(0);
+
+    const unscanned = roots.filter((root) => !SCAN_ROOTS.includes(root));
+
+    expect(
+      unscanned,
+      'a source root this repository has is not in the scan’s scope — add it to SCAN_ROOTS in tests/contract/zod-message-scan.ts (and to CONTRIBUTING.md’s “Adding a workspace package” if it is a new top-level directory)',
     ).toEqual([]);
   });
 });

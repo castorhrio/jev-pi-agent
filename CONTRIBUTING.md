@@ -188,6 +188,12 @@ build graph is checked by `tests/contract/build-graph.test.ts`. Without the refe
 `tsc --build` may compile a package before its dependency exists — which fails only on a
 clean build, never on an incremental one.
 
+A package under `packages/` or `apps/` is covered by the source scans without being
+named anywhere. A **top-level** workspace — a new directory beside `packages/` — is not:
+add its `src` to `SCAN_ROOTS` in `tests/contract/zod-message-scan.ts`, or its schemas are
+never read by the "no English custom message" scan. `tests/contract/zod-custom-messages.test.ts`
+fails when a source root exists that the scan does not cover.
+
 ## Commit messages
 
 Explain what was wrong and why the fix is that shape. A diff already shows what changed; the

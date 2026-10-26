@@ -74,6 +74,72 @@ function issueOutsideRefinements(code: z.ZodIssueCode): z.ZodIssue {
   return issue({ code });
 }
 
+/** The issues a sample raised, whether it returned a failure or threw one. */
+function issuesFrom(run: () => unknown): z.ZodIssue[] {
+  try {
+    const result = run() as { success?: boolean; error?: unknown };
+    if (result?.success === false && result.error instanceof ZodError) {
+      return result.error.issues;
+    }
+  } catch (error) {
+    if (error instanceof ZodError) return error.issues;
+    throw error;
+  }
+  // A sample that passes proves nothing about wording, and would leave the
+  // loops below checking an empty list — a gate that cannot fail.
+  throw new Error('this sample no longer fails to parse, so it says nothing about the wording');
+}
+
+/**
+ * One real schema failure per issue code, run against the *installed* Zod.
+ *
+ * The list in `ipc-errors.ts` decides which messages the app may show, and
+ * it is a transcription of what one version of Zod happens to say. A bump
+ * that rewords a message would leave the list silently stale — every symptom
+ * of that is a library sentence in English reaching a person — so the check
+ * is made against the library rather than against a comment. `custom` is
+ * absent on purpose: its message is the schema's own, which is the one case
+ * the list must *not* claim (asserted below).
+ */
+const ZOD_DEFAULT_FAILURES: Record<Exclude<z.ZodIssueCode, 'custom'>, () => unknown> = {
+  invalid_type: () => z.object({ cols: z.number() }).safeParse({ cols: 'red' }),
+  invalid_literal: () => z.literal('a').safeParse('b'),
+  // A Chinese value on purpose: this is also the case where a Zod message
+  // contains CJK and must still be read as Zod's.
+  invalid_enum_value: () => z.enum(['a', 'b']).safeParse('红色'),
+  invalid_union: () => z.union([z.string(), z.number()]).safeParse(true),
+  invalid_union_discriminator: () =>
+    z
+      .discriminatedUnion('kind', [z.object({ kind: z.literal('a') })])
+      .safeParse({ kind: 'b' }),
+  unrecognized_keys: () =>
+    z.object({ cols: z.number() }).strict().safeParse({ cols: 1, extra: 2 }),
+  invalid_string: () => z.string().email().safeParse('not-an-address'),
+  invalid_date: () => z.date().safeParse(new Date('nonsense')),
+  too_small: () => z.string().min(5).safeParse('ab'),
+  too_big: () => z.string().max(1).safeParse('abc'),
+  not_finite: () => z.number().finite().safeParse(Number.POSITIVE_INFINITY),
+  not_multiple_of: () => z.number().multipleOf(3).safeParse(4),
+  // These three only exist as thrown `ZodError`s from a called function or a
+  // merged intersection, which is why they are the codes nobody translates
+  // and everybody assumes are unreachable.
+  invalid_arguments: () =>
+    (z.function().args(z.string()).implement((value: string) => value) as (
+      value: unknown,
+    ) => unknown)(1),
+  invalid_return_type: () =>
+    z
+      .function()
+      .args()
+      .returns(z.string())
+      .implement((() => 1) as () => string)(),
+  invalid_intersection_types: () =>
+    z
+      .object({ n: z.number().transform(() => 'x') })
+      .and(z.object({ n: z.number().transform(() => 1) }))
+      .parse({ n: 1 }),
+};
+
 describe('schemaFailureFields — the field names, and never their values', () => {
   it('names a field by its path', () => {
     const error = new ZodError([
@@ -498,72 +564,6 @@ describe('the sentence and its `reasonSource` describe the same issue', () => {
 });
 
 describe('ZOD_OWN_OPENINGS — the list of wordings Zod writes itself', () => {
-  /**
-   * One real schema failure per issue code, run against the *installed* Zod.
-   *
-   * The list in `ipc-errors.ts` decides which messages the app may show, and
-   * it is a transcription of what one version of Zod happens to say. A bump
-   * that rewords a message would leave the list silently stale — every symptom
-   * of that is a library sentence in English reaching a person — so the check
-   * is made against the library rather than against a comment. `custom` is
-   * absent on purpose: its message is the schema's own, which is the one case
-   * the list must *not* claim (asserted below).
-   */
-  const ZOD_DEFAULT_FAILURES: Record<Exclude<z.ZodIssueCode, 'custom'>, () => unknown> = {
-    invalid_type: () => z.object({ cols: z.number() }).safeParse({ cols: 'red' }),
-    invalid_literal: () => z.literal('a').safeParse('b'),
-    // A Chinese value on purpose: this is also the case where a Zod message
-    // contains CJK and must still be read as Zod's.
-    invalid_enum_value: () => z.enum(['a', 'b']).safeParse('红色'),
-    invalid_union: () => z.union([z.string(), z.number()]).safeParse(true),
-    invalid_union_discriminator: () =>
-      z
-        .discriminatedUnion('kind', [z.object({ kind: z.literal('a') })])
-        .safeParse({ kind: 'b' }),
-    unrecognized_keys: () =>
-      z.object({ cols: z.number() }).strict().safeParse({ cols: 1, extra: 2 }),
-    invalid_string: () => z.string().email().safeParse('not-an-address'),
-    invalid_date: () => z.date().safeParse(new Date('nonsense')),
-    too_small: () => z.string().min(5).safeParse('ab'),
-    too_big: () => z.string().max(1).safeParse('abc'),
-    not_finite: () => z.number().finite().safeParse(Number.POSITIVE_INFINITY),
-    not_multiple_of: () => z.number().multipleOf(3).safeParse(4),
-    // These three only exist as thrown `ZodError`s from a called function or a
-    // merged intersection, which is why they are the codes nobody translates
-    // and everybody assumes are unreachable.
-    invalid_arguments: () =>
-      (z.function().args(z.string()).implement((value: string) => value) as (
-        value: unknown,
-      ) => unknown)(1),
-    invalid_return_type: () =>
-      z
-        .function()
-        .args()
-        .returns(z.string())
-        .implement((() => 1) as () => string)(),
-    invalid_intersection_types: () =>
-      z
-        .object({ n: z.number().transform(() => 'x') })
-        .and(z.object({ n: z.number().transform(() => 1) }))
-        .parse({ n: 1 }),
-  };
-
-  /** The issues a sample raised, whether it returned a failure or threw one. */
-  function issuesFrom(run: () => unknown): z.ZodIssue[] {
-    try {
-      const result = run() as { success?: boolean; error?: unknown };
-      if (result?.success === false && result.error instanceof ZodError) {
-        return result.error.issues;
-      }
-    } catch (error) {
-      if (error instanceof ZodError) return error.issues;
-      throw error;
-    }
-    // A sample that passes proves nothing about wording, and would leave the
-    // loop below checking an empty list — a gate that cannot fail.
-    throw new Error('this sample no longer fails to parse, so it says nothing about the wording');
-  }
-
   it('recognises every message this build of Zod writes, for every code', () => {
     const covered = new Set<z.ZodIssueCode>();
 
@@ -675,5 +675,150 @@ describe('ZOD_OWN_OPENINGS — the list of wordings Zod writes itself', () => {
       ).toBe(false);
       expect(zodReasonSource(issue({ code: 'custom', message }))).toBe('schema');
     }
+  });
+});
+
+/**
+ * The rule that decides whose sentence a person reads, asked both ways.
+ *
+ * `isZodOwnText` is a heuristic, and a heuristic is the weakest thing in
+ * `ipc-errors.ts`: it reads a message as Zod's own when it has no Chinese in
+ * it, and as the app's own when it has Chinese *and* does not start with a
+ * wording Zod is known to use. The second half of that rule is the dangerous
+ * one — Zod quotes the value it received, so a library sentence can carry
+ * Chinese inside it (`Invalid enum value. Expected 'a', received '青柠'`) and
+ * must still be read as Zod's.
+ *
+ * The cases below are the ones a comment could only promise: the real
+ * failures where Zod quotes a Chinese value, and — for every code this build
+ * can raise — the same library sentence with Chinese in it, which must not
+ * change what the person is told.
+ */
+describe('a Zod message that quotes a Chinese value is still Zod’s', () => {
+  /**
+   * The failures where Zod really does put the caller's value in the message.
+   *
+   * These are not built by hand: each one is a schema failing against a
+   * Chinese input, so the message is the one a person would actually read.
+   * Only a few of Zod's wordings quote a value at all — an enum, a literal, a
+   * discriminator and an unknown key name — and those are the four that can
+   * carry Chinese into a library sentence.
+   *
+   * The quoted values are deliberately odd words: the reasons in the table are
+   * Chinese too, so only a token that cannot appear in one of them proves the
+   * value was not carried along.
+   */
+  const CJK_QUOTING_FAILURES: Array<{ code: z.ZodIssueCode; quoted: string; run: () => unknown }> =
+    [
+      {
+        code: 'invalid_enum_value',
+        quoted: '青柠',
+        run: () => z.enum(['a', 'b']).safeParse('青柠'),
+      },
+      {
+        code: 'invalid_literal',
+        quoted: '青柠',
+        run: () => z.literal('青柠').safeParse('柠檬'),
+      },
+      {
+        code: 'invalid_union_discriminator',
+        quoted: '青柠',
+        run: () =>
+          z
+            .discriminatedUnion('kind', [z.object({ kind: z.literal('青柠') })])
+            .safeParse({ kind: '柠檬' }),
+      },
+      {
+        code: 'unrecognized_keys',
+        quoted: '额外',
+        run: () => z.object({ cols: z.number() }).strict().safeParse({ cols: 1, 额外: 2 }),
+      },
+    ];
+
+  it('reads the real failures that quote a Chinese value as Zod’s own', () => {
+    // The failure this guards: the message has Chinese in it, so the
+    // "contains CJK" test alone would keep it — and a person would read
+    // `Invalid enum value. Expected 'a' | 'b', received '青柠'`, which is the
+    // library's diagnostics in the sentence §7.2 promises is Chinese.
+    for (const { code, quoted, run } of CJK_QUOTING_FAILURES) {
+      const [raised] = issuesFrom(run);
+
+      expect(raised, `${code}: the sample raised no issue`).toBeDefined();
+      expect(raised?.message, `${code}: the message does not quote the Chinese value`).toContain(
+        quoted,
+      );
+      expect(zodReasonSource(raised as z.ZodIssue), `${code}: read as the app's sentence`).toBe(
+        'table',
+      );
+      // The reason is the table's Chinese sentence, not the library's.
+      expect(
+        zodReason(raised as z.ZodIssue),
+        `${code}: the library's wording reached the person`,
+      ).toBe(ZOD_REASON_BY_CODE[code]);
+      // And the quoted value is not carried along: a refusal is not a place
+      // to repeat the caller's input back.
+      expect(
+        zodReason(raised as z.ZodIssue),
+        `${code}: the value was echoed into the reason`,
+      ).not.toContain(quoted);
+    }
+  });
+
+  it('changes no answer for any code, when Chinese appears in the message', () => {
+    // Zod only quotes a value in a few of its wordings, but the rule under
+    // test is not *which* wording quotes — it is that Chinese inside a
+    // library sentence never turns that sentence into "a sentence this app
+    // wrote". So every code's real message is probed with a Chinese token
+    // where a quoted value would sit, and the answer has to be the same one
+    // the unprobed message gets: same source, same reason, and never the
+    // message itself.
+    for (const [code, run] of Object.entries(ZOD_DEFAULT_FAILURES)) {
+      const [real] = issuesFrom(run);
+
+      expect(real, `${code}: the sample raised no issue`).toBeDefined();
+      const probed = {
+        ...real,
+        message: `${real?.message} '青柠'`,
+      } as unknown as z.ZodIssue;
+
+      expect(
+        zodReasonSource(probed),
+        `${code}: Chinese turned a library sentence into the app's`,
+      ).toBe('table');
+      expect(zodReason(probed), `${code}: the reason changed when the message did`).toBe(
+        zodReason(real as z.ZodIssue),
+      );
+      expect(zodReason(probed), `${code}: the library's wording reached the person`).not.toBe(
+        probed.message,
+      );
+    }
+  });
+});
+
+describe('ZOD_ISSUE_CODES — the codes this build of Zod can raise', () => {
+  it('is a list, and a long enough one to be a real list', () => {
+    // Every reason-table test in this file loops over this list, and the
+    // list is read from the *running* Zod's own enum. A Zod upgrade that made
+    // `ZodIssueCode` a frozen object with non-enumerable members would leave
+    // it empty — and every loop over it vacuous, with the whole wording
+    // contract silently unenforced and every test above still green.
+    //
+    // Zod 3.x knows sixteen codes; the floor below is deliberately well under
+    // that, so it fails on a list that has collapsed rather than on a version
+    // bump that added a code (which has its own test, and its own decision).
+    expect(ZOD_ISSUE_CODES.length, 'the running Zod raised no issue codes at all').toBeGreaterThanOrEqual(
+      10,
+    );
+    // The list is an enum's keys, so it cannot repeat — unless the enum does.
+    expect(new Set(ZOD_ISSUE_CODES).size).toBe(ZOD_ISSUE_CODES.length);
+  });
+
+  it('matches the reason table, in both directions', () => {
+    // The table is `Record<z.ZodIssueCode, string>`, so `tsc` checks it — but
+    // the suite transpiles without typechecking, so the same question is asked
+    // here at runtime. Both directions: a code with no reason would answer
+    // 「不符合要求」, and a reason for a code this Zod cannot raise is a
+    // sentence nobody will ever read.
+    expect(Object.keys(ZOD_REASON_BY_CODE).sort()).toEqual([...ZOD_ISSUE_CODES].sort());
   });
 });
