@@ -112,11 +112,29 @@ export class GitLikeBridge {
       }, deadlineMs);
     });
 
+    // Whether the `git status` subprocess is still running right now.
+    //
+    // The summary cannot cancel it: `GitService.status` takes no
+    // `AbortSignal`, so a `git status` that is still out there when the
+    // deadline fires keeps running and its answer is dropped when it lands.
+    // A subprocess the reader cannot see is a subprocess nobody can account
+    // for, so the state is measured rather than assumed.
+    let statusInFlight = false;
+
     try {
+      const statusCall = this.opts.git.status(input.workspaceId, root);
+      statusInFlight = true;
       const status = await Promise.race([
-        this.opts.git
-          .status(input.workspaceId, root)
-          .then((dto) => ({ answered: true as const, dto })),
+        statusCall.then(
+          (dto) => {
+            statusInFlight = false;
+            return { answered: true as const, dto };
+          },
+          (error) => {
+            statusInFlight = false;
+            throw error;
+          },
+        ),
         deadline.then(() => ({ answered: false as const, dto: undefined })),
       ]);
 
@@ -132,7 +150,15 @@ export class GitLikeBridge {
           requested: 0,
           abandoned: 0,
           failed: 0,
-          inFlight: 0,
+          // Subprocesses still running. At this stage the only one is
+          // `git status` itself, and it cannot be cancelled — it keeps
+          // running and its answer is dropped when it lands. Reporting
+          // `inFlight: 0` here would claim the workspace was quiet while a
+          // git process was still out there.
+          inFlight: statusInFlight ? 1 : 0,
+          // Named on its own, so the reader does not have to work out *which*
+          // subprocess the count above refers to.
+          statusInFlight,
         });
         return [];
       }
@@ -224,14 +250,22 @@ export class GitLikeBridge {
         // `inFlight` names how many subprocesses are still out there. Binary and
         // empty patches are not abandoned: they answered, and were dropped for
         // a reason the other two fields already tell.
+        //
+        // The fields are arithmetic, not adjectives: every requested path is
+        // in exactly one of `answered`, `failed` and `abandoned`, and the
+        // abandoned ones split into the ones that never became a subprocess
+        // (`neverStarted`) and the ones that are still running (`inFlight`).
+        // A reader can add them up instead of taking them on trust.
         this.opts.logger.debug('git diff summary stopped at its deadline', {
           workspaceId: input.workspaceId,
           deadlineMs,
           stage: 'diff',
           collected: out.length,
           requested: paths.length,
+          answered,
           abandoned: paths.length - answered - failed,
           failed,
+          neverStarted: paths.length - answered - failed - inFlight,
           inFlight,
         });
       }

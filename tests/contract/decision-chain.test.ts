@@ -45,16 +45,29 @@ import { DecisionFacade } from '../../apps/desktop/src/main/decision-facade';
  */
 function stubEngine(
   id: string,
-  options: { sideEffects?: DecisionEngineManifest['sideEffects']; kinds?: DecisionKind[] } = {},
+  options: {
+    sideEffects?: DecisionEngineManifest['sideEffects'];
+    /**
+     * Build the manifest with no `sideEffects` field at all.
+     *
+     * The contract requires the field, so this is a manifest written by code
+     * rather than by the contract — which is exactly the case the facade
+     * defends against with `?? []`.
+     */
+    withoutSideEffects?: boolean;
+    kinds?: DecisionKind[];
+  } = {},
 ): DecisionEngine {
-  const manifest: DecisionEngineManifest = {
+  const manifest = {
     id,
     displayName: id,
     version: '1.0.0',
-    sideEffects: options.sideEffects ?? ['none'],
+    ...(options.withoutSideEffects
+      ? {}
+      : { sideEffects: options.sideEffects ?? ['none'] }),
     supportedKinds: options.kinds ?? ['route'],
     timeoutMs: 500,
-  };
+  } as DecisionEngineManifest;
 
   return {
     manifest,
@@ -278,6 +291,72 @@ describe('a declared side effect is a permission question, answered one case at 
     const { facade } = makeFacade({ engines: [future], allowNetworkEngines: true });
 
     expect(facade.setChain(['future'])).toEqual(['rule']);
+  });
+});
+
+/**
+ * The rule table, executable.
+ *
+ * The facade's own comment lists the cases its permission check asks about —
+ * nothing declared, `['none']`, `['network']`, `['none', …]` mixed in, and
+ * anything else. The cases above explain *why* each branch exists; this one
+ * states *what* each branch does, one row per branch, so the comment and the
+ * code cannot drift apart without a test going red.
+ *
+ * Two rows had no case of their own: a manifest with no `sideEffects` field
+ * at all (the contract requires the field, so only code can produce it) and
+ * the network pair with the authorisation switched both ways.
+ */
+describe('a side-effect declaration is judged one branch at a time', () => {
+  interface Branch {
+    /** the declaration, as a manifest author would write it */
+    what: string;
+    sideEffects?: DecisionEngineManifest['sideEffects'];
+    /** the manifest carries no `sideEffects` field at all */
+    withoutField?: boolean;
+    /** the user switched "allow network engines" on in Settings */
+    authorised: boolean;
+    verdict: 'allowed' | 'refused';
+  }
+
+  const branches: Branch[] = [
+    {
+      what: 'no `sideEffects` field at all',
+      withoutField: true,
+      authorised: false,
+      verdict: 'allowed',
+    },
+    { what: 'an empty declaration', sideEffects: [], authorised: false, verdict: 'allowed' },
+    { what: '`none`', sideEffects: ['none'], authorised: false, verdict: 'allowed' },
+    { what: '`none` twice', sideEffects: ['none', 'none'], authorised: true, verdict: 'refused' },
+    {
+      what: '`none` and `network`',
+      sideEffects: ['none', 'network'],
+      authorised: true,
+      verdict: 'refused',
+    },
+    { what: '`network`, not authorised', sideEffects: ['network'], authorised: false, verdict: 'refused' },
+    { what: '`network`, authorised', sideEffects: ['network'], authorised: true, verdict: 'allowed' },
+    { what: '`process`', sideEffects: ['process'], authorised: true, verdict: 'refused' },
+  ];
+
+  it.each(branches)('$what is $verdict', (branch) => {
+    const engine = stubEngine('probe', {
+      ...(branch.withoutField ? { withoutSideEffects: true } : {}),
+      ...(branch.sideEffects ? { sideEffects: branch.sideEffects } : {}),
+    });
+    const { facade } = makeFacade({ engines: [engine], allowNetworkEngines: branch.authorised });
+
+    // The verdict is read off the chain, because that is all a caller can
+    // see: an engine that may not run is not in the chain, and the chain
+    // falls back to the rule engine.
+    const chain = facade.setChain(['probe']);
+
+    if (branch.verdict === 'allowed') {
+      expect(chain).toEqual(['probe']);
+    } else {
+      expect(chain).toEqual(['rule']);
+    }
   });
 });
 
