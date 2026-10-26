@@ -43,10 +43,13 @@ import { join, sep } from 'node:path';
 import { MemoryLogSink, Logger } from '@ucad/observability';
 import { ADAPTER_CANDIDATES } from '../../apps/desktop/src/main/adapter-candidates';
 import {
+  MAIN_DIR_TO_APPS,
+  MAIN_DIR_TO_WORKSPACE_ROOT,
   adapterSearchPaths,
   resolveAdapterModules,
   resolveFromProcess,
 } from '../../apps/desktop/src/main/adapter-resolution';
+import { packagesTheApp } from './ci-shape';
 
 const here = import.meta.dirname;
 const REPO_ROOT = join(here, '..', '..');
@@ -127,6 +130,20 @@ describe('the search paths cover the layouts that ship', () => {
 
     expect(paths).toContain(REPO_ROOT);
     expect(existsSync(join(REPO_ROOT, 'node_modules', '@ucad'))).toBe(true);
+  });
+
+  it('pins the hop counts themselves, so a layout change cannot skip them', () => {
+    // The path assertions above would notice a *wrong* current layout, but not
+    // a layout change made together with a matching fixture edit: both would
+    // agree on, say, five hops and the development tree would still resolve.
+    // The counts are the third fact in the contract — constants, fixture and
+    // doc comment — and this is the assertion that makes forgetting one red.
+    expect(MAIN_DIR_TO_WORKSPACE_ROOT).toHaveLength(4);
+    expect(MAIN_DIR_TO_APPS).toHaveLength(3);
+    // Every segment is a parent hop; an absolute or named segment here would be
+    // a different mapping wearing the same length.
+    expect(MAIN_DIR_TO_WORKSPACE_ROOT.every((segment) => segment === '..')).toBe(true);
+    expect(MAIN_DIR_TO_APPS.every((segment) => segment === '..')).toBe(true);
   });
 });
 
@@ -877,20 +894,15 @@ describe('bootstrap.ts names the real search roots and stays off the `write` cha
  */
 
 /**
- * What a packaging step looks like in the workflow: the two commands that build one.
+ * "CI does not cover it", as the README bullet states it.
  *
- * Known blind spot, deliberately textual: this matches the *commands* in
- * `ci.yml`, not the job graph. A refactor into a composite action, a renamed
- * step, or a packaging command moved to another workflow could make this
- * report "not covered" while a real package job exists (or the reverse if a
- * commented-out line keeps the word). Keeping the regex about the commands is
- * still better than matching a step name: the claim is "the app is packaged",
- * not "a step is called Package". If that refactor lands, update this constant
- * with the new workflow rather than deleting the assertion.
+ * "Does CI package the app" is answered by `packagesTheApp` in `ci-shape.ts`,
+ * which names all three commands that build an artifact. This file used to
+ * answer it with a narrower private regex, so a `npm run dist` step would have
+ * passed here while the README went on saying CI does not cover the packaged
+ * check. `ci-shape.test.ts` pins the shared vocabulary against the real
+ * workflow.
  */
-const CI_PACKAGING = /\bnpm run package\b|\belectron-builder\b/u;
-
-/** "CI does not cover it", as the README bullet states it. */
 const CI_NOT_COVERED = /\bci does not cover\b/iu;
 
 function ciClaimProblems(input: {
@@ -901,7 +913,7 @@ function ciClaimProblems(input: {
     return ['the asar limitation bullet is missing, so its CI claim is unchecked'];
   }
   const claimsManual = CI_NOT_COVERED.test(input.bullet);
-  const ciPackages = CI_PACKAGING.test(input.workflow);
+  const ciPackages = packagesTheApp(input.workflow);
   if (claimsManual && ciPackages) {
     return [
       'the README says CI does not cover the packaged asar check, but .github/workflows/ci.yml runs one; ' +

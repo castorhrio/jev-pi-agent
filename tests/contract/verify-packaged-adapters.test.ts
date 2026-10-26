@@ -69,6 +69,7 @@ import { join, resolve } from 'node:path';
 import {
   KILL_GRACE_MS,
   RELEASE_DIR,
+  SUMMARY_LINE_PATTERNS,
   findPackagedExecutable,
   interruptRun,
   launch,
@@ -80,6 +81,7 @@ import {
   tailOf,
   verifyResolution,
 } from '../../scripts/verify-packaged-adapters.mjs';
+import { packagesTheApp } from './ci-shape';
 
 const here = import.meta.dirname;
 const REPO_ROOT = join(here, '..', '..');
@@ -128,6 +130,33 @@ describe('the summary line a packaged build prints', () => {
     expect(resolvedAdapterIds('Error: Cannot open display\n')).toBeNull();
     // A line that merely mentions resolution is not the summary line.
     expect(resolvedAdapterIds('adapters resolved: universal\n')).toBeNull();
+  });
+
+  it('keeps the report and stream patterns in their own roles', () => {
+    // The two patterns answer different questions, and naming them by consumer
+    // is what makes that checkable. A captured output that ends mid-line is a
+    // *finished* capture, so `report` reads it: `$` matches the end of the
+    // string as well as the end of a line, and `['universal', 'mo']` is the
+    // honest answer to "what did this captured output say".
+    const halfLine = '[ucad] adapters resolved: universal, mo';
+    expect(SUMMARY_LINE_PATTERNS.report.test(halfLine)).toBe(true);
+    expect(resolvedAdapterIds(halfLine)).toEqual(['universal', 'mo']);
+    // `verifyResolution` is a report consumer too: it must judge the capture it
+    // was given rather than reporting "no summary line" because the capture
+    // ended without a newline (a build can print the line and exit).
+    expect(verifyResolution(halfLine)).toEqual([]);
+
+    // `stream` is the launch's pattern, and the same half line must not satisfy
+    // it: the value is still arriving, and stopping here would report the
+    // shorter list `universal, mo` as the build's resolution. This is the
+    // assertion that goes red if the launch is ever switched back to `report`.
+    expect(SUMMARY_LINE_PATTERNS.stream.test(halfLine)).toBe(false);
+
+    // Once the terminator arrives, both patterns agree — one complete line.
+    const wholeLine = `${halfLine}ck\n`;
+    expect(SUMMARY_LINE_PATTERNS.report.test(wholeLine)).toBe(true);
+    expect(SUMMARY_LINE_PATTERNS.stream.test(wholeLine)).toBe(true);
+    expect(resolvedAdapterIds(wholeLine)).toEqual(['universal', 'mock']);
   });
 });
 
@@ -910,11 +939,13 @@ describe('the manual step is discoverable as a command', () => {
   });
 
   it('is not claimed to run in CI, which still has no packaging job', () => {
-    // The same claim `adapter-resolution.test.ts` keeps for the README bullets.
-    // If a packaging job appears, the honest sentence changes with it — this
-    // case exists so the change is made on purpose.
+    // The same claim `adapter-resolution.test.ts` keeps for the README bullets,
+    // and the same vocabulary: `packagesTheApp` names `npm run package`,
+    // `npm run dist` and `electron-builder`, so a release job added under any
+    // of them turns this red. If a packaging job appears, the honest sentence
+    // changes with it — this case exists so the change is made on purpose.
     const workflow = readFileSync(join(REPO_ROOT, '.github', 'workflows', 'ci.yml'), 'utf8');
-    expect(/\bnpm run package\b|\belectron-builder\b/u.test(workflow)).toBe(false);
+    expect(packagesTheApp(workflow)).toBe(false);
     expect(existsSync(join(REPO_ROOT, 'scripts', 'verify-packaged-adapters.mjs'))).toBe(true);
   });
 });

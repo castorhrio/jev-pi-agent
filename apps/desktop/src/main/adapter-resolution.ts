@@ -98,6 +98,23 @@ export interface AdapterSearchContext {
 }
 
 /**
+ * The two upward hops from the compiled `dist/main` directory, as segments.
+ *
+ * The counts are the part that silent drift makes expensive: a hop too many or
+ * too few does not throw, it resolves nothing in development and only shows up
+ * in a packaged build. Naming them here means a reader can count the `..`s.
+ *
+ * **If the directory layout changes, three things change together:** these
+ * constants, the path assertions in `tests/contract/adapter-resolution.test.ts`
+ * (including its `length` assertions), and the numbered list in
+ * {@link adapterSearchPaths}'s doc comment. The test pins the *number* of hops
+ * as well as the resulting path, so a layout change that forgets one of the
+ * three is red rather than a build that quietly resolves no adapter.
+ */
+export const MAIN_DIR_TO_WORKSPACE_ROOT = ['..', '..', '..', '..'] as const;
+export const MAIN_DIR_TO_APPS = ['..', '..', '..'] as const;
+
+/**
  * The directories Node is asked about, in the order they are asked.
  *
  * The order is deliberate and each entry covers a layout that really ships:
@@ -105,10 +122,12 @@ export interface AdapterSearchContext {
  *  1. `appPath` — a packaged app. Electron resolves bare specifiers against
  *     the ASAR-appended app path, which is *not* the workspace root, so a bare
  *     `require.resolve` would only ever see what the packaged app contains.
- *  2. four hops up from `dist/main` — the workspace root, where `node_modules`
- *     holds the `@ucad/*` symlinks a development run needs.
- *  3. three hops up — the repository's `apps/` directory, for an app-local
- *     `node_modules` in a layout that does not hoist to the root.
+ *  2. four hops up from `dist/main` ({@link MAIN_DIR_TO_WORKSPACE_ROOT}) — the
+ *     workspace root, where `node_modules` holds the `@ucad/*` symlinks a
+ *     development run needs.
+ *  3. three hops up ({@link MAIN_DIR_TO_APPS}) — the repository's `apps/`
+ *     directory, for an app-local `node_modules` in a layout that does not
+ *     hoist to the root.
  *  4. `cwd` — a process started from the repository root (`npm run dev`).
  *
  * `path.resolve` with segments rather than a `../../../..` string: the same
@@ -125,8 +144,8 @@ export function adapterSearchPaths(
 ): readonly [string, ...string[]] {
   return [
     context.appPath,
-    path.resolve(context.mainDir, '..', '..', '..', '..'),
-    path.resolve(context.mainDir, '..', '..', '..'),
+    path.resolve(context.mainDir, ...MAIN_DIR_TO_WORKSPACE_ROOT),
+    path.resolve(context.mainDir, ...MAIN_DIR_TO_APPS),
     context.cwd,
   ];
 }

@@ -119,6 +119,29 @@ const NONE = '(none)';
 const COMPLETE_RESOLVED_LINE = /^\[ucad\] adapters resolved: .*\r?\n/m;
 
 /**
+ * The two summary-line patterns, named by **who reads them**.
+ *
+ * The names are the contract, not decoration. `report` reads a *finished*
+ * capture, where the end of the string is a legitimate end of a line, so it is
+ * what `resolvedAdapterIds` (and therefore `verifyResolution`) uses. `stream`
+ * reads output that is still arriving, where a line without its terminator is
+ * an unfinished value, so it is what `launch` uses to decide the launch is
+ * over.
+ *
+ * Writing that down as two exported fields makes the roles assertable: a later
+ * edit that "unifies" the patterns would make the launch stop on a chunk ending
+ * `universal, mo`, and `verify-packaged-adapters.test.ts` fails on it instead
+ * of the operator reading a truncated list as the answer. Do not call either
+ * field from the other's consumer.
+ */
+export const SUMMARY_LINE_PATTERNS = Object.freeze({
+  /** A finished capture: may end without a newline, because the capture ended. */
+  report: RESOLVED_LINE,
+  /** A live stream: only a line whose terminator has arrived is complete. */
+  stream: COMPLETE_RESOLVED_LINE,
+});
+
+/**
  * How long a stopped build gets to honour `SIGTERM` before it is `SIGKILL`ed.
  *
  * Exported and used as `launch`'s own default, not only as `stop`'s: the
@@ -189,7 +212,7 @@ export function findPackagedExecutable(options) {
  * for; the tests pin both directions so that edit has to be deliberate.
  */
 export function resolvedAdapterIds(output) {
-  const match = RESOLVED_LINE.exec(output);
+  const match = SUMMARY_LINE_PATTERNS.report.exec(output);
   if (match === null) return null;
   const ids = match[1]
     .split(',')
@@ -348,10 +371,10 @@ export function launch(
       // in ("output that arrives after the line does not change the verdict").
       if (settled) return;
       output += String(chunk);
-      // A *complete* line, not merely a matching prefix: see
-      // `COMPLETE_RESOLVED_LINE` for what a chunk boundary would otherwise do
-      // to the id list.
-      if (COMPLETE_RESOLVED_LINE.test(output)) finish('resolved-line');
+      // The *stream* pattern, not the report one: a chunk boundary must not
+      // turn an unfinished id list into a verdict. See
+      // `SUMMARY_LINE_PATTERNS` for the two roles.
+      if (SUMMARY_LINE_PATTERNS.stream.test(output)) finish('resolved-line');
     };
 
     child.stdout?.on('data', collect);
