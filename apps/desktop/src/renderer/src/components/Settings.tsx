@@ -5,7 +5,6 @@ import type {
   ModelDescriptor,
   PermissionDecision,
   ProviderDescriptorDto,
-  UpdateStatus,
 } from '@ucad/contracts';
 import { getApi } from '../api';
 import { useT, useI18n } from '../i18n-context';
@@ -14,6 +13,7 @@ import type { AppData } from '../state/hooks';
 import type { SessionViewState } from '../state/session-reducer';
 import { ReadFailure } from './ReadFailure';
 import { describeError } from '../error-message';
+import { useUpdateController } from '../update-controller';
 
 function Def({ k, children }: { k: string; children: React.ReactNode }): JSX.Element {
   return (
@@ -144,8 +144,27 @@ export function SettingsPanel({
 }): JSX.Element {
   const t = useT();
   const { locale, setLocale } = useI18n();
-  const [update, setUpdate] = useState<UpdateStatus | null>(null);
-  const [checking, setChecking] = useState(false);
+  /**
+   * The update card and the banner read the same controller.
+   *
+   * This card used to keep its own status, its own subscription, and a
+   * `catch(() => undefined)` on every action. The card is where a user goes
+   * when the banner is quiet, so an action that failed there looked exactly
+   * like an action that did nothing — the one thing the banner's contract
+   * forbids. Sharing the controller also means a download started in the
+   * banner is the download this card is watching.
+   */
+  const updates = useUpdateController();
+  const update = updates.status;
+  /**
+   * A pending check disables the button only while it is actually waiting.
+   *
+   * A rejection keeps the pending action (that is what owns the failure), but
+   * it is no longer progress: leaving the button disabled would strand the
+   * user on "检查中…" with no way to retry — and with no banner either when the
+   * initial status read is what failed.
+   */
+  const checking = updates.pendingAction === 'check' && updates.failure === null;
   const [provider, setProvider] = useState('openai');
   const [key, setKey] = useState('api-key');
   const [secret, setSecret] = useState('');
@@ -154,28 +173,6 @@ export function SettingsPanel({
   const [closeError, setCloseError] = useState<string | null>(null);
   /** the stored choice, read once so the render cannot see a half-loaded snapshot */
   const closeBehaviour = data.settings?.window.closeBehaviour;
-
-  useEffect(() => {
-    const api = getApi();
-    void api.app.updateStatus().then(setUpdate).catch(() => undefined);
-    // The updater pushes a status whenever it changes — including the
-    // failures that happen *after* a click, such as an installer that no
-    // longer matches its hash. Without this subscription those failures
-    // landed nowhere, and the card kept saying the update was ready.
-    return api.app.onUpdateStatus(setUpdate);
-  }, []);
-
-  const check = useCallback(async () => {
-    setChecking(true);
-    setMessage(null);
-    try {
-      setUpdate(await getApi().app.checkUpdate());
-    } catch (error) {
-      setMessage(describeError(error));
-    } finally {
-      setChecking(false);
-    }
-  }, []);
 
   const storeSecret = useCallback(async () => {
     setMessage(null);
@@ -281,20 +278,11 @@ export function SettingsPanel({
         )}
 
         <div className="row-gap mt-2" style={{ flexWrap: 'wrap' }}>
-          <button className="primary" onClick={() => void check()} disabled={checking}>
+          <button className="primary" onClick={updates.check} disabled={checking}>
             {checking ? t('settings.checking') : t('settings.checkUpdate')}
           </button>
           {update?.state === 'available' && (
-            <button
-              onClick={() => {
-                void getApi()
-                  .app.downloadUpdate()
-                  .then(setUpdate)
-                  .catch(() => undefined);
-              }}
-            >
-              {t('settings.downloadUpdate')}
-            </button>
+            <button onClick={updates.download}>{t('settings.downloadUpdate')}</button>
           )}
           {update?.state === 'downloading' && (
             <span className="faint mono">
@@ -302,23 +290,41 @@ export function SettingsPanel({
             </span>
           )}
           {update?.state === 'ready' && (
-            <button
-              className="primary"
-              onClick={() => {
-                void getApi()
-                  .app.installUpdate()
-                  .catch(() => undefined);
-              }}
-            >
+            <button className="primary" onClick={updates.install}>
               {t('settings.restartNow')}
             </button>
           )}
         </div>
 
+        {/*
+          Two different failures, kept apart:
+          - `statusFailure` is the card's first read failing. Without it the
+            version line showed the fallback and nothing said the update
+            service could not be asked at all.
+          - `failure` belongs to a click. The banner owns the same value, but
+            the card is where a user looks when the banner is silent, so a
+            rejected download here has to say why rather than leave the button
+            looking inert.
+        */}
+        {updates.statusFailure && (
+          <div className="mt-2">
+            <ReadFailure
+              label={t('settings.updateStatusFailed')}
+              reason={updates.statusFailure}
+            />
+          </div>
+        )}
+        {updates.failure && (
+          <div className="notice error mt-2" role="alert">
+            {t('settings.updateFailed')}: {updates.failure}
+          </div>
+        )}
+
         <div className="faint mt-2 fs-note">
           {update?.state === 'up-to-date' && t('settings.upToDate')}
           {update?.state === 'unsupported' && t('settings.updateNone')}
-          {update?.state === 'error' && `${t('settings.updateFailed')}: ${update.message}`}
+          {update?.state === 'error' && !updates.failure &&
+            `${t('settings.updateFailed')}: ${update.message}`}
           {update?.state === 'ready' && update.verified && t('settings.updateVerified')}
         </div>
       </div>

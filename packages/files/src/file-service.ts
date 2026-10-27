@@ -166,7 +166,7 @@ export class FileService {
           expected: input.expectedRevision,
           actual: current ?? null,
         });
-        throw fail('UNKNOWN', '文件已被其他方修改，请重新加载后再试', {
+        throw fail('REVISION_CONFLICT', '文件已被其他方修改，请重新加载后再试', {
           path: target,
           expectedRevision: input.expectedRevision,
           actualRevision: current ?? null,

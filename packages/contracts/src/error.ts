@@ -30,6 +30,11 @@ export type AppErrorCode =
   | 'NO_ACTIVE_WORKSPACE'
   | 'NOT_FOUND'
   | 'INVALID_INPUT'
+  // A write was refused because the file changed since the caller read it
+  // (§11.3 optimistic concurrency). It has its own code because the Renderer
+  // has a real decision to offer — reload, or overwrite on purpose — and a
+  // message it would have to pattern-match is not a contract.
+  | 'REVISION_CONFLICT'
   // Something this build has no way to offer right now: no window to put a
   // dialog in, no update service wired up, an attachment type no adapter
   // reads. The message names which one; the code keeps the refusal out of
@@ -99,6 +104,9 @@ export const RETRYABLE: Readonly<Record<AppErrorCode, boolean>> = {
   NO_ACTIVE_WORKSPACE: false,
   NOT_FOUND: false,
   INVALID_INPUT: false,
+  // The retry is the user's decision, not an automatic one: retrying with the
+  // same expected revision would fail again.
+  REVISION_CONFLICT: false,
   FEATURE_UNAVAILABLE: false,
   UNKNOWN: false,
 };
@@ -198,9 +206,29 @@ export function describeError(value: unknown): string {
   return String(value);
 }
 
-export function toAppError(value: unknown, component: ErrorComponent = 'ipc'): AppError {
-  if (value && typeof value === 'object' && 'code' in value && 'component' in value) {
-    return value as AppError;
+/**
+ * The canonical `AppError` a thrown value carries, if any.
+ *
+ * Planes such as `@ucad/files` and `@ucad/git` throw an `AppErrorThrow`, which
+ * keeps the `AppError` on `.appError` instead of spreading `code`/`component`
+ * onto the `Error` itself. `toAppError()` used to look only at the top level,
+ * so every one of those refusals became `UNKNOWN` in the IPC log — the exact
+ * collapse `codedError()` was introduced to end. Reading the carried shape is
+ * how the log (and a bridge rule that needs a stable code) sees the code the
+ * plane actually chose.
+ */
+export function carriedAppError(value: unknown): AppError | null {
+  if (value === null || typeof value !== 'object') return null;
+  if ('code' in value && 'component' in value) return value as AppError;
+  const nested = (value as { appError?: unknown }).appError;
+  if (nested !== null && typeof nested === 'object' && 'code' in nested && 'component' in nested) {
+    return nested as AppError;
   }
+  return null;
+}
+
+export function toAppError(value: unknown, component: ErrorComponent = 'ipc'): AppError {
+  const carried = carriedAppError(value);
+  if (carried !== null) return carried;
   return appError('UNKNOWN', describeError(value), component);
 }

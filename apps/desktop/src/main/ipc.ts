@@ -22,7 +22,7 @@ import type { UcadApp } from './app-container';
 // log again — a schema's own message that got swallowed leaves no other
 // trace). It imports `zod` and nothing of Electron, so both rules are
 // tested directly instead of through a registered handler.
-import { schemaFailureFields, toUserError, zodFailureSource } from './ipc-errors';
+import { schemaFailureFields, revisionConflictResult, toUserError, zodFailureSource } from './ipc-errors';
 import type { ZodReasonSource } from './ipc-errors';
 import { requestHighRiskPermission } from './local-permission';
 import type { UpdateService } from './update-service';
@@ -600,13 +600,23 @@ export function registerIpc(
         .object({ expectedRevision: z.string().optional() })
         .parse(opts);
       const session = ucad.sessionStore.listSessions()[0];
-      return ucad.files.write({
-        workspaceRoot: root,
-        path: parsedPath,
-        content: parsedContent,
-        expectedRevision: parsedOpts.expectedRevision,
-        sessionId: session?.id,
-      });
+      try {
+        return await ucad.files.write({
+          workspaceRoot: root,
+          path: parsedPath,
+          content: parsedContent,
+          expectedRevision: parsedOpts.expectedRevision,
+          sessionId: session?.id,
+        });
+      } catch (error) {
+        // The one refusal with a follow-up decision travels as a result: the
+        // Renderer switches on `conflict.code`, so the editor's controls do not
+        // depend on the wording of a sentence (see `revisionConflictResult`).
+        // Every other failure keeps the one-sentence rejection contract.
+        const conflict = revisionConflictResult(error);
+        if (conflict !== null) return conflict;
+        throw error;
+      }
     }),
   );
 

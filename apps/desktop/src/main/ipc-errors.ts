@@ -24,7 +24,8 @@
  */
 
 import { ZodError, z } from 'zod';
-import { toAppError } from '@ucad/contracts';
+import { carriedAppError, toAppError } from '@ucad/contracts';
+import type { FileWriteResult } from '@ucad/contracts';
 
 /**
  * How a schema failure with no field is named in the log.
@@ -285,6 +286,42 @@ export function zodReason(issue: z.ZodIssue): string {
   // "undefined" in the sentence a person reads. The table is exhaustive for
   // `tsc`; this `??` is what keeps the *runtime* honest when it is not.
   return ZOD_REASON_BY_CODE[issue.code] ?? ZOD_REASON_GENERIC;
+}
+
+/**
+ * A revision conflict is an answer, not a rejection.
+ *
+ * `FileService.write` refuses an optimistic-concurrency mismatch by throwing,
+ * which is right for the service. Across the bridge it is wrong: the Renderer
+ * must decide between "reload" and "overwrite", and a rejection carries one
+ * sentence with no fields (see `tests/contract/ipc-error-bridge.test.ts`). So
+ * the one refusal with a real follow-up action is translated into a result
+ * here, keyed by the stable `code` — never by the sentence. A change to the
+ * wording, in any language, must not change whether the editor offers the
+ * conflict controls.
+ *
+ * Every other failure returns `null` and is rethrown by the caller, which keeps
+ * the bridge rule intact for all of them.
+ */
+export function revisionConflictResult(error: unknown): FileWriteResult | null {
+  const appError = carriedAppError(error);
+  if (appError?.code !== 'REVISION_CONFLICT') return null;
+  const currentRevision = actualRevision(appError.details);
+  return {
+    revision: currentRevision ?? '',
+    conflict: {
+      code: 'REVISION_CONFLICT',
+      message: appError.message,
+      currentRevision,
+    },
+  };
+}
+
+/** The actual revision carried in the refusal's details, if it is a string. */
+function actualRevision(details: unknown): string | null {
+  if (details === null || typeof details !== 'object') return null;
+  const value = (details as { actualRevision?: unknown }).actualRevision;
+  return typeof value === 'string' ? value : null;
 }
 
 /**

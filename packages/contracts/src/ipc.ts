@@ -348,7 +348,30 @@ export interface FileReadResult {
 }
 
 export interface FileWriteResult {
+  /**
+   * The revision written, or — when `conflict` is present — the revision the
+   * file actually has. Empty when the file no longer exists.
+   */
   revision: string;
+  /**
+   * Present when the write did **not** happen because the file changed since
+   * the caller read it (§11.3).
+   *
+   * This is a result rather than a rejection on purpose. The Renderer has a
+   * real decision to offer (reload, or overwrite on purpose), and it must make
+   * that decision from a stable `code` — not by matching the wording of an
+   * error message. Keeping it out of the rejection path also preserves the
+   * bridge rule that a rejection is one user-safe sentence and nothing else.
+   */
+  conflict?: FileWriteConflict;
+}
+
+export interface FileWriteConflict {
+  code: 'REVISION_CONFLICT';
+  /** user-safe sentence from Main */
+  message: string;
+  /** the revision on disk at the time of the refusal; null if the file is gone */
+  currentRevision: string | null;
 }
 
 export interface FileEntry {

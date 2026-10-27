@@ -30,6 +30,17 @@
  * directory: a renderer source file that formats a caught value with
  * `x instanceof Error ? x.message : String(x)` fails there, so the fifth copy
  * is a red gate rather than a review someone has to remember.
+ *
+ * ## Display only — never a discriminant
+ *
+ * The output of this function is prose for a person. It changes with the
+ * language, with the sentence a plane chose, and with the next edit to either,
+ * so branching on it is a contract made of wording. Code that must know *what
+ * kind* of failure it has reads a stable `code` — from an `AppError`, or from
+ * a structured result where a rejection would carry only a sentence (the
+ * revision conflict in `files.write` is that shape). Before this rule the file
+ * editor matched `/revision|conflict|冲突|已修改/` against this text, which
+ * meant a translation would have silently disabled the conflict controls.
  */
 export function describeError(value: unknown): string {
   if (value instanceof Error) return value.message;

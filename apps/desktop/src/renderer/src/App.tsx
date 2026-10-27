@@ -44,6 +44,7 @@ import { McpPanel } from './components/McpPanel';
 import { RecentProjects } from './components/RecentProjects';
 import { HandoffPanel } from './components/HandoffPanel';
 import { PanelBoundary } from './components/PanelBoundary';
+import { UpdateControllerProvider } from './update-controller';
 import {
   HANDOFF_SECTIONS,
   buildHandoffPrompt,
@@ -115,7 +116,9 @@ export function App(): JSX.Element {
   if (!hasApi()) return <BridgeMissing />;
   return (
     <I18nProvider api={getApi()}>
-      <Shell />
+      <UpdateControllerProvider>
+        <Shell />
+      </UpdateControllerProvider>
     </I18nProvider>
   );
 }

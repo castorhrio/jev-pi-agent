@@ -73,21 +73,23 @@ export function FileEditor({
         const result = await getApi().files.write(path, content, {
           ...(opts.force ? {} : { expectedRevision: revision }),
         });
+        // A revision mismatch comes back as data, not as a rejected promise:
+        // the decision — reload or overwrite — belongs to the user, and the
+        // branch is on the stable `code` so rewording the sentence (in either
+        // language) cannot change which controls appear. A rejection is always
+        // an ordinary failure now; it is never a conflict, whatever it says.
+        if (result.conflict) {
+          setState('conflict');
+          setMessage(result.conflict.message);
+          return;
+        }
         setRevision(result.revision);
         setDirty(false);
         setState('idle');
         onSaved?.();
       } catch (error) {
-        const text = describeError(error);
-        // A revision mismatch is not a failure to retry blindly — it means
-        // something else changed the file and the user has to choose.
-        if (/revision|conflict|冲突|已修改/i.test(text)) {
-          setState('conflict');
-          setMessage(text);
-        } else {
-          setState('error');
-          setMessage(text);
-        }
+        setState('error');
+        setMessage(describeError(error));
       }
     },
     [path, content, revision, onSaved],
@@ -146,7 +148,13 @@ export function FileEditor({
                   setDirty(false);
                   setState('idle');
                 })
-                .catch(() => undefined);
+                .catch((error: unknown) => {
+                  // A reload that fails is still a click with an answer: the
+                  // conflict notice would otherwise stay on screen with no
+                  // hint that the disk could not be read again.
+                  setState('error');
+                  setMessage(describeError(error));
+                });
             }}
           >
             {t('editor.reload')}

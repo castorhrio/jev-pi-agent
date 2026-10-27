@@ -161,3 +161,80 @@ describe('the update surface, when no feed is configured', () => {
     expect(await within(updateCard()).findByText('未配置更新源')).toBeTruthy();
   });
 });
+
+/**
+ * The Settings card is where a user goes when the banner is quiet.
+ *
+ * It used to answer every failure with `.catch(() => undefined)`: a rejected
+ * download, a rejected install and even a failed `updateStatus()` read all
+ * produced no change and no sentence. The click looked like a control that did
+ * nothing — the one outcome the banner's contract forbids. Both surfaces now
+ * read the same controller, so the card carries the same failure the banner
+ * does.
+ */
+describe('a failed update action in Settings is never a silent click', () => {
+  function mountWithBrokenUpdate(
+    overrides: Partial<ReturnType<typeof createFixtureApi>['api']['app']>,
+  ) {
+    const fixture = createFixtureApi('default');
+    const api = {
+      ...fixture.api,
+      app: {
+        ...fixture.api.app,
+        updateStatus: async (): Promise<UpdateStatus> => AVAILABLE,
+        ...overrides,
+      },
+    };
+    (window as unknown as Record<string, unknown>).ucad = api;
+    return render(<App />);
+  }
+
+  it('shows the reason when the download is rejected', async () => {
+    const user = userEvent.setup();
+    mountWithBrokenUpdate({
+      downloadUpdate: async () => {
+        throw new Error('下载通道已断开');
+      },
+    });
+    await settle();
+    await openSettings(user);
+
+    await user.click(within(updateCard()).getByRole('button', { name: '下载更新' }));
+
+    expect(await within(updateCard()).findByText(/下载通道已断开/)).toBeTruthy();
+  });
+
+  it('keeps the check button usable after a rejected check', async () => {
+    const user = userEvent.setup();
+    mountWithBrokenUpdate({
+      checkUpdate: async () => {
+        throw new Error('检查通道已断开');
+      },
+    });
+    await settle();
+    await openSettings(user);
+
+    const card = updateCard();
+    await user.click(within(card).getByRole('button', { name: '检查更新' }));
+
+    expect(await within(card).findByText(/检查通道已断开/)).toBeTruthy();
+    // The failure keeps the pending action (it owns the message), but the
+    // control must not stay stuck on "检查中…" with no way to retry.
+    const retry = within(card).getByRole('button', { name: '检查更新' });
+    expect(retry).toBeEnabled();
+  });
+
+  it('says the status could not be read, instead of showing the fallback as fact', async () => {
+    const user = userEvent.setup();
+    mountWithBrokenUpdate({
+      updateStatus: async () => {
+        throw new Error('更新服务离线');
+      },
+    });
+    await settle();
+    await openSettings(user);
+
+    expect(await within(updateCard()).findByText(/读取更新状态失败/)).toBeTruthy();
+    expect(within(updateCard()).getByText(/更新服务离线/)).toBeTruthy();
+  });
+});

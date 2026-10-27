@@ -171,6 +171,7 @@ describe('the retryable table', () => {
     'NO_ACTIVE_WORKSPACE',
     'NOT_FOUND',
     'INVALID_INPUT',
+    'REVISION_CONFLICT',
     'FEATURE_UNAVAILABLE',
     'UNKNOWN',
   ] as const satisfies readonly AppErrorCode[];
@@ -586,7 +587,10 @@ describe('the Renderer formats a caught value in one place', () => {
     // import and re-derives the sentence locally fails here even if it does so
     // in a spelling the regex above does not know.
     const expected = [
-      path.join('components', 'UpdateBanner.tsx'),
+      // The banner's formatting moved with its state: both surfaces now read
+      // the shared controller, so the controller is where a caught value is
+      // turned into the sentence they show.
+      'update-controller.tsx',
       path.join('components', 'Settings.tsx'),
       path.join('components', 'Panels.tsx'),
       path.join('components', 'TerminalPanel.tsx'),

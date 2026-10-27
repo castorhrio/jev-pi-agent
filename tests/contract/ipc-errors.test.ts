@@ -30,11 +30,14 @@
 
 import { describe, it, expect } from 'vitest';
 import { ZodError, z } from 'zod';
+import { appError } from '@ucad/contracts';
+import type { AppErrorCode } from '@ucad/contracts';
 import {
   ZOD_ISSUE_CODES,
   ZOD_OWN_OPENINGS,
   ZOD_REASON_BY_CODE,
   ZOD_REASON_GENERIC,
+  revisionConflictResult,
   schemaFailureFields,
   toUserError,
   zodFailureSource,
@@ -838,5 +841,67 @@ describe('ZOD_ISSUE_CODES — the codes this build of Zod can raise', () => {
     // 「不符合要求」, and a reason for a code this Zod cannot raise is a
     // sentence nobody will ever read.
     expect(Object.keys(ZOD_REASON_BY_CODE).sort()).toEqual([...ZOD_ISSUE_CODES].sort());
+  });
+});
+
+/**
+ * A revision conflict is identified by its code, not by its wording.
+ *
+ * The file editor used to answer this question with
+ * `/revision|conflict|冲突|已修改/i.test(describeError(error))`. That made a
+ * sentence into a protocol: reword the message, or translate the app, and the
+ * editor would silently stop offering "reload" and "overwrite" while still
+ * showing the failure as ordinary. `revisionConflictResult` reads the code the
+ * file service chose and turns it into a result the Renderer can switch on.
+ *
+ * The `AppErrorThrow` shape is reproduced structurally (an `Error` carrying
+ * `appError`) rather than imported: this module deliberately depends on `zod`
+ * and `@ucad/contracts` alone, and the contract it consumes is the carried
+ * shape, not a particular class.
+ */
+describe('a revision conflict crosses as a result, keyed by code', () => {
+  function carried(code: AppErrorCode, message: string, details?: unknown): Error {
+    return Object.assign(new Error(message), {
+      appError: appError(code, message, 'ipc', details === undefined ? {} : { details }),
+    });
+  }
+
+  it('maps the conflict whatever the sentence says', () => {
+    const chinese = revisionConflictResult(
+      carried('REVISION_CONFLICT', '文件已被其他方修改，请重新加载后再试', {
+        actualRevision: 'r2',
+      }),
+    );
+    const english = revisionConflictResult(
+      carried('REVISION_CONFLICT', 'The file changed underneath you.', {
+        actualRevision: 'r2',
+      }),
+    );
+
+    expect(chinese?.conflict?.code).toBe('REVISION_CONFLICT');
+    expect(english?.conflict?.code).toBe('REVISION_CONFLICT');
+    // Both carry the disk revision, and the Chinese sentence is preserved for
+    // display. The *decision* does not read it.
+    expect(chinese?.revision).toBe('r2');
+    expect(english?.revision).toBe('r2');
+    expect(chinese?.conflict?.message).toBe('文件已被其他方修改，请重新加载后再试');
+  });
+
+  it('does not treat a message that talks about conflicts as one', () => {
+    // The defect in one assertion: a plain failure whose text mentions
+    // revision/conflict/已修改 must stay an ordinary failure.
+    expect(revisionConflictResult(new Error('revision conflict: 已修改'))).toBeNull();
+    expect(revisionConflictResult(carried('UNKNOWN', 'revision conflict'))).toBeNull();
+    expect(revisionConflictResult(carried('STORAGE_ERROR', 'conflict'))).toBeNull();
+  });
+
+  it('reports no revision when the file is gone', () => {
+    const result = revisionConflictResult(
+      carried('REVISION_CONFLICT', '文件已被其他方修改', { actualRevision: null }),
+    );
+
+    expect(result?.conflict?.code).toBe('REVISION_CONFLICT');
+    expect(result?.revision).toBe('');
+    expect(result?.conflict?.currentRevision).toBeNull();
   });
 });

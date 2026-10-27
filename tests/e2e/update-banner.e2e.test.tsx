@@ -4,10 +4,12 @@ import userEvent from '@testing-library/user-event';
 import { I18nProvider } from '@renderer/i18n-context';
 import {
   ACTION_COMPLETED_STATES,
-  UpdateBanner,
+  NEVER_TERMINAL_STATES,
+  UpdateControllerProvider,
   actionCompleted,
   type PendingAction,
-} from '@renderer/components/UpdateBanner';
+} from '@renderer/update-controller';
+import { UpdateBanner } from '@renderer/components/UpdateBanner';
 import { createFixtureApi } from '@renderer/dev/fixture-bridge';
 import {
   UPDATE_STATES,
@@ -114,7 +116,9 @@ function mount(
   (window as unknown as Record<string, unknown>).ucad = api;
   const utils = render(
     <I18nProvider api={api}>
-      <UpdateBanner />
+      <UpdateControllerProvider>
+        <UpdateBanner />
+      </UpdateControllerProvider>
     </I18nProvider>,
   );
 
@@ -188,6 +192,45 @@ describe('the pending action ends where the table says', () => {
           `${action} × ${state}: actionCompleted disagrees with ACTION_COMPLETED_STATES`,
         ).toBe((ACTION_COMPLETED_STATES[action] as readonly string[]).includes(state));
       }
+    }
+  });
+
+  /**
+   * Completeness, not just consistency.
+   *
+   * A new `UpdateState` is a row somebody has to answer, but the rows above do
+   * not force anyone to look: a state listed in *no* row simply means "no
+   * action ends here", which is indistinguishable from a state nobody
+   * considered. This gate makes the omission red. Every state must be either an
+   * ending for at least one action or an explicit entry in
+   * `NEVER_TERMINAL_STATES`; being both is also wrong, because the two answers
+   * are opposites.
+   */
+  it('leaves no state unclassified', () => {
+    const endings = new Set<string>();
+    for (const action of PENDING_ACTIONS) {
+      for (const state of ACTION_COMPLETED_STATES[action]) endings.add(state);
+    }
+    const neverTerminal = new Set<string>(NEVER_TERMINAL_STATES);
+
+    for (const state of UPDATE_STATES) {
+      const ends = endings.has(state);
+      const never = neverTerminal.has(state);
+      expect(
+        ends || never,
+        `${state} is neither an ending nor listed in NEVER_TERMINAL_STATES — a new state needs a decision`,
+      ).toBe(true);
+      expect(
+        ends && never,
+        `${state} is both an ending and listed as never-terminal`,
+      ).toBe(false);
+    }
+
+    for (const state of NEVER_TERMINAL_STATES) {
+      expect(
+        (UPDATE_STATES as readonly string[]).includes(state),
+        `NEVER_TERMINAL_STATES names "${state}", which is not an UpdateState`,
+      ).toBe(true);
     }
   });
 
