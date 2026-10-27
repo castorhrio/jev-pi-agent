@@ -42,12 +42,13 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, relative, sep } from 'node:path';
+import { join } from 'node:path';
 import { Readable } from 'node:stream';
 import type * as http from 'node:http';
 import { Logger, MemoryLogSink, silentLogger } from '@ucad/observability';
 
 import { blankComments as blankCommentsShared } from './source-scan';
+import { MAIN_SOURCE, REPO_ROOT, mainSources, type SourceFile } from './main-sources';
 import {
   CHANNEL_URL_REJECTIONS,
   checkChannelUrl,
@@ -2395,23 +2396,71 @@ describe('the updater itself', () => {
    * position rather than by name, because "one write, somewhere in the right
    * file" is not the claim.
    *
-   * A property write (`this.status.progress = 1`) is counted too: it mutates
-   * the same value without going through the funnel, and the union would let
-   * it reach a state the transition never declared.
+   * **What counts as a write, and why the list is longer than one operator.**
+   * The first version of this scan asked for `=[^=]` — a plain assignment and
+   * nothing else — which left three spellings of the same mutation invisible:
+   *
+   *  - the compound assignments (`??=`, `||=`, `&&=`, `+=`, …). `this.status ??= …`
+   *    is valid TypeScript, is a write, and was skipped by a pattern looking for
+   *    `=` directly after the field. That is the failure mode a gate about
+   *    "how many writers are there" cannot have: it has to count the writers a
+   *    person would plausibly write, not the one it was first shown;
+   *  - a property write or update — `this.status.progress = 1`,
+   *    `this.status.progress++`, `++this.status.progress`. Those mutate the same
+   *    value without assigning the field, so no operator follows `this.status`
+   *    itself;
+   *  - a call-shaped mutation of the object: `Object.assign(this.status, …)` and
+   *    `Reflect.set(this.status, …)`. "Patch the status in place" is exactly the
+   *    edit this gate exists to refuse, and it is a write with no `=` in it.
+   *
+   * Reads stay out — `this.status.state`, `this.status === other`, and the prose
+   * that names the field — because a gate that counts those would be red about
+   * correct code. The fixture below pins both directions: every spelling above
+   * is counted, and the reads are not.
    */
   function statusWrites(source: string): number[] {
     const code = blankComments(source);
-    const writes: number[] = [];
-    const pattern = /this\s*\.\s*status\s*(?:=[^=]|\.\s*[A-Za-z_$][\w$]*\s*=[^=])/g;
-    for (const match of code.matchAll(pattern)) {
-      writes.push(code.slice(0, match.index).split('\n').length);
+    const writes = new Set<number>();
+    const lineAt = (index: number): number => code.slice(0, index).split('\n').length;
+    /** An assignment; `==`/`===` are comparisons, not writes. */
+    const assignment = /^(?:=(?!=)|\?\?=|\|\|=|&&=|\*\*=|<<=|>>=|>>>=|[+\-*/%&|^]=)/;
+    /** A call that mutates its first argument in place. */
+    const mutatingCall = /(?:\bObject\s*\.\s*assign|\bReflect\s*\.\s*set)\s*\(\s*$/;
+    /** An update applied *to* the field: `++this.status`. */
+    const updateBefore = /(?:\+\+|--)\s*$/;
+
+    for (const match of code.matchAll(/this\s*\.\s*status\b/g)) {
+      const start = match.index;
+      const before = code.slice(0, start);
+      const after = code.slice(start + match[0].length);
+
+      if (assignment.test(after.trimStart()) || updateBefore.test(before) || mutatingCall.test(before)) {
+        writes.add(lineAt(start));
+        continue;
+      }
+      // A property of the status: written, updated, or merely read.
+      const property = /^\s*\.\s*[A-Za-z_$][\w$]*/.exec(after);
+      if (property === null) continue;
+      const rest = after.slice(property[0].length).trimStart();
+      if (assignment.test(rest) || rest.startsWith('++') || rest.startsWith('--')) {
+        writes.add(lineAt(start));
+      }
     }
-    return writes;
+    return [...writes].sort((a, b) => a - b);
   }
 
   it('writes the status in one place, where the state and the document are paired', () => {
     const source = readFileSync(UPDATE_SERVICE_SOURCE, 'utf8');
     const writes = statusWrites(source);
+
+    // The scan reads the field by its name, so the name is part of the claim: a
+    // rename to `#status`, or a second field holding a status, would leave the
+    // scan looking for a spelling nothing writes. The count below would then
+    // fail with "0 places" — true, and silent about why.
+    expect(
+      source.match(/\bprivate\s+status\s*:/g) ?? [],
+      'update-service.ts no longer declares exactly one `private status:` field, so this scan is reading a name nothing writes',
+    ).toHaveLength(1);
 
     const lines = source.split('\n');
     const methodRange = (signature: string): readonly [number, number] => {
@@ -2431,8 +2480,8 @@ describe('the updater itself', () => {
     // one thing the overloads cannot see.
     expect(
       writes,
-      `update-service.ts writes this.status in ${writes.length} places; a transition may only be ` +
-        'written by set(), and the initial idle value by the constructor',
+      `apps/desktop/src/main/update-service.ts writes this.status at line(s) ${writes.join(', ')}; ` +
+        'a transition may only be written by set(), and the initial idle value by the constructor',
     ).toHaveLength(2);
 
     const allowed = [methodRange('constructor(opts: UpdateServiceOptions)'), methodRange('private set(patch: StatusPatch, document:')];
@@ -2441,44 +2490,66 @@ describe('the updater itself', () => {
     );
     expect(
       outside,
-      `this.status is written at update-service.ts:${outside.join(', ')} outside set(); a writer ` +
-        'outside the funnel is a write the overloads never saw',
+      `this.status is written at apps/desktop/src/main/update-service.ts:${outside.join(', ')} outside ` +
+        'set()/the constructor; a writer outside the funnel is a write the overloads never saw',
     ).toEqual([]);
   });
 
-  it('counts a second writer, and ignores the prose about the status', () => {
-    // The fixture is the edit this gate exists for: a transition written by
-    // hand beside `set()`. Both spellings are counted — a whole assignment and
-    // a property write — because the second is the shape a progress update
-    // would take if somebody skipped the funnel.
+  it('counts every spelling of a write, and ignores the reads', () => {
+    // The fixture is the edit this gate exists for — a transition written by
+    // hand beside `set()` — in every spelling that reaches the same field. The
+    // first version of the scan knew only the first two, which is why the
+    // compound assignment, the update and the in-place call are here: a
+    // spelling the gate cannot see is a writer nobody counts, and each of these
+    // is a way to enter `available` with no document without touching `set()`.
     expect(
       statusWrites(
         [
-          'class S {',
-          '  set(patch: P) {',
-          '    this.status = { ...this.status, ...patch };',
-          '  }',
-          '  retry() {',
-          "    this.status = { state: 'available' };",
-          '  }',
-          '  progress(p: number) {',
-          '    this.status.progress = p;',
-          '  }',
-          '}',
+          'class S {', //                                    1
+          '  set(patch: P) {', //                              2
+          '    this.status = { ...this.status, ...patch };', // 3
+          '  }', //                                            4
+          '  retry() {', //                                    5
+          "    this.status = { state: 'available' };", //     6
+          '  }', //                                            7
+          '  progress(p: number) {', //                        8
+          '    this.status.progress = p;', //                  9
+          '  }', //                                           10
+          '  restore(other: S) {', //                         11
+          '    this.status ??= other.status;', //             12
+          '  }', //                                           13
+          '  bump() {', //                                    14
+          '    ++this.status.progress;', //                   15
+          '  }', //                                           16
+          '  merge(patch: P) {', //                           17
+          '    Object.assign(this.status, patch);', //        18
+          '  }', //                                           19
+          '  quiet() {', //                                   20
+          '  }', //                                           21
+          '  loud() {', //                                    22
+          '    this.status ||= { state: \'error\' };', //     23
+          '  }', //                                           24
+          '}', //                                             25
         ].join('\n'),
       ),
-    ).toEqual([3, 6, 9]);
+      'a write to this.status was not counted, so the funnel gate would stay green about it',
+    ).toEqual([3, 6, 9, 12, 15, 18, 23]);
 
     // The other direction, which is what keeps the gate usable: this file and
-    // the service explain the rule in prose, and a comparison is not a write.
+    // the service read the field everywhere and explain the rule in prose, and
+    // a read is not a write.
     expect(
       statusWrites(
         [
           '// this.status = a comment, not a write.',
           '/** `this.status =` is shown in prose here. */',
           'export const same = this.status === other;',
+          'export const state = this.status.state;',
+          'export const { document: _d } = this.status;',
+          'export const ok = this.status.document !== null;',
         ].join('\n'),
       ),
+      'the scan counted a read of this.status as a write',
     ).toEqual([]);
   });
 
@@ -3055,8 +3126,6 @@ describe('the release feed a publisher uploads', () => {
   });
 });
 
-const REPO_ROOT = join(import.meta.dirname, '..', '..');
-const MAIN_SOURCE = join(REPO_ROOT, 'apps', 'desktop', 'src', 'main');
 const UPDATE_FEED_SOURCE = join(MAIN_SOURCE, 'update-feed.ts');
 const UPDATE_SERVICE_SOURCE = join(MAIN_SOURCE, 'update-service.ts');
 const SELF_PATH = join(import.meta.dirname, 'update-integrity.test.ts');
@@ -3086,12 +3155,6 @@ const SELF_PATH = join(import.meta.dirname, 'update-integrity.test.ts');
  * the local copy lost.
  */
 const blankComments = blankCommentsShared;
-
-/** One source file the production-wiring scan reads. */
-interface SourceFile {
-  readonly path: string;
-  readonly source: string;
-}
 
 /** One constructor call, with the line it starts on and its argument text. */
 interface Construction {
@@ -3232,23 +3295,6 @@ function constructionFix(reason: ConstructionProblem['reason']): string {
   return reason === 'opens-the-seam'
     ? 'the seam is for tests only — remove it from the constructor call, or drive the window from update-integrity.test.ts'
     : 'write the options as an object literal at the call site (no spread, no helper): the scan cannot see a beforeLaunch inside a value it cannot read';
-}
-
-/** Every `.ts` file under `apps/desktop/src/main`, repo-relative and read. */
-function mainSources(dir: string = MAIN_SOURCE): SourceFile[] {
-  return readdirSync(dir, { withFileTypes: true })
-    .sort((a, b) => a.name.localeCompare(b.name))
-    .flatMap((entry) => {
-      const full = join(dir, entry.name);
-      if (entry.isDirectory()) return mainSources(full);
-      if (!entry.name.endsWith('.ts')) return [];
-      return [
-        {
-          path: relative(REPO_ROOT, full).split(sep).join('/'),
-          source: readFileSync(full, 'utf8'),
-        },
-      ];
-    });
 }
 
 /**

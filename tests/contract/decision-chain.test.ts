@@ -966,4 +966,39 @@ describe('every drop reason is a token the log can be read back by', () => {
       'a drop reason has no explanation, or a refusal reached the log without one',
     ).toEqual(['unknown', 'duplicate']);
   });
+
+  it('keeps every side-effect refusal inside the drop-reason vocabulary', () => {
+    // The subset `decision-facade.ts` states as `_everyRefusalIsADropReason`,
+    // asked at runtime. That annotation is a compile-time check and this suite
+    // is transpiled without typechecking, so a refusal added to
+    // `SIDE_EFFECT_REFUSALS` without a drop reason beside it would be a rule
+    // only `npm run typecheck` could see — while the line it produces writes a
+    // token into `reason` that a reader of drop reasons has never been told
+    // about. The annotation's own comment says the relationship is worth
+    // stating rather than assuming; this is the second half of stating it.
+    for (const refusal of SIDE_EFFECT_REFUSALS) {
+      expect(
+        ENGINE_CHAIN_DROP_REASONS,
+        `${refusal}: refused in a log line whose reason field does not list it`,
+      ).toContain(refusal);
+    }
+
+    // Both directions written out, because "every refusal is a drop reason" is
+    // true of two vocabularies with one member each, and because the *difference*
+    // is the part a reader needs: the reasons that are not refusals are the two
+    // about the chain — an id this build does not know, and an entry the chain
+    // named twice. Naming them means a refusal appended to one array and not
+    // the other is red on the side it was forgotten, rather than merely
+    // counted; and so is a chain reason that quietly gains a refusal.
+    const dropReasons: readonly string[] = ENGINE_CHAIN_DROP_REASONS;
+    const refusals: readonly string[] = SIDE_EFFECT_REFUSALS;
+    expect(
+      dropReasons.filter((reason) => !refusals.includes(reason)),
+      'the drop reasons that are not side-effect refusals are not exactly [unknown, duplicate]',
+    ).toEqual(['unknown', 'duplicate']);
+    expect(
+      refusals.filter((refusal) => !dropReasons.includes(refusal)),
+      'a side-effect refusal is not a drop reason, so its log line carries a reason nothing enumerates',
+    ).toEqual([]);
+  });
 });

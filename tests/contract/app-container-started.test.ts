@@ -57,6 +57,7 @@ import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { blankComments } from './source-scan';
+import { REPO_ROOT, mainSources } from './main-sources';
 
 /**
  * `app-container.ts` imports `safeStorage` at module load. The container
@@ -470,10 +471,6 @@ function privateHashBodyOrFail(source: string, name: string): string {
   );
 }
 
-/** The main-process sources the guard's scope is read from. */
-const MAIN_SOURCE = path.join(here, '../../apps/desktop/src/main');
-/** Repo root, so the paths in a failure message are the ones a reader types. */
-const REPO_ROOT = path.join(here, '../..');
 /** The container's path in the shape `mainSources()` returns. */
 const CONTAINER_REL = path.relative(REPO_ROOT, CONTAINER_SOURCE).split(path.sep).join('/');
 
@@ -577,24 +574,6 @@ function scopeViolation(
     return 'retentionDeps() asks the guard for a different set of fields than RETENTION_DEPENDENCIES names';
   }
   return null;
-}
-
-/** Every `.ts` file under `apps/desktop/src/main`, as repo-relative path + source. */
-function mainSources(dir: string = MAIN_SOURCE): { path: string; source: string }[] {
-  return fs
-    .readdirSync(dir, { withFileTypes: true })
-    .sort((a, b) => a.name.localeCompare(b.name))
-    .flatMap((entry) => {
-      const full = path.join(dir, entry.name);
-      if (entry.isDirectory()) return mainSources(full);
-      if (!entry.name.endsWith('.ts')) return [];
-      return [
-        {
-          path: path.relative(REPO_ROOT, full).split(path.sep).join('/'),
-          source: fs.readFileSync(full, 'utf8'),
-        },
-      ];
-    });
 }
 
 /**
