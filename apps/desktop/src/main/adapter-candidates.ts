@@ -30,6 +30,19 @@ import { DEFAULT_AGENT_ID } from '@ucad/contracts';
  * go on describing the table above. Freezing turns that into a runtime failure
  * at the line that does it; the contract gate asserts the objects are frozen,
  * so a later edit cannot quietly drop the wrapper either.
+ *
+ * ## This table must stay a literal type
+ *
+ * `as const satisfies Record<string, string>` is load-bearing, not style.
+ * `as const` keeps every key and every value a literal, and `satisfies` checks
+ * the shape without widening it, so `keyof typeof ADAPTER_CANDIDATES` is exactly
+ * `'universal' | 'mock'`. Both compile-time proofs below depend on that: the
+ * conditional in `DEFAULT_AGENT_IS_A_CANDIDATE` resolves to `true` only because
+ * the key union is narrow, and `ADAPTER_LOAD_ORDER`'s `satisfies` rejects an id
+ * outside it. Annotate the object as `Record<string, string>` instead and
+ * `keyof` widens to `string`: any id then satisfies both checks, they still
+ * compile, and the proof that the fallback names a shipped adapter silently
+ * disappears. Keep the literal type — and the freeze — when editing.
  */
 export const ADAPTER_CANDIDATES = Object.freeze({
   // The reference adapter that actually talks to a model.
@@ -48,6 +61,14 @@ export const ADAPTER_CANDIDATES = Object.freeze({
  * adapter and `DEFAULT_AGENT_ID` stops being a key, `never` is not assignable
  * to `true`, and the build fails here instead of the fallback drifting to an id
  * no adapter answers to.
+ *
+ * The proof is only as good as the key type it reads. `ADAPTER_CANDIDATES` is
+ * `as const satisfies Record<string, string>`, which is what keeps
+ * `keyof typeof ADAPTER_CANDIDATES` a union of the ids actually written above;
+ * if that table were annotated as `Record<string, string>`, `keyof` would be
+ * `string`, this conditional would always pick `true`, and the proof would pass
+ * for a removed adapter. The two declarations are one mechanism — see the
+ * "literal type" paragraph above.
  */
 export const DEFAULT_AGENT_IS_A_CANDIDATE: typeof DEFAULT_AGENT_ID extends keyof typeof ADAPTER_CANDIDATES
   ? true

@@ -34,6 +34,13 @@ const AVAILABLE: UpdateStatus = {
   feedConfigured: true,
 };
 
+const UP_TO_DATE: UpdateStatus = {
+  state: 'up-to-date',
+  currentVersion: '1.0.0',
+  latestVersion: '1.0.0',
+  feedConfigured: true,
+};
+
 const READY: UpdateStatus = {
   state: 'ready',
   currentVersion: '1.0.0',
@@ -79,7 +86,11 @@ interface MountOptions {
   readonly initial?: () => Promise<UpdateStatus | null>;
   readonly check?: () => Promise<UpdateStatus>;
   readonly download?: () => Promise<UpdateStatus>;
-  readonly install?: () => Promise<boolean>;
+  /**
+   * The real call answers a boolean, but the controller also accepts a status
+   * for the install paths that stay alive long enough to report one.
+   */
+  readonly install?: () => Promise<boolean | UpdateStatus>;
 }
 
 function mount(options: MountOptions = {}) {
@@ -176,6 +187,36 @@ describe('the update controller hands failure ownership over in sequence', () =>
     expect(field('failure')).toBe('none');
     expect(field('status-failure')).toBe('none');
     expect(field('pending')).toBe('none');
+  });
+
+  it('lets a pushed terminal status end the check it answers', async () => {
+    const user = userEvent.setup();
+    const check = deferred<UpdateStatus>();
+    const { emit } = mount({
+      initial: async () => IDLE,
+      check: () => check.promise,
+    });
+    await waitFor(() => expect(field('status')).toBe('idle'));
+
+    await user.click(screen.getByRole('button', { name: 'run check' }));
+    expect(field('pending')).toBe('check');
+
+    // No token guards a push: it is Main stating what is true now, and
+    // `available` is an ending for a check. So the push takes ownership of the
+    // answer the click was waiting for (the same choice the module comment
+    // states). The click's own answer is now stale and must be dropped —
+    // `pendingRef` is already clear, so `settle` refuses it.
+    await emit(AVAILABLE);
+    expect(field('status')).toBe('available');
+    expect(field('pending')).toBe('none');
+
+    await act(async () => {
+      check.resolve(UP_TO_DATE);
+      await check.promise;
+    });
+    expect(field('status'), 'a superseded check overwrote the newer push').toBe('available');
+    expect(field('pending')).toBe('none');
+    expect(field('failure')).toBe('none');
   });
 
   it('refuses a pushed value whose state is not in UPDATE_STATES', async () => {
@@ -281,6 +322,40 @@ describe('the update controller hands failure ownership over in sequence', () =>
     );
     expect(field('failure')).toBe('none');
     expect(field('status')).toBe('ready');
+  });
+
+  it('releases a status-answering install once, on the same token', async () => {
+    const user = userEvent.setup();
+    const check = deferred<UpdateStatus>();
+    mount({
+      initial: async () => READY,
+      // The install paths that stay alive may answer with a status instead of
+      // a boolean. `idle` is an ending in the install row, so this resolution
+      // takes both release paths: `settle` clears the action, then
+      // `applyStatus` finds `pendingRef` already clear and has nothing to do.
+      install: async () => IDLE,
+      check: () => check.promise,
+    });
+    await waitFor(() => expect(field('status')).toBe('ready'));
+
+    await user.click(screen.getByRole('button', { name: 'run install' }));
+    await waitFor(() => expect(field('pending')).toBe('none'));
+
+    expect(field('status')).toBe('idle');
+    expect(field('failure'), 'a clean install answer became a failure').toBe('none');
+    expect(field('status-failure')).toBe('none');
+
+    // Both release paths are done. The controller is still usable: a new
+    // action starts and ends on its own token rather than being retired by the
+    // install's.
+    await user.click(screen.getByRole('button', { name: 'run check' }));
+    expect(field('pending')).toBe('check');
+    await act(async () => {
+      check.resolve(AVAILABLE);
+      await check.promise;
+    });
+    expect(field('pending')).toBe('none');
+    expect(field('status')).toBe('available');
   });
 
   it('does not hand a later error push to the install that already ended', async () => {

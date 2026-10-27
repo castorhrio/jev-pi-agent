@@ -19,6 +19,13 @@
  *  - only the most recently started action owns the answer. A check that
  *    resolves after the user has moved on to a download must not retire that
  *    download, and two clicks on the same button are two actions;
+ *  - a pushed status outranks the action it ends. When Main pushes a state the
+ *    table counts as an ending for the pending action, that action is over:
+ *    the push is the service stating what is true now, and the click's own late
+ *    answer is dropped (its token no longer matches a cleared `pendingRef`).
+ *    The opposite—a click's answer outranking a push—would let a stale answer
+ *    overwrite what Main has just measured. `tests/e2e/update-controller.e2e.test.tsx`
+ *    pins this direction;
  *  - a failed *initial read* is a different fact from a failed action, and gets
  *    its own field (`statusFailure`). The banner stays quiet about it — the app
  *    checks on startup, and an offline launch must not open with an error
@@ -224,6 +231,11 @@ export function UpdateControllerProvider({ children }: { children: ReactNode }):
    *
    * Every other action ends from `ACTION_COMPLETED_STATES` in `applyStatus`, so
    * this function deliberately releases only `install`.
+   *
+   * One invariant holds across both paths: for a given token, at most one call
+   * clears `pendingRef`. An install that answers with a status (`idle`, say)
+   * runs `settle` first and then `applyStatus`; the second sees `null` and
+   * cannot retire an action that has since replaced it.
    */
   const settle = useCallback((action: PendingAction, token: number): boolean => {
     if (pendingRef.current?.token !== token) return false;
