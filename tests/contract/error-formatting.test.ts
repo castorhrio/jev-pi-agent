@@ -15,6 +15,8 @@ import { fileURLToPath } from 'node:url';
 import { RETRYABLE, appError, codedError, describeError, toAppError } from '@ucad/contracts';
 import type { AppErrorCode } from '@ucad/contracts';
 import { scanBareThrows } from './bare-throw-scan';
+import { blankComments } from './source-scan';
+import { describeError as rendererDescribeError } from '../../apps/desktop/src/renderer/src/error-message';
 
 describe('describeError', () => {
   it('never renders the string "[object Object]"', () => {
@@ -406,6 +408,196 @@ describe('every refusal in Main names a code (§4.11)', () => {
       const text = fs.readFileSync(path.join(mainSrc, file), 'utf8');
       expect(text, `${file} throws a bare Error`).not.toMatch(/throw new Error\(/);
       expect(text, `${file} throws a plain appError object`).not.toMatch(/throw appError\(/);
+    }
+  });
+});
+
+/**
+ * The Renderer's copy of the same function, held to the same behaviour.
+ *
+ * `apps/desktop/src/renderer/src/error-message.ts` exists because the Renderer
+ * imports no *runtime* code from `@ucad/contracts` (the package is CommonJS and
+ * the Vite bundle stays free of it), while the sentence a user reads must not
+ * depend on which process formatted the failure. Two implementations, one
+ * behaviour: every value below is answered by both, and the answers are
+ * compared rather than described, so a change to either that the other does not
+ * follow fails here with the input printed.
+ *
+ * The rest of the block is the meta-test the repository asks of any rule that
+ * "is kept in one place": one place is a property of the source, and the
+ * Renderer had this expression written out at more than thirty call sites plus
+ * five private helpers, each one a fresh chance to render `[object Object]`.
+ */
+describe('the Renderer copy of describeError', () => {
+  /**
+   * The shapes a rejection takes on its way across the IPC bridge.
+   *
+   * The first three are the ones a reader meets: an `Error` (what Main
+   * rejects with), a string, and a value that is neither — the last is the
+   * `[object Object]` case this function exists for. The rest pin the branches
+   * that are easy to lose in a rewrite and impossible to notice in the UI.
+   */
+  const SHARED_SHAPES: readonly unknown[] = [
+    new Error('ECONNRESET'),
+    'plain text',
+    { a: 1 },
+    { code: 'NETWORK_ERROR', message: 'socket hang up' },
+    { message: 'no code on this one' },
+    { weird: true, shape: 1 },
+    {},
+    null,
+    undefined,
+    42,
+    true,
+    Object.create(null),
+  ];
+
+  it('answers exactly what the contract version answers', () => {
+    // Indexed rather than printed: one of the fixtures has no prototype, and a
+    // failure message that throws would hide the disagreement it is about.
+    SHARED_SHAPES.forEach((value, index) => {
+      expect(
+        rendererDescribeError(value),
+        `the two copies disagree about shape #${index}`,
+      ).toBe(describeError(value));
+    });
+  });
+
+  it('never renders the string "[object Object]"', () => {
+    // The blunt claim, for the same reason the contract version makes it: the
+    // first version of this function was `String(error)`, and `{a:1}` is the
+    // value that reached a user as `[object Object]`.
+    for (const value of SHARED_SHAPES) {
+      expect(rendererDescribeError(value)).not.toContain('[object Object]');
+      expect(rendererDescribeError(value).length).toBeGreaterThan(0);
+    }
+    expect(rendererDescribeError({ a: 1 })).toBe('[object a]');
+  });
+
+  it('keeps an Error message, and a string, as written', () => {
+    // The two cases every call site actually sees, stated separately because a
+    // plausible rewrite (`String(value ?? '')`) passes the loop above and fails
+    // this one.
+    expect(rendererDescribeError(new Error('安装包校验失败'))).toBe('安装包校验失败');
+    expect(rendererDescribeError('下载通道已断开')).toBe('下载通道已断开');
+  });
+});
+
+const rendererSrc = path.resolve(here, '../../apps/desktop/src/renderer/src');
+
+/** One renderer source file, named relative to the directory being scanned. */
+interface RendererSource {
+  readonly file: string;
+  readonly text: string;
+}
+
+/** Every `.ts`/`.tsx` file under the Renderer, sorted for a stable failure. */
+function rendererSources(dir: string = rendererSrc): RendererSource[] {
+  const out: RendererSource[] = [];
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true }).sort((a, b) =>
+    a.name.localeCompare(b.name),
+  )) {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      out.push(...rendererSources(full));
+    } else if (/\.tsx?$/.test(entry.name)) {
+      out.push({ file: path.relative(rendererSrc, full), text: fs.readFileSync(full, 'utf8') });
+    }
+  }
+  return out;
+}
+
+/**
+ * The expression this module replaced, as a regex.
+ *
+ * `err instanceof Error ? err.message : String(err)` — a formatting decision
+ * made at the call site. It answers `[object Object]` for every non-`Error`
+ * object, and each copy is a place the next fix does not reach.
+ */
+const INLINE_ERROR_FORMAT = /\b\w+ instanceof Error \? \w+\.message : String\(\w+\)/;
+
+/**
+ * Every renderer line that formats a caught value inline, with its line number.
+ *
+ * Comments are blanked first (`blankComments`), because the module docs *name*
+ * this pattern while explaining why it is gone — prose is not a call site. The
+ * blanking keeps byte positions, so the line number is the real one.
+ */
+function inlineErrorFormats(sources: readonly RendererSource[]): string[] {
+  const found: string[] = [];
+  for (const source of sources) {
+    const code = blankComments(source.text);
+    code.split('\n').forEach((line, index) => {
+      if (INLINE_ERROR_FORMAT.test(line)) {
+        found.push(`${source.file}:${index + 1}: ${line.trim()}`);
+      }
+    });
+  }
+  return found;
+}
+
+describe('the Renderer formats a caught value in one place', () => {
+  it('reads the directory this gate is about', () => {
+    const sources = rendererSources();
+    expect(sources.length, 'no renderer sources found, so the scan below proves nothing')
+      .toBeGreaterThan(20);
+    expect(sources.map((source) => source.file)).toContain('error-message.ts');
+    expect(sources.map((source) => source.file)).toContain(
+      path.join('components', 'UpdateBanner.tsx'),
+    );
+  });
+
+  it('has no inline copy left at any call site', () => {
+    const found = inlineErrorFormats(rendererSources());
+    expect(
+      found,
+      `these call sites format a caught value themselves instead of calling describeError():\n  ${found.join('\n  ')}`,
+    ).toEqual([]);
+  });
+
+  it('defines describeError once, in the module the comment points at', () => {
+    const definitions = rendererSources()
+      .filter((source) => /(?:export )?function describeError\(/.test(blankComments(source.text)))
+      .map((source) => source.file);
+    expect(definitions).toEqual(['error-message.ts']);
+  });
+
+  it('can fail, and does not count prose as a call site', () => {
+    // A gate whose only evidence is green is a gate nobody has seen work. The
+    // first fixture is the shape that was removed; the second is the same
+    // sentence in a comment, which must not fail the scan.
+    expect(
+      inlineErrorFormats([
+        { file: 'x.tsx', text: 'setError(e instanceof Error ? e.message : String(e));' },
+      ]),
+    ).toHaveLength(1);
+    expect(
+      inlineErrorFormats([
+        {
+          file: 'y.tsx',
+          text: '// used to be setError(e instanceof Error ? e.message : String(e))',
+        },
+      ]),
+    ).toEqual([]);
+  });
+
+  it('is imported by the call sites that used to hold a copy', () => {
+    // The files that carried one or more copies. A rewrite that drops the
+    // import and re-derives the sentence locally fails here even if it does so
+    // in a spelling the regex above does not know.
+    const expected = [
+      path.join('components', 'UpdateBanner.tsx'),
+      path.join('components', 'Settings.tsx'),
+      path.join('components', 'Panels.tsx'),
+      path.join('components', 'TerminalPanel.tsx'),
+      path.join('state', 'hooks.ts'),
+      'App.tsx',
+    ];
+    const sources = new Map(rendererSources().map((source) => [source.file, source.text]));
+    for (const file of expected) {
+      expect(sources.get(file), `${file} is missing`).toContain(
+        `import { describeError } from`,
+      );
     }
   });
 });

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { UpdateStatus } from '@ucad/contracts';
 import { getApi } from '../api';
 import { useT } from '../i18n-context';
+import { describeError } from '../error-message';
 
 /**
  * Update banner.
@@ -20,11 +21,14 @@ import { useT } from '../i18n-context';
  * what lets the banner say which one it is still waiting on, and it is why an
  * unrelated failure that arrives after a click is still the user's to see.
  *
- * `pendingAction` ends when the action does: a terminal status for that action
- * (`ready` after a download, anything past `checking` for a check) clears it,
- * as does dismissing a failure. Progress (`downloading`, `checking`) does not,
- * or a download that fails after its progress bar appeared would lose the
- * failure. An error status keeps it so the failure stays rendered.
+ * `pendingAction` ends when the action does, and "does" is `ACTION_COMPLETED_STATES`
+ * below rather than a rule spread over two `if`s: one row per action, listing
+ * the statuses that answer it. A download is over at `ready` and nowhere else
+ * (`available` downloaded nothing); a check and an install are over at any
+ * status that is not progress or failure. Progress (`checking`, `downloading`)
+ * never ends one, or a download that fails after its progress bar appeared
+ * would lose the failure; `error` never does, because the failure is exactly
+ * what the pending action is still for. Dismissing a failure ends it too.
  *
  * The three calls are also awaited here, not just pushed. The main process
  * pushes every transition, but an IPC rejection is a failure with no status:
@@ -40,33 +44,49 @@ import { useT } from '../i18n-context';
  */
 
 /** The action the user started from this banner. */
-type PendingAction = 'download' | 'install' | 'check';
+export type PendingAction = 'download' | 'install' | 'check';
+
+/**
+ * Which statuses mean each action is over — one row per action, no complement.
+ *
+ * The rule used to be a complement (`not error, not checking, not downloading
+ * → over`, with a special case for a download), which is a rule you can only
+ * read by subtracting: a *new* state silently counted as an ending for every
+ * action, so the banner would forget a check while it was still running. As a
+ * table the question is asked per status and per action, a new `UpdateState`
+ * is a row somebody has to answer, and
+ * `tests/e2e/update-banner.e2e.test.tsx` walks the cross product to check that
+ * this is the table `actionCompleted()` actually reads.
+ *
+ * `error` is in no row on purpose — the failure is what the pending action is
+ * for. Progress (`checking`, `downloading`) is in no row either: a download
+ * that has shown its bar is still the download whose failure the user is
+ * waiting on.
+ */
+export const ACTION_COMPLETED_STATES = {
+  // A check answers with where the app stands now: up to date, a version to
+  // download, a verified installer, or no feed. `idle` is the service before
+  // any check and still an answer to a click that arrived during start-up.
+  check: ['idle', 'up-to-date', 'available', 'ready', 'unsupported'],
+  // Only `ready`: `available` is the state a download *starts* from, so it
+  // cannot be the download's answer, and `up-to-date` would be a check's.
+  download: ['ready'],
+  // An install answers with a boolean, not a status (the app quits), so any
+  // settled status ends it. A failed install arrives as a rejected IPC call —
+  // `localFailure` — which this table never sees.
+  install: ['idle', 'up-to-date', 'available', 'ready', 'unsupported'],
+} as const satisfies Readonly<Record<PendingAction, readonly UpdateStatus['state'][]>>;
 
 /**
  * Whether a status means `action` is over, so the banner may forget it.
  *
- * `error` is not an ending on purpose: the failure is what the pending action
- * is for. Progress statuses are not endings either — a download that has shown
- * its bar is still the download whose failure the user is waiting on.
+ * Reads the table rather than deciding again: the e2e suite asserts the two
+ * agree for every action × state pair, so a state this function answered
+ * differently would be a red test instead of a second opinion.
  */
-function actionCompleted(action: PendingAction, state: UpdateStatus['state']): boolean {
-  if (state === 'error' || state === 'checking' || state === 'downloading') return false;
-  // A download ends at `ready`; an `available` status did not download
-  // anything, so it cannot be the download's answer.
-  return action === 'download' ? state === 'ready' : true;
-}
-
-/**
- * The message in an IPC rejection.
- *
- * Main rejects every handler with a real `Error` (`toUserError` in
- * `main/ipc.ts`), and the Renderer deliberately imports no runtime code from
- * the CommonJS `@ucad/contracts`, so it cannot use `describeError` either.
- * `String(error)` keeps a non-`Error` rejection from rendering as
- * `[object Object]`.
- */
-function describeError(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
+export function actionCompleted(action: PendingAction, state: UpdateStatus['state']): boolean {
+  const endings: readonly UpdateStatus['state'][] = ACTION_COMPLETED_STATES[action];
+  return endings.includes(state);
 }
 
 export function UpdateBanner(): JSX.Element | null {

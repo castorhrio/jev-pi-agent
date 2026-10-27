@@ -49,6 +49,7 @@ import {
   buildHandoffPrompt,
   sectionLabelKey,
 } from '../../shared/handoff-prompt';
+import { describeError } from './error-message';
 
 type Surface =
   | 'chat'
@@ -66,17 +67,6 @@ type Surface =
   | 'mcp'
   | 'handoff'
   | 'recent';
-
-/**
- * Main rejects every handler with a real `Error` (`toUserError` in
- * main/ipc.ts), so this never sees the `AppError` *object* — and the Renderer
- * deliberately imports no runtime code from the CommonJS `@ucad/contracts`, so
- * it cannot use `describeError` either. Kept in one place so a new call site
- * cannot quietly reintroduce `[object Object]`.
- */
-function describe(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
 
 /** Surfaces that take over the full main column (no conversation underneath). */
 const FULL_SURFACES: ReadonlySet<Surface> = new Set<Surface>([
@@ -297,7 +287,7 @@ function Shell(): JSX.Element {
       setSurface('chat');
       flash(workspace.name);
     } catch (error) {
-      setFatal(error instanceof Error ? error.message : String(error));
+      setFatal(describeError(error));
     }
   }, [api, data, flash]);
 
@@ -344,7 +334,7 @@ function Shell(): JSX.Element {
       // This is reached from the menu item, the rail's "+" and `send()` alike.
       // An unhandled rejection here looked to the user like a button that did
       // nothing, so the reason is surfaced and the typed text is kept.
-      flash(t('session.createFailed', { reason: describe(error) }));
+      flash(t('session.createFailed', { reason: describeError(error) }));
       return null;
     }
   }, [api, data, agentId, permissionMode, providerId, t, flash]);
@@ -374,7 +364,7 @@ function Shell(): JSX.Element {
           ...(providerId !== '' ? { providerId } : {}),
         });
       } catch (error) {
-        setFatal(error instanceof Error ? error.message : String(error));
+        setFatal(describeError(error));
       } finally {
         setBusy(false);
       }
@@ -392,7 +382,7 @@ function Shell(): JSX.Element {
     await api.sessions
       .cancel(sessionId)
       .then(() => undefined)
-      .catch((error: unknown) => flash(t('session.stopFailed', { reason: describe(error) })));
+      .catch((error: unknown) => flash(t('session.stopFailed', { reason: describeError(error) })));
   }, [api, sessionId, t, flash]);
 
   const renameSession = useCallback(
@@ -400,7 +390,7 @@ function Shell(): JSX.Element {
       void api.sessions
         .rename(id, title)
         .then(() => data.refresh())
-        .catch((error: unknown) => flash(t('session.renameFailed', { reason: describe(error) })));
+        .catch((error: unknown) => flash(t('session.renameFailed', { reason: describeError(error) })));
     },
     [api, data, t, flash],
   );
@@ -416,7 +406,7 @@ function Shell(): JSX.Element {
           return data.refresh();
         })
         .then(() => flash(t('session.deleted', { title })))
-        .catch((error: unknown) => flash(t('session.deleteFailed', { reason: describe(error) })));
+        .catch((error: unknown) => flash(t('session.deleteFailed', { reason: describeError(error) })));
     },
     [api, data, t, flash],
   );
@@ -442,7 +432,7 @@ function Shell(): JSX.Element {
         .then(setHandoffHistory)
         .catch(() => undefined);
     } catch (error) {
-      flash(t('handoff.failed', { reason: describe(error) }));
+      flash(t('handoff.failed', { reason: describeError(error) }));
     } finally {
       setHandoffBusy(false);
     }
@@ -474,7 +464,7 @@ function Shell(): JSX.Element {
       } catch (error) {
         // A refusal here is information, not a crash: it is how the user
         // learns another agent already holds this handoff.
-        flash(t('handoff.claimFailed', { reason: describe(error) }));
+        flash(t('handoff.claimFailed', { reason: describeError(error) }));
         await api.sessions
           .listHandoffs(sessionId)
           .then(setHandoffHistory)
@@ -537,7 +527,7 @@ function Shell(): JSX.Element {
               .catch((error: unknown) => {
                 flash(
                   t('session.exportFailed', {
-                    reason: error instanceof Error ? error.message : String(error),
+                    reason: describeError(error),
                   }),
                 );
               });
@@ -692,7 +682,7 @@ function Shell(): JSX.Element {
               .resume(sessionId)
               .then(() => data.refresh())
               .catch((error) =>
-                setFatal(error instanceof Error ? error.message : String(error)),
+                setFatal(describeError(error)),
               );
           }}
           onRenameSession={renameSession}

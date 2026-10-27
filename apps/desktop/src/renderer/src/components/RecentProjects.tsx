@@ -15,6 +15,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { getApi } from '../api';
 import { useT } from '../i18n-context';
 import type { WorkspaceActivationDto, WorkspaceDto } from '@ucad/contracts';
+import { describeError } from '../error-message';
 
 export function RecentProjects({
   currentId,
@@ -59,7 +60,7 @@ export function RecentProjects({
       .then((list) => setRows(list))
       .catch((e: unknown) => {
         setRows([]);
-        setError(e instanceof Error ? e.message : String(e));
+        setError(describeError(e));
       });
   }, []);
 
@@ -87,7 +88,7 @@ export function RecentProjects({
         // the whole point — the user needs to know whether to re-pick the folder
         // or to fix the mount. A failure does *not* navigate, so this notice is
         // shown where it is set.
-        setError(t('recent.switchFailed', { reason: e instanceof Error ? e.message : String(e) }));
+        setError(t('recent.switchFailed', { reason: describeError(e) }));
       })
       .finally(() => setBusyId(null));
   };

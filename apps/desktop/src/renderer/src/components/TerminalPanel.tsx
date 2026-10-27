@@ -36,6 +36,7 @@ import type { PtyAvailabilityDto, PtyDataEvent, PtyExitEvent, TerminalDataEvent,
 import { getApi } from '../api';
 import { useT } from '../i18n-context';
 import type { AppData } from '../state/hooks';
+import { describeError } from '../error-message';
 
 // ---------------------------------------------------------------------------
 // session registry
@@ -111,7 +112,7 @@ export function TerminalPanel({ data }: { data: AppData }): JSX.Element {
         // terminal is not usable and the reason has to be on screen.
         setAvailability({
           available: false,
-          reason: message(error),
+          reason: describeError(error),
           platform: 'unknown',
         });
       });
@@ -185,7 +186,7 @@ export function TerminalPanel({ data }: { data: AppData }): JSX.Element {
     } catch (error) {
       // Main refuses with the real reason (a missing native module, a directory
       // outside the workspace). "Nothing happened" would read as a dead button.
-      setFailure(`${t('terminal.failed')}: ${message(error)}`);
+      setFailure(`${t('terminal.failed')}: ${describeError(error)}`);
     } finally {
       setBusy(false);
     }
@@ -197,7 +198,7 @@ export function TerminalPanel({ data }: { data: AppData }): JSX.Element {
         await api.terminal.ptyKill(id);
       } catch (error) {
         const session = sessions.get(id);
-        if (session) session.exit = message(error);
+        if (session) session.exit = describeError(error);
         setIds((list) => list);
       }
     },
@@ -409,7 +410,7 @@ function PtyView({ session, api }: { session: PtySession; api: UcadApi }): JSX.E
     // editing, which is the entire reason this is a PTY and not a form field.
     const offData = term.onData((data) => {
       void api.terminal.ptyWrite(session.id, data).catch((error: unknown) => {
-        session.exit = message(error);
+        session.exit = describeError(error);
       });
     });
     const offResize = term.onResize(({ cols, rows }) => {
@@ -530,7 +531,7 @@ function CommandConsole({ api }: { api: UcadApi }): JSX.Element {
       ]);
       setSelected(terminalId);
     } catch (error) {
-      setFailure(`${t('terminal.failed')}: ${message(error)}`);
+      setFailure(`${t('terminal.failed')}: ${describeError(error)}`);
     } finally {
       setBusy(false);
     }
@@ -543,7 +544,7 @@ function CommandConsole({ api }: { api: UcadApi }): JSX.Element {
         setConsoles((list) => list.map((entry) => (entry.id === id ? { ...entry, state: 'killed' } : entry)));
       } catch (error) {
         setConsoles((list) =>
-          list.map((entry) => (entry.id === id ? { ...entry, state: 'ended', error: message(error) } : entry)),
+          list.map((entry) => (entry.id === id ? { ...entry, state: 'ended', error: describeError(error) } : entry)),
         );
       }
     },
@@ -570,7 +571,7 @@ function CommandConsole({ api }: { api: UcadApi }): JSX.Element {
     } catch (error) {
       setConsoles((list) =>
         list.map((item) =>
-          item.id === selected ? { ...item, state: 'ended', error: message(error) } : item,
+          item.id === selected ? { ...item, state: 'ended', error: describeError(error) } : item,
         ),
       );
     }
@@ -793,10 +794,6 @@ function push(entry: ConsoleEntry, segment: Segment): ConsoleEntry {
 function streamOf(event: TerminalDataEvent): 'stdout' | 'stderr' {
   const raw = (event as { stream?: unknown }).stream;
   return raw === 'stderr' ? 'stderr' : 'stdout';
-}
-
-function message(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }
 
 function shortId(id: string): string {

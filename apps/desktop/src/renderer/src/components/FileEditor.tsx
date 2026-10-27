@@ -17,6 +17,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { getApi } from '../api';
 import { useT } from '../i18n-context';
+import { describeError } from '../error-message';
 
 const AUTOSAVE_DEBOUNCE_MS = 800;
 
@@ -56,7 +57,7 @@ export function FileEditor({
       .catch((error) => {
         if (cancelled) return;
         setState('error');
-        setMessage(error instanceof Error ? error.message : String(error));
+        setMessage(describeError(error));
       });
     return () => {
       cancelled = true;
@@ -77,7 +78,7 @@ export function FileEditor({
         setState('idle');
         onSaved?.();
       } catch (error) {
-        const text = error instanceof Error ? error.message : String(error);
+        const text = describeError(error);
         // A revision mismatch is not a failure to retry blindly — it means
         // something else changed the file and the user has to choose.
         if (/revision|conflict|冲突|已修改/i.test(text)) {

@@ -4,6 +4,7 @@ import { useT } from '../i18n-context';
 import { FileEditor } from './FileEditor';
 import { ReadFailure } from './ReadFailure';
 import type { AppData } from '../state/hooks';
+import { describeError } from '../error-message';
 
 type Entry = { name: string; path: string; kind: 'file' | 'dir' };
 
@@ -70,7 +71,7 @@ export function Explorer({
       .catch((error: unknown) => {
         if (cancelled) return;
         setEntries([]);
-        setListError(error instanceof Error ? error.message : String(error));
+        setListError(describeError(error));
       });
     return () => {
       cancelled = true;
@@ -94,7 +95,7 @@ export function Explorer({
         }),
       )
       .catch((error: unknown) =>
-        setFileError(error instanceof Error ? error.message : String(error)),
+        setFileError(describeError(error)),
       );
   }, [selectedPath]);
 
@@ -112,7 +113,7 @@ export function Explorer({
           setFile({ path, content: result.content, truncated: result.truncated }),
         )
         .catch((error: unknown) =>
-          setFileError(error instanceof Error ? error.message : String(error)),
+          setFileError(describeError(error)),
         );
     },
     [onSelectFile],
@@ -166,7 +167,7 @@ export function Explorer({
          */
         setTrustError(
           t('trust.failed', {
-            reason: error instanceof Error ? error.message : String(error),
+            reason: describeError(error),
           }),
         );
       }
@@ -317,7 +318,7 @@ export function Changes({ data }: { data: AppData }): JSX.Element {  const t = u
       setStatus(await getApi().git.status(workspaceId));
       setError(null);
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(describeError(e));
     }
   }, [workspaceId]);
 
@@ -340,7 +341,7 @@ export function Changes({ data }: { data: AppData }): JSX.Element {  const t = u
       await fn();
       await refresh();
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(describeError(e));
     }
   };
 
@@ -349,7 +350,7 @@ export function Changes({ data }: { data: AppData }): JSX.Element {  const t = u
       const d = await getApi().git.diff({ path });
       setPatch({ path, text: d.binary ? '' : d.patch });
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(describeError(e));
     }
   };
 

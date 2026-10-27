@@ -33,6 +33,7 @@ import type {
 import { getApi } from '../api';
 import { useT } from '../i18n-context';
 import type { AppData } from '../state/hooks';
+import { describeError } from '../error-message';
 
 const QUERY_KINDS: readonly IntelligenceQueryKind[] = [
   'search',
@@ -112,10 +113,6 @@ function newQueryOperationId(): string {
   return `uiq_${Date.now().toString(36)}_${random}_${queryCounter}`;
 }
 
-function message(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
-
 function toOutcome(value: unknown): QueryOutcome | null {
   if (typeof value !== 'object' || value === null) return null;
   const candidate = value as Record<string, unknown>;
@@ -173,7 +170,7 @@ export function IntelligencePanel({ data }: { data: AppData }): JSX.Element {
     } catch (error) {
       // Never fall back to an empty table here: an empty table and a failed
       // fetch look identical, and only one of them is true.
-      setProvidersFailed(message(error));
+      setProvidersFailed(describeError(error));
     } finally {
       setProvidersLoaded(true);
     }
@@ -193,7 +190,7 @@ export function IntelligencePanel({ data }: { data: AppData }): JSX.Element {
       setStatus(await api.intelligence.status(workspaceId, providerId));
     } catch (error) {
       setStatus(null);
-      setStatusFailure(message(error));
+      setStatusFailure(describeError(error));
     }
   }, [api, workspaceId, providerId]);
 
@@ -217,7 +214,7 @@ export function IntelligencePanel({ data }: { data: AppData }): JSX.Element {
         await loadStatus();
       } catch (error) {
         setHandle(null);
-        setOpFailure(`${t(operation === 'index' ? 'intel.index' : 'intel.refresh')} — ${message(error)}`);
+        setOpFailure(`${t(operation === 'index' ? 'intel.index' : 'intel.refresh')} — ${describeError(error)}`);
       } finally {
         setOpBusy(false);
       }
@@ -240,7 +237,7 @@ export function IntelligencePanel({ data }: { data: AppData }): JSX.Element {
       );
       await loadStatus();
     } catch (error) {
-      setOpFailure(message(error));
+      setOpFailure(describeError(error));
     }
   }, [api, handle, loadStatus, t]);
 
@@ -264,7 +261,7 @@ export function IntelligencePanel({ data }: { data: AppData }): JSX.Element {
       const payload = 'result' in envelope ? envelope.result : raw;
       setReport({ kind, outcome: toOutcome(payload), raw: payload, failure: null, operationId });
     } catch (error) {
-      setReport({ kind, outcome: null, raw: null, failure: message(error), operationId });
+      setReport({ kind, outcome: null, raw: null, failure: describeError(error), operationId });
     } finally {
       setQueryBusy(false);
       setRunningQueryId(null);
@@ -289,7 +286,7 @@ export function IntelligencePanel({ data }: { data: AppData }): JSX.Element {
           : (typeof reason === 'string' ? reason : t('intel.cancelMissed')),
       );
     } catch (error) {
-      setQueryCancelNote(message(error));
+      setQueryCancelNote(describeError(error));
     }
   }, [api, runningQueryId, t]);
 

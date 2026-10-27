@@ -2,7 +2,12 @@ import { describe, expect, it } from 'vitest';
 import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { I18nProvider } from '@renderer/i18n-context';
-import { UpdateBanner } from '@renderer/components/UpdateBanner';
+import {
+  ACTION_COMPLETED_STATES,
+  UpdateBanner,
+  actionCompleted,
+  type PendingAction,
+} from '@renderer/components/UpdateBanner';
 import { createFixtureApi } from '@renderer/dev/fixture-bridge';
 import {
   UPDATE_STATES,
@@ -134,6 +139,99 @@ function banner(): HTMLElement {
   if (found === null) throw new Error('the update banner is not rendered');
   return found as HTMLElement;
 }
+
+/**
+ * Every action the banner can be waiting on.
+ *
+ * `PendingAction` is a type, and this suite is transpiled without typechecking,
+ * so the list is written out and compared with the table's keys below: a third
+ * action fails here until it has a row and a sample.
+ */
+const PENDING_ACTIONS: readonly PendingAction[] = ['check', 'download', 'install'];
+
+/**
+ * The other half of "which status ends which action".
+ *
+ * `actionCompleted()` used to be a complement — "not error, not progress, so
+ * it is over" — with a special case for a download. That reads as a rule about
+ * endings while behaving as a rule about everything else, and the cost was
+ * concrete: a *new* `UpdateState` counted as an ending for every action, so a
+ * check would be forgotten while it was still running and its failure would
+ * then be dismissed as somebody else's. The table answers per action, and this
+ * block walks the cross product so the function and the table cannot drift.
+ */
+describe('the pending action ends where the table says', () => {
+  it('has one row per action, naming only real states', () => {
+    expect(
+      Object.keys(ACTION_COMPLETED_STATES).sort(),
+      'an action has no row, or a row exists for an action that is gone',
+    ).toEqual([...PENDING_ACTIONS].sort());
+
+    const known = new Set<string>(UPDATE_STATES);
+    for (const action of PENDING_ACTIONS) {
+      const row = ACTION_COMPLETED_STATES[action];
+      // An empty row would be "this action never ends", which is a rule — but
+      // not one anybody wrote down, and not what the banner does.
+      expect(row.length, `${action}: the row ends no status`).toBeGreaterThan(0);
+      expect(new Set(row).size, `${action}: a status is listed twice`).toBe(row.length);
+      for (const state of row) {
+        expect(known.has(state), `${action}: "${state}" is not an UpdateState`).toBe(true);
+      }
+    }
+  });
+
+  it('is what actionCompleted reads, for every action and state pair', () => {
+    for (const action of PENDING_ACTIONS) {
+      for (const state of UPDATE_STATES) {
+        expect(
+          actionCompleted(action, state),
+          `${action} × ${state}: actionCompleted disagrees with ACTION_COMPLETED_STATES`,
+        ).toBe((ACTION_COMPLETED_STATES[action] as readonly string[]).includes(state));
+      }
+    }
+  });
+
+  it('never counts progress or a failure as an ending', () => {
+    // The two statuses that must keep the banner waiting: a download that has
+    // shown its bar is still the download whose failure the user is watching,
+    // and `error` is the answer the pending action exists to render. A row that
+    // listed either would make the banner forget the thing it is waiting on.
+    for (const action of PENDING_ACTIONS) {
+      for (const state of ['checking', 'downloading', 'error'] as const) {
+        expect(
+          ACTION_COMPLETED_STATES[action],
+          `${action}: "${state}" ends the action, so the failure it is waiting for is lost`,
+        ).not.toContain(state);
+      }
+    }
+  });
+
+  it('ends a download at ready and nowhere else', () => {
+    // The row a complement gets wrong: `available` is the state a download
+    // *starts* from, so treating it as an ending means the banner stops
+    // watching before the bytes arrive.
+    expect(ACTION_COMPLETED_STATES.download).toEqual(['ready']);
+  });
+
+  it('keeps a download pending through available, so its failure is still shown', async () => {
+    // The behavioural half of the row above, and the defect a complement
+    // produces: the service can push `available` again (a re-check) while the
+    // download is in flight. If that ended the action, the failure that
+    // follows has no owner and the banner goes quiet mid-download.
+    const user = userEvent.setup();
+    const { show, emit } = mount(STATUS.available);
+    await show();
+
+    await user.click(within(banner()).getByRole('button', { name: '下载更新' }));
+    await emit(STATUS.available);
+    await emit(STATUS.error);
+
+    expect(
+      screen.getByRole('alert'),
+      'an `available` status during the download ended the action, hiding its failure',
+    ).toHaveTextContent('SHA-256');
+  });
+});
 
 describe('the update banner accounts for every state', () => {
   it('has a row for every state the contract can publish', () => {

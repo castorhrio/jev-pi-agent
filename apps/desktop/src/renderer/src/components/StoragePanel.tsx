@@ -24,6 +24,7 @@ import type { StoragePurgeResult, StoragePurgeScope, StorageUsageDto } from '@uc
 import { getApi } from '../api';
 import { useT } from '../i18n-context';
 import type { AppData } from '../state/hooks';
+import { describeError } from '../error-message';
 
 function Def({ k, children }: { k: string; children: React.ReactNode }): JSX.Element {  return (
     <div className="def">
@@ -31,10 +32,6 @@ function Def({ k, children }: { k: string; children: React.ReactNode }): JSX.Ele
       <span className="v">{children}</span>
     </div>
   );
-}
-
-function message(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }
 
 /** Byte counts are measured in bytes; only the unit is presentation. */
@@ -98,7 +95,7 @@ export function StoragePanel({ data }: { data: AppData }): JSX.Element {
       // An empty panel here would be a lie: the data exists, we failed to read
       // it, and the user has to be told which of the two it is.
       setUsage(null);
-      setUsageFailure(message(error));
+      setUsageFailure(describeError(error));
     } finally {
       setLoaded(true);
     }
@@ -122,7 +119,7 @@ export function StoragePanel({ data }: { data: AppData }): JSX.Element {
       );
       await load();
     } catch (error) {
-      setSaveFailure(message(error));
+      setSaveFailure(describeError(error));
     } finally {
       setSaveBusy(false);
     }
@@ -147,7 +144,7 @@ export function StoragePanel({ data }: { data: AppData }): JSX.Element {
       } catch (error) {
         setPreview(null);
         setArmed(null);
-        setPreviewFailure(message(error));
+        setPreviewFailure(describeError(error));
       }
     },
     [api, armed, workspaceId],
@@ -171,7 +168,7 @@ export function StoragePanel({ data }: { data: AppData }): JSX.Element {
       } catch (error) {
         // The reason is shown verbatim; a cleanup that failed silently is the
         // one outcome §17.1 rules out.
-        setPurgeFailure(message(error));
+        setPurgeFailure(describeError(error));
         setResult(null);
         setArmed(null);
         setPreview(null);
@@ -191,7 +188,7 @@ export function StoragePanel({ data }: { data: AppData }): JSX.Element {
       setOrphanNote(t('retention.collected', { count: done.removed, bytes: formatBytes(done.bytes) }));
       await load();
     } catch (error) {
-      setOrphanFailure(message(error));
+      setOrphanFailure(describeError(error));
     } finally {
       setOrphanBusy(false);
     }

@@ -32,6 +32,7 @@ import { MCP_ENV_MASK } from '@ucad/contracts';
 import { getApi } from '../api';
 import { useT } from '../i18n-context';
 import type { AppData } from '../state/hooks';
+import { describeError } from '../error-message';
 
 type ScopeFilter = 'all' | 'global' | 'workspace';
 type Transport = 'stdio' | 'http';
@@ -75,10 +76,6 @@ const EMPTY_FORM: FormState = {
   secretRef: '',
 };
 
-function message(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
-
 function Def({ k, children }: { k: string; children: ReactNode }): JSX.Element {
   return (
     <div className="def">
@@ -117,7 +114,7 @@ export function McpPanel({ data }: { data: AppData }): JSX.Element {
       // Never fall back to an empty list: "nothing configured" and "the load
       // failed" are different facts and only one of them is true.
       setServers(null);
-      setLoadFailed(message(error));
+      setLoadFailed(describeError(error));
     }
   }, [api, scope]);
 
@@ -141,7 +138,7 @@ export function McpPanel({ data }: { data: AppData }): JSX.Element {
         if (done) setFlash(done);
       } catch (error) {
         // Every failure path surfaces its reason; none of them is swallowed.
-        setFailure(message(error));
+        setFailure(describeError(error));
       } finally {
         setBusy(null);
       }

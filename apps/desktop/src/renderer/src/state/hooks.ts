@@ -19,6 +19,7 @@ import type {
 } from '@ucad/contracts';
 import { getApi } from '../api';
 import { emptySessionView, mergeDeltaText, reduceEvent, type SessionViewState } from './session-reducer';
+import { describeError } from '../error-message';
 
 /**
  * The reads in `refresh` that are guarded individually, named after the field
@@ -129,7 +130,7 @@ export function useAppData(activeSessionId: string | null): AppData {
       try {
         return await read();
       } catch (err) {
-        endpointErrors[key] = err instanceof Error ? err.message : String(err);
+        endpointErrors[key] = describeError(err);
         return fallback;
       }
     };
@@ -191,7 +192,7 @@ export function useAppData(activeSessionId: string | null): AppData {
       // `describeError` exists for — and it imports no runtime code from
       // `@ucad/contracts` on purpose, keeping the Vite bundle free of the CJS
       // contracts package.
-      const message = error instanceof Error ? error.message : String(error);
+      const message = describeError(error);
       setLoadError(message);
       // A failed load is also a settled load. Leaving `loading` true here would
       // leave the window saying "loading…" forever next to an error message.
@@ -438,7 +439,7 @@ export function useSessionEvents(sessionId: string | null): SessionEvents {
     void start()
       .catch((err: unknown) => {
         if (cancelled) return;
-        setError(err instanceof Error ? err.message : String(err));
+        setError(describeError(err));
       })
       .finally(() => {
         // A failed replay is finished too. Leaving this true would pin the
@@ -494,7 +495,7 @@ export function usePermissionQueue(
     try {
       await getApi().permissions.respond(requestId, decision as never);
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(describeError(err));
     } finally {
       setBusy(false);
     }

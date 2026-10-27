@@ -13,6 +13,7 @@ import type { Locale } from '../../../shared/i18n';
 import type { AppData } from '../state/hooks';
 import type { SessionViewState } from '../state/session-reducer';
 import { ReadFailure } from './ReadFailure';
+import { describeError } from '../error-message';
 
 function Def({ k, children }: { k: string; children: React.ReactNode }): JSX.Element {
   return (
@@ -170,7 +171,7 @@ export function SettingsPanel({
     try {
       setUpdate(await getApi().app.checkUpdate());
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : String(error));
+      setMessage(describeError(error));
     } finally {
       setChecking(false);
     }
@@ -184,7 +185,7 @@ export function SettingsPanel({
       setHint(described.configured ? described.keyHint : null);
       setSecret('');
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : String(error));
+      setMessage(describeError(error));
     }
   }, [provider, key, secret]);
 
@@ -202,7 +203,7 @@ export function SettingsPanel({
         await getApi().settings.patch({ window: { closeBehaviour: next } });
         onChanged();
       } catch (error) {
-        setCloseError(error instanceof Error ? error.message : String(error));
+        setCloseError(describeError(error));
       }
     },
     [onChanged],
@@ -605,7 +606,7 @@ function ProviderSection({
         [id]: {
           ok: false,
           latencyMs: 0,
-          reason: error instanceof Error ? error.message : String(error),
+          reason: describeError(error),
         },
       }));
     } finally {
@@ -637,7 +638,7 @@ function ProviderSection({
           [providerId]: {
             ok: false,
             latencyMs: 0,
-            reason: error instanceof Error ? error.message : String(error),
+            reason: describeError(error),
           },
         }));
       } finally {
@@ -666,7 +667,7 @@ function ProviderSection({
         [providerId]: {
           ok: false,
           latencyMs: 0,
-          reason: error instanceof Error ? error.message : String(error),
+          reason: describeError(error),
         },
       }));
     } finally {

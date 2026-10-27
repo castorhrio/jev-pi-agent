@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { getApi } from '../api';
 import { useT } from '../i18n-context';
 import type { AppData } from '../state/hooks';
+import { describeError } from '../error-message';
 
 type FileEntry = { name: string; path: string; kind: 'file' | 'dir' };
 
@@ -272,7 +273,7 @@ function FileTree({
         if (!cancelled) setEntries(list);
       })
       .catch((e) => {
-        if (!cancelled) setError(e instanceof Error ? e.message : String(e));
+        if (!cancelled) setError(describeError(e));
       });
     return () => {
       cancelled = true;
