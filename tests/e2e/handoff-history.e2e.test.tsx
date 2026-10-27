@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { App } from '@renderer/App';
 import { createFixtureApi } from '@renderer/dev/fixture-bridge';
@@ -21,6 +21,14 @@ import type { UcadApi } from '@ucad/contracts';
  */
 
 type Fixture = ReturnType<typeof createFixtureApi>;
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((res) => {
+    resolve = res;
+  });
+  return { promise, resolve };
+}
 
 function mount(scenario: Parameters<typeof createFixtureApi>[0] = 'default') {
   const fixture: Fixture = createFixtureApi(scenario);
@@ -128,6 +136,60 @@ describe('handoff history (RESEARCH §2 supersede-not-delete)', () => {
 
     await waitFor(() => expect(document.querySelector('.handoff-doc')).toBeNull());
     expect(screen.getByRole('button', { name: '生成交接摘要' })).toBeTruthy();
+  });
+
+  it('drops a chain read that resolves after another session is selected', async () => {
+    const user = userEvent.setup();
+    const fixture: Fixture = createFixtureApi('default');
+    // Read the seeded chain before overriding the bridge: this is what the
+    // previous session's slow answer will eventually deliver.
+    const previousChain = await fixture.api.sessions.listHandoffs('sess-1');
+    const late = deferred<typeof previousChain>();
+    let readsForPreviousSession = 0;
+    (fixture.api.sessions as { listHandoffs: (id: string) => Promise<unknown> }).listHandoffs = (
+      id,
+    ) => {
+      if (id !== 'sess-1') return Promise.resolve([]);
+      readsForPreviousSession += 1;
+      // The opening read answers immediately so the panel starts from a known
+      // empty state; the read started by "generate" is the one held open.
+      return readsForPreviousSession === 1 ? Promise.resolve([]) : late.promise;
+    };
+    (window as unknown as Record<string, unknown>).ucad = fixture.api;
+    render(<App />);
+    await settle();
+
+    await user.click(within(nav()).getByRole('button', { name: /更多/ }));
+    await user.click(await screen.findByRole('menuitem', { name: '交接' }));
+    await screen.findByText('交接摘要', { selector: 'h1' });
+    await waitFor(() => expect(screen.queryByText('交接历史')).toBeNull());
+
+    // Generating appends a record, then re-reads the chain. That second read is
+    // not the opening effect, so its only protection is the read token. The
+    // panel stays busy while it is pending, hence the call count rather than
+    // the "regenerate" label as the signal.
+    await user.click(screen.getByRole('button', { name: '生成交接摘要' }));
+    await waitFor(() => expect(readsForPreviousSession).toBe(2));
+    await waitFor(() => expect(document.querySelector('.handoff-doc')).not.toBeNull());
+
+    // Switch while the previous session's chain read is still in flight. The
+    // new session has no records, which is what the panel must keep saying.
+    await user.click(screen.getByText('Context Broker 预算账本'));
+    await waitFor(() => expect(document.querySelector('.handoff-doc')).toBeNull());
+    await waitFor(() => expect(screen.queryByText('交接历史')).toBeNull());
+
+    await act(async () => {
+      late.resolve(previousChain);
+      await late.promise;
+    });
+
+    // Clearing on switch is not enough: the answer arrived afterwards and
+    // belongs to a session nobody is looking at any more.
+    expect(
+      screen.queryByText('交接历史'),
+      'a late chain read from the previous session landed under the selected one',
+    ).toBeNull();
+    expect(screen.getByText(/还没有交接摘要/)).toBeTruthy();
   });
 
   it('shows an existing chain on open, without asking for a new handoff first', async () => {

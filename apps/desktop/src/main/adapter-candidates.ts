@@ -1,3 +1,5 @@
+import { DEFAULT_AGENT_ID } from '@ucad/contracts';
+
 /**
  * The adapters this build tries to load, in the order they are tried.
  *
@@ -35,6 +37,21 @@ export const ADAPTER_CANDIDATES = Object.freeze({
   // The executable specification of the protocol, for offline work and CI.
   mock: '@ucad/adapter-mock',
 } as const satisfies Record<string, string>);
+
+/**
+ * Compile-time proof that the fallback agent names an adapter this build ships.
+ *
+ * `DEFAULT_AGENT_ID` lives in the contracts package because the Renderer needs
+ * it, and the Renderer must not import a Main-process module to learn which
+ * adapter the Main process loads. That leaves two files stating one fact again,
+ * so this assignment makes the table the authority: remove or rename the
+ * adapter and `DEFAULT_AGENT_ID` stops being a key, `never` is not assignable
+ * to `true`, and the build fails here instead of the fallback drifting to an id
+ * no adapter answers to.
+ */
+export const DEFAULT_AGENT_IS_A_CANDIDATE: typeof DEFAULT_AGENT_ID extends keyof typeof ADAPTER_CANDIDATES
+  ? true
+  : never = true;
 
 /**
  * The ids of `ADAPTER_CANDIDATES`, in the order the app tries them.

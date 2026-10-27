@@ -33,6 +33,7 @@ import type {
   ContextStrategy,
   ExtendDropReason,
 } from '@ucad/contracts';
+import { DEFAULT_AGENT_ID } from '@ucad/contracts';
 import { getApi } from '../api';
 import { useT } from '../i18n-context';
 import type { Translate } from '../../../shared/i18n';
@@ -166,7 +167,9 @@ export function ContextDrawer({
       // An empty `defaultAgentId` means "not chosen yet" (§defaults), not a
       // missing key, so this has to be a truthy check rather than `??`.
       const agentId =
-        data.settings?.agent.defaultAgentId || data.agents[0]?.manifest.id || 'mock';
+        data.settings?.agent.defaultAgentId ||
+        data.agents[0]?.manifest.id ||
+        DEFAULT_AGENT_ID;
       const next = await getApi().context.preview({
         workspaceId: data.workspace.id,
         sessionId,

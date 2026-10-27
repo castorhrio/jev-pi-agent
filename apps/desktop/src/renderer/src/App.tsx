@@ -7,6 +7,7 @@ import type {
   HandoffRecord,
   ProviderDescriptorDto,
 } from '@ucad/contracts';
+import { DEFAULT_AGENT_ID } from '@ucad/contracts';
 
 /**
  * The terminal panel is loaded on demand; see the note where it renders.
@@ -161,6 +162,23 @@ function Shell(): JSX.Element {
   const [handoffHistory, setHandoffHistory] = useState<HandoffRecord[]>([]);
   const [handoffHistoryError, setHandoffHistoryError] = useState<string | null>(null);
   const [handoffBusy, setHandoffBusy] = useState(false);
+  /**
+   * Which session the handoff panel is showing, and a sequence number for its
+   * reads.
+   *
+   * Both are updated during render, before any effect or promise continuation
+   * for the new session can run. A session switch bumps the token, so a read
+   * that started under the previous session has already lost its claim by the
+   * time it resolves. Without this the opening effect's `cancelled` flag
+   * covered one path only: a read started by `generateHandoff` or a claim had
+   * no token, and its late answer could populate the next session's panel.
+   */
+  const handoffSession = useRef(sessionId);
+  const handoffReadToken = useRef(0);
+  if (handoffSession.current !== sessionId) {
+    handoffSession.current = sessionId;
+    handoffReadToken.current += 1;
+  }
   const [permissionMode, setPermissionMode] = useState<PermissionMode>('ask');
   /**
    * `''` = no explicit agent choice yet; the effect below seeds it from
@@ -202,7 +220,10 @@ function Shell(): JSX.Element {
    * load still names a real agent rather than an empty string.
    */
   const effectiveAgentId =
-    agentId || data.settings?.agent.defaultAgentId || data.agents[0]?.manifest.id || 'mock';
+    agentId ||
+    data.settings?.agent.defaultAgentId ||
+    data.agents[0]?.manifest.id ||
+    DEFAULT_AGENT_ID;
 
   const { view, error: streamError, gaps, replaying } = useSessionEvents(sessionId);
   const { pending, respond, busy: permissionBusy, error: permissionError } =
@@ -306,18 +327,30 @@ function Shell(): JSX.Element {
    * diagnostics already render read failures as themselves; the handoff
    * history was the one surface that did not.
    *
-   * `isCancelled` is how the opening effect keeps a slow read for a previous
-   * session from landing under the current one.
+   * A read may only write if it is still the newest *and* still belongs to the
+   * selected session. `isCancelled` covers the opening effect's unmount; the
+   * token covers every other path — a regenerate, a claim's re-read, two
+   * overlapping reads — and the session switch itself, which bumps the token
+   * during render before a late answer can be observed. A read with no claim
+   * is dropped silently: the session that replaced it owns the panel.
    */
   const refreshHandoffHistory = useCallback(
     async (id: string, isCancelled: () => boolean = () => false): Promise<void> => {
+      // A caller that outlived a session switch (a slow write resolving into
+      // the old closure) must not even start a read for the session it named:
+      // the panel is showing a different one now.
+      if (handoffSession.current !== id) return;
+      const token = handoffReadToken.current + 1;
+      handoffReadToken.current = token;
+      const ownsRead = (): boolean =>
+        !isCancelled() && handoffSession.current === id && handoffReadToken.current === token;
       try {
         const list = await api.sessions.listHandoffs(id);
-        if (isCancelled()) return;
+        if (!ownsRead()) return;
         setHandoffHistory(list);
         setHandoffHistoryError(null);
       } catch (error) {
-        if (!isCancelled()) setHandoffHistoryError(describeError(error));
+        if (ownsRead()) setHandoffHistoryError(describeError(error));
       }
     },
     [api],

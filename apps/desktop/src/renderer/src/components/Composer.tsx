@@ -8,6 +8,7 @@ import {
   type KeyboardEvent,
 } from 'react';
 import type { AgentCatalogEntry, PermissionMode, ProviderDescriptorDto } from '@ucad/contracts';
+import { DEFAULT_AGENT_ID } from '@ucad/contracts';
 import { getApi } from '../api';
 import { useT } from '../i18n-context';
 
@@ -240,7 +241,7 @@ export const Composer = forwardRef<
               >
                 {(props.agents.length > 0
                   ? props.agents.map((a) => a.manifest.id)
-                  : ['mock']
+                  : [DEFAULT_AGENT_ID]
                 ).map((id) => (
                   <option key={id} value={id}>
                     {props.agents.find((a) => a.manifest.id === id)?.manifest.displayName ?? id}

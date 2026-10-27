@@ -205,19 +205,41 @@ export function UpdateControllerProvider({ children }: { children: ReactNode }):
   }, [applyStatus]);
 
   /**
+   * Takes ownership of an answer, and ends the one action that ends with its
+   * call.
+   *
+   * Ownership is checked against the token, not just the action name: a check
+   * started before a download must not apply its late status (which may be an
+   * ending for the download) or overwrite the download's failure. `false` means
+   * the action was superseded, and the caller drops the answer silently.
+   *
+   * An install ends when `installUpdate()` settles, whether it resolved or
+   * rejected. A success normally quits the app, but the harness, `dev:web` and
+   * a quit the user cancels all stay alive: leaving the action set there would
+   * claim an install that is over, and the next background failure would be
+   * attributed to a click nobody is waiting on. A rejection ends it too —
+   * nothing can be retried without a fresh check, and the banner draws the
+   * local `failure` without asking for a pending action. Both outcomes go
+   * through this one release, so success and failure cannot drift apart.
+   *
+   * Every other action ends from `ACTION_COMPLETED_STATES` in `applyStatus`, so
+   * this function deliberately releases only `install`.
+   */
+  const settle = useCallback((action: PendingAction, token: number): boolean => {
+    if (pendingRef.current?.token !== token) return false;
+    if (action === 'install') {
+      pendingRef.current = null;
+      setPendingAction(null);
+    }
+    return true;
+  }, []);
+
+  /**
    * Starts an action and turns its rejection into the failure the user sees.
    *
-   * The answer is checked against the token, not just the action name: a
-   * check started before a download must not apply its late status (which may
-   * be an ending for the download) or overwrite the download's failure. A
-   * stale answer is dropped silently — the action that replaced it owns the
-   * screen.
-   *
-   * An install rejection ends the action. Nothing else can be retried without
-   * a fresh check, and the failure is what the user needs to read; leaving
-   * `pendingAction` set would keep claiming the app is still installing. The
-   * banner draws a local `failure` without asking for a pending action, so
-   * releasing it does not hide the reason.
+   * The answer is claimed through `settle` before anything is applied: a stale
+   * answer neither rewrites the status nor overwrites the current action's
+   * failure.
    */
   const run = useCallback(
     (action: PendingAction, start: () => Promise<unknown>): void => {
@@ -231,32 +253,19 @@ export function UpdateControllerProvider({ children }: { children: ReactNode }):
       clearFailures();
       void start()
         .then((next) => {
-          if (pendingRef.current?.token !== token) return;
+          if (!settle(action, token)) return;
           // `installUpdate()` answers a boolean; every other call answers the
           // status the subscription also sees. Applying it twice is harmless —
           // the state is the same — and it is what lets a check settle without
           // waiting for a push.
           if (isUpdateStatus(next)) applyStatus(next);
-          // A successful install normally quits the app, so nothing has to
-          // retire the action. Every other path that stays alive does: the
-          // harness, `dev:web`, and a quit the user cancels. Leaving it set
-          // would claim an install that is over, and the next background
-          // failure would then be attributed to a click nobody is waiting on.
-          if (action === 'install') {
-            pendingRef.current = null;
-            setPendingAction(null);
-          }
         })
         .catch((error: unknown) => {
-          if (pendingRef.current?.token !== token) return;
+          if (!settle(action, token)) return;
           setFailure(describeError(error));
-          if (action === 'install') {
-            pendingRef.current = null;
-            setPendingAction(null);
-          }
         });
     },
-    [applyStatus, clearFailures],
+    [applyStatus, clearFailures, settle],
   );
 
   const check = useCallback(() => run('check', () => getApi().app.checkUpdate()), [run]);

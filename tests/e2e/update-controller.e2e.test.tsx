@@ -43,6 +43,13 @@ const READY: UpdateStatus = {
   feedConfigured: true,
 };
 
+const ERROR: UpdateStatus = {
+  state: 'error',
+  currentVersion: '1.0.0',
+  message: 'a background check failed',
+  feedConfigured: true,
+};
+
 function deferred<T>() {
   let resolve!: (value: T) => void;
   const promise = new Promise<T>((res) => {
@@ -274,6 +281,26 @@ describe('the update controller hands failure ownership over in sequence', () =>
     );
     expect(field('failure')).toBe('none');
     expect(field('status')).toBe('ready');
+  });
+
+  it('does not hand a later error push to the install that already ended', async () => {
+    const user = userEvent.setup();
+    const { emit } = mount({
+      initial: async () => READY,
+      install: async () => true,
+    });
+    await waitFor(() => expect(field('status')).toBe('ready'));
+
+    await user.click(screen.getByRole('button', { name: 'run install' }));
+    await waitFor(() => expect(field('pending')).toBe('none'));
+
+    // The install is over. A background check failing afterwards is a status,
+    // not a failure of the click: there is no pending action left to own it,
+    // and `failure` must stay empty so the banner does not blame the install.
+    await emit(ERROR);
+    expect(field('status')).toBe('error');
+    expect(field('pending'), 'an error push revived the finished install action').toBe('none');
+    expect(field('failure'), 'an error push was attributed to the finished install').toBe('none');
   });
 
   it('ends a rejected install while keeping its reason readable', async () => {

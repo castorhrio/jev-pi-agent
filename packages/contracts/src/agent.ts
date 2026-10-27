@@ -11,6 +11,19 @@ import type { InboundEventProposal } from './events';
  */
 export type AgentTransport = 'worker' | 'child_process' | 'http' | 'acp';
 
+/**
+ * The agent id a turn falls back to when neither the settings nor the
+ * catalogue names one.
+ *
+ * This used to be a bare `'mock'` in two Renderer components, written
+ * independently of the adapter table the Main process actually loads. The two
+ * facts could drift: rename or remove the adapter and both fallbacks would keep
+ * naming something the build does not ship, with no test noticing. The id is
+ * declared here so both planes share one value, and `adapter-candidates.ts`
+ * ties it to `ADAPTER_CANDIDATES` at compile time.
+ */
+export const DEFAULT_AGENT_ID = 'mock' as const;
+
 export interface PinnedDependency {
   package: string;
   /** exact version only — no range (V-1) */
