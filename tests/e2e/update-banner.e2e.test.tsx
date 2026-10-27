@@ -431,6 +431,25 @@ describe('the update banner accounts for every state', () => {
     );
   });
 
+  it('still shows a rejected install after the action is no longer pending', async () => {
+    const user = userEvent.setup();
+    const { show } = mount(STATUS.ready, {
+      installError: new Error('安装程序校验失败'),
+    });
+    await show();
+
+    await user.click(within(banner()).getByRole('button', { name: '立即重启并安装' }));
+
+    // A rejected install ends the pending action, because there is nothing
+    // left to retry without a fresh check. The reason must survive that: the
+    // banner used to draw a local failure only while `pendingAction` was set,
+    // so this exact rejection lit nothing and the click looked inert.
+    const alert = await screen.findByRole('alert');
+    expect(alert, 'a rejected install left the click with no answer').toHaveTextContent(
+      '安装程序校验失败',
+    );
+  });
+
   it('follows a pushed status instead of only the initial read', async () => {
     const { show, emit } = mount(STATUS['up-to-date']);
     await show();

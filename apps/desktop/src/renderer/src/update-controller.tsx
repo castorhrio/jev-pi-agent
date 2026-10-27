@@ -14,8 +14,11 @@
  *    nowhere else — progress never ends one, or a download that fails after its
  *    progress bar appeared would lose the failure;
  *  - an IPC rejection is a failure with no status, so it is kept locally as
- *    `failure` and owned by the pending action. The alternative is a button
- *    that does nothing and says nothing;
+ *    `failure`. The alternative is a button that does nothing and says
+ *    nothing;
+ *  - only the most recently started action owns the answer. A check that
+ *    resolves after the user has moved on to a download must not retire that
+ *    download, and two clicks on the same button are two actions;
  *  - a failed *initial read* is a different fact from a failed action, and gets
  *    its own field (`statusFailure`). The banner stays quiet about it — the app
  *    checks on startup, and an offline launch must not open with an error
@@ -89,6 +92,21 @@ export const NEVER_TERMINAL_STATES = [
 ] as const satisfies readonly UpdateStatus['state'][];
 
 /**
+ * The compile-time half of "every state is classified".
+ *
+ * The e2e suite walks the cross product at runtime, but a new `UpdateState`
+ * that nobody classified would still be a state whose pending action is
+ * never released — a silent stuck spinner, found only by a human clicking
+ * long enough. Asking the type system the same question makes that omission a
+ * `tsc` error: `Exclude` of everything classified must be `never`.
+ */
+type _EndingState = (typeof ACTION_COMPLETED_STATES)[PendingAction][number];
+type _NeverTerminalState = (typeof NEVER_TERMINAL_STATES)[number];
+type _EveryStateIsClassified<
+  T extends never = Exclude<UpdateStatus['state'], _EndingState | _NeverTerminalState>,
+> = T;
+
+/**
  * Whether a status means `action` is over, so the surfaces may forget it.
  *
  * Reads the table rather than deciding again: the e2e suite asserts the two
@@ -123,7 +141,14 @@ export function UpdateControllerProvider({ children }: { children: ReactNode }):
   // The subscription is installed once, so it cannot read the render-time
   // `pendingAction`: a status pushed ten seconds after the click would still
   // see the value from mount. The ref is the current one.
-  const pendingRef = useRef<PendingAction | null>(null);
+  //
+  // The token matters as much as the action. Identity by action alone would
+  // let two clicks on the same button share one answer — the first click's
+  // late result would retire the second click, which is still waiting. The
+  // token is bumped per call, so only the click that is still current may
+  // apply a status or a failure.
+  const pendingRef = useRef<{ action: PendingAction; token: number } | null>(null);
+  const tokenRef = useRef(0);
 
   /**
    * Drops both kinds of failure at once.
@@ -149,8 +174,8 @@ export function UpdateControllerProvider({ children }: { children: ReactNode }):
       // A real status is a better answer than a rejection or a failed read, so
       // it replaces them rather than sitting beside them.
       clearFailures();
-      const action = pendingRef.current;
-      if (action !== null && actionCompleted(action, next.state)) {
+      const pending = pendingRef.current;
+      if (pending !== null && actionCompleted(pending.action, next.state)) {
         pendingRef.current = null;
         setPendingAction(null);
       }
@@ -180,14 +205,23 @@ export function UpdateControllerProvider({ children }: { children: ReactNode }):
   /**
    * Starts an action and turns its rejection into the failure the user sees.
    *
-   * The pending action is kept on rejection: `failure` is rendered under the
-   * same ownership rule as an error status, and dismissing or retrying is what
-   * ends it. Without this the rejection would be an unhandled promise and the
-   * click would look like a no-op.
+   * The answer is checked against the token, not just the action name: a
+   * check started before a download must not apply its late status (which may
+   * be an ending for the download) or overwrite the download's failure. A
+   * stale answer is dropped silently — the action that replaced it owns the
+   * screen.
+   *
+   * An install rejection ends the action. Nothing else can be retried without
+   * a fresh check, and the failure is what the user needs to read; leaving
+   * `pendingAction` set would keep claiming the app is still installing. The
+   * banner draws a local `failure` without asking for a pending action, so
+   * releasing it does not hide the reason.
    */
   const run = useCallback(
     (action: PendingAction, start: () => Promise<unknown>): void => {
-      pendingRef.current = action;
+      const token = tokenRef.current + 1;
+      tokenRef.current = token;
+      pendingRef.current = { action, token };
       setPendingAction(action);
       // Acting is a better answer than the failed read or the previous
       // rejection, so both go; if this action fails, its own `failure` is the
@@ -195,6 +229,7 @@ export function UpdateControllerProvider({ children }: { children: ReactNode }):
       clearFailures();
       void start()
         .then((next) => {
+          if (pendingRef.current?.token !== token) return;
           // `installUpdate()` answers a boolean; every other call answers the
           // status the subscription also sees. Applying it twice is harmless —
           // the state is the same — and it is what lets a check settle without
@@ -202,7 +237,12 @@ export function UpdateControllerProvider({ children }: { children: ReactNode }):
           if (isUpdateStatus(next)) applyStatus(next);
         })
         .catch((error: unknown) => {
+          if (pendingRef.current?.token !== token) return;
           setFailure(describeError(error));
+          if (action === 'install') {
+            pendingRef.current = null;
+            setPendingAction(null);
+          }
         });
     },
     [applyStatus, clearFailures],

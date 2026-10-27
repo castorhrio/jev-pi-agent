@@ -113,6 +113,23 @@ describe('handoff history (RESEARCH §2 supersede-not-delete)', () => {
     expect(screen.getAllByText('已被更新的取代')).toHaveLength(2);
   });
 
+  it('drops the previous session’s handoff when another session is selected', async () => {
+    const user = userEvent.setup();
+    mount();
+    await settle();
+    await openHandoff(user);
+
+    const doc = document.querySelector('.handoff-doc') as HTMLElement;
+    expect(within(doc).getByText(/修复注入哈希不一致/)).toBeTruthy();
+
+    // The document is per-session. It survived a switch before, so the panel
+    // described work the newly selected session had never done.
+    await user.click(screen.getByText('Context Broker 预算账本'));
+
+    await waitFor(() => expect(document.querySelector('.handoff-doc')).toBeNull());
+    expect(screen.getByRole('button', { name: '生成交接摘要' })).toBeTruthy();
+  });
+
   it('shows an existing chain on open, without asking for a new handoff first', async () => {
     const user = userEvent.setup();
     mount();

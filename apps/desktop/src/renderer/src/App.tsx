@@ -196,6 +196,22 @@ function Shell(): JSX.Element {
     if (!sessionId && data.sessions.length > 0) setSessionId(data.sessions[0]!.id);
   }, [data.sessions, sessionId]);
 
+  /**
+   * A handoff belongs to one session.
+   *
+   * The document used to survive a switch: selecting another session kept the
+   * previous one's summary on screen, so the panel described work that session
+   * had never done. The chain has its own read, keyed on `sessionId`, but the
+   * document is only written by `generateHandoff` — nothing retired it. Both
+   * the document and the chain readout are cleared here so the new session
+   * starts from "not read yet", not from its neighbour's answer.
+   */
+  useEffect(() => {
+    setHandoff(null);
+    setHandoffHistory([]);
+    setHandoffHistoryError(null);
+  }, [sessionId]);
+
   // The vendor list drives the composer's picker. A failure here must not stop
   // the app from starting: without it the picker is simply absent and turns
   // behave exactly as they did before this existed.

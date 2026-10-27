@@ -10,12 +10,19 @@ import { useUpdateController } from '../update-controller';
  * it. Settings carries the full picture for anyone who goes looking.
  *
  * A failure is shown only when it belongs to an action the user started *in
- * this banner or the Settings card* — ownership is the pending action, not the
- * order of events. The app checks on startup, so a machine that is offline
- * would otherwise open to an error banner about a check nobody asked for.
- * Naming the action is what lets the banner say which one it is still waiting
- * on, and it is why an unrelated failure that arrives after a click is still
- * the user's to see.
+ * this banner or the Settings card*. The app checks on startup, so a machine
+ * that is offline would otherwise open to an error banner about a check
+ * nobody asked for. A local `failure` is always such an action — the
+ * controller sets it only from a click — while a pushed `error` status needs
+ * the pending action to tell a background check from one the user is waiting
+ * on. Naming the action is what lets the banner say which one it is still
+ * waiting on, and it is why an unrelated failure that arrives after a click is
+ * still the user's to see.
+ *
+ * A local failure does not require a pending action: an install rejection
+ * ends the action (there is nothing to retry without a fresh check) but must
+ * still show its reason. Gating the local failure on `pendingAction` would
+ * have turned that into a silent dead end.
  *
  * The name, the table of endings and the local-failure answer all live in
  * `update-controller.tsx`, because Settings needs exactly the same rules. A
@@ -52,9 +59,10 @@ export function UpdateBanner(): JSX.Element | null {
   if (!status) return null;
 
   // A rejection has no status to switch on, and the status may still be the
-  // pre-action one (`available`). It is drawn first, under the same ownership
-  // gate, so the click always has an answer.
-  if (pendingAction !== null && failure !== null) {
+  // pre-action one (`available`). The controller only records `failure` for a
+  // click, so this is attributable without a pending action — which an install
+  // rejection has already released.
+  if (failure !== null) {
     return failureBanner(failure);
   }
 

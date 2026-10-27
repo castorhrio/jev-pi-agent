@@ -34,6 +34,23 @@ const AVAILABLE: UpdateStatus = {
   feedConfigured: true,
 };
 
+const READY: UpdateStatus = {
+  state: 'ready',
+  currentVersion: '1.0.0',
+  latestVersion: '1.1.0',
+  downloadedPath: '/tmp/UCAD-setup.exe',
+  verified: true,
+  feedConfigured: true,
+};
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((res) => {
+    resolve = res;
+  });
+  return { promise, resolve };
+}
+
 /** Reads the controller directly, since `statusFailure` has no banner surface. */
 function Probe(): JSX.Element {
   const controller = useUpdateController();
@@ -44,6 +61,8 @@ function Probe(): JSX.Element {
       <output data-testid="failure">{controller.failure ?? 'none'}</output>
       <output data-testid="status-failure">{controller.statusFailure ?? 'none'}</output>
       <button onClick={controller.check}>run check</button>
+      <button onClick={controller.download}>run download</button>
+      <button onClick={controller.install}>run install</button>
       <button onClick={controller.dismissFailure}>dismiss</button>
     </div>
   );
@@ -52,6 +71,8 @@ function Probe(): JSX.Element {
 interface MountOptions {
   readonly initial?: () => Promise<UpdateStatus | null>;
   readonly check?: () => Promise<UpdateStatus>;
+  readonly download?: () => Promise<UpdateStatus>;
+  readonly install?: () => Promise<boolean>;
 }
 
 function mount(options: MountOptions = {}) {
@@ -69,6 +90,8 @@ function mount(options: MountOptions = {}) {
         };
       },
       checkUpdate: options.check ?? (async () => IDLE),
+      downloadUpdate: options.download ?? (async () => IDLE),
+      installUpdate: options.install ?? (async () => true),
     },
   } as unknown as UcadApi;
 
@@ -164,5 +187,90 @@ describe('the update controller hands failure ownership over in sequence', () =>
 
     await emit(null as unknown as UpdateStatus);
     expect(field('status')).toBe('idle');
+  });
+
+  it('does not let a late check answer retire a download started after it', async () => {
+    const user = userEvent.setup();
+    const check = deferred<UpdateStatus>();
+    const download = deferred<UpdateStatus>();
+    mount({
+      initial: async () => AVAILABLE,
+      check: () => check.promise,
+      download: () => download.promise,
+    });
+    await waitFor(() => expect(field('status')).toBe('available'));
+
+    await user.click(screen.getByRole('button', { name: 'run check' }));
+    await user.click(screen.getByRole('button', { name: 'run download' }));
+    expect(field('pending')).toBe('download');
+
+    // `ready` ends both a check and a download. The check was replaced before
+    // it answered, so its answer belongs to nobody: it must neither change the
+    // status nor clear the action the user is now waiting on.
+    await act(async () => {
+      check.resolve(READY);
+      await check.promise;
+    });
+    expect(field('pending'), 'a superseded check cleared the download').toBe('download');
+    expect(field('status'), 'a superseded check rewrote the status').toBe('available');
+
+    await act(async () => {
+      download.resolve(READY);
+      await download.promise;
+    });
+    expect(field('pending')).toBe('none');
+    expect(field('status')).toBe('ready');
+  });
+
+  it('does not let an earlier click of the same action settle a later one', async () => {
+    const user = userEvent.setup();
+    const first = deferred<UpdateStatus>();
+    const second = deferred<UpdateStatus>();
+    const answers = [first.promise, second.promise];
+    let call = 0;
+    mount({
+      initial: async () => AVAILABLE,
+      download: () => answers[call++]!,
+    });
+    await waitFor(() => expect(field('status')).toBe('available'));
+
+    // The action name is identical on both clicks, so identity by action alone
+    // would treat the first answer as the second click's answer.
+    await user.click(screen.getByRole('button', { name: 'run download' }));
+    await user.click(screen.getByRole('button', { name: 'run download' }));
+    expect(field('pending')).toBe('download');
+
+    await act(async () => {
+      first.resolve(READY);
+      await first.promise;
+    });
+    expect(field('pending'), 'the first click settled the second click').toBe('download');
+    expect(field('status'), 'the first click rewrote the status').toBe('available');
+
+    await act(async () => {
+      second.resolve(READY);
+      await second.promise;
+    });
+    expect(field('pending')).toBe('none');
+    expect(field('status')).toBe('ready');
+  });
+
+  it('ends a rejected install while keeping its reason readable', async () => {
+    const user = userEvent.setup();
+    mount({
+      initial: async () => READY,
+      install: async () => {
+        throw new Error('安装程序校验失败');
+      },
+    });
+    await waitFor(() => expect(field('status')).toBe('ready'));
+
+    await user.click(screen.getByRole('button', { name: 'run install' }));
+    await waitFor(() => expect(field('failure')).toBe('安装程序校验失败'));
+
+    // Nothing is installing any more, and there is nothing to retry without a
+    // fresh check — but the user still has to be told why the click failed.
+    expect(field('pending'), 'a rejected install is still reported as pending').toBe('none');
+    expect(field('status')).toBe('ready');
   });
 });
