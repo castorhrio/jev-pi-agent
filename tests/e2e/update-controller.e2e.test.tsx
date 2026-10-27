@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import {
@@ -219,22 +219,52 @@ describe('the update controller hands failure ownership over in sequence', () =>
     expect(field('failure')).toBe('none');
   });
 
-  it('refuses a pushed value whose state is not in UPDATE_STATES', async () => {
-    const { emit } = mount();
-    await waitFor(() => expect(field('status')).toBe('idle'));
+  it('refuses a pushed value whose state is not in UPDATE_STATES and says so', async () => {
+    // The refusal is the only place contract drift can be seen: the payload is
+    // dropped before it reaches state, so no surface renders it and nothing
+    // else in the renderer can notice. The warning is therefore part of the
+    // contract, not debug output — a silent refusal is indistinguishable from
+    // "the banner just stopped updating". Spied rather than tolerated, so a
+    // future edit cannot delete the warning and keep this green.
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      const { emit } = mount();
+      await waitFor(() => expect(field('status')).toBe('idle'));
+      // A status the renderer *does* understand is not a refusal: the spy is
+      // tied to the drift, not to every push this provider ever receives.
+      expect(warn).not.toHaveBeenCalled();
 
-    // The subscription used to hand Main's payload straight to `applyStatus`,
-    // whose guard was "has a `state` key". A drifted state was written through
-    // and every surface rendered something the tables do not know about.
-    await emit({
-      state: 'reticulating',
-      currentVersion: '1.0.0',
-      feedConfigured: true,
-    } as unknown as UpdateStatus);
-    expect(field('status')).toBe('idle');
+      // The subscription used to hand Main's payload straight to `applyStatus`,
+      // whose guard was "has a `state` key". A drifted state was written through
+      // and every surface rendered something the tables do not know about.
+      const drifted = {
+        state: 'reticulating',
+        currentVersion: '1.0.0',
+        feedConfigured: true,
+      } as unknown as UpdateStatus;
+      await emit(drifted);
+      expect(field('status')).toBe('idle');
+      // The payload is carried, not just the fact: a console line that says
+      // "refused something" leaves the reader without the state name that has
+      // to be added to `UPDATE_STATES` (or removed from Main).
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(warn.mock.calls[0]).toEqual([
+        '[update-controller] refused an unknown update state',
+        { next: drifted },
+      ]);
 
-    await emit(null as unknown as UpdateStatus);
-    expect(field('status')).toBe('idle');
+      // A non-object is the same class of drift: refused, and warned about,
+      // rather than reaching `setStatus(null)` (which means "not read yet").
+      await emit(null as unknown as UpdateStatus);
+      expect(field('status')).toBe('idle');
+      expect(warn).toHaveBeenCalledTimes(2);
+      expect(warn.mock.calls[1]).toEqual([
+        '[update-controller] refused an unknown update state',
+        { next: null },
+      ]);
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   it('does not let a late check answer retire a download started after it', async () => {

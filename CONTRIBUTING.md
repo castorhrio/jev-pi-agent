@@ -300,6 +300,15 @@ will meet, and where each is written down:
   pattern to remove the false alarm — the failure (`packagingProblem`) names the file **and line**
   it matched, and says both fixes: reword the comment, or, if it is a real step, update README.md
   in both languages, this file and `adapter-resolution.ts` to describe what CI now checks.
+- **A scan that proves a step is *present* reads `run:` entries, not raw text.**
+  `tests/contract/ci-typecheck.test.ts` asserts that a workflow runs `npm run typecheck`, which is
+  the only thing enforcing every compile-time assertion here (`npm test` erases types through
+  esbuild). It deliberately does **not** reuse the raw-text reader above, and the asymmetry is the
+  reason: for packaging a false alarm is cheap, while for the typecheck a *commented-out*
+  `# - run: npm run typecheck` must not count as CI running it. The reader therefore reads `run:`
+  lines only (including a block-scalar body), and the case *does not count a commented-out step*
+  pins the difference. Its own blind spot — a command hidden behind `run: ./scripts/check.sh` — is
+  asserted too, like every other scan here.
 - **A workflow file reached through a symlink is followed, not skipped.** The reader
   resolves the link and reads the target's text, so a `release.yml` that points at a
   packaging job is still a red gate. A `.yml` / `.yaml` entry that does not resolve to a

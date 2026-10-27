@@ -26,6 +26,10 @@
  *    The opposite—a click's answer outranking a push—would let a stale answer
  *    overwrite what Main has just measured. `tests/e2e/update-controller.e2e.test.tsx`
  *    pins this direction;
+ *  - a pushed status whose state is not in `UPDATE_STATES` is contract drift,
+ *    not a status: it is refused *and* warned about, because dropping it is
+ *    otherwise invisible — no surface renders the payload, so the renderer
+ *    would look like a banner that simply stopped updating;
  *  - a failed *initial read* is a different fact from a failed action, and gets
  *    its own field (`statusFailure`). The banner stays quiet about it — the app
  *    checks on startup, and an offline launch must not open with an error
@@ -200,7 +204,18 @@ export function UpdateControllerProvider({ children }: { children: ReactNode }):
       // at compile time. A state outside `UPDATE_STATES` is contract drift,
       // not a status; writing it through would make every surface render a
       // state the tables do not know about.
-      if (!isUpdateStatus(next)) return;
+      //
+      // The refusal is also the *only* trace the drift leaves: the payload is
+      // dropped before it reaches state, so no surface draws it and nothing
+      // else in the renderer can observe it. Refusing in silence is how a
+      // renamed state sits in a build for weeks looking like "the banner is
+      // just not updating". One warning, with the payload, is what turns that
+      // into a line in the console. `tests/e2e/update-controller.e2e.test.tsx`
+      // asserts it, so the warning cannot be dropped as noise.
+      if (!isUpdateStatus(next)) {
+        console.warn('[update-controller] refused an unknown update state', { next });
+        return;
+      }
       setStatus(next);
       // A real status is a better answer than a rejection or a failed read, so
       // it replaces them rather than sitting beside them.
