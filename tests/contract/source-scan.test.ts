@@ -67,14 +67,54 @@ import { blankComments } from './source-scan';
  * *supposed* to differ there). Code, strings and regex literals must be
  * byte-identical where they sit, and that is what a refactor which re-emits
  * text in a different order breaks silently.
+ *
+ * ## Why the check is not just the two totals
+ *
+ * A newline is whitespace, so the byte-by-byte check above skips it — and a
+ * walk that emitted a newline one position early and another one late would
+ * keep the total length, the newline *count* and every non-whitespace byte
+ * exactly where they were. The text would still be wrong in the way that
+ * matters: the source is read line by line.
+ *
+ * `unreadableClaims()` in `app-container-started.test.ts` is the gate that
+ * makes this concrete. It walks `blankComments(source).split('\n')`, and for a
+ * line it cannot read it prints `${index + 1}: ${original[index]}` — the
+ * blanked text supplies the *number* and the original supplies the *text*.
+ * That pairing is only meaningful while line `n` of the blanking is line `n`
+ * of the source. A drifted newline makes the report name the right line number
+ * with the wrong line's text, and no other assertion in this file goes red.
+ *
+ * So each line's length is compared, in order. That is the per-line half of
+ * "the positions are the source's positions": with the totals it also rules
+ * out a byte moved within a line (the non-whitespace check) and a line break
+ * moved between lines (this check), which are the two ways a `file:line` can
+ * come back wrong.
  */
 function blank(source: string): string {
   const blanked = blankComments(source);
   expect(blanked.length, 'blanking changed the length of the source').toBe(source.length);
+
+  const originalLines = source.split('\n');
+  const blankedLines = blanked.split('\n');
   expect(
-    blanked.split('\n').length,
+    blankedLines.length,
     'blanking changed the number of lines in the source',
-  ).toBe(source.split('\n').length);
+  ).toBe(originalLines.length);
+
+  // The per-line lengths, which the two totals above cannot see: a newline
+  // emitted one byte early and another one late leaves both totals untouched.
+  const resized = originalLines
+    .map((line, index) =>
+      line.length === blankedLines[index]!.length
+        ? null
+        : `line ${index + 1}: ${line.length} -> ${blankedLines[index]!.length}`,
+    )
+    .filter((mismatch): mismatch is string => mismatch !== null);
+  expect(
+    resized,
+    'a line break moved, so the blanking is not line-for-line the source: a gate that ' +
+      'reports `line: text` from the blanked text would pair a line number with another line',
+  ).toEqual([]);
 
   const moved: string[] = [];
   for (let index = 0; index < source.length; index += 1) {
@@ -375,12 +415,54 @@ describe('the walk keeps its positions', () => {
     expect(blanked).toContain('const t = `x // y`;');
   });
 
+  it('keeps every line the same length, so line `n` is line `n`', () => {
+    /*
+     * The per-line half of the position invariant, driven on its own here
+     * rather than only through `blank()`.
+     *
+     * The totals — total length and newline count — cannot see a newline that
+     * moved: emit it one byte early and another one late, and both totals, and
+     * every non-whitespace byte, are unchanged. What breaks is the pairing the
+     * container scan depends on, `blankComments(source).split('\n')[n]` with
+     * `source.split('\n')[n]`: `unreadableClaims()` prints the blanked line's
+     * number next to the original line's text, so a shifted newline makes the
+     * report point at a line that reads perfectly well while the line that
+     * could not be read goes unnamed.
+     *
+     * The fixture is written with comments of different lengths on both sides
+     * of several newlines, because a walk that blanked `/* … *\/` to one space
+     * (or dropped the `*\/`) would keep the *shape* of the lines and change
+     * their lengths — the failure this assertion exists for.
+     */
+    const source = [
+      'const a = 1; /* a long block comment here */',
+      '// short',
+      'const b = 2; /* x',
+      '   y */ const c = 3;',
+      'const d = /[//]/; // trailing',
+    ].join('\n');
+    const originalLines = source.split('\n');
+    const blankedLines = blank(source).split('\n');
+
+    expect(blankedLines, 'the blanking is not line-for-line the source').toHaveLength(
+      originalLines.length,
+    );
+    for (const [index, line] of originalLines.entries()) {
+      expect(
+        blankedLines[index]!.length,
+        `line ${index + 1} changed length, so a later line number moved`,
+      ).toBe(line.length);
+    }
+  });
+
   it('is idempotent, so a gate may blank a blanked source', () => {
     // Not a claim about the gates — it is a claim about the walk that makes the
     // shared module safe to compose, and it fails loudly if a state ever leaks
     // into the output (a blanked comment that reads as a quote, say).
+    // `blank()` also re-checks the position invariants against the *first*
+    // result, so a second pass that moved a byte would be caught here too.
     const source = 'const s = `${a /* c */}`; // trailing\nconst t = `x`; /* block */';
     const once = blank(source);
-    expect(blankComments(once)).toBe(once);
+    expect(blank(once)).toBe(once);
   });
 });
