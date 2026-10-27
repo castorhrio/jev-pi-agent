@@ -255,6 +255,27 @@ describe('the update controller hands failure ownership over in sequence', () =>
     expect(field('status')).toBe('ready');
   });
 
+  it('releases the install action when the installer reports success', async () => {
+    const user = userEvent.setup();
+    mount({
+      initial: async () => READY,
+      install: async () => true,
+    });
+    await waitFor(() => expect(field('status')).toBe('ready'));
+
+    await user.click(screen.getByRole('button', { name: 'run install' }));
+
+    // The app quits after a real install, so nothing has to retire the action.
+    // The harness, `dev:web` and a quit the user cancels all stay alive, and
+    // there the action used to stay pending forever — claiming an install that
+    // had already succeeded.
+    await waitFor(() =>
+      expect(field('pending'), 'a successful install is still reported as pending').toBe('none'),
+    );
+    expect(field('failure')).toBe('none');
+    expect(field('status')).toBe('ready');
+  });
+
   it('ends a rejected install while keeping its reason readable', async () => {
     const user = userEvent.setup();
     mount({

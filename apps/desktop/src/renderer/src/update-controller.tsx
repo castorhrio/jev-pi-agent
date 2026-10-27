@@ -68,9 +68,11 @@ export const ACTION_COMPLETED_STATES = {
   // Only `ready`: `available` is the state a download *starts* from, so it
   // cannot be the download's answer, and `up-to-date` would be a check's.
   download: ['ready'],
-  // An install answers with a boolean, not a status (the app quits), so any
-  // settled status ends it. A failed install arrives as a rejected IPC call —
-  // `failure` — which this table never sees.
+  // An install normally answers with a boolean rather than a status (the app
+  // quits), so the controller releases it when the call settles; a status is
+  // the other way an install can end, for the paths that stay alive. A failed
+  // install arrives as a rejected IPC call — `failure` — which this table never
+  // sees.
   install: ['idle', 'up-to-date', 'available', 'ready', 'unsupported'],
 } as const satisfies Readonly<Record<PendingAction, readonly UpdateStatus['state'][]>>;
 
@@ -235,6 +237,15 @@ export function UpdateControllerProvider({ children }: { children: ReactNode }):
           // the state is the same — and it is what lets a check settle without
           // waiting for a push.
           if (isUpdateStatus(next)) applyStatus(next);
+          // A successful install normally quits the app, so nothing has to
+          // retire the action. Every other path that stays alive does: the
+          // harness, `dev:web`, and a quit the user cancels. Leaving it set
+          // would claim an install that is over, and the next background
+          // failure would then be attributed to a click nobody is waiting on.
+          if (action === 'install') {
+            pendingRef.current = null;
+            setPendingAction(null);
+          }
         })
         .catch((error: unknown) => {
           if (pendingRef.current?.token !== token) return;

@@ -162,7 +162,12 @@ function Shell(): JSX.Element {
   const [handoffHistoryError, setHandoffHistoryError] = useState<string | null>(null);
   const [handoffBusy, setHandoffBusy] = useState(false);
   const [permissionMode, setPermissionMode] = useState<PermissionMode>('ask');
-  const [agentId, setAgentId] = useState<string>('mock');
+  /**
+   * `''` = no explicit agent choice yet; the effect below seeds it from
+   * settings, then from the catalogue. It is not a fabricated id: an empty
+   * value means "not chosen", exactly like `providerId`.
+   */
+  const [agentId, setAgentId] = useState<string>('');
   const [providers, setProviders] = useState<ProviderDescriptorDto[]>([]);
   /**
    * `''` = do not override; the session's own provider decides. Sending an
@@ -187,6 +192,17 @@ function Shell(): JSX.Element {
     providerId !== ''
       ? providerId
       : (data.sessions.find((s) => s.id === sessionId)?.providerId ?? undefined);
+
+  /**
+   * The agent a new turn or session will use: the picker's explicit choice,
+   * else the remembered default, else the first catalogued agent.
+   *
+   * The state is seeded by the effect below, but this value is what the send
+   * path reads, so a click that lands in the same frame as the first settings
+   * load still names a real agent rather than an empty string.
+   */
+  const effectiveAgentId =
+    agentId || data.settings?.agent.defaultAgentId || data.agents[0]?.manifest.id || 'mock';
 
   const { view, error: streamError, gaps, replaying } = useSessionEvents(sessionId);
   const { pending, respond, busy: permissionBusy, error: permissionError } =
@@ -257,13 +273,25 @@ function Shell(): JSX.Element {
       .catch(() => undefined);
   }, []);
 
+  /**
+   * Seed the agent picker once, from the remembered default or the first
+   * catalogued agent.
+   *
+   * Guarded on the current value being empty, like `providerId`. Without the
+   * guard every settings refresh — a provider patch, the settings card saving
+   * anything — reset the composer to the default agent under the user, even
+   * though they had already chosen one for this session.
+   */
   useEffect(() => {
-    if (data.settings?.agent.defaultAgentId) {
-      setAgentId(data.settings.agent.defaultAgentId);
-    } else if (data.agents.length > 0) {      setAgentId(data.agents[0]!.manifest.id);
-    }
+    if (agentId !== '') return;
+    const fallback =
+      data.settings?.agent.defaultAgentId || data.agents[0]?.manifest.id;
+    if (fallback) setAgentId(fallback);
+  }, [data.settings, data.agents, agentId]);
+
+  useEffect(() => {
     if (data.settings?.agent.permissionMode) setPermissionMode(data.settings.agent.permissionMode);
-  }, [data.settings, data.agents]);
+  }, [data.settings]);
 
   useEffect(() => {
     if (data.loadError) setFatal(data.loadError);
@@ -360,7 +388,7 @@ function Shell(): JSX.Element {
     try {
       const created = await api.sessions.create({
         workspaceId: data.workspace.id,
-        agentId,
+        agentId: effectiveAgentId,
         permissionMode,
         title: t('session.new'),
         // The session records the vendor it was opened with, so a later turn
@@ -378,7 +406,7 @@ function Shell(): JSX.Element {
       flash(t('session.createFailed', { reason: describeError(error) }));
       return null;
     }
-  }, [api, data, agentId, permissionMode, providerId, t, flash]);
+  }, [api, data, effectiveAgentId, permissionMode, providerId, t, flash]);
 
   const ensureSession = useCallback(async (): Promise<string | null> => {
     if (!data.workspace) return null;
@@ -493,7 +521,7 @@ function Shell(): JSX.Element {
       if (!sessionId) return;
       try {
         if (action === 'claim') {
-          await api.sessions.claimHandoff(sessionId, handoffId, agentId);
+          await api.sessions.claimHandoff(sessionId, handoffId, effectiveAgentId);
           flash(t('handoff.claimed'));
         } else {
           await api.sessions.completeHandoff(sessionId, handoffId);
@@ -511,7 +539,7 @@ function Shell(): JSX.Element {
         await refreshHandoffHistory(sessionId);
       }
     },
-    [api, sessionId, agentId, t, flash, refreshHandoffHistory],
+    [api, sessionId, effectiveAgentId, t, flash, refreshHandoffHistory],
   );
 
   // One implementation per command, reached from the menu, the keyboard and the
@@ -628,9 +656,9 @@ function Shell(): JSX.Element {
    * agents; the session's own agent wins over the composer's current pick.
    */
   const activeAgentName = useMemo(() => {
-    const id = data.activeSession?.agentId ?? agentId;
+    const id = data.activeSession?.agentId ?? effectiveAgentId;
     return data.agents.find((a) => a.manifest.id === id)?.manifest.displayName ?? id;
-  }, [data.activeSession, data.agents, agentId]);
+  }, [data.activeSession, data.agents, effectiveAgentId]);
 
   if (fatal) {
     return (
@@ -876,7 +904,7 @@ function Shell(): JSX.Element {
                 running={running}
                 busy={busy}
                 interrupted={interrupted}
-                agentId={agentId}
+                agentId={effectiveAgentId}
                 onAgentChange={setAgentId}
                 providerId={providerId}
                 onProviderChange={chooseProvider}
