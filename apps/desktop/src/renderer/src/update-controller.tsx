@@ -108,11 +108,33 @@ export const NEVER_TERMINAL_STATES = [
  * never released — a silent stuck spinner, found only by a human clicking
  * long enough. Asking the type system the same question makes that omission a
  * `tsc` error: `Exclude` of everything classified must be `never`.
+ *
+ * The aliases below are not exported, and none of them is a value: the two
+ * `T extends never = …` defaults *are* the assertions. `_EndingState` and
+ * `_NeverTerminalState` are the vocabularies the tables contribute, and the
+ * two assertions ask the two halves of the question — nothing unclassified,
+ * and nothing classified twice.
  */
 type _EndingState = (typeof ACTION_COMPLETED_STATES)[PendingAction][number];
 type _NeverTerminalState = (typeof NEVER_TERMINAL_STATES)[number];
 type _EveryStateIsClassified<
   T extends never = Exclude<UpdateStatus['state'], _EndingState | _NeverTerminalState>,
+> = T;
+/**
+ * The other direction: no state may be in both tables.
+ *
+ * `_EveryStateIsClassified` only says nothing is *missing*. A state added to
+ * an ending row *and* to `NEVER_TERMINAL_STATES` would satisfy it while the
+ * two tables contradict each other — `actionCompleted()` would release the
+ * pending action for a state the other table says is still in flight, which is
+ * the stuck-spinner bug in the opposite direction. The e2e suite asserts the
+ * disjointness at runtime (it has to: `npm test` does not typecheck), but only
+ * for the states it walks. This alias makes the overlap a `tsc` error at the
+ * edit that causes it, with `Extract` naming the state in the compiler's
+ * message.
+ */
+type _NoStateIsBothEndingAndNeverTerminal<
+  T extends never = Extract<_EndingState, _NeverTerminalState>,
 > = T;
 
 /**

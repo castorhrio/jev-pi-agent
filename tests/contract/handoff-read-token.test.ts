@@ -42,7 +42,6 @@ const APP = join(
   'src',
   'App.tsx',
 );
-const COMPONENT = 'App';
 const TOKEN_REF = 'handoffReadToken';
 const GUARD = 'handoffSession.current !== sessionId';
 
@@ -54,7 +53,9 @@ interface Increment {
   /**
    * true only when the nearest function is a top-level component declaration.
    * The component's name is not pinned: `Shell` owns the handoff state today,
-   * and a rename should not need a test edit.
+   * and a rename should not need a test edit. `owner` is here to make a
+   * failure readable (and to show the *fixture's* name was read from the
+   * fixture), not to assert what the real component is called.
    */
   readonly inRenderBody: boolean;
   /** the condition of the nearest enclosing `if`, or `null` */
@@ -146,7 +147,19 @@ describe('the handoff read token is bumped in the render body', () => {
 
   it('bumps it when the session changes, and nowhere else', () => {
     const renderBumps = found.filter((entry) => entry.inRenderBody);
-    expect(renderBumps, 'the render body must bump the token exactly once').toHaveLength(1);
+    // The owner is printed, not asserted by name: `Shell` owns the handoff
+    // state today, and a rename of the component should not need a test edit.
+    // What is asserted is the count — a second render-time bump would
+    // invalidate the claim held by a read this one did not start — and the
+    // guard, so the sole bump is the session switch.
+    const where = renderBumps
+      .map((entry) => `App.tsx:${entry.line} in ${entry.owner}`)
+      .join(', ');
+    expect(
+      renderBumps.length,
+      `the render body must bump the token exactly once; found ${renderBumps.length}` +
+        (renderBumps.length === 0 ? '' : ` (${where})`),
+    ).toBe(1);
     expect(renderBumps[0]?.guard, 'the bump is no longer guarded by a session change').toBe(
       GUARD,
     );
@@ -165,9 +178,13 @@ describe('the handoff read token is bumped in the render body', () => {
  */
 describe('the token scan can fail', () => {
   it('counts the render-body bump and reads its guard', () => {
+    // The fixture's component is deliberately *not* named `App`: the owner a
+    // failure prints has to be the declaration the AST found, not a constant
+    // this file carries, and the real component's name is not a fact worth
+    // pinning (see `Increment.owner`).
     const result = increments(
       [
-        'export function App(): JSX.Element {',
+        'export function FixtureOwner(): JSX.Element {',
         '  const handoffSession = useRef(sessionId);',
         '  const handoffReadToken = useRef(0);',
         '  if (handoffSession.current !== sessionId) {',
@@ -181,7 +198,7 @@ describe('the token scan can fail', () => {
 
     expect(result).toHaveLength(1);
     expect(result[0]?.line).toBe(6);
-    expect(result[0]?.owner).toBe(COMPONENT);
+    expect(result[0]?.owner).toBe('FixtureOwner');
     expect(result[0]?.inRenderBody).toBe(true);
     expect(result[0]?.guard).toBe(GUARD);
   });

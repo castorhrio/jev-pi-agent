@@ -86,6 +86,18 @@ export const DEFAULT_AGENT_IS_A_CANDIDATE: typeof DEFAULT_AGENT_ID extends keyof
  * reports first and which one a resolution failure names first, with nothing
  * going red.
  *
+ * That reliance is on the language, not on a convention: `Object.entries` and
+ * `Object.keys` return a plain object's own string keys in **insertion
+ * order** (ECMAScript `OrdinaryOwnPropertyKeys`), which for an object literal
+ * is the order written above, and `Object.freeze` does not change it. So the
+ * list below is the table's order and not a second opinion. The guarantee is
+ * conditional on the table staying an object literal of non-index string
+ * keys: build it from a `Map`, from an array of entries, or give it a key
+ * that looks like an array index (`'0'` sorts first), and the order the
+ * resolver walks changes while every sentence here goes on describing the old
+ * one. That is why the contract gate compares this list with
+ * `Object.keys(ADAPTER_CANDIDATES)` itself rather than with a sorted set.
+ *
  * So the order is written down twice, deliberately, and
  *
  *  - the type ties every entry to a key of the table, so renaming or removing
