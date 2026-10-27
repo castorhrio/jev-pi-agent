@@ -90,8 +90,26 @@ export function normalizeSha256(value: unknown): string | null {
  * `invalid-url` and `not-https` are different values because they are
  * different fixes: a typo in a variable versus a channel somebody tried to
  * downgrade. One is a person to tell, the other is a decision to refuse.
+ *
+ * **The array is the fact; the type is derived from it.** The reasons used to
+ * be a union here, a `Record` in `update-feed-log.ts`, and a hand-written
+ * `as const` list in every test that could not enumerate a type — three
+ * spellings of one vocabulary, related to each other as subsets. Adding a
+ * reason meant remembering all of them, and forgetting a list was invisible:
+ * the compiler only checks the direction that has a `Record`, and a test that
+ * spells the reasons out by hand keeps passing when a member is added beside
+ * it.
+ *
+ * As an array the direction reverses. A new reason is one line here, and
+ * everything keyed by `ChannelUrlRejection` — the log sentence table, the
+ * Settings message table — fails `npm run typecheck` until it has an entry.
+ * The gates import this array instead of writing the reasons out again, so a
+ * list that disagrees with the type is no longer a thing that can be written.
  */
-export type ChannelUrlRejection = 'invalid-url' | 'not-https';
+export const CHANNEL_URL_REJECTIONS = ['invalid-url', 'not-https'] as const;
+
+/** One of {@link CHANNEL_URL_REJECTIONS} — the union the tables are keyed by. */
+export type ChannelUrlRejection = (typeof CHANNEL_URL_REJECTIONS)[number];
 
 /**
  * Whether a parsed URL is on the one protocol the update channel allows.

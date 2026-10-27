@@ -46,8 +46,20 @@ interface AdmittedDecision {
  * - `duplicate` — the chain named the same engine twice;
  * - `contradiction` — the manifest says two things at once (NFR-14);
  * - `unauthorized` — it declares an effect no setting permits.
+ *
+ * The array is the fact and this type is derived from it — see
+ * {@link SIDE_EFFECT_REFUSALS} for why the vocabulary is a value rather than a
+ * union spelled twice.
  */
-export type EngineChainDropReason = 'unknown' | 'duplicate' | 'contradiction' | 'unauthorized';
+export const ENGINE_CHAIN_DROP_REASONS = [
+  'unknown',
+  'duplicate',
+  'contradiction',
+  'unauthorized',
+] as const;
+
+/** One token a drop line may carry in its `reason` field. */
+export type EngineChainDropReason = (typeof ENGINE_CHAIN_DROP_REASONS)[number];
 
 /**
  * Why an engine's declared side effects may not run.
@@ -56,8 +68,21 @@ export type EngineChainDropReason = 'unknown' | 'duplicate' | 'contradiction' | 
  * a declaration that contradicts itself, and one that asks for an effect no
  * setting permits. They need different fixes — a manifest to correct and a
  * setting to switch — so they are told apart.
+ *
+ * **The array is the fact; the type is derived from it.** The refusals used to
+ * be a union plus a hand-written list in `tests/contract/decision-chain.test.ts`
+ * plus the keys of {@link SIDE_EFFECT_REFUSAL_EXPLANATION} — three spellings of
+ * one vocabulary, related as subsets. The `Record` type made *one* of the
+ * directions a compile error (a member with no sentence), and nothing made the
+ * other one (a sentence for a member the union no longer has, or a test list
+ * that never grew). As an array, adding a refusal is one line here, the
+ * sentence table fails `npm run typecheck` without an entry, and the gates
+ * import this array instead of writing the members out again.
  */
-export type SideEffectRefusal = 'contradiction' | 'unauthorized';
+export const SIDE_EFFECT_REFUSALS = ['contradiction', 'unauthorized'] as const;
+
+/** One of {@link SIDE_EFFECT_REFUSALS}. */
+export type SideEffectRefusal = (typeof SIDE_EFFECT_REFUSALS)[number];
 
 /**
  * What each refusal means, in the log line.
@@ -69,12 +94,12 @@ export type SideEffectRefusal = 'contradiction' | 'unauthorized';
  * would print the bare token, and every test would still pass, because none
  * of them could enumerate the members of a type.
  *
- * So the members of the union now have a table of their own: adding one to
- * {@link SideEffectRefusal} fails `npm run typecheck` until it is explained
+ * So the members of the union have a table of their own: adding one to
+ * {@link SIDE_EFFECT_REFUSALS} fails `npm run typecheck` until it is explained
  * here, and the log reads the sentence from it rather than leaving a reader to
- * look the token up in this file. Exported for the runtime half of the same
- * check (`tests/contract/decision-chain.test.ts`), because the suite
- * transpiles without typechecking and a test cannot enumerate a type either.
+ * look the token up in this file. The vocabulary itself is the array next
+ * door, so the gates compare this table with the same value the type is
+ * derived from — not with a second hand-written list that can fall behind.
  */
 export const SIDE_EFFECT_REFUSAL_EXPLANATION: Record<SideEffectRefusal, string> = {
   contradiction: 'the manifest contradicts itself, so no setting can make it runnable',
@@ -103,15 +128,13 @@ export const SIDE_EFFECT_REFUSAL_EXPLANATION: Record<SideEffectRefusal, string> 
  * the literal types are what the log sites hand to `logger.warn({ reason })`,
  * and `as const` is what keeps them literal through the annotation.
  *
- * Exported for the runtime half of the same check
- * (`tests/contract/decision-chain.test.ts`), for the reason
- * {@link SIDE_EFFECT_REFUSAL_EXPLANATION} is: the suite transpiles without
- * typechecking, and a test cannot enumerate the members of a type. The test
- * compares the values with the keys *and* with the refusal tokens
+ * Keyed by a type derived from {@link ENGINE_CHAIN_DROP_REASONS}, so a reason
+ * added to that array is a compile error here until it is given its own token
+ * — the same shape as {@link SIDE_EFFECT_REFUSAL_EXPLANATION}, and the reason
+ * both vocabularies are arrays rather than unions. The gates compare this table
+ * with the array and with the refusal tokens
  * `SIDE_EFFECT_REFUSAL_EXPLANATION` is keyed by, so the two tables cannot drift
- * apart into two vocabularies for one log field. Adding a reason means adding
- * the runtime list next door — which is the point: a union member nothing can
- * enumerate is a `tsc`-only promise.
+ * apart into two vocabularies for one log field.
  */
 export const DROP_REASON = {
   unknown: 'unknown',
@@ -130,8 +153,8 @@ export const DROP_REASON = {
  * field, two vocabularies, and no single place that says which members are
  * allowed. The tables are separate (`SIDE_EFFECT_REFUSAL_EXPLANATION` explains
  * only the refusals), which is why the subset is worth stating rather than
- * assuming: the compiler accepts `SideEffectRefusal = 'too-many-effects'`
- * happily, and the log would then carry a reason nowhere enumerated.
+ * assuming: `SIDE_EFFECT_REFUSALS` may grow a member the drop array does not
+ * have, and the log would then carry a reason nowhere enumerated.
  */
 type RefusalThatIsNotADropReason = Exclude<SideEffectRefusal, EngineChainDropReason>;
 

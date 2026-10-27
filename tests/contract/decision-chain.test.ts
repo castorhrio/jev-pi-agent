@@ -38,7 +38,9 @@ import type {
 import {
   DROP_REASON,
   DecisionFacade,
+  ENGINE_CHAIN_DROP_REASONS,
   SIDE_EFFECT_REFUSAL_EXPLANATION,
+  SIDE_EFFECT_REFUSALS,
 } from '../../apps/desktop/src/main/decision-facade';
 import type {
   EngineChainDropReason,
@@ -789,14 +791,21 @@ describe('a combination chain: every entry, its reason, and the order', () => {
  *
  * The table in `decision-facade.ts` is what makes the type growable only on
  * purpose: `Record<SideEffectRefusal, string>` fails `tsc` for a member with no
- * explanation. A test run cannot enumerate a type — types are erased — so
- * `ALL_REFUSALS` below is its runtime stand-in, the same role
- * `ZOD_ISSUE_CODES` plays for `ZOD_REASON_BY_CODE` in `ipc-errors.test.ts`.
- * It is compared with the table in both directions, and every member is asked
- * for a declaration that produces it: an entry nothing can confirm is
- * indistinguishable from an entry that is right.
+ * explanation. A test run cannot enumerate a type — types are erased — so the
+ * vocabulary is a *value*: `SIDE_EFFECT_REFUSALS` is the array the type is
+ * derived from, the same role `ZOD_ISSUE_CODES` plays for
+ * `ZOD_REASON_BY_CODE` in `ipc-errors.test.ts`. It is compared with the table
+ * in both directions, and every member is asked for a declaration that
+ * produces it: an entry nothing can confirm is indistinguishable from an entry
+ * that is right.
+ *
+ * The array is imported rather than restated on purpose. A hand list here was
+ * a second spelling of the vocabulary, related to the type as a subset: a third
+ * refusal added to the union left this file green while it compared a table
+ * with a list of two. Imported, a member added to `SIDE_EFFECT_REFUSALS` is a
+ * `tsc` error at the `Record` and a real case in the loop below, with nothing
+ * to remember.
  */
-const ALL_REFUSALS = ['contradiction', 'unauthorized'] as const satisfies readonly SideEffectRefusal[];
 
 describe('every side-effect refusal has a case, and an explanation', () => {
   /**
@@ -865,17 +874,17 @@ describe('every side-effect refusal has a case, and an explanation', () => {
     // ever see. The suite transpiles without typechecking, so without this the
     // `Record` annotation would be the only check — and it is not run by
     // `npm test`.
-    expect([...ALL_REFUSALS].sort()).toEqual(
+    expect([...SIDE_EFFECT_REFUSALS].sort()).toEqual(
       Object.keys(SIDE_EFFECT_REFUSAL_EXPLANATION).sort(),
     );
   });
 
   it('has a sample for every refusal, and no sample for a refusal that is gone', () => {
     // The same question for the sample map above: its `Record` type catches a
-    // missing member only under `tsc`, so compare it with the hand list. A
-    // member with no sample would shrink the loop in the case above; a sample
-    // left behind for a deleted member is a test that no longer tests anything.
-    expect(Object.keys(SAMPLES).sort()).toEqual([...ALL_REFUSALS].sort());
+    // missing member only under `tsc`, so compare it with the array. A member
+    // with no sample would shrink the loop in the case above; a sample left
+    // behind for a deleted member is a test that no longer tests anything.
+    expect(Object.keys(SAMPLES).sort()).toEqual([...SIDE_EFFECT_REFUSALS].sort());
   });
 });
 
@@ -895,18 +904,13 @@ describe('every side-effect refusal has a case, and an explanation', () => {
  * explains: `tests/` is transpiled without typechecking, and a test cannot
  * enumerate a type.
  *
- * So the union has a runtime stand-in below — the same role `ALL_REFUSALS`
- * plays for {@link SideEffectRefusal} — and the two tables are compared against
- * each other, because they write the same log field. A report that counts
- * `reason` values sees one vocabulary; two tables drifting into two
- * vocabularies is the drift with no reader to notice it.
+ * So the union has a runtime stand-in — `ENGINE_CHAIN_DROP_REASONS`, the array
+ * the type is derived from, the same role `SIDE_EFFECT_REFUSALS` plays for
+ * {@link SideEffectRefusal} — and the two tables are compared against each
+ * other, because they write the same log field. A report that counts `reason`
+ * values sees one vocabulary; two tables drifting into two vocabularies is the
+ * drift with no reader to notice it.
  */
-const ALL_DROP_REASONS = [
-  'unknown',
-  'duplicate',
-  'contradiction',
-  'unauthorized',
-] as const satisfies readonly EngineChainDropReason[];
 
 describe('every drop reason is a token the log can be read back by', () => {
   it('writes each reason as its own name, once each', () => {
@@ -920,16 +924,16 @@ describe('every drop reason is a token the log can be read back by', () => {
   });
 
   it('names every reason the union has, and no reason it does not', () => {
-    // The other direction, against the hand list: a fifth union member with no
-    // row here would leave the log writing a token this file cannot enumerate,
-    // and a row left behind for a deleted member is a promise about a line
-    // nothing can produce.
+    // The other direction, against the array the type is derived from: a fifth
+    // reason with no row here would leave the log writing a token this file
+    // cannot enumerate, and a row left behind for a deleted member is a
+    // promise about a line nothing can produce.
     expect(
       Object.keys(DROP_REASON).sort(),
       'DROP_REASON and EngineChainDropReason disagree about which reasons exist',
-    ).toEqual([...ALL_DROP_REASONS].sort());
+    ).toEqual([...ENGINE_CHAIN_DROP_REASONS].sort());
     // Non-vacuous: an empty table would satisfy both directions above.
-    expect(ALL_DROP_REASONS.length).toBeGreaterThan(2);
+    expect(ENGINE_CHAIN_DROP_REASONS.length).toBeGreaterThan(2);
   });
 
   it('uses one vocabulary for the refusals the log explains', () => {

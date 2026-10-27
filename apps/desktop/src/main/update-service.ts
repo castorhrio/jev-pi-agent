@@ -48,6 +48,7 @@ import {
   normalizeSha256,
   openStagedInstallerForLaunch,
   verifyInstaller,
+  type ChannelUrlRejection,
   type InstallerVerification,
   type StagedFileCheck,
   type StagedInstallerHandle,
@@ -78,8 +79,61 @@ export interface UpdateStatus {
   verified?: boolean;
   message?: string;
   checkedAt?: string;
+  /**
+   * Whether the build was given a feed address at all.
+   *
+   * `false` means nothing was configured — the development case, which the
+   * Settings screen says plainly. It is *not* "the feed is usable": a value
+   * that was configured and refused (`http://…`, a typo) is still a configured
+   * value, and reporting it as absent would tell the user to configure
+   * something they already configured. Such a check reports `state: 'error'`
+   * with the reason, so the two cases stay distinguishable in the UI.
+   */
   feedConfigured: boolean;
 }
+
+/**
+ * The status this service keeps: the public one, plus the document the check
+ * read.
+ *
+ * The document used to be a field of its own (`private feed: … | null`) next to
+ * a status whose `state` was a plain string, and the invariant tying them
+ * together — "`state === 'available'` implies a document" — was a comment. Two
+ * fields can disagree, and the comment is the only thing that could say which
+ * one was right; `download()` kept a branch for the day they did.
+ *
+ * Merged, the pairing is the type: `available` *carries* the document, so
+ * `check()` cannot write the state without the document it is about (the
+ * transition overload on `set()` refuses it), and `download()`'s read of that
+ * document is a narrowing of the same value it guarded — not a second field
+ * that might be null while the first says otherwise.
+ *
+ * `ready` allows `null` on purpose, and it is not symmetry: `ready` is the one
+ * state a *rebuilt* status can arrive in from outside (a later build that
+ * persists the status hands over a `downloadedPath` and no feed document,
+ * because nothing persists one). `installAndRestart()` is written for exactly
+ * that reader and refuses it by name. `available` is never restored — a
+ * restored pending install is `ready` — so it has no such case.
+ */
+type ServiceStatus =
+  | (UpdateStatus & { readonly state: 'available'; readonly document: UpdateFeedDocument })
+  | (UpdateStatus & {
+      readonly state: 'ready';
+      readonly document: UpdateFeedDocument | null;
+    })
+  | (UpdateStatus & {
+      readonly state: 'idle' | 'checking' | 'up-to-date' | 'downloading' | 'error' | 'unsupported';
+      readonly document: null;
+    });
+
+/**
+ * A status transition, as `set()` accepts it.
+ *
+ * `document` is not in here: it is a *parameter* of the transition rather than
+ * a field a caller can pass in a patch, so a patch cannot carry a document that
+ * disagrees with the state it is entering.
+ */
+type StatusPatch = Partial<UpdateStatus> & { readonly state?: UpdateState };
 
 export interface UpdateServiceOptions {
   logger: Logger;
@@ -178,14 +232,65 @@ const MAX_DOWNLOAD_REDIRECTS = 5;
  */
 export const STALE_UPDATE_DOCUMENT_MESSAGE = '更新信息已失效，请重新检查更新';
 
+/**
+ * What the update screen says when a configured feed was refused.
+ *
+ * A different sentence from 未配置更新源 on purpose. `check()` used to report a
+ * refused feed as `unsupported` with 未配置更新源, which told a user who *had*
+ * configured a feed to go and configure one, and left a support report unable
+ * to say which of the two had happened. The reason is what makes the two fixes
+ * distinguishable on screen: a typo in the address, or a channel somebody tried
+ * to downgrade to cleartext.
+ *
+ * `Record<ChannelUrlRejection, string>`, so the table cannot fall behind the
+ * vocabulary: `CHANNEL_URL_REJECTIONS` in `update-feed.ts` is the fact, and a
+ * reason added there fails `npm run typecheck` here until it has a sentence for
+ * the screen — the same shape as `UPDATE_FEED_REFUSAL_MESSAGE`, which is the
+ * sentence the *log* gets for the same reason.
+ */
+export const FEED_REFUSAL_STATUS_MESSAGE: Readonly<Record<ChannelUrlRejection, string>> = {
+  'invalid-url': '更新源地址无效，请检查 UCAD_UPDATE_FEED 或 update-config.json',
+  'not-https': '更新源必须使用 https，请检查 UCAD_UPDATE_FEED 或 update-config.json',
+};
+
+/**
+ * What `resolveFeed()` found: an address to fetch, nothing configured, or a
+ * value that *was* configured and was refused.
+ *
+ * Two cases used to be one. `resolveFeed()` returned `string | null`, so
+ * "nothing was configured" and "what was configured is not usable" reached
+ * `check()` as the same value and got the same status (`unsupported`,
+ * `feedConfigured: false`, 未配置更新源). The union names the case, `check()`
+ * answers each one on purpose, and adding a refusal to
+ * `CHANNEL_URL_REJECTIONS` is a compile error at
+ * `FEED_REFUSAL_STATUS_MESSAGE` until the new case has a sentence.
+ */
+type FeedResolution =
+  | { readonly kind: 'ok'; readonly url: string }
+  | { readonly kind: 'none' }
+  | { readonly kind: 'rejected'; readonly reason: ChannelUrlRejection };
+
+/**
+ * Whether a feed address was given at all — the constructor's reading of it.
+ *
+ * Asks `checkFeedUrl()` rather than testing for blank text here: "nothing was
+ * configured" is one rule, and a second reading of it would be a second answer
+ * to "should the app say 未配置更新源". A value that was provided and refused is
+ * still provided; `false` here means the environment and the packaged file both
+ * said nothing.
+ */
+function feedValueProvided(value: string | null | undefined): boolean {
+  const verdict = checkFeedUrl(value);
+  return verdict.ok || verdict.reason !== 'empty';
+}
+
 export class UpdateService {
   private readonly opts: UpdateServiceOptions;
-  private status: UpdateStatus;
-  private readonly listeners = new Set<(s: UpdateStatus) => void>();
   /**
-   * The feed document the version check read.
+   * The status, and — in the states that can use it — the feed document the
+   * version check read (see `ServiceStatus`).
    *
-   * The download uses *this* document rather than fetching the feed a second
+   * The download uses *that* document rather than fetching the feed a second
    * time. Two reasons, and the second is the one that matters: the hash and
    * the URL then come from a single read of the feed, so a feed that changes
    * between the check and the download cannot point the download at a
@@ -193,27 +298,38 @@ export class UpdateService {
    * user was shown — "1.1.0 is available" — is the comparison the download
    * is made against.
    *
-   * **Lifetime.** Written by `check()` and by nothing else, in the same
-   * statement block that sets `available`; cleared by the paths that take the
-   * status away from `available` because the check failed. It is not cleared
-   * by `download()`, which keeps it for `installAndRestart()` — the hash the
-   * staged file is re-verified against is this document's. So
-   * `state === 'available'` implies this is non-null, which is why `download()`
-   * refuses rather than re-reads when it is missing.
+   * **Lifetime.** Written by `check()` and by nothing else, passed to the
+   * transition that sets `available`; carried into `ready` by the download, so
+   * `installAndRestart()` re-verifies against the same document; and dropped
+   * by every other transition, because no other state can use one. That is the
+   * whole of the rule — there is no second field for a reader to consult, and
+   * no place a document can survive a state that would not read it.
    */
-  private feed: UpdateFeedDocument | null = null;
+  private status: ServiceStatus;
+  private readonly listeners = new Set<(s: UpdateStatus) => void>();
 
   constructor(opts: UpdateServiceOptions) {
     this.opts = opts;
     this.status = {
       state: 'idle',
       currentVersion: opts.currentVersion,
-      feedConfigured: Boolean(opts.getFeedUrl()),
+      feedConfigured: feedValueProvided(opts.getFeedUrl()),
+      document: null,
     };
   }
 
+  /**
+   * The status as the app sees it.
+   *
+   * The document is stripped here rather than left on the object: it is the
+   * internal half of the state, it carries the feed's `sha256` and download URL,
+   * and the IPC push sends this value to the renderer. A status that leaked it
+   * would put the answer to "what is this install checked against" in a process
+   * that only needs to draw a button.
+   */
   get current(): UpdateStatus {
-    return { ...this.status };
+    const { document: _internal, ...visible } = this.status;
+    return { ...visible };
   }
 
   onChange(cb: (s: UpdateStatus) => void): () => void {
@@ -248,21 +364,62 @@ export class UpdateService {
    * is configured rather than assuming it was the environment variable.
    * `tests/contract/update-integrity.test.ts` compares the warning with that
    * table for every reason.
+   *
+   * **Three answers, because two of them are different sentences on screen.**
+   * This used to return `string | null`, so "nothing was configured" and "what
+   * was configured is not usable" arrived at `check()` as the same value: both
+   * were reported `unsupported` with `feedConfigured: false` and the message
+   * 未配置更新源. The refused case then told the user to configure a feed they
+   * had already configured, and the status could not tell a support report
+   * which of the two it was looking at. The union names the case, so `check()`
+   * answers each one on purpose — and adding a refusal to
+   * `CHANNEL_URL_REJECTIONS` is a compile error at `FEED_REFUSAL_STATUS_MESSAGE`
+   * until it has a sentence for the screen.
    */
-  private resolveFeed(): string | null {
+  private resolveFeed(): FeedResolution {
     const verdict = checkFeedUrl(this.opts.getFeedUrl());
-    if (verdict.ok) return verdict.url;
+    if (verdict.ok) return { kind: 'ok', url: verdict.url };
     // Nothing configured is not a refusal: the app says "未配置更新源" and
     // that is the whole story.
-    if (verdict.reason === 'empty') return null;
+    if (verdict.reason === 'empty') return { kind: 'none' };
     this.opts.logger.warn(UPDATE_FEED_REFUSAL_MESSAGE[verdict.reason], {
       reason: verdict.reason,
     });
-    return null;
+    return { kind: 'rejected', reason: verdict.reason };
   }
 
-  private set(patch: Partial<UpdateStatus>): UpdateStatus {
-    this.status = { ...this.status, ...patch };
+  /**
+   * Writes one status transition, and is the only place the status is written.
+   *
+   * The document is a parameter rather than a field of `patch` for the reason
+   * `ServiceStatus` gives: the states that carry one have to be entered *with*
+   * one, so the first overload below makes `check()`'s `available` transition
+   * fail `npm run typecheck` if it forgets the document — the invariant that
+   * used to be a comment on a field. Every other transition passes none, and
+   * gets `document: null`, which is what "no state but `available`/`ready` may
+   * hold this" means in practice.
+   *
+   * The `as` is the one place the pairing is asserted rather than checked: the
+   * compiler cannot correlate the spread of a union with a patch that narrows
+   * it, so the claim "this transition entered the state it says" is made here —
+   * at the single funnel every write goes through. `tests/contract/update-integrity.test.ts`
+   * scans this file for a second assignment to `status`, because a writer
+   * outside this method would be a writer the overloads never saw.
+   */
+  private set(
+    patch: StatusPatch & { readonly state: 'available' },
+    document: UpdateFeedDocument,
+  ): UpdateStatus;
+  private set(
+    patch: StatusPatch & { readonly state: 'ready' },
+    document: UpdateFeedDocument | null,
+  ): UpdateStatus;
+  private set(
+    patch: StatusPatch & { readonly state?: Exclude<UpdateState, 'available' | 'ready'> },
+    document?: null,
+  ): UpdateStatus;
+  private set(patch: StatusPatch, document: UpdateFeedDocument | null = null): UpdateStatus {
+    this.status = { ...this.status, ...patch, document } as ServiceStatus;
     for (const listener of this.listeners) {
       try {
         listener(this.current);
@@ -275,12 +432,25 @@ export class UpdateService {
 
   async check(): Promise<UpdateStatus> {
     const feed = this.resolveFeed();
-    if (!feed) {
-      this.feed = null;
+    // "Nothing configured" and "what was configured is not usable" are two
+    // answers, and the difference is what the user is told to do next: the
+    // first is the development case the Settings screen names, the second is a
+    // value somebody wrote that this app will not fetch. Reporting the second
+    // as the first (`unsupported`, `feedConfigured: false`, 未配置更新源) is the
+    // edit this branch exists to prevent — see `FEED_REFUSAL_STATUS_MESSAGE`.
+    if (feed.kind === 'none') {
       return this.set({
         state: 'unsupported',
         feedConfigured: false,
         message: '未配置更新源',
+        checkedAt: new Date().toISOString(),
+      });
+    }
+    if (feed.kind === 'rejected') {
+      return this.set({
+        state: 'error',
+        feedConfigured: true,
+        message: FEED_REFUSAL_STATUS_MESSAGE[feed.reason],
         checkedAt: new Date().toISOString(),
       });
     }
@@ -291,14 +461,13 @@ export class UpdateService {
       const doFetch = this.opts.fetchImpl ?? fetch;
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), CHECK_TIMEOUT_MS);
-      const response = await doFetch(feed, {
+      const response = await doFetch(feed.url, {
         signal: controller.signal,
         headers: { accept: 'application/json' },
       });
       clearTimeout(timer);
 
       if (!response.ok) {
-        this.feed = null;
         return this.set({
           state: 'error',
           message: `更新源返回 HTTP ${response.status}`,
@@ -309,7 +478,6 @@ export class UpdateService {
       const body = (await response.json()) as UpdateFeedDocument;
       const latest = typeof body.version === 'string' ? body.version.trim() : '';
       if (!latest) {
-        this.feed = null;
         return this.set({
           state: 'error',
           message: '更新源缺少 version 字段',
@@ -318,7 +486,7 @@ export class UpdateService {
       }
 
       // The document the user was shown is the document the download uses.
-      this.feed = { ...body, version: latest };
+      const document: UpdateFeedDocument = { ...body, version: latest };
 
       if (compareVersions(latest, this.status.currentVersion) <= 0) {
         return this.set({
@@ -329,15 +497,20 @@ export class UpdateService {
         });
       }
 
-      return this.set({
-        state: 'available',
-        latestVersion: latest,
-        notes: typeof body.notes === 'string' ? body.notes : undefined,
-        message: undefined,
-        checkedAt: new Date().toISOString(),
-      });
+      // The document is the second argument, not a field of the patch: the
+      // overload of `set()` for `available` requires one, so this transition
+      // cannot be written without the document it is about.
+      return this.set(
+        {
+          state: 'available',
+          latestVersion: latest,
+          notes: typeof body.notes === 'string' ? body.notes : undefined,
+          message: undefined,
+          checkedAt: new Date().toISOString(),
+        },
+        document,
+      );
     } catch (error) {
-      this.feed = null;
       const message = describeError(error);
       this.opts.logger.warn('update check failed', { message });
       return this.set({
@@ -350,32 +523,27 @@ export class UpdateService {
 
   /** Downloads the staged installer. Refuses when there is nothing to fetch. */
   async download(): Promise<UpdateStatus> {
-    if (this.status.state !== 'available') {
+    // One read of the status, and the document comes out of it. `available` is
+    // *defined* as "there is a check behind this", so the document is not a
+    // second field that might be null while the state says otherwise: it is
+    // the same value, narrowed. The branch this replaces asked whether the
+    // field was null and refused if it was — a check for a disagreement the
+    // type no longer allows anything to produce.
+    //
+    // The document, not a second read of the feed, is what the download uses:
+    // the hash and the URL the installer is fetched from must be the ones the
+    // version the user was shown was compared against. An earlier build
+    // re-fetched the feed here, which reopened exactly the window the stored
+    // document exists to close (a feed that changed between the check and the
+    // download could name a different file than the one the user was shown).
+    const current = this.status;
+    if (current.state !== 'available') {
       return this.set({
         state: 'error',
         message: '没有可下载的新版本',
       });
     }
-    // The document the check read, not a second read of the feed: the hash
-    // and the URL the installer is fetched from must be the ones the version
-    // the user was shown was compared against.
-    //
-    // `available` is only ever set by `check()`, in the same statement block
-    // that stores this document, and every path that clears the document also
-    // moves the state off `available` — so the two cannot disagree today.
-    // That makes the branch below unreachable *by construction*, and it is
-    // kept as a refusal rather than a second read of the feed: an earlier
-    // build re-fetched here, which reopened exactly the window this field
-    // exists to close (a feed that changed between the check and the download
-    // could name a different file than the one the user was shown), and a
-    // fallback is also what would let the two disagree silently the day a
-    // caller starts writing to the status. `tests/contract/update-integrity.test.ts`
-    // drives this branch and asserts the feed is not read again.
-    const info = this.feed;
-    if (!info) {
-      this.opts.logger.error('update download without the document the update check read');
-      return this.set({ state: 'error', message: STALE_UPDATE_DOCUMENT_MESSAGE });
-    }
+    const info = current.document;
     if (!info.url) {
       return this.set({ state: 'error', message: '更新源未提供下载地址' });
     }
@@ -478,13 +646,20 @@ export class UpdateService {
       version: info.version,
       sha256: verification.sha256,
     });
-    return this.set({
-      state: 'ready',
-      progress: 1,
-      downloadedPath: target,
-      verified: true,
-      message: undefined,
-    });
+    return this.set(
+      {
+        state: 'ready',
+        progress: 1,
+        downloadedPath: target,
+        verified: true,
+        message: undefined,
+      },
+      // The document travels with the staged path it describes: the click that
+      // launches this file re-verifies it against this document, and a `ready`
+      // status carrying a path but no document would be exactly the restored
+      // shape `installAndRestart()` refuses.
+      info,
+    );
   }
 
   /**
@@ -540,7 +715,8 @@ export class UpdateService {
    * document from a service whose download succeeded and pressing install.
    */
   async installAndRestart(): Promise<boolean> {
-    const target = this.status.downloadedPath;
+    const current = this.status;
+    const target = current.downloadedPath;
     if (!target || !fs.existsSync(target)) {
       this.set({ state: 'error', message: '安装包不存在，请重新下载' });
       return false;
@@ -553,7 +729,11 @@ export class UpdateService {
     // is known to be wrong with the bytes, and the next download overwrites the
     // same single-slot name. What is taken away is the status's claim that an
     // install is pending, because this method will not install it.
-    const info = this.feed;
+    // `ready` is the one state that may hold this method's answer *and* no
+    // document, and `ServiceStatus` says why: a restored status arrives with a
+    // `downloadedPath` and no feed document. Every other state reads as "no
+    // document", which is the refusal below rather than a launch.
+    const info = current.state === 'ready' ? current.document : null;
     if (!info) {
       this.opts.logger.error('update install without the document the update check read', {
         target,
@@ -660,7 +840,7 @@ export class UpdateService {
   /** Used by the Settings screen when the user would rather do it themselves. */
   openFeed(): void {
     const feed = this.resolveFeed();
-    if (feed) void shell.openExternal(feed);
+    if (feed.kind === 'ok') void shell.openExternal(feed.url);
   }
 }
 

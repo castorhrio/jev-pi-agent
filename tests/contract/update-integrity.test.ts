@@ -49,6 +49,7 @@ import { Logger, MemoryLogSink, silentLogger } from '@ucad/observability';
 
 import { blankComments as blankCommentsShared } from './source-scan';
 import {
+  CHANNEL_URL_REJECTIONS,
   checkChannelUrl,
   checkFeedUrl,
   checkOpenStagedInstaller,
@@ -66,6 +67,7 @@ import {
   type ChannelUrlRejection,
 } from '../../apps/desktop/src/main/update-feed';
 import {
+  FEED_REFUSAL_STATUS_MESSAGE,
   STALE_UPDATE_DOCUMENT_MESSAGE,
   UpdateService,
   resolveDownloadRedirect,
@@ -119,17 +121,39 @@ function overrun(message: string): never {
  * purpose so the guard is not merely a function nobody has seen answer.
  */
 function assertNoScriptOverruns(): void {
-  // Drained before the assertion: a guard that left the record behind would
-  // fail every later test in the file as well, and the reader would be sent to
-  // the wrong one.
-  const overruns = scriptOverruns.splice(0);
   expect(
-    overruns,
-    `a scripted transport was asked for an answer the test did not script (${overruns.join(
+    scriptOverruns,
+    `a scripted transport was asked for an answer the test did not script (${scriptOverruns.join(
       '; ',
     )}); the product catches that assertion and reports it as its own error, so it is asserted here instead`,
   ).toEqual([]);
 }
+
+/**
+ * Assert the guard answers for a fixture that overran on purpose, then forget.
+ *
+ * The overrun is cleared here rather than by the guard, because the guard no
+ * longer clears: a reader that drained the record would leave a test which
+ * overran with an emptied record and a green `afterEach`. The reset is the
+ * `beforeEach` below; this helper is for the fixtures that need the record
+ * gone *during* the test they are in.
+ */
+function expectScriptOverrun(pattern: RegExp): void {
+  expect(() => assertNoScriptOverruns()).toThrow(pattern);
+  scriptOverruns.length = 0;
+}
+
+/**
+ * A clean record before every test, so the guard judges one test's overruns.
+ *
+ * The file used to reset inside `assertNoScriptOverruns()` (`splice(0)`), which
+ * made the guard's correctness depend on being the last reader. A `beforeEach`
+ * says the same thing where the state is created, and lets `afterEach` stay a
+ * pure assertion: it cannot hide a leak by clearing one.
+ */
+beforeEach(() => {
+  scriptOverruns.length = 0;
+});
 
 afterEach(assertNoScriptOverruns);
 
@@ -278,7 +302,7 @@ describe('the scripted helpers fail the test that outruns them', () => {
     // the half that survives `check()`'s `catch` — see `assertNoScriptOverruns`.
     // Asserting it here is also what drains the record, so this deliberate
     // overrun does not fail the guard it is testing.
-    expect(() => assertNoScriptOverruns()).toThrow(/1 scripted, request 2/);
+    expectScriptOverrun(/1 scripted, request 2/);
   });
 
   it('turns a download that makes one request too many into a failed expectation', () => {
@@ -297,7 +321,7 @@ describe('the scripted helpers fail the test that outruns them', () => {
 
     // The recorded overrun is the one the after-test guard fails on, and saying
     // so here is also what drains it.
-    expect(() => assertNoScriptOverruns()).toThrow(/1 scripted, request 2/);
+    expectScriptOverrun(/1 scripted, request 2/);
   });
 });
 
@@ -568,8 +592,24 @@ describe('the feed rule has one implementation', () => {
       // Accepted means the request was made; refused means it was not, and the
       // app says so instead of reporting an empty update.
       expect(fetched.calls, `the service fetched ${label}`).toBe(accepted ? 1 : 0);
-      expect(status.feedConfigured, `the service reported ${label} as configured`).toBe(accepted);
-      if (!accepted) expect(status.state).toBe('unsupported');
+      if (accepted) {
+        expect(status.feedConfigured, `the service reported ${label} as unconfigured`).toBe(true);
+      } else if (reason === undefined) {
+        // Nothing configured: the development case, and the only one that may
+        // say 未配置更新源.
+        expect(status.feedConfigured, `the service reported ${label} as configured`).toBe(false);
+        expect(status.state, `${label} is not "nothing configured"`).toBe('unsupported');
+        expect(status.message).toBe('未配置更新源');
+      } else {
+        // Configured and refused. `feedConfigured` stays true — a person did
+        // write a value — and the status names the fix instead of telling them
+        // to configure what they already configured.
+        expect(status.feedConfigured, `the service forgot ${label} was configured`).toBe(true);
+        expect(status.state, `${label} was reported as "not configured"`).toBe('error');
+        expect(status.message, `${label}: the status does not name the refusal`).toBe(
+          FEED_REFUSAL_STATUS_MESSAGE[reason],
+        );
+      }
 
       // The URL the two resolvers hand on is the same normalised string, not
       // merely "both truthy": a rule that agreed on the decision but not on
@@ -1602,8 +1642,12 @@ describe('the updater itself', () => {
 
     const status = await instance.check();
 
-    expect(status.state).toBe('unsupported');
-    expect(status.feedConfigured).toBe(false);
+    // Refused, not absent: the value was configured, so the status stands as
+    // configured with the reason. Reporting `unsupported` here would tell the
+    // operator to set the variable they just set.
+    expect(status.state).toBe('error');
+    expect(status.feedConfigured).toBe(true);
+    expect(status.message).toBe(FEED_REFUSAL_STATUS_MESSAGE['not-https']);
     expect(fetchCalls.calls).toBe(0);
   });
 
@@ -1628,7 +1672,7 @@ describe('the updater itself', () => {
     expect(
       new Set(refused.map(([, reason]) => reason)),
       'the cases below no longer cover every reason the service can refuse',
-    ).toEqual(new Set(Object.keys(UPDATE_FEED_REFUSAL_MESSAGE)));
+    ).toEqual(new Set(CHANNEL_URL_REJECTIONS));
 
     for (const [feedUrl, reason] of refused) {
       const logs = new MemoryLogSink();
@@ -1636,8 +1680,15 @@ describe('the updater itself', () => {
 
       const status = await instance.check();
 
-      expect(status.state, `${feedUrl} was not reported as unsupported`).toBe('unsupported');
-      expect(status.feedConfigured).toBe(false);
+      // The status half of the same refusal: a configured feed that was
+      // refused stays configured, fails the check, and carries the sentence
+      // for the reason. "unsupported" here would be the defect this branch
+      // was written to prevent.
+      expect(status.state, `${feedUrl} was not reported as a failed check`).toBe('error');
+      expect(status.feedConfigured, `${feedUrl} was reported as never configured`).toBe(true);
+      expect(status.message, `${feedUrl}: the status does not name the refusal`).toBe(
+        FEED_REFUSAL_STATUS_MESSAGE[reason],
+      );
       expect(fetchCalls.calls, `${feedUrl} was fetched anyway`).toBe(0);
 
       const warnings = logs.records.filter((record) => record.level === 'warn');
@@ -2255,132 +2306,180 @@ describe('the updater itself', () => {
   });
 
   /**
-   * Forgets the document the update check read.
+   * The status and the document are one value, and these are the two halves a
+   * test can see: what `available` carries, and what the app is shown.
    *
-   * The field is private because nothing outside the service may write it —
-   * which is also why no public path can produce the state below: `available`
-   * and the document are written in one statement block, and every path that
-   * clears the document moves the status off `available` in the same block. A
-   * test that wants the branch has to write the field, and reaching a branch
-   * only a corrupt status can reach is the point of the assertion.
+   * `UpdateService` used to keep `status` and `feed` as two fields, with
+   * "`available` implies a document" promised in a comment. The pairing is a
+   * discriminated union now, and `set()` has an overload for `available` that
+   * refuses the transition without a document — a compile-time fact, not this
+   * test's. What a test can still do is read the private value after each
+   * transition and fail when the two disagree, which is the runtime half: the
+   * union can be lied to with an `as`, and `download()` would then read
+   * `undefined.url`.
    */
-  function forgetCheckedFeed(instance: UpdateService): void {
-    (instance as unknown as { feed: unknown }).feed = null;
+  interface InternalStatus {
+    readonly state: string;
+    readonly document: unknown;
   }
+  const internalStatus = (instance: UpdateService): InternalStatus =>
+    (instance as unknown as { status: InternalStatus }).status;
 
-  it('takes the pending download with it when a later check fails', async () => {
-    // Reachable, and the reason the status and the document are read together:
-    // the user clicks 检查更新 a second time while the first result is on
-    // screen. That check fails — a blip, a feed that went away — so the
-    // document the download would have been made against is gone with it.
-    // Downloading anyway would stage a file for a version the app can no
-    // longer say anything about, and the version the user was shown would be
-    // a claim about a feed that was never read.
+  it('carries the checked document into available, ready, and nowhere else', async () => {
     const genuine = 'the genuine installer';
-    const { instance, downloads, fetchCalls } = service({
-      steps: [
-        { status: 200, document: { version: '9.9.9', url: INSTALLER_URL, sha256: sha256Of(genuine) } },
-        { status: 503 },
-      ],
+    const { instance } = service({
+      feed: {
+        version: '9.9.9',
+        url: INSTALLER_URL,
+        sha256: sha256Of(genuine),
+        size: genuine.length,
+      },
       download: async (_url, target) => {
         writeFileSync(target, genuine);
       },
     });
 
-    expect((await instance.check()).state).toBe('available');
+    const available = await instance.check();
+    expect(available.state).toBe('available');
+    // The internal half, read directly: `available` with no document is the
+    // state the old two-field version could reach, and it is the state that
+    // made `download()` re-read the feed.
+    expect(internalStatus(instance).state).toBe('available');
+    expect(internalStatus(instance).document, 'available without a document').toMatchObject({
+      version: '9.9.9',
+      url: INSTALLER_URL,
+      sha256: sha256Of(genuine),
+    });
+    // And what the renderer and the IPC push see: the document is stripped,
+    // because a process that only draws a button does not need the hash and
+    // the download URL.
+    expect(available, 'the feed document leaked into the public status').not.toHaveProperty(
+      'document',
+    );
 
-    const rechecked = await instance.check();
-    expect(rechecked.state).toBe('error');
-    expect(rechecked.message).toContain('503');
+    const ready = await instance.download();
+    expect(ready.state).toBe('ready');
+    expect(internalStatus(instance).document, 'ready lost the document the install re-checks').toMatchObject(
+      { sha256: sha256Of(genuine), size: genuine.length },
+    );
+    expect(ready).not.toHaveProperty('document');
+  });
+
+  it('refuses a download before any check, without a single request', async () => {
+    // `download()` is reachable from a screen whose status is `idle` — the
+    // button is drawn from a status that was never a check. It must refuse,
+    // and it must not rescue itself by reading the feed: an earlier build
+    // re-fetched here, which reopened the window the stored document exists to
+    // close. The transport has no scripted answers, so a request would be
+    // recorded and fail the test.
+    const { getImpl, requests } = scriptedGet([]);
+    const { instance, fetchCalls } = service({ downloadGet: getImpl });
 
     const status = await instance.download();
+
     expect(status.state).toBe('error');
-    expect(downloads, 'a failed re-check still downloaded the stale version').toEqual([]);
-    // Two checks and no third request: the download did not rescue itself by
-    // reading the feed again.
-    expect(fetchCalls.calls).toBe(2);
-    expect(existsSync(join(dir, 'UCAD-setup.exe'))).toBe(false);
+    expect(status.message).toContain('没有可下载的新版本');
+    expect(requests, 'a download with no check behind it made a request').toEqual([]);
+    expect(fetchCalls.calls, 'the download read the feed to rescue itself').toBe(0);
+    expect(internalStatus(instance).document).toBeNull();
   });
 
   /**
-   * Makes the status say `available` with no check behind it.
+   * Every write to `this.status`, as a 1-based line.
    *
-   * The second way into the branch below, and the one a future caller would
-   * produce: the status and the document are two fields, and only `check()`
-   * currently writes both. Written through the field on purpose — no public
-   * path produces the state today, and a gate that could only observe the
-   * reachable path would be asserting nothing about the unreachable one.
+   * The overload on `set()` only binds callers it can see. A second writer —
+   * a retry loop setting `status.state = 'available'`, a restored session
+   * assigning a ready shape — is a writer the overloads never saw, and the
+   * union guarantees nothing about it. The scan is the half that counts those:
+   * the only allowed write is `set()`'s own assignment, and it is looked up by
+   * position rather than by name, because "one write, somewhere in the right
+   * file" is not the claim.
+   *
+   * A property write (`this.status.progress = 1`) is counted too: it mutates
+   * the same value without going through the funnel, and the union would let
+   * it reach a state the transition never declared.
    */
-  function pretendAvailable(instance: UpdateService): void {
-    (instance as unknown as { status: Record<string, unknown> }).status = {
-      state: 'available',
-      currentVersion: '1.0.0',
-      latestVersion: '9.9.9',
-      feedConfigured: true,
-    };
+  function statusWrites(source: string): number[] {
+    const code = blankComments(source);
+    const writes: number[] = [];
+    const pattern = /this\s*\.\s*status\s*(?:=[^=]|\.\s*[A-Za-z_$][\w$]*\s*=[^=])/g;
+    for (const match of code.matchAll(pattern)) {
+      writes.push(code.slice(0, match.index).split('\n').length);
+    }
+    return writes;
   }
 
-  it('refuses a download whose checked document is gone, without a single request', async () => {
-    // The branch `download()` keeps for a status that disagrees with itself.
-    // It cannot be produced today, and what is asserted is what happens *if* it
-    // ever can: the download stops, says so, and above all does not fetch
-    // anything — not the feed a second time, and not the installer. An earlier
-    // build re-fetched the feed here, which reopened the window the stored
-    // document exists to close — a second read can name a different file than
-    // the version the user was shown, and the hash that
-    // `installAndRestart()` re-checks comes from that same document.
-    //
-    // The transport below has *no* scripted answers, so "no network request
-    // was made" is a fact about this run rather than an absence nobody
-    // checked: one attempt would overrun the script and be recorded.
-    const genuine = 'the genuine installer';
-    const { getImpl, requests } = scriptedGet([]);
-    const { instance, fetchCalls } = service({
-      feed: { version: '9.9.9', url: INSTALLER_URL, sha256: sha256Of(genuine) },
-      downloadGet: getImpl,
-    });
+  it('writes the status in one place, where the state and the document are paired', () => {
+    const source = readFileSync(UPDATE_SERVICE_SOURCE, 'utf8');
+    const writes = statusWrites(source);
 
-    await instance.check();
-    expect(instance.current.state).toBe('available');
+    const lines = source.split('\n');
+    const methodRange = (signature: string): readonly [number, number] => {
+      const start = lines.findIndex((line) => line.includes(signature));
+      expect(start, `${signature} is gone, so this gate cannot say where a write is allowed`).toBeGreaterThanOrEqual(
+        0,
+      );
+      const end = lines.findIndex((line, index) => index > start && line === '  }');
+      expect(end, `${signature} is not closed, so this gate cannot read its body`).toBeGreaterThan(
+        start,
+      );
+      return [start, end];
+    };
+    // Two writers, and both are the state's *initial* value: the constructor
+    // enters `idle` with no document, and `set()` enters every later state.
+    // A third would be a transition written beside the funnel, which is the
+    // one thing the overloads cannot see.
+    expect(
+      writes,
+      `update-service.ts writes this.status in ${writes.length} places; a transition may only be ` +
+        'written by set(), and the initial idle value by the constructor',
+    ).toHaveLength(2);
 
-    forgetCheckedFeed(instance);
-    const status = await instance.download();
-
-    expect(status.state).toBe('error');
-    // The message tells the user what to do — check again — rather than
-    // reporting a download failure for a download that never started.
-    expect(status.message).toContain('重新检查');
-    expect(requests, 'the download reached the network with no document to check against').toEqual(
-      [],
+    const allowed = [methodRange('constructor(opts: UpdateServiceOptions)'), methodRange('private set(patch: StatusPatch, document:')];
+    const outside = writes.filter(
+      (line) => !allowed.some(([start, end]) => line - 1 > start && line - 1 < end),
     );
-    // One read of the feed — the check's. The fallback used to make this two.
-    expect(fetchCalls.calls).toBe(1);
-    expect(existsSync(join(dir, 'UCAD-setup.exe'))).toBe(false);
+    expect(
+      outside,
+      `this.status is written at update-service.ts:${outside.join(', ')} outside set(); a writer ` +
+        'outside the funnel is a write the overloads never saw',
+    ).toEqual([]);
   });
 
-  it('refuses the same download when the status was never earned by a check', async () => {
-    // The same invariant from the other end: `available` without a document,
-    // and without even a check having run. This is the shape a later caller
-    // writing `state: 'available'` — a retry queue, a restored session —
-    // would hand the download, and the refusal (plus its log line) is what
-    // keeps that caller from becoming a second feed reader.
-    const logs = new MemoryLogSink();
-    const { getImpl, requests } = scriptedGet([]);
-    const { instance, fetchCalls } = service({ logs, downloadGet: getImpl });
+  it('counts a second writer, and ignores the prose about the status', () => {
+    // The fixture is the edit this gate exists for: a transition written by
+    // hand beside `set()`. Both spellings are counted — a whole assignment and
+    // a property write — because the second is the shape a progress update
+    // would take if somebody skipped the funnel.
+    expect(
+      statusWrites(
+        [
+          'class S {',
+          '  set(patch: P) {',
+          '    this.status = { ...this.status, ...patch };',
+          '  }',
+          '  retry() {',
+          "    this.status = { state: 'available' };",
+          '  }',
+          '  progress(p: number) {',
+          '    this.status.progress = p;',
+          '  }',
+          '}',
+        ].join('\n'),
+      ),
+    ).toEqual([3, 6, 9]);
 
-    pretendAvailable(instance);
-    const status = await instance.download();
-
-    expect(status.state).toBe('error');
-    expect(status.message).toContain('重新检查');
-    expect(requests, 'a download with no checked document made a request').toEqual([]);
-    expect(fetchCalls.calls, 'the download read the feed to rescue itself').toBe(0);
-
-    const refusal = logs.records.find(
-      (record) => record.msg === 'update download without the document the update check read',
-    );
-    expect(refusal, 'the refusal was silent, so nobody can diagnose it').toBeDefined();
-    expect(refusal!.level, 'an update that refused to download is not a debug note').toBe('error');
+    // The other direction, which is what keeps the gate usable: this file and
+    // the service explain the rule in prose, and a comparison is not a write.
+    expect(
+      statusWrites(
+        [
+          '// this.status = a comment, not a write.',
+          '/** `this.status =` is shown in prose here. */',
+          'export const same = this.status === other;',
+        ].join('\n'),
+      ),
+    ).toEqual([]);
   });
 
   it('writes every byte it reports as downloaded', async () => {
@@ -2574,7 +2673,7 @@ describe('the updater itself', () => {
     // What the test did: outran its script. `afterEach` runs this same guard,
     // so the run would be red even if this assertion were deleted — the
     // assertion is here to prove the guard answers, and to drain the record.
-    expect(() => assertNoScriptOverruns()).toThrow(/1 scripted, request 2/);
+    expectScriptOverrun(/1 scripted, request 2/);
   });
 
   it('fails the test, not the check, when the feed script is empty', async () => {
@@ -2589,7 +2688,7 @@ describe('the updater itself', () => {
     expect(status.message, 'the assertion was masked as a product failure').toContain(
       '0 scripted, request 1',
     );
-    expect(() => assertNoScriptOverruns()).toThrow(/0 scripted, request 1/);
+    expectScriptOverrun(/0 scripted, request 1/);
   });
 });
 

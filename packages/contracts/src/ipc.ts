@@ -497,7 +497,12 @@ export interface UpdateStatus {
   verified?: boolean;
   message?: string;
   checkedAt?: string;
-  /** false => no release feed is configured, and the UI says so plainly */
+  /**
+   * false => no release feed was provided at all, and the UI says so plainly.
+   * A provided-but-refused feed (`http://…`, a typo) is still configured: it
+   * reports `true` with `state: 'error'` and the reason in `message`. Reporting
+   * it as absent would tell a user to configure what they already configured.
+   */
   feedConfigured: boolean;
 }
 

@@ -36,12 +36,13 @@
  * is looked up with the token the resolver returned — the same key the log line
  * carries as `reason`, which is what a support report filters on.
  *
- * The keys are also compared with a hand list, for the reason
- * `tests/contract/decision-chain.test.ts` keeps one for the drop reasons: this
- * suite is transpiled without typechecking, so nothing here can enumerate a
- * type. Without the list, a fourth reason would leave a row nobody notices —
- * `Record` would demand it, and this file would still pass while checking
- * nothing about it.
+ * The keys are also compared with `CHANNEL_URL_REJECTIONS` — the array the
+ * type is derived from — for the reason
+ * `tests/contract/decision-chain.test.ts` compares its tables with the arrays
+ * in `decision-facade.ts`: this suite is transpiled without typechecking, so
+ * nothing here can enumerate a type. The array is the one fact, so a reason
+ * added to it fails `npm run typecheck` at the sentence table and is red here
+ * without a second list to remember.
  *
  * ## And the wiring, because a rule nobody calls is not a rule
  *
@@ -65,6 +66,7 @@ import {
   type UpdateFeedLogTarget,
 } from '../../apps/desktop/src/main/update-feed-log';
 import {
+  CHANNEL_URL_REJECTIONS,
   resolveUpdateFeed,
   type ChannelUrlRejection,
   type ResolvedUpdateFeed,
@@ -134,14 +136,14 @@ const RESOLVED: ResolvedUpdateFeed = {
 const NOT_CONFIGURED: ResolvedUpdateFeed = { url: null, source: 'none' };
 
 /**
- * The rejection reasons, as runtime values.
+ * The rejection reasons are `CHANNEL_URL_REJECTIONS`.
  *
- * The stand-in for `ChannelUrlRejection` that the type cannot provide here;
- * `produce()` below turns each one into the real resolution a user would hit,
- * so a name on this list that the resolver no longer produces is red rather
- * than merely stale.
+ * Imported rather than restated: the array in `update-feed.ts` is what
+ * `ChannelUrlRejection` is derived from, and `PRODUCTIONS` below turns each
+ * member into the real resolution a user would hit — so a member the resolver
+ * no longer produces is red rather than merely stale, and a member added to
+ * the vocabulary cannot be forgotten here.
  */
-const ALL_REFUSALS = ['invalid-url', 'not-https'] as const satisfies readonly ChannelUrlRejection[];
 
 /** How each refusal is produced by the product, not by a hand-built object. */
 const PRODUCTIONS: Record<ChannelUrlRejection, { envValue: string }> = {
@@ -236,7 +238,7 @@ describe('the update feed is announced once per process', () => {
 
 describe('a refused override is reported as the refusal it was', () => {
   it('writes the sentence that matches the reason the resolver gave', () => {
-    for (const reason of ALL_REFUSALS) {
+    for (const reason of CHANNEL_URL_REJECTIONS) {
       const announcer = createUpdateFeedAnnouncer();
       const { lines, target } = recorder();
       const resolved = resolveUpdateFeed(PRODUCTIONS[reason]);
@@ -277,7 +279,7 @@ describe('a refused override is reported as the refusal it was', () => {
     expect(typo, 'the two refusals share a sentence, so the log cannot name the fix').not.toBe(
       downgrade,
     );
-    for (const reason of ALL_REFUSALS) {
+    for (const reason of CHANNEL_URL_REJECTIONS) {
       expect(
         UPDATE_FEED_REFUSAL_MESSAGE[reason],
         `${reason}: the sentence does not name the variable the operator has to change`,
@@ -295,9 +297,19 @@ describe('a refused override is reported as the refusal it was', () => {
     // sentence would make two different problems look like one.
     const keys = Object.keys(UPDATE_FEED_REFUSAL_MESSAGE);
     expect(keys.sort(), 'the refusal table and ChannelUrlRejection disagree').toEqual(
-      [...ALL_REFUSALS].sort(),
+      [...CHANNEL_URL_REJECTIONS].sort(),
     );
-    expect(ALL_REFUSALS.length, 'the hand list is too short to prove anything').toBeGreaterThan(1);
+    // The sample map is keyed by the same type, and `tsc` catches a missing
+    // member only where it runs; `npm test` does not. A missing entry would
+    // make the loop above resolve `undefined` and report an exception instead
+    // of a reason, so the keys are compared here.
+    expect(Object.keys(PRODUCTIONS).sort(), 'a refusal has no case that produces it').toEqual(
+      [...CHANNEL_URL_REJECTIONS].sort(),
+    );
+    expect(
+      CHANNEL_URL_REJECTIONS.length,
+      'the vocabulary is too short to prove anything',
+    ).toBeGreaterThan(1);
     expect(
       new Set(Object.values(UPDATE_FEED_REFUSAL_MESSAGE)).size,
       'two refusal reasons share one sentence',
