@@ -72,10 +72,22 @@ export interface UpdateFeedLogTarget {
  * because `tests/` is transpiled without typechecking and a test cannot
  * enumerate a type. Adding a reason means adding it to both — which is the
  * point, and the price of the compiler only seeing one direction.
+ *
+ * **One sentence, two call sites.** `UpdateService.resolveFeed()` writes this
+ * same warning when a caller hands it a feed directly, so the sentence cannot
+ * name only the environment override: the service is reached by a value that
+ * may have come from either the override or the packaged configuration. It
+ * names both places a build's feed is configured, which is true at both call
+ * sites. A second, service-local pair of sentences used to sit beside this
+ * table, and `tests/contract/update-integrity.test.ts` now asserts the service
+ * writes exactly `UPDATE_FEED_REFUSAL_MESSAGE[reason]` for every reason — the
+ * same rule as the announcer's, not a lookalike that can drift.
  */
 export const UPDATE_FEED_REFUSAL_MESSAGE: Record<ChannelUrlRejection, string> = {
-  'invalid-url': 'UCAD_UPDATE_FEED ignored: the value is not a URL',
-  'not-https': 'UCAD_UPDATE_FEED ignored: the feed must be an https URL',
+  'invalid-url':
+    'update feed ignored: UCAD_UPDATE_FEED or update-config.json is not a valid URL',
+  'not-https':
+    'update feed ignored: UCAD_UPDATE_FEED or update-config.json must be an https URL',
 };
 
 /** The line a resolved feed produces, said once. */

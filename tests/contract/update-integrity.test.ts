@@ -70,6 +70,7 @@ import {
   resolveDownloadRedirect,
   type DownloadGet,
 } from '../../apps/desktop/src/main/update-service';
+import { UPDATE_FEED_REFUSAL_MESSAGE } from '../../apps/desktop/src/main/update-feed-log';
 import { buildFeedDocument, installerUrlFor } from '../../scripts/make-update-feed.mjs';
 
 const FEED_URL = 'https://example.test/update-feed.json';
@@ -1004,6 +1005,109 @@ describe('every URL on the update channel is judged by one rule', () => {
   });
 });
 
+/** A place a source reaches for the plaintext HTTP transport. */
+interface PlaintextHttpUse {
+  readonly line: number;
+  readonly what: string;
+}
+
+/**
+ * Every plaintext-HTTP use in a source, with the line that names it.
+ *
+ * The update channel's URLs are https-only, but that is a rule about *values*;
+ * it says nothing about the module the downloader imports. `update-service.ts`
+ * used to import `node:http` as a value and pick it for a non-https URL — dead
+ * through the rule, and one edit away from being live in the file that writes
+ * an installer to disk. This scan is about that transport, not about the rule,
+ * so it reads the source rather than a parsed URL.
+ *
+ * Two shapes are counted: a `http.get(` / `http.request(` call, and a value
+ * import of `node:http`. A type-only import is fine — `DownloadGet` is
+ * structurally `https.get`, and its callback and return types come from the
+ * same module — so `import type …` is the shape this gate expects.
+ *
+ * Comments are blanked (see `blankComments`), because the file explains the
+ * transport by name. The bias is the safe one: a `http.get(` inside a string
+ * literal is still counted, which can only make the gate find something; it
+ * cannot hide a call.
+ */
+function plaintextHttpUses(source: string): PlaintextHttpUse[] {
+  const code = blankComments(source);
+  const lineOf = (index: number) => code.slice(0, index).split('\n').length;
+  const uses: PlaintextHttpUse[] = [];
+  for (const match of code.matchAll(/\bhttp\s*\.\s*(get|request)\s*\(/g)) {
+    uses.push({ line: lineOf(match.index!), what: `calls http.${match[1]}(` });
+  }
+  for (const match of code.matchAll(
+    /^[ \t]*import\s+(?!type\b)[^\n]*from\s*['"]node:http['"]/gm,
+  )) {
+    uses.push({ line: lineOf(match.index!), what: 'imports node:http as a value' });
+  }
+  return uses.sort((a, b) => a.line - b.line);
+}
+
+describe('the downloader never reaches for the plaintext transport', () => {
+  it('reads the real downloader and finds only https', () => {
+    // `https.get` has to still be there: a gate that only asserts the absence
+    // of `http` would stay green if the default downloader stopped making a
+    // request at all, and the two assertions together say "https, not http".
+    const source = readFileSync(join(MAIN_SOURCE, 'update-service.ts'), 'utf8');
+    expect(source, 'the default downloader no longer calls https.get').toContain('https.get(');
+    expect(
+      plaintextHttpUses(source),
+      'update-service.ts reaches for the plaintext transport; the update channel is https-only and node:http must be a type-only import',
+    ).toEqual([]);
+  });
+
+  it('counts a plaintext call and a value import, and ignores types and prose', () => {
+    // The edit the gate exists for, in both spellings: a call added back, and
+    // the value import it needs to compile.
+    const bad = [
+      "import * as http from 'node:http';",
+      'export const request = http.get(url, {}, () => {});',
+    ].join('\n');
+    expect(plaintextHttpUses(bad)).toEqual([
+      { line: 1, what: 'imports node:http as a value' },
+      { line: 2, what: 'calls http.get(' },
+    ]);
+
+    // The other method, and a call after a doc comment that names the same
+    // identifier: the comment is blanked, the call is not.
+    expect(
+      plaintextHttpUses(
+        [
+          '/** http.request( is what this file must not do. */',
+          'export const request = http.request(url, {}, () => {});',
+        ].join('\n'),
+      ),
+    ).toEqual([{ line: 2, what: 'calls http.request(' }]);
+
+    // The shape production uses: types from `node:http`, the request from
+    // `node:https`.
+    expect(
+      plaintextHttpUses(
+        [
+          "import type * as http from 'node:http';",
+          "import * as https from 'node:https';",
+          'export type Get = (r: http.IncomingMessage) => http.ClientRequest;',
+          'export const request = https.get(url, {}, () => {});',
+        ].join('\n'),
+      ),
+    ).toEqual([]);
+
+    // And plain prose, which both files are full of.
+    expect(
+      plaintextHttpUses(
+        [
+          '// http.get( and http.request( are not allowed in this file.',
+          '/* The old branch chose http for a non-https URL. */',
+          'export const ok = true;',
+        ].join('\n'),
+      ),
+    ).toEqual([]);
+  });
+});
+
 describe('a hash is a hash', () => {
   it('accepts the shapes a release tool writes', () => {
     const digest = sha256Of('installer');
@@ -1502,20 +1606,30 @@ describe('the updater itself', () => {
     expect(fetchCalls.calls).toBe(0);
   });
 
-  it('says in the log why a feed was refused, not just that it was', async () => {
+  it('says in the log why a feed was refused, in the one sentence the rule owns', async () => {
     // The refusal is the security-relevant half of `resolveFeed()`, and it was
     // the half with no gate: what the user sees is "未配置更新源" in both
     // cases, and a cleartext channel refused without a line in `app.log` is a
     // refusal nobody can diagnose. Both refusal reasons are asserted, because
     // "you typed a URL wrong" and "you tried to downgrade the channel" send a
     // person to two different fixes and must not be flattened into one line.
-    const refused: ReadonlyArray<readonly [string, string, 'invalid-url' | 'not-https']> = [
-      ['http://example.test/feed.json', 'must be https', 'not-https'],
-      ['file:///etc/passwd', 'must be https', 'not-https'],
-      ['example.test/feed.json', 'not a valid URL', 'invalid-url'],
+    //
+    // The sentence is compared with `UPDATE_FEED_REFUSAL_MESSAGE`, not with a
+    // substring: this file used to hold a second copy of the wording, so the
+    // service could drift from the announcer that reports the same reasons for
+    // an override. Change the service back to an inline sentence and this is
+    // red; add a reason without a sentence and the typecheck is red.
+    const refused: ReadonlyArray<readonly [string, ChannelUrlRejection]> = [
+      ['http://example.test/feed.json', 'not-https'],
+      ['file:///etc/passwd', 'not-https'],
+      ['example.test/feed.json', 'invalid-url'],
     ];
+    expect(
+      new Set(refused.map(([, reason]) => reason)),
+      'the cases below no longer cover every reason the service can refuse',
+    ).toEqual(new Set(Object.keys(UPDATE_FEED_REFUSAL_MESSAGE)));
 
-    for (const [feedUrl, message, reason] of refused) {
+    for (const [feedUrl, reason] of refused) {
       const logs = new MemoryLogSink();
       const { instance, fetchCalls } = service({ logs, getFeedUrl: () => feedUrl });
 
@@ -1525,10 +1639,15 @@ describe('the updater itself', () => {
       expect(status.feedConfigured).toBe(false);
       expect(fetchCalls.calls, `${feedUrl} was fetched anyway`).toBe(0);
 
-      const warning = logs.records.find((record) => record.msg.includes(message));
-      expect(warning, `${feedUrl} was refused with no log line saying why`).toBeDefined();
-      expect(warning!.level).toBe('warn');
-      expect(warning!.meta).toMatchObject({ reason });
+      const warnings = logs.records.filter((record) => record.level === 'warn');
+      expect(warnings, `${feedUrl} was refused with no warning, or with more than one`).toHaveLength(
+        1,
+      );
+      expect(
+        warnings[0]!.msg,
+        `${feedUrl}: the service writes a sentence of its own instead of UPDATE_FEED_REFUSAL_MESSAGE[${reason}]`,
+      ).toBe(UPDATE_FEED_REFUSAL_MESSAGE[reason]);
+      expect(warnings[0]!.meta).toMatchObject({ reason });
     }
   });
 

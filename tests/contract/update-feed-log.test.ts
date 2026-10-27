@@ -46,11 +46,12 @@
  * ## And the wiring, because a rule nobody calls is not a rule
  *
  * The last block reads `bootstrap.ts` as text and asserts that the flags did not
- * grow back, that the announcer is the thing being called, and that the file
- * still resolves the feed through `resolveUpdateFeed()` rather than assembling
- * its own answer. `/opt/jev-pi-agent` cannot import that file, so a scan is the
- * only available check — and the flags are exactly the sort of local state that
- * reappears because it is two lines shorter than passing an instance.
+ * grow back, that the announcer is created exactly once and at module scope,
+ * that the announcer is the thing being called, and that the file still resolves
+ * the feed through `resolveUpdateFeed()` rather than assembling its own answer.
+ * `/opt/jev-pi-agent` cannot import that file, so a scan is the only available
+ * check — and the flags are exactly the sort of local state that reappears
+ * because it is two lines shorter than passing an instance.
  */
 
 import { describe, expect, it } from 'vitest';
@@ -68,6 +69,7 @@ import {
   type ChannelUrlRejection,
   type ResolvedUpdateFeed,
 } from '../../apps/desktop/src/main/update-feed';
+import { blankComments } from './source-scan';
 
 const here = import.meta.dirname;
 const REPO_ROOT = join(here, '..', '..');
@@ -317,6 +319,36 @@ describe('bootstrap keeps no announcement state of its own', () => {
       /announceUpdateFeed\.announce\(/.test(bootstrap),
       'bootstrap.ts creates the announcer but never announces anything through it',
     ).toBe(true);
+  });
+
+  it('creates exactly one announcer, at module scope', () => {
+    // A second instance is a second "already said" state, so the line a user
+    // depends on appears twice; an instance created inside the update-check
+    // function is the same state re-derived per call, which is the bug this
+    // module was extracted to end. The call count alone cannot tell those
+    // apart when the extra one sits in a branch, so the position is asserted
+    // too: the factory's only call is a top-level declaration, not a statement
+    // in a function body.
+    //
+    // Comments are blanked because this file's own prose names the factory,
+    // and the scan is about code. Line numbers survive blanking, so a failure
+    // can name the line. The scan is textual, like the other wiring gates
+    // here: `bootstrap.ts` imports Electron, so the alternative is not a
+    // better check but no check.
+    const code = blankComments(bootstrap);
+    const calls = [...code.matchAll(/createUpdateFeedAnnouncer\s*\(\s*\)/g)];
+    expect(
+      calls,
+      'bootstrap.ts does not hold exactly one announcer; a second instance is a second "already said" state',
+    ).toHaveLength(1);
+
+    const index = calls[0]!.index!;
+    const lineStart = code.lastIndexOf('\n', index) + 1;
+    const line = code.slice(lineStart, index);
+    expect(
+      line.match(/^[ \t]*/)![0],
+      'createUpdateFeedAnnouncer() moved into a function body; it must be created once, at module scope',
+    ).toBe('');
   });
 
   it('still resolves the feed through the one resolver', () => {

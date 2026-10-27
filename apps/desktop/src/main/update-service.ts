@@ -36,7 +36,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { pipeline } from 'node:stream/promises';
 import * as https from 'node:https';
-import * as http from 'node:http';
+import type * as http from 'node:http';
 import { describeError } from '@ucad/contracts';
 import type { Logger } from '@ucad/observability';
 import {
@@ -53,6 +53,7 @@ import {
   type StagedInstallerHandle,
   type UpdateFeedDocument,
 } from './update-feed';
+import { UPDATE_FEED_REFUSAL_MESSAGE } from './update-feed-log';
 
 type UpdateState =
   | 'idle'
@@ -142,7 +143,7 @@ export interface UpdateServiceOptions {
   beforeLaunch?: (target: string) => void | Promise<void>;
 }
 
-/** The HTTP GET a download uses. Structurally `https.get`/`http.get`. */
+/** The HTTPS GET a download uses. Structurally `https.get`. */
 export type DownloadGet = (
   url: URL,
   options: { readonly timeout: number },
@@ -219,6 +220,15 @@ export class UpdateService {
    * installer the feed names, and each redirect hop — are judged by the same
    * rule at their own sites, so no place in this file writes a scheme
    * comparison down.
+   *
+   * The refusal's sentence is not written here either. `update-feed-log.ts`
+   * owns the one reason-to-sentence map, because the same two reasons are
+   * announced for an unusable override; a service-local copy would be the same
+   * security rule with two readings of it. This path is reached when a caller
+   * bypasses `resolveUpdateFeed()`, and the sentence names both places a feed
+   * is configured rather than assuming it was the environment variable.
+   * `tests/contract/update-integrity.test.ts` compares the warning with that
+   * table for every reason.
    */
   private resolveFeed(): string | null {
     const verdict = checkFeedUrl(this.opts.getFeedUrl());
@@ -226,12 +236,9 @@ export class UpdateService {
     // Nothing configured is not a refusal: the app says "未配置更新源" and
     // that is the whole story.
     if (verdict.reason === 'empty') return null;
-    this.opts.logger.warn(
-      verdict.reason === 'invalid-url'
-        ? 'update feed is not a valid URL; ignoring'
-        : 'update feed must be https; ignoring',
-      { reason: verdict.reason },
-    );
+    this.opts.logger.warn(UPDATE_FEED_REFUSAL_MESSAGE[verdict.reason], {
+      reason: verdict.reason,
+    });
     return null;
   }
 
@@ -660,18 +667,20 @@ export function resolveDownloadRedirect(
 }
 
 /**
- * The transport behind the default downloader: the https agent for an https
- * URL, and the http agent otherwise.
+ * The transport behind the default downloader: https, and only https.
  *
- * The `http` branch is not a policy: every URL that reaches the downloader has
- * already been through `checkChannelUrl()` (the installer) or
- * `resolveDownloadRedirect()` (each hop), both of which refuse anything but
- * https. It stays a choice of module rather than an assertion so a test that
- * drives this seam with a plain-http URL exercises the download path instead of
- * throwing here — the refusal belongs to the rule, not to the socket.
+ * Every URL that reaches the downloader has already been through
+ * `checkChannelUrl()` (the installer) or `resolveDownloadRedirect()` (each
+ * hop), both of which refuse anything but https — so there is no branch on the
+ * scheme here. The old code chose the `http` module for a non-https URL, on the
+ * theory that a test seam could drive the download path with cleartext. That
+ * made the plaintext transport a live value in the file that performs the
+ * download: unreachable through the rule, but one edit away from being called.
+ * `tests/contract/update-integrity.test.ts` scans this file for a plaintext
+ * request, and `node:http` is a type-only import now.
  */
 const defaultDownloadGet: DownloadGet = (url, options, onResponse) =>
-  (isUpdateChannelScheme(url.protocol) ? https : http).get(url, options, onResponse);
+  https.get(url, options, onResponse);
 
 async function downloadTo(
   url: URL,
