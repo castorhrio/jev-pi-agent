@@ -1717,6 +1717,79 @@ describe('the updater itself', () => {
     expect(logs.records.filter((record) => record.level === 'warn')).toEqual([]);
   });
 
+  it('keeps the two answers distinct: refused is not unconfigured, in either direction', async () => {
+    // `check()` answers "nothing configured" and "configured but refused" with
+    // two sentences, and each branch already has an exact-match test above.
+    // What an exact match against `FEED_REFUSAL_STATUS_MESSAGE` cannot see is
+    // the two vocabularies *colliding*: set `FEED_REFUSAL_STATUS_MESSAGE[
+    // 'not-https']` to 未配置更新源 and every assertion above stays green while
+    // the screen goes back to telling an operator to configure the variable
+    // they just set — the defect `d044e5d` fixed.
+    //
+    // So the sentences are compared with each other, and the unconfigured one
+    // is taken from the service rather than repeated here: a test that spelled
+    // both literals out would agree with a copy of the defect.
+    const unconfigured = await service({ getFeedUrl: () => null }).instance.check();
+    expect(unconfigured.state, 'the no-feed case is no longer "nothing configured"').toBe(
+      'unsupported',
+    );
+    expect(unconfigured.feedConfigured, 'the no-feed case claims a feed was configured').toBe(
+      false,
+    );
+    const unconfiguredMessage = unconfigured.message ?? '';
+    expect(unconfiguredMessage, 'the no-feed case stopped naming the missing feed').not.toBe('');
+
+    // Every reason, because a copy-paste of one refusal sentence into another
+    // reason gives the user the wrong fix and passes any single-sentence test.
+    const cases: ReadonlyArray<readonly [string, ChannelUrlRejection]> = [
+      ['http://example.test/feed.json', 'not-https'],
+      ['file:///etc/passwd', 'not-https'],
+      ['example.test/feed.json', 'invalid-url'],
+      ['not a url', 'invalid-url'],
+    ];
+    expect(
+      new Set(cases.map(([, reason]) => reason)),
+      'the cases below no longer cover every reason a configured feed can be refused',
+    ).toEqual(new Set(CHANNEL_URL_REJECTIONS));
+
+    const refusalMessages = new Map<ChannelUrlRejection, string>();
+    for (const [feedUrl, reason] of cases) {
+      const status = await service({ getFeedUrl: () => feedUrl }).instance.check();
+      expect(status.state, `${feedUrl} is not reported as a failed check`).toBe('error');
+      expect(status.feedConfigured, `${feedUrl} was reported as never configured`).toBe(true);
+      const message = status.message ?? '';
+      expect(message, `${feedUrl} does not name the refusal`).toBe(
+        FEED_REFUSAL_STATUS_MESSAGE[reason],
+      );
+
+      // The refusal may not contain the unconfigured sentence: "未配置更新源"
+      // plus detail is still the sentence that sends the operator to configure
+      // what is already configured.
+      expect(message, `${feedUrl}: the refusal restates 未配置更新源`).not.toContain(
+        unconfiguredMessage,
+      );
+      // And the reverse: the no-feed sentence may not carry a fix for a value
+      // that was never supplied.
+      expect(unconfiguredMessage, `${feedUrl}: the no-feed sentence carries the refusal`).not.toContain(
+        message,
+      );
+
+      refusalMessages.set(reason, message);
+    }
+
+    // Two reasons sharing one sentence would tell the user the wrong fix for
+    // one of them ("you typed the address wrong" vs "you downgraded the
+    // channel"), so the vocabulary has to be as large as the reason list.
+    expect(
+      refusalMessages.size,
+      'a refusal reason in CHANNEL_URL_REJECTIONS was not exercised',
+    ).toBe(CHANNEL_URL_REJECTIONS.length);
+    expect(
+      [...refusalMessages.values()],
+      'two refusal reasons share one sentence, so the screen cannot say which fix is needed',
+    ).toHaveLength(new Set(refusalMessages.values()).size);
+  });
+
   it('refuses an installer URL that is not https before fetching it', async () => {
     // The feed is https and hashed, but the file it names is not. The hash
     // proves the bytes match what the feed named; it does not make a cleartext
