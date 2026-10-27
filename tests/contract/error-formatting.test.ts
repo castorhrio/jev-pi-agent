@@ -230,18 +230,31 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const mainSrc = path.resolve(here, '../../apps/desktop/src/main');
 
 /**
- * The one bare `throw new Error()` Main may keep.
+ * The bare `throw new Error()` statements Main may keep.
  *
- * `bootstrap.ts` raises it inside `installTray()` and catches it a few lines
- * below: nothing crosses the IPC bridge, the app degrades to
+ * `bootstrap.ts` raises its one inside `installTray()` and catches it a few
+ * lines below: nothing crosses the IPC bridge, the app degrades to
  * "closing the window quits", and the reason goes into the log as a `warn`
  * with the tray problem, not as a §4.11 code the Renderer could act on.
+ *
+ * `update-service.ts` raises its one from the private `set()` funnel, when a
+ * status transition would pair a state with a document the state cannot hold.
+ * That is an internal invariant, not a refusal a user can act on: the public
+ * methods only write legal transitions, and the throw means a bug in the state
+ * machine rather than a feed, a file or a network. It is also unreachable from
+ * the Renderer — both the IPC wrapper and `bootstrap.ts` catch whatever a
+ * public method rejects with.
  */
 const ALLOWED = [
   {
     file: 'bootstrap.ts',
     line: 'throw new Error(`tray icon could not be decoded: ${icon.path}`);',
     why: 'thrown and caught inside installTray(); the tray degrades, nothing crosses IPC',
+  },
+  {
+    file: 'update-service.ts',
+    line: 'throw new Error(',
+    why: 'the private status funnel refuses an illegal transition; an internal invariant, not a coded refusal',
   },
 ];
 

@@ -2692,6 +2692,49 @@ describe('the updater itself', () => {
     expect(launched).toEqual([]);
   });
 
+  it('judges every hop, not only the first: a cleartext third hop stops the chain', async () => {
+    // The single-hop case above proves the response listener asks the rule.
+    // It cannot prove the *next* request asks it too: a loop that checked only
+    // the first `Location` and then recursed without checking would pass it.
+    // Two https hops followed by a cleartext one is the shape that separates
+    // the two, and the request count says the third hop was never made.
+    const genuine = 'the genuine installer';
+    const { getImpl, requests } = scriptedGet([
+      { status: 302, location: 'https://example.test/hop-1' },
+      { status: 302, location: 'https://example.test/hop-2' },
+      { status: 302, location: 'http://example.test/hop-3' },
+    ]);
+    const { instance, launched } = service({
+      feed: {
+        version: '9.9.9',
+        url: INSTALLER_URL,
+        sha256: sha256Of(genuine),
+        size: genuine.length,
+      },
+      downloadGet: getImpl,
+    });
+
+    await instance.check();
+    const status = await instance.download();
+
+    expect(status.state).toBe('error');
+    expect(status.message).toContain('重定向必须使用 https');
+    // The refusal names the hop that issued the downgrade, and that is the
+    // request's own URL — not the `http:` Location, which was never requested.
+    expect(status.message).toContain('第 3 次跳转');
+    expect(status.message).toContain('请求地址 https://example.test/hop-2');
+    expect(requests, 'the cleartext hop was requested before it was judged').toEqual([
+      INSTALLER_URL,
+      'https://example.test/hop-1',
+      'https://example.test/hop-2',
+    ]);
+    expect(readdirSync(dir), 'a refused chain left a file in the staging directory').toEqual([]);
+
+    const installed = await instance.installAndRestart();
+    expect(installed).toBe(false);
+    expect(launched).toEqual([]);
+  });
+
   it('follows exactly five redirects and stages the bytes at the end', async () => {
     // The boundary in the safe direction: five hops are followed. Without
     // this case the limit could be tightened to four and every assertion
@@ -2961,6 +3004,15 @@ describe('every Location a redirect carries is judged after it is resolved', () 
       // so this is not `invalid-location`: the rule is what refuses it.
       location: 'javascript:alert(1)',
       resolved: 'javascript:alert(1)',
+      accepted: false,
+      message: '重定向必须使用 https',
+    },
+    {
+      // A transport, but one that reads the local disk rather than the network.
+      // The downloader must not follow it before judging it: a feed that names
+      // `file:` would otherwise turn the updater into a local file copier.
+      location: 'file:///etc/passwd',
+      resolved: 'file:///etc/passwd',
       accepted: false,
       message: '重定向必须使用 https',
     },
