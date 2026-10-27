@@ -23,7 +23,7 @@
  *  2. assign it in the `start()` step that owns it;
  *  3. add the name to `STARTED_FIELDS`, next to that step;
  *  4. if it is not built by `start()` at all (a constructor field, an
- *     always-present map, a getter), add it to `FieldsNotBuiltByStart`
+ *     always-present map, a getter), add it to `FIELDS_NOT_BUILT_BY_START`
  *     instead — with a sentence saying which of those it is.
  *
  * Step 3 or 4 is not optional: `_everyFieldIsStarted` is a conditional type
@@ -199,37 +199,86 @@ export const STARTED_FIELDS = [
  *    `start()` builds (`retentionService`, `db`, `activeWorkspaceId`), which is
  *    the opposite relationship.
  *
+ * ## Why this is a value, not a type
+ *
+ * It used to be a type alias, and a type is invisible to a test: `tests/`
+ * belongs to no tsc project, so everything this list said could only be
+ * checked by the compiler — and the compiler only checks the direction it is
+ * given. The direction that actually gets got wrong is the other one: a field
+ * `start()` really does build is moved down here to quiet the completeness
+ * check, and the class body keeps the `field!: T` declaration the checklist no
+ * longer covers. `satisfies readonly ContainerField[]` cannot see that, because
+ * both spellings are the same type.
+ *
+ * As an exported `as const` array the scanner can read it, so that mistake is a
+ * red test that names the field (see the reverse-direction test in
+ * `tests/contract/app-container-started.test.ts`, which fails when a name on
+ * this list is declared `field!: T` in the class body).
+ *
+ * ## The three rules a name here has to satisfy
+ *
+ *  - `satisfies readonly ContainerField[]` below — it is a real value member of
+ *    the container. A typo, or a rename carried through this list alone, does
+ *    not compile.
+ *  - the disjointness guard below — it is not also on `STARTED_FIELDS`. A name
+ *    on both lists is a contradiction the compiler can see: `start()` would
+ *    demand the field while this list says nothing builds it.
+ *  - the source scanner in the contract suite — the class body does not declare
+ *    it as `field!: T`. That is this list's reverse direction, and a test is the
+ *    only place it can be checked: the compiler cannot tell "declared and
+ *    assigned elsewhere" from "declared and never assigned".
+ *
  * **A name here is a decision, not a way to silence an error.** The guarantee
  * below says every value member is either on `STARTED_FIELDS` or here, so a
- * field forgotten from the checklist fails to compile — and the source scanner
- * in the contract suite still requires every `field!: T` to be on
- * `STARTED_FIELDS`, so a *started* field moved down here does not buy silence:
- * that gate stays red. This list can therefore not become the place a
- * forgotten field goes to hide; a new getter is one line of deliberate
- * thinking instead.
+ * field forgotten from the checklist fails to compile — and the two gates above
+ * mean this list cannot become the place a forgotten field goes to hide: a
+ * *started* field moved down here is a red test, and a *getter* that became a
+ * field is one too.
  */
-type FieldsNotBuiltByStart =
-  | 'paths'
-  | 'agents'
-  | 'retention'
-  | 'encryptionEnabled'
-  | 'currentWorkspaceId';
+export const FIELDS_NOT_BUILT_BY_START = [
+  'paths',
+  'agents',
+  'retention',
+  'encryptionEnabled',
+  'currentWorkspaceId',
+] as const satisfies readonly ContainerField[];
+
+/** The same list, as a type — what the completeness guard below needs. */
+type FieldsNotBuiltByStart = (typeof FIELDS_NOT_BUILT_BY_START)[number];
 
 /**
- * The line below `npm run typecheck` refuses to compile when a name above is
- * not a container member at all.
+ * A name on both lists — `never` while they disagree about nothing.
  *
- * The `satisfies readonly ContainerField[]` that guards `STARTED_FIELDS` cannot
- * guard a type, so the same check is written as the same shape of conditional:
- * a typo or a rename that was not carried through makes the annotation below
- * unsatisfiable, and the failure names the offending string rather than saying
- * only that something is wrong.
+ * `STARTED_FIELDS` and `FIELDS_NOT_BUILT_BY_START` are answers to one question
+ * asked from two sides, so a name on both is not a redundancy: it is a
+ * contradiction. `start()`'s completeness check would refuse to return without
+ * the field, while this list says nothing in `start()` builds it. The source
+ * scanner catches the same shape from the other end (a `field!: T` may not be
+ * on this list), but only for names the class declares that way — a getter
+ * moved up to the checklist would pass the scanner and fail nothing at all.
+ *
+ * This is the guard for that direction, and it is a compile-time one: the
+ * contract suite is not in a tsc project, so a runtime assertion here would only
+ * run when somebody remembered to run it.
  */
-const _fieldsNotBuiltByStartAreFields: [
-  Exclude<FieldsNotBuiltByStart, ContainerField>,
-] extends [never]
+type SelfMadeFieldThatIsStarted = Extract<
+  (typeof STARTED_FIELDS)[number],
+  FieldsNotBuiltByStart
+>;
+
+/**
+ * The line below `npm run typecheck` refuses to compile while a field is on both
+ * lists.
+ *
+ * Same mechanism as `_everyFieldIsStarted` (a conditional annotation that only
+ * holds while the exclusion is empty, so the error lands here rather than at
+ * whichever use site the compiler reached first), and the failure branch carries
+ * the field's name for the same reason: a name in the message is the difference
+ * between a one-minute fix and a search.
+ */
+const _selfMadeFieldsAreNotStarted: [SelfMadeFieldThatIsStarted] extends [never]
   ? true
-  : { readonly notAContainerField: Exclude<FieldsNotBuiltByStart, ContainerField> } = true;
+  : { readonly startedAndSelfMade: SelfMadeFieldThatIsStarted } = true;
 
 /**
  * A container field that is neither started nor self-made — `never` while the

@@ -193,8 +193,13 @@ and compares the two readings byte for byte. A disagreement fails with the file,
 That is how the *next* unanticipated spelling is found on purpose rather than by a downstream gate
 losing a call. A deliberate refusal (the `}` case above) is recorded in `KNOWN_DIFFERENCES` in that
 file, with a reason; the list is checked in both directions, so an entry that no longer differs is
-also a failure. Do not add an entry to get green: either fix the walk and add a fixture, or write
-down why the refusal is deliberate.
+also a failure. An entry is a *pinned pattern* (`shape`, matched against the byte-level detail the
+comparison prints) as well as a file name, so it excuses the construct somebody decided about and
+nothing else: a second misread in the same file still fails, and an entry whose pattern matches
+nothing is reported as stale instead of staying live. An empty list is the strongest setting — it
+means no difference is acceptable at all. Do not add an entry to get green, and do not widen a
+pattern to cover the next failure: either fix the walk and add a fixture, or write down why the
+refusal is deliberate.
 
 **Container claims.** The rule matches `!:`, not `!: ` — `db!:Database` is the same claim
 as `db!: Database` to the compiler, so requiring the space silently skipped a field. It
@@ -205,6 +210,20 @@ that way fails loudly. If a new declaration spelling appears (a decorator, a gen
 different modifier), add it to the fixture block `the scan that reads the container’s
 promises`; if the scan should keep skipping it, add an assertion under `declares no claim
 the scan deliberately skips` rather than an explanatory comment.
+
+**Adding a subsystem is four steps, and moving a name between lists is a decision.**
+Declare it as `field!: T`, assign it in the `start()` step that owns it, and add the name
+to `STARTED_FIELDS` next to that step. Only a field `start()` does *not* build — a
+constructor field, an always-present map, a getter — goes in `FIELDS_NOT_BUILT_BY_START`,
+with a sentence saying which of those it is. The two lists are answers to one question
+asked from two sides, so `npm run typecheck` guarantees both coverage (every value member
+is on one of them) and disjointness (a name on both does not compile). Coverage alone
+cannot tell a genuinely self-made name from a **real** `field!: T` field moved onto the
+self-made list to quiet an error, so that direction is a red test instead: the scan fails
+if a name on `FIELDS_NOT_BUILT_BY_START` is declared `field!: T` in the class body, and
+the running container is asked *why* each name is on the list (`assigned` / `accessor`) —
+an entry that looks like an unassigned claim fails both gates. A new name therefore means
+adding it to that test's pinned expectations, which is the point.
 
 **Zod messages.** The scan reads `message` / `required_error` / `invalid_type_error` in
 schema options, a positional second argument (`min`, `max`, `regex`, `refine`, …), the

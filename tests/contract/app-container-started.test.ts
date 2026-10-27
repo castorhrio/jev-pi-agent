@@ -25,6 +25,14 @@
  *    declaration — so a field that is added to the container is a field this
  *    file knows about. A list written by hand would go stale silently, and a
  *    field nobody lists is a field nobody checks;
+ *  - the *reverse direction*, which is the one a hand-written checklist gets
+ *    wrong: a name on `FIELDS_NOT_BUILT_BY_START` may not be declared
+ *    `field!: T`. `npm run typecheck` guarantees only that every field is on
+ *    one of the two lists; it cannot see a `start()`-built field that was moved
+ *    onto the *other* list to quiet an error, because both spellings are the
+ *    same type. The scanner can, and the runtime half below reads why each name
+ *    is on that list, so the sentence "`paths` is set by the constructor" is a
+ *    fact about the container rather than a comment nobody re-reads;
  *  - the *run* starts a real container in a temporary directory and asks
  *    whether each of those claims is true afterwards;
  *  - the *guard's scope* is read from the sources rather than from the comment
@@ -73,6 +81,7 @@ import {
   missingStartedFields,
 } from '../../apps/desktop/src/main/app-container';
 import {
+  FIELDS_NOT_BUILT_BY_START,
   RETENTION_DEPENDENCIES,
   STARTED_FIELDS,
 } from '../../apps/desktop/src/main/container-contract';
@@ -300,6 +309,62 @@ function dependenciesOutsideTheChecklist(
 ): string[] {
   const promised = new Set(checklist);
   return dependencies.filter((field) => !promised.has(field));
+}
+
+/**
+ * The names two lists have in common, in the order `first` writes them.
+ *
+ * Used for both of the ways the container's lists can contradict each other: a
+ * name on `FIELDS_NOT_BUILT_BY_START` that the class body declares `field!: T`
+ * (the scanner's job below), and a name that somehow landed on both of the
+ * container's lists (the compiler's job, mirrored here so the *shipped* lists
+ * are asserted rather than trusted). Both answers are "which names", not
+ * "yes/no", because the fix is to move that one field.
+ */
+function sharedNames(first: readonly string[], second: readonly string[]): string[] {
+  const other = new Set(second);
+  return first.filter((name) => other.has(name));
+}
+
+/**
+ * Why a name is on `FIELDS_NOT_BUILT_BY_START`, read off a container that has
+ * not started.
+ *
+ * The list's own sentences — "set by the constructor", "an always-present map",
+ * "a getter" — are prose, and prose cannot be wrong. Each sentence is one of
+ * three shapes in the running object, and this returns the one the container
+ * actually has:
+ *
+ *  - `accessor` — a getter on the prototype. It *reads* fields `start()` builds,
+ *    which is the opposite relationship, so it is not a promise `start()` makes;
+ *  - `assigned` — an own property that already holds a value without `start()`
+ *    having run: the constructor's `paths`, an initialised map;
+ *  - `looks-like-a-claim` — an own property that is still `undefined`, which is
+ *    exactly what a `field!: T` looks like before `start()` (the compiler emits
+ *    the declaration as `field;`). A name on this list that answers this is a
+ *    field `start()` builds sitting on the wrong list — the mistake the scanner
+ *    catches in the source and this catches in the object.
+ *
+ * The getter is read from its descriptor and never called: `retention` builds
+ * the service, so asking it why it is on the list would build what the question
+ * is about (and, before `start()`, throw instead of answering).
+ */
+function whyNotBuiltByStart(
+  container: object,
+  name: string,
+): 'accessor' | 'assigned' | 'looks-like-a-claim' {
+  for (
+    let proto = Object.getPrototypeOf(container) as object | null;
+    proto !== null;
+    proto = Object.getPrototypeOf(proto) as object | null
+  ) {
+    const descriptor = Object.getOwnPropertyDescriptor(proto, name);
+    if (descriptor === undefined) continue;
+    if (descriptor.get !== undefined) return 'accessor';
+    break;
+  }
+  const own = Object.getOwnPropertyDescriptor(container, name);
+  return own !== undefined && own.value !== undefined ? 'assigned' : 'looks-like-a-claim';
 }
 
 /**
@@ -574,9 +639,15 @@ afterEach(async () => {
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
-/** A real container, started in a temporary directory. */
-async function startApp(): Promise<UcadApp> {
-  const paths: AppPaths = {
+/**
+ * The paths a container is given under the per-test temporary directory.
+ *
+ * One function rather than a copy per container: the containers below are built
+ * both started and not, and the two halves of the reverse gate are only
+ * comparable while they are built the same way.
+ */
+function freshPaths(): AppPaths {
+  return {
     userData: dir,
     dbPath: path.join(dir, 'ucad.db'),
     blobDir: path.join(dir, 'blobs'),
@@ -584,7 +655,11 @@ async function startApp(): Promise<UcadApp> {
     cacheDir: path.join(dir, 'cache'),
     downloadDir: path.join(dir, 'downloads'),
   };
-  const container = new UcadApp({ paths });
+}
+
+/** A real container, started in a temporary directory. */
+async function startApp(): Promise<UcadApp> {
+  const container = new UcadApp({ paths: freshPaths() });
   await container.start();
   return container;
 }
@@ -1190,14 +1265,7 @@ describe('the container keeps every promise start() made', () => {
     // were already set would mean something else had initialised them, and
     // the ordering `start()` relies on would be a story.
     const container = new UcadApp({
-      paths: {
-        userData: dir,
-        dbPath: path.join(dir, 'ucad.db'),
-        blobDir: path.join(dir, 'blobs'),
-        logDir: path.join(dir, 'logs'),
-        cacheDir: path.join(dir, 'cache'),
-        downloadDir: path.join(dir, 'downloads'),
-      },
+      paths: freshPaths(),
     });
 
     for (const field of PROMISED_FIELDS) {
@@ -1231,14 +1299,7 @@ describe('the container keeps every promise start() made', () => {
     // "nothing is missing" proves nothing — a fresh container has none of the
     // fields, and the answer has to say so, field by field.
     const fresh = new UcadApp({
-      paths: {
-        userData: dir,
-        dbPath: path.join(dir, 'ucad.db'),
-        blobDir: path.join(dir, 'blobs'),
-        logDir: path.join(dir, 'logs'),
-        cacheDir: path.join(dir, 'cache'),
-        downloadDir: path.join(dir, 'downloads'),
-      },
+      paths: freshPaths(),
     });
     expect(missingStartedFields(fresh), 'a fresh container reported nothing missing').toEqual([
       ...PROMISED_FIELDS,
@@ -1298,14 +1359,7 @@ describe('the container keeps every promise start() made', () => {
     expect(() => assertStartComplete(app!), 'start() finished but was refused').not.toThrow();
 
     const fresh = new UcadApp({
-      paths: {
-        userData: dir,
-        dbPath: path.join(dir, 'ucad.db'),
-        blobDir: path.join(dir, 'blobs'),
-        logDir: path.join(dir, 'logs'),
-        cacheDir: path.join(dir, 'cache'),
-        downloadDir: path.join(dir, 'downloads'),
-      },
+      paths: freshPaths(),
     });
     let thrown: unknown;
     try {
@@ -1366,5 +1420,112 @@ describe('the container keeps every promise start() made', () => {
     app = await startApp();
     expect(app.retention).toBeInstanceOf(RetentionService);
     expect(app.getRetention()).toBe(app.retention);
+  });
+});
+
+/**
+ * The reverse direction: the names `start()` does *not* build.
+ *
+ * `npm run typecheck` guarantees that every value member of the container is on
+ * exactly one of the two lists. That is a statement about *coverage*, and it is
+ * satisfied just as well by a `start()`-built field that was moved onto the
+ * self-made list — the compiler cannot tell the two apart, because both are the
+ * same type. The gates below are the ones that can.
+ */
+describe('the fields start() does not build', () => {
+  it('reports a name two lists share, in both directions', () => {
+    // The helper first: an intersection that can only answer `[]` would make
+    // every assertion below vacuous.
+    expect(sharedNames(['db', 'paths'], ['paths', 'agents'])).toEqual(['paths']);
+    expect(sharedNames(['db'], ['paths'])).toEqual([]);
+
+    // The shipped lists, which the compiler also checks — asserted here so a
+    // reader sees the two answers side by side, and so a build that skipped
+    // `tsc` still fails this.
+    expect(sharedNames(STARTED_FIELDS, FIELDS_NOT_BUILT_BY_START)).toEqual([]);
+    expect(sharedNames(FIELDS_NOT_BUILT_BY_START, STARTED_FIELDS)).toEqual([]);
+
+    // Non-vacuous: "no shared name" is also what two empty lists answer.
+    expect(
+      FIELDS_NOT_BUILT_BY_START.length,
+      'the self-made list is empty, so the reverse gate proves nothing',
+    ).toBeGreaterThan(0);
+    expect(STARTED_FIELDS.length, 'the checklist is empty').toBeGreaterThan(0);
+  });
+
+  it('does not declare a self-made name as a promise', () => {
+    // The gate this file exists for this round. `FIELDS_NOT_BUILT_BY_START` is
+    // an exported value precisely so the scanner can read it: while it was a
+    // type, the only thing that looked at it was the compiler, and the compiler
+    // accepts a `field!: T` on that list without a word.
+    const claimed = claims(fs.readFileSync(CONTAINER_SOURCE, 'utf8')).map((claim) => claim.name);
+    expect(claimed.length, 'the scan found no claims in the container at all').toBeGreaterThan(10);
+    expect(
+      sharedNames(claimed, FIELDS_NOT_BUILT_BY_START),
+      'a name on FIELDS_NOT_BUILT_BY_START is declared `field!: T` in app-container.ts. The ' +
+        'compile-time guard only says every field is on one of the two lists — it cannot tell a ' +
+        'genuinely self-made name from a field `start()` builds that was moved down here to quiet ' +
+        'an error. Move it back to STARTED_FIELDS and assign it in start(), or drop the `!` if ' +
+        'the field really is made by the constructor or is a getter.',
+    ).toEqual([]);
+
+    // And the same helper answers otherwise for a claim that *is* on the list,
+    // so the assertion above is not a filter over a scan that reads nothing.
+    expect(sharedNames(claims('class A {\n  paths!: AppPaths;\n}').map((c) => c.name), FIELDS_NOT_BUILT_BY_START)).toEqual(['paths']);
+    expect(sharedNames(claims('class A {\n  db!: Database;\n}').map((c) => c.name), FIELDS_NOT_BUILT_BY_START)).toEqual([]);
+  });
+
+  it('tells an assigned field, a getter and a claim apart', () => {
+    // The runtime helper's three answers, on a fixture, because the container
+    // below only exercises the two that are already true.
+    class SelfMadeFixture {
+      assigned = new Map<string, string>();
+      declared!: unknown;
+      get accessor(): unknown {
+        return this.declared;
+      }
+    }
+    const fixture = new SelfMadeFixture();
+    expect(whyNotBuiltByStart(fixture, 'assigned')).toBe('assigned');
+    expect(whyNotBuiltByStart(fixture, 'accessor')).toBe('accessor');
+    // `declared!: unknown` is emitted as `declared;` — an own property holding
+    // `undefined`. That is the shape a `field!: T` has before `start()`, and it
+    // is the answer a wrongly-listed field would give.
+    expect(whyNotBuiltByStart(fixture, 'declared')).toBe('looks-like-a-claim');
+    expect(whyNotBuiltByStart(fixture, 'missing')).toBe('looks-like-a-claim');
+  });
+
+  it('names only fields that are true before start()', () => {
+    // The list's sentences, checked against the container: each name's reason
+    // is pinned, so moving a field onto this list means saying which kind it is
+    // — and a `field!: T` among them is `looks-like-a-claim` here, one test
+    // before the assertion below would need to explain itself.
+    const fresh = new UcadApp({ paths: freshPaths() });
+    const reasons = Object.fromEntries(
+      FIELDS_NOT_BUILT_BY_START.map((name) => [name, whyNotBuiltByStart(fresh, name)]),
+    );
+    expect(
+      reasons,
+      'a name on FIELDS_NOT_BUILT_BY_START is not self-made in the container: `looks-like-a-claim` ' +
+        'means the field is still undefined before start(), i.e. it is a promise on the wrong ' +
+        'list. Move it to STARTED_FIELDS. An unexpected key means a name was added here without ' +
+        'saying what makes it true.',
+    ).toEqual({
+      paths: 'assigned',
+      agents: 'assigned',
+      retention: 'accessor',
+      encryptionEnabled: 'accessor',
+      currentWorkspaceId: 'accessor',
+    });
+
+    // The positive control, on the same container: every promised field really
+    // does look like a claim before `start()`, so the answers above are not the
+    // helper's only output.
+    const claimed = promisedFields(fs.readFileSync(CONTAINER_SOURCE, 'utf8')).map((name) =>
+      whyNotBuiltByStart(fresh, name),
+    );
+    expect([...new Set(claimed)], 'a promised field was already true before start()').toEqual([
+      'looks-like-a-claim',
+    ]);
   });
 });
