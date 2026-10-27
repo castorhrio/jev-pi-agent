@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { act, render, screen, within } from '@testing-library/react';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { I18nProvider } from '@renderer/i18n-context';
 import { UpdateBanner } from '@renderer/components/UpdateBanner';
@@ -26,6 +26,12 @@ import {
  * failure is shown only after the user has acted in this banner. The last rule
  * is deliberate — the app checks on startup, and an offline machine must not
  * open with a failure banner about a check nobody asked for.
+ *
+ * Ownership is a named action, not "some click happened here": the banner
+ * remembers whether it is waiting on a download, an install or a check, and
+ * keeps that until the action ends. A rejection from the IPC surface has no
+ * status to carry it, so it is answered locally — the alternative is a button
+ * that does nothing and says nothing.
  */
 
 const BASE = { currentVersion: '1.0.0', feedConfigured: true } as const;
@@ -55,7 +61,14 @@ const STATUS: Record<UpdateState, UpdateStatus> = {
  * state draws nothing would pass before the effect ran — the test would be
  * green and would have checked only the initial `null`.
  */
-function mount(status: UpdateStatus) {
+function mount(
+  status: UpdateStatus,
+  options: {
+    readonly downloadError?: unknown;
+    readonly checkError?: unknown;
+    readonly installError?: unknown;
+  } = {},
+) {
   const fixture = createFixtureApi('default');
   const listeners = new Set<(next: UpdateStatus) => void>();
   const calls = { check: 0, download: 0, install: 0 };
@@ -77,14 +90,17 @@ function mount(status: UpdateStatus) {
       },
       checkUpdate: async () => {
         calls.check += 1;
+        if (options.checkError !== undefined) throw options.checkError;
         return status;
       },
       downloadUpdate: async () => {
         calls.download += 1;
+        if (options.downloadError !== undefined) throw options.downloadError;
         return status;
       },
       installUpdate: async () => {
         calls.install += 1;
+        if (options.installError !== undefined) throw options.installError;
         return true;
       },
     },
@@ -212,6 +228,66 @@ describe('the update banner accounts for every state', () => {
 
     expect(screen.queryByRole('alert'), 'a dismissed failure is still on screen').toBeNull();
     expect(calls.check, 'dismissing ran a check the user did not ask for').toBe(0);
+  });
+
+  it('keeps a background failure quiet, and shows one once the user has acted', async () => {
+    const user = userEvent.setup();
+    const { show, emit } = mount(STATUS.available);
+    await show();
+
+    // The startup check runs on its own; its failure is not this user's
+    // question, and a banner about it would greet every offline launch.
+    await emit(STATUS.error);
+    expect(document.querySelector('.banner'), 'a background failure opened a banner').toBeNull();
+
+    // The same failure after a click in this banner is the answer they are
+    // watching for — ownership is the action, not the order of events.
+    await emit(STATUS.available);
+    await user.click(within(banner()).getByRole('button', { name: '下载更新' }));
+    await emit(STATUS.error);
+    expect(screen.getByRole('alert'), 'a failure after the user acted was hidden').toHaveTextContent(
+      'SHA-256',
+    );
+  });
+
+  it('forgets the action once a status ends it, so a later background failure stays quiet', async () => {
+    const user = userEvent.setup();
+    const { show, emit } = mount(STATUS.available);
+    await show();
+
+    await user.click(within(banner()).getByRole('button', { name: '下载更新' }));
+    // `ready` is what a download ends at, so the pending action is over by the
+    // time the next failure arrives.
+    await emit(STATUS.ready);
+    await emit(STATUS.error);
+
+    expect(
+      document.querySelector('.banner'),
+      'a finished action still owned a later background failure',
+    ).toBeNull();
+  });
+
+  it('turns a rejected download into a failure with a reason and a retry', async () => {
+    const user = userEvent.setup();
+    const { show, calls } = mount(STATUS.available, {
+      downloadError: new Error('下载通道已断开'),
+    });
+    await show();
+
+    await user.click(within(banner()).getByRole('button', { name: '下载更新' }));
+
+    // A rejected IPC call pushes no status, so without a local failure the
+    // banner would simply stay on "available" and the click would be a no-op.
+    const alert = await screen.findByRole('alert');
+    expect(alert, 'a rejected download left the click with no answer').toHaveTextContent(
+      '下载通道已断开',
+    );
+
+    await user.click(within(alert).getByRole('button', { name: '检查更新' }));
+    expect(calls.check, 'the retry after a rejection did not run a check').toBe(1);
+    await waitFor(() =>
+      expect(screen.queryByRole('alert'), 'the retry left the old failure on screen').toBeNull(),
+    );
   });
 
   it('follows a pushed status instead of only the initial read', async () => {

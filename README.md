@@ -76,7 +76,8 @@ installed build. `UCAD_UPDATE_FEED` overrides it for a private or
 self-hosted feed. The override must be an `https` URL, the same rule the
 packaged configuration is held to: an update that installs itself is code
 execution, so a cleartext override is refused and the refusal is logged
-rather than silently ignored.
+rather than silently ignored. A value that is not a URL at all is refused the
+same way, with the reason logged.
 
 The feed is generated from the installer, so the digest in it is the digest
 of the file that was uploaded:
@@ -226,7 +227,8 @@ Windows 安装包发布在
 应用会自己检查更新——feed 地址随安装包一起发布，不需要用户配置。
 `UCAD_UPDATE_FEED` 可以覆盖它，指向私有或自建的 feed。覆盖值必须是 `https`
 地址，与随包配置受同一条约束：应用会下载并启动这个地址给出的安装包，等于代码执行，
-所以明文 feed 一律被拒，并在日志里写明——不会静默忽略。
+所以明文 feed 一律被拒，并在日志里写明——不会静默忽略。完全不是 URL 的值
+同样会被拒绝，原因也会写进日志。
 
 feed 由安装包生成，里面的摘要就是上传的那个文件的摘要：
 
