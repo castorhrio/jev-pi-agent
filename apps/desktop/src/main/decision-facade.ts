@@ -88,13 +88,67 @@ export const SIDE_EFFECT_REFUSAL_EXPLANATION: Record<SideEffectRefusal, string> 
  * against {@link EngineChainDropReason}: a misspelled reason in a log field is
  * the kind of drift a support report cannot see — the line looks right and the
  * reason is wrong.
+ *
+ * ## Why the value type is `R`, not `EngineChainDropReason`
+ *
+ * The annotation used to be `satisfies Record<EngineChainDropReason,
+ * EngineChainDropReason>`, and that is a cross product: it proves every key is
+ * a reason and every value is a reason, which is not the claim this table
+ * makes. `unknown: 'duplicate'` satisfied it, compiled, and logged — the key
+ * says one thing, the token a report counts says another, and the one line a
+ * reader would check by eye reads as correct.
+ *
+ * The mapped type below is the claim: the value of each reason is *that*
+ * reason, so the two spellings cannot disagree. `satisfies` (not `:`) because
+ * the literal types are what the log sites hand to `logger.warn({ reason })`,
+ * and `as const` is what keeps them literal through the annotation.
+ *
+ * Exported for the runtime half of the same check
+ * (`tests/contract/decision-chain.test.ts`), for the reason
+ * {@link SIDE_EFFECT_REFUSAL_EXPLANATION} is: the suite transpiles without
+ * typechecking, and a test cannot enumerate the members of a type. The test
+ * compares the values with the keys *and* with the refusal tokens
+ * `SIDE_EFFECT_REFUSAL_EXPLANATION` is keyed by, so the two tables cannot drift
+ * apart into two vocabularies for one log field. Adding a reason means adding
+ * the runtime list next door — which is the point: a union member nothing can
+ * enumerate is a `tsc`-only promise.
  */
-const DROP_REASON = {
+export const DROP_REASON = {
   unknown: 'unknown',
   duplicate: 'duplicate',
   contradiction: 'contradiction',
   unauthorized: 'unauthorized',
-} as const satisfies Record<EngineChainDropReason, EngineChainDropReason>;
+} as const satisfies { readonly [R in EngineChainDropReason]: R };
+
+/**
+ * A refusal that is not also a drop reason — `never` while the two agree.
+ *
+ * The relationship the log field depends on: `refusalReason()`'s answer is
+ * written into the *same* `reason` field as `unknown` and `duplicate`, so a
+ * refusal that is not a member of {@link EngineChainDropReason} would be a
+ * token a report reading drop reasons has never been told about — one log
+ * field, two vocabularies, and no single place that says which members are
+ * allowed. The tables are separate (`SIDE_EFFECT_REFUSAL_EXPLANATION` explains
+ * only the refusals), which is why the subset is worth stating rather than
+ * assuming: the compiler accepts `SideEffectRefusal = 'too-many-effects'`
+ * happily, and the log would then carry a reason nowhere enumerated.
+ */
+type RefusalThatIsNotADropReason = Exclude<SideEffectRefusal, EngineChainDropReason>;
+
+/**
+ * The line below `npm run typecheck` refuses to compile when the subset stops
+ * holding.
+ *
+ * Same mechanism as `_selfMadeFieldsAreNotStarted` in `container-contract.ts`:
+ * a conditional annotation that only holds while the exclusion is empty, so the
+ * failure lands here with the offending token in the message rather than at
+ * whichever log site the compiler reached first. An annotation and not a bare
+ * alias, because an unused alias is still valid TypeScript; `_`-prefixed so the
+ * linter's unused-variable rule leaves it alone.
+ */
+const _everyRefusalIsADropReason: [RefusalThatIsNotADropReason] extends [never]
+  ? true
+  : { readonly refusalIsNotADropReason: RefusalThatIsNotADropReason } = true;
 
 export interface DecisionFacadeOptions {
   db: Database;

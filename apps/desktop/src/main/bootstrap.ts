@@ -20,6 +20,7 @@ import { registerIpc } from './ipc';
 import { installApplicationMenu } from './menu';
 import { UpdateService, type UpdateStatus } from './update-service';
 import { resolveUpdateFeed } from './update-feed';
+import { createUpdateFeedAnnouncer } from './update-feed-log';
 import { loadTrayIcon, shouldPreventWindowClose, type TrayProblem } from './tray-icon';
 import { evaluateNavigation, evaluateWindowOpen } from './navigation-guard';
 import { IPC_MENU } from './ipc-menus';
@@ -29,10 +30,16 @@ const isDev = !app.isPackaged;
 
 /** The packaged configuration that names the release feed. */
 const UPDATE_CONFIG_FILE = 'update-config.json';
-/** The feed is read on every check; it is announced once. */
-let updateFeedLogged = false;
-/** A refused `UCAD_UPDATE_FEED` is equally worth saying once, not per check. */
-let updateFeedRejectedLogged = false;
+
+/**
+ * The feed's two log lines, each said once for the life of the process.
+ *
+ * An instance rather than two module-level flags: see `update-feed-log.ts` for
+ * why the rule is a value, and `tests/contract/update-feed-log.test.ts` for the
+ * two checks that make it one line — the behaviour these flags used to describe
+ * in a comment and nothing else.
+ */
+const announceUpdateFeed = createUpdateFeedAnnouncer();
 
 let mainWindow: BrowserWindow | null = null;
 let ucad: UcadApp | null = null;
@@ -524,30 +531,21 @@ function bootstrapTray(): void {
  * A refused override is logged once, loudly enough to be found: the alternative
  * is an app that says "未配置更新源" while the variable the operator set sits
  * right there in the environment, which reads like the override was ignored for
- * no reason. The check runs on every update check, so the line is de-duplicated
- * like the resolved-feed line above.
+ * no reason. This runs on every update check, so both lines are de-duplicated —
+ * by `update-feed-log.ts`, which owns the two sentences and the "already said"
+ * state, and which the contract suite drives directly because this file cannot
+ * be imported without Electron. The caller keeps one announcer for the process;
+ * nothing here remembers anything.
  */
 function readUpdateFeed(): string | null {
   const resolved = resolveUpdateFeed({
     envValue: process.env.UCAD_UPDATE_FEED,
     configPaths: updateConfigPaths(),
   });
-  if (resolved.rejected && !updateFeedRejectedLogged) {
-    updateFeedRejectedLogged = true;
-    // Two refusals, two lines: "not a URL" is a typo to fix, "not https" is a
-    // downgrade this app will not take. The reason travels with the message
-    // rather than being flattened into "invalid", so the log names the fix.
-    ucad?.logger.warn(
-      resolved.rejected === 'invalid-url'
-        ? 'UCAD_UPDATE_FEED ignored: the value is not a URL'
-        : 'UCAD_UPDATE_FEED ignored: the feed must be an https URL',
-      { reason: resolved.rejected },
-    );
-  }
-  if (resolved.url && !updateFeedLogged) {
-    updateFeedLogged = true;
-    ucad?.logger.info('update feed resolved', { source: resolved.source });
-  }
+  // No logger before the container is up: the announcer writes nothing and
+  // marks nothing as said, so the line survives to the first check that can
+  // print it.
+  announceUpdateFeed.announce(resolved, ucad?.logger);
   return resolved.url;
 }
 

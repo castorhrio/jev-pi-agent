@@ -491,6 +491,15 @@ export class UpdateService {
    * exactly what it does not catch. It is deliberately not "hash the installer
    * a second time": that would move the window rather than close it, and it
    * would double the wait on a button the user already waited on.
+   *
+   * That gap is not only written down — it is asserted, because a risk nobody
+   * can fail is a risk nobody re-reads: `tests/contract/update-integrity.test.ts`
+   * ("launches a file replaced after the last check — the window a path launch
+   * leaves open") substitutes the staged file *inside* the launcher, after the
+   * `fstat` and the path resolution, and pins that the launch proceeds. The
+   * day the launch becomes atomic with the check, that test goes red, which is
+   * where the paragraph above and the note on `FileIdentity` are to be
+   * rewritten.
    */
   async installAndRestart(): Promise<boolean> {
     const target = this.status.downloadedPath;

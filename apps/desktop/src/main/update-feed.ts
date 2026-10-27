@@ -665,6 +665,12 @@ export function closeStagedInstaller(handle: StagedInstallerHandle): void {
  * same path inside the launcher: a path-based launch cannot be made atomic
  * with a path check. What this closes is every change that can happen during
  * `beforeLaunch`, which is the window the test seam exists to open.
+ *
+ * What the check cannot close is pinned rather than described:
+ * `tests/contract/update-integrity.test.ts` substitutes the file inside the
+ * launcher — after this function has answered `{ ok: true }` — and asserts the
+ * launch proceeds. A change that made the launch atomic with this answer would
+ * turn that test red, which is the moment this paragraph stops being true.
  */
 export function checkOpenStagedInstaller(
   filePath: string,

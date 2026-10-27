@@ -36,6 +36,7 @@ import type {
   DecisionResult,
 } from '@ucad/contracts';
 import {
+  DROP_REASON,
   DecisionFacade,
   SIDE_EFFECT_REFUSAL_EXPLANATION,
 } from '../../apps/desktop/src/main/decision-facade';
@@ -875,5 +876,90 @@ describe('every side-effect refusal has a case, and an explanation', () => {
     // member with no sample would shrink the loop in the case above; a sample
     // left behind for a deleted member is a test that no longer tests anything.
     expect(Object.keys(SAMPLES).sort()).toEqual([...ALL_REFUSALS].sort());
+  });
+});
+
+/**
+ * The drop reasons, as the log writes them — enumerated at runtime.
+ *
+ * `DROP_REASON` is the table every drop line reads its `reason` field from, and
+ * until this block existed it was checked by `tsc` alone. That check was worth
+ * having but was not the claim the comment above the table made: `satisfies
+ * Record<EngineChainDropReason, EngineChainDropReason>` is the cross product,
+ * so `unknown: 'duplicate'` compiled — every key a reason, every value a
+ * reason, and the two spellings free to disagree. The table's annotation is a
+ * mapped type now, so that particular lie is a compile error (verified by
+ * editing the table and watching `npm run typecheck` refuse it). What the
+ * compiler still cannot do is tell whether the union has members the table has
+ * forgotten, or whether the tokens here are the ones the refusal table
+ * explains: `tests/` is transpiled without typechecking, and a test cannot
+ * enumerate a type.
+ *
+ * So the union has a runtime stand-in below — the same role `ALL_REFUSALS`
+ * plays for {@link SideEffectRefusal} — and the two tables are compared against
+ * each other, because they write the same log field. A report that counts
+ * `reason` values sees one vocabulary; two tables drifting into two
+ * vocabularies is the drift with no reader to notice it.
+ */
+const ALL_DROP_REASONS = [
+  'unknown',
+  'duplicate',
+  'contradiction',
+  'unauthorized',
+] as const satisfies readonly EngineChainDropReason[];
+
+describe('every drop reason is a token the log can be read back by', () => {
+  it('writes each reason as its own name, once each', () => {
+    // The runtime half of the mapped type in `decision-facade.ts`, which
+    // `npm test` never runs: the values are the keys, so a report keyed on the
+    // token and a report keyed on the name count the same lines.
+    expect(
+      [...new Set(Object.values(DROP_REASON))],
+      'a drop reason is written under a token that is not its own name',
+    ).toEqual(Object.keys(DROP_REASON));
+  });
+
+  it('names every reason the union has, and no reason it does not', () => {
+    // The other direction, against the hand list: a fifth union member with no
+    // row here would leave the log writing a token this file cannot enumerate,
+    // and a row left behind for a deleted member is a promise about a line
+    // nothing can produce.
+    expect(
+      Object.keys(DROP_REASON).sort(),
+      'DROP_REASON and EngineChainDropReason disagree about which reasons exist',
+    ).toEqual([...ALL_DROP_REASONS].sort());
+    // Non-vacuous: an empty table would satisfy both directions above.
+    expect(ALL_DROP_REASONS.length).toBeGreaterThan(2);
+  });
+
+  it('uses one vocabulary for the refusals the log explains', () => {
+    // The refusals are written into the same `reason` field as `unknown` and
+    // `duplicate`, so their tokens have to be drop reasons — and the *same*
+    // ones: `reasonExplanation` is looked up with the token, so a refusal whose
+    // table key and log token differed would make the sentence unreachable.
+    const refusals = Object.keys(SIDE_EFFECT_REFUSAL_EXPLANATION) as SideEffectRefusal[];
+    expect(refusals.length, 'the refusal table is empty, so this proves nothing').toBeGreaterThan(
+      0,
+    );
+
+    expect(
+      refusals.filter((refusal) => !(refusal in DROP_REASON)),
+      'a refusal is logged under a token a reader of drop reasons has never been told about',
+    ).toEqual([]);
+    for (const refusal of refusals) {
+      expect(
+        DROP_REASON[refusal],
+        `${refusal}: the refusal table's key and the token the log writes differ`,
+      ).toBe(refusal);
+    }
+
+    // And the split is deliberate rather than an oversight: the reasons the
+    // refusal table does not explain are exactly the two about the *chain*.
+    // A refusal added to the union without an explanation would show up here,
+    // which is the runtime half of `Record<SideEffectRefusal, string>`.
+    expect(
+      Object.keys(DROP_REASON).filter((reason) => !refusals.includes(reason as SideEffectRefusal)),
+      'a drop reason has no explanation, or a refusal reached the log without one',
+    ).toEqual(['unknown', 'duplicate']);
   });
 });

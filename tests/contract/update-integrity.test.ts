@@ -1961,6 +1961,97 @@ describe('the updater itself', () => {
   });
 
   /**
+   * The window that is still open, pinned so that closing it cannot be silent.
+   *
+   * Everything above asks the same question at a different moment: the digest
+   * before the click, the descriptor and the path immediately before the
+   * launch. What no check can do is make the *launch* atomic with the check —
+   * the launcher is handed a path, and the OS resolves that path itself, one
+   * syscall after the last thing this process can ask. `FileIdentity` in
+   * `update-feed.ts` says exactly what it does not catch, and
+   * `installAndRestart()`'s doc says the same in prose: "the residual gap is
+   * the one syscall between that last path check and the OS resolving the same
+   * path inside the launcher".
+   *
+   * Prose about a risk is a claim nobody can fail, and this repository's own
+   * rule is that a gate which cannot fail is not a gate. So the risk is
+   * recorded as a test: the substitution happens *inside the launcher* — after
+   * the descriptor was `fstat`ed, after the path was resolved, with
+   * `installAndRestart()` already past every question it is able to ask — and
+   * the honest observation is that the launch proceeds and the bytes on disk
+   * are not the bytes that were verified.
+   *
+   * **This test is expected to go red the day the window closes** (a launch
+   * that hands the OS the checked descriptor rather than a name, a platform
+   * whose installer path can be opened by handle). That is the intent, in both
+   * directions: it is not a claim that the defect is acceptable, it is the
+   * boundary of what `installAndRestart()` currently guarantees. Whoever
+   * closes the window turns this case into a refusal test — the same shape as
+   * the two above — and deletes the paragraph in `installAndRestart()` and in
+   * `FileIdentity` that this test is the runtime half of.
+   *
+   * TODO(update-launch-window): when the launch is atomic with the check,
+   * flip this to `expect(installed).toBe(false)` and update the "Updates" row
+   * in `CONTRIBUTING.md` ("the residual `stat` window … stays written down"),
+   * which is the sentence this test keeps true.
+   */
+  it('launches a file replaced after the last check — the window a path launch leaves open', async () => {
+    const genuine = 'the genuine installer';
+    // Same length, so no size check could take the credit if one ran later.
+    const swapped = 'the evil installer!!!';
+    expect(swapped.length).toBe(genuine.length);
+
+    let handedToTheOs: string | undefined;
+    const { instance, launched } = service({
+      feed: {
+        version: '9.9.9',
+        url: INSTALLER_URL,
+        sha256: sha256Of(genuine),
+        size: genuine.length,
+      },
+      download: async (_url, target) => {
+        writeFileSync(target, genuine);
+      },
+      // The launcher itself is the last thing that runs, so this is the one
+      // moment that is *after* the final check and *before* the OS opens the
+      // path. `beforeLaunch` cannot reach it: that seam runs before the check.
+      open: async (target) => {
+        const replacement = join(dir, 'late-arrival.exe');
+        writeFileSync(replacement, swapped);
+        renameSync(replacement, target);
+        handedToTheOs = readFileSync(target, 'utf8');
+        return '';
+      },
+    });
+
+    await instance.check();
+    expect((await instance.download()).state).toBe('ready');
+
+    const installed = await instance.installAndRestart();
+
+    expect(
+      installed,
+      'the launch was refused. If that was deliberate — the launch is now atomic with the check — ' +
+        'this case has become a refusal test: flip the expectation, and update the paragraph in ' +
+        'installAndRestart() and the "Updates" row in CONTRIBUTING.md that this test pins.',
+    ).toBe(true);
+    expect(launched, 'the launcher was not called, so nothing was substituted after the check').toEqual(
+      [join(dir, 'UCAD-setup.exe')],
+    );
+    // Both readings, so the fixture is about the window and not about a swap
+    // that never happened: the launcher was handed the staged path, and what
+    // sits at that path when the OS opens it is the substitute.
+    expect(handedToTheOs, 'the substitution did not happen inside the launcher').toBe(swapped);
+    expect(
+      readFileSync(join(dir, 'UCAD-setup.exe'), 'utf8'),
+      'the file at the launched path is still the verified one',
+    ).toBe(swapped);
+    // And the updater is not lying about its own state: nothing it can observe
+    // changed, which is precisely why this window is not a bug in the check.
+    expect(instance.current.state, 'a launched update left an error behind').not.toBe('error');
+  });
+
+  /**
    * Forgets the document the update check read.
    *
    * The field is private because nothing outside the service may write it —
