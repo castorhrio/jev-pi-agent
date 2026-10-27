@@ -75,6 +75,19 @@ const here = import.meta.dirname;
 const REPO_ROOT = join(here, '..', '..');
 const BOOTSTRAP_PATH = join(REPO_ROOT, 'apps', 'desktop', 'src', 'main', 'bootstrap.ts');
 
+/**
+ * The 1-based line of the first match in `source`, or `0` when it is absent.
+ *
+ * A failure has to name a line, and "the call is not there at all" has to be a
+ * different answer from "the call is on line 1" — which is why an absent match
+ * is `0` rather than `-1` or an exception.
+ */
+function lineOf(source: string, pattern: RegExp): number {
+  const match = pattern.exec(source);
+  if (!match) return 0;
+  return source.slice(0, match.index).split('\n').length;
+}
+
 /** One line the announcer wrote, kept with the level it was written at. */
 interface LoggedLine {
   readonly level: 'info' | 'warn';
@@ -319,6 +332,58 @@ describe('bootstrap keeps no announcement state of its own', () => {
       /announceUpdateFeed\.announce\(/.test(bootstrap),
       'bootstrap.ts creates the announcer but never announces anything through it',
     ).toBe(true);
+  });
+
+  it('announces only after the container that can print it is up', () => {
+    // The announcer tolerates a missing target — an unsaid line is not a said
+    // line (the block above drives that) — and that tolerance is not a licence
+    // to read the feed before the logger exists. A line produced before the
+    // container is up is *delayed* until the next check, and on a build that
+    // never checks again it is never printed at all, which is the one line that
+    // says where this build's feed comes from.
+    //
+    // Two positions, because they are two different ways to break it. The
+    // announcement call has to sit below `await ucad.start()` in the file this
+    // one reads the feed from, and — the runtime fact — the construction that
+    // can *reach* it has to sit below it too: `new UpdateService({…})` calls
+    // `getFeedUrl()` in its constructor, so that line is the first thing in the
+    // process that can resolve the feed and announce it.
+    const code = blankComments(bootstrap);
+    const started = lineOf(code, /await ucad\.start\(\)\s*;/);
+    expect(
+      started,
+      'bootstrap.ts no longer awaits ucad.start(); this gate cannot say where the logger comes from',
+    ).toBeGreaterThan(0);
+
+    const constructed = lineOf(code, /new UpdateService\(/);
+    expect(constructed, 'bootstrap.ts constructs no UpdateService, so it reads no feed').toBeGreaterThan(0);
+    expect(
+      constructed,
+      'UpdateService is constructed before the container is up, and its constructor is the first thing that resolves (and announces) the feed',
+    ).toBeGreaterThan(started);
+
+    const announced = lineOf(code, /announceUpdateFeed\.announce\(/);
+    expect(announced, 'bootstrap.ts creates the announcer but never announces anything').toBeGreaterThan(
+      0,
+    );
+    expect(
+      announced,
+      'the announcement moved above `await ucad.start()`, where it has nowhere to write',
+    ).toBeGreaterThan(started);
+
+    // And it says where to write, explicitly: an absent target is the one
+    // spelling that turns every check into a silent no-op.
+    const call = /announceUpdateFeed\.announce\(([^)]*)\)/.exec(code);
+    expect(call, 'the announcement is not a plain call, so this gate cannot read its arguments').not.toBeNull();
+    const args = call![1]!
+      .split(',')
+      .map((arg) => arg.trim())
+      .filter((arg) => arg.length > 0);
+    expect(args, 'the announcement passes no target').toHaveLength(2);
+    expect(
+      ['undefined', 'null'],
+      'the announcement passes an absent target explicitly, so nothing is ever written',
+    ).not.toContain(args[1]);
   });
 
   it('creates exactly one announcer, at module scope', () => {

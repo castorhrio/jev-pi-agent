@@ -159,6 +159,25 @@ const DOWNLOAD_TIMEOUT_MS = 10 * 60_000;
  */
 const MAX_DOWNLOAD_REDIRECTS = 5;
 
+/**
+ * What the user is told when the document the update check read is gone.
+ *
+ * Two call sites, one sentence, because it is one fact: the file the app would
+ * download or launch can only be judged against the feed document the check
+ * stored, and that document is not there any more. `download()` refuses to
+ * stage bytes it cannot check; `installAndRestart()` refuses to launch a file
+ * it cannot check. The fix is the same button in both cases — check again — so
+ * two locally written sentences ("重新下载" at one site, "重新检查" at the other)
+ * would be the same rule with two readings of it, which is exactly the drift
+ * `UPDATE_FEED_REFUSAL_MESSAGE` was extracted to stop.
+ *
+ * It is *not* `verificationMessage({ reason: 'no-hash' })`. That sentence says
+ * the feed published no hash, which is a statement about the publisher; this
+ * one says the app lost the answer, which is a statement about the app. The two
+ * send the reader to two different places.
+ */
+export const STALE_UPDATE_DOCUMENT_MESSAGE = '更新信息已失效，请重新检查更新';
+
 export class UpdateService {
   private readonly opts: UpdateServiceOptions;
   private status: UpdateStatus;
@@ -355,7 +374,7 @@ export class UpdateService {
     const info = this.feed;
     if (!info) {
       this.opts.logger.error('update download without the document the update check read');
-      return this.set({ state: 'error', message: '更新信息已失效，请重新检查更新' });
+      return this.set({ state: 'error', message: STALE_UPDATE_DOCUMENT_MESSAGE });
     }
     if (!info.url) {
       return this.set({ state: 'error', message: '更新源未提供下载地址' });
@@ -507,6 +526,18 @@ export class UpdateService {
    * day the launch becomes atomic with the check, that test goes red, which is
    * where the paragraph above and the note on `FileIdentity` are to be
    * rewritten.
+   *
+   * **The feed document is required, and there is no second source for it.**
+   * The hash this file is checked against is the one the update check stored;
+   * `openStagedInstallerForLaunch()` would answer `no-hash` without it, which
+   * is fail-closed but describes the publisher rather than the app. So the
+   * document is required up front and the refusal names the real problem —
+   * "check again" — instead of "your feed published no hash". That branch is
+   * the only way a *restored* status can reach this method: a second process,
+   * or a later build that persists `status`, hands this method a
+   * `downloadedPath` and nothing else, and it must not launch a file it cannot
+   * check. `tests/contract/update-integrity.test.ts` drives it by dropping the
+   * document from a service whose download succeeded and pressing install.
    */
   async installAndRestart(): Promise<boolean> {
     const target = this.status.downloadedPath;
@@ -515,13 +546,34 @@ export class UpdateService {
       return false;
     }
 
+    // The document the hash comes from. Without it there is nothing to verify
+    // against — not a weaker check, no check — so the staged file is not
+    // touched and nothing is launched. The file is left on disk rather than
+    // deleted: it matched the document that was read when it landed, nothing
+    // is known to be wrong with the bytes, and the next download overwrites the
+    // same single-slot name. What is taken away is the status's claim that an
+    // install is pending, because this method will not install it.
+    const info = this.feed;
+    if (!info) {
+      this.opts.logger.error('update install without the document the update check read', {
+        target,
+      });
+      this.set({
+        state: 'error',
+        verified: false,
+        downloadedPath: undefined,
+        message: STALE_UPDATE_DOCUMENT_MESSAGE,
+      });
+      return false;
+    }
+
     // Verified through a descriptor that stays open until the launch decision.
     // The handle, not the path, is the thing that was hashed: closing and
     // re-opening the path here would leave a second window in which the name
     // could resolve somewhere else.
     const opened = await openStagedInstallerForLaunch(target, {
-      sha256: this.feed?.sha256,
-      size: this.feed?.size,
+      sha256: info.sha256,
+      size: info.size,
     });
     if (!opened.ok) {
       removeStagedInstaller(target);

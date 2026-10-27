@@ -66,6 +66,7 @@ import {
   type ChannelUrlRejection,
 } from '../../apps/desktop/src/main/update-feed';
 import {
+  STALE_UPDATE_DOCUMENT_MESSAGE,
   UpdateService,
   resolveDownloadRedirect,
   type DownloadGet,
@@ -2045,6 +2046,89 @@ describe('the updater itself', () => {
     ).toMatchObject({ reason: 'unreadable' });
   });
 
+  /**
+   * The document, not the file, is the thing an install click has to have.
+   *
+   * `installAndRestart()` verifies against the hash the update check stored, so
+   * a status that says `ready` with that document gone is a question with no
+   * answer — and it is the shape the *next* process gets: a restored status
+   * hands over a `downloadedPath` and nothing else, because nothing persists
+   * the document. The reachable version of the same state is a re-check that
+   * failed after a successful download (`check()` drops the document and
+   * leaves the staged path), which is what this drives: the user presses
+   * 检查更新 once more, that check fails, and then presses 安装.
+   *
+   * What is asserted is not just `false`. A refusal for an unrelated reason
+   * would also be `false`, so the test pins the launch, the status the screen
+   * reads, the one sentence the two refusal paths share, the log line — and the
+   * file, which this is the one refusal that does *not* delete.
+   */
+  it('refuses the install click when the document the hash came from is gone', async () => {
+    const genuine = 'the genuine installer';
+    const logs = new MemoryLogSink();
+    const { instance, launched } = service({
+      logs,
+      steps: [
+        {
+          status: 200,
+          document: {
+            version: '9.9.9',
+            url: INSTALLER_URL,
+            sha256: sha256Of(genuine),
+            size: genuine.length,
+          },
+        },
+        { status: 503 },
+      ],
+      download: async (_url, target) => {
+        writeFileSync(target, genuine);
+      },
+    });
+
+    expect((await instance.check()).state).toBe('available');
+    expect((await instance.download()).state).toBe('ready');
+
+    // The failed re-check: the document is dropped, the staged path is not.
+    expect((await instance.check()).state).toBe('error');
+    expect(
+      instance.current.downloadedPath,
+      'the staged download did not survive the failed re-check, so this is not the state the test means to drive',
+    ).toBe(join(dir, 'UCAD-setup.exe'));
+
+    const installed = await instance.installAndRestart();
+
+    expect(installed, 'an installer was launched with nothing to verify it against').toBe(false);
+    expect(launched, 'a file no document describes was launched').toEqual([]);
+
+    const status = instance.current;
+    expect(status.state).toBe('error');
+    expect(status.verified).toBe(false);
+    // The button that calls this method is driven off `downloadedPath`; a
+    // status that still offers it would offer an install that always refuses.
+    expect(
+      status.downloadedPath,
+      'the status still points at an install it will not perform',
+    ).toBeUndefined();
+    // "check again", not "your feed published no hash": the feed published one,
+    // and the `no-hash` sentence would send the user to the publisher with a
+    // true-sounding claim about a feed that is fine.
+    expect(status.message).toBe(STALE_UPDATE_DOCUMENT_MESSAGE);
+
+    const refusal = logs.records.find(
+      (record) => record.msg === 'update install without the document the update check read',
+    );
+    expect(refusal, 'the refusal was silent, so nobody can diagnose it').toBeDefined();
+    expect(refusal!.level, 'an install that was refused is not a debug note').toBe('error');
+
+    // Nothing was found wrong with these bytes: they matched the document when
+    // they landed. Deleting a good download over a lost bookkeeping fact is the
+    // worse trade, and the next download overwrites the same single-slot name.
+    expect(
+      existsSync(join(dir, 'UCAD-setup.exe')),
+      'a download that verified when it landed was deleted over a lost document',
+    ).toBe(true);
+  });
+
   it('launches when the file is still the file it verified', async () => {
     // The positive control. Without it, the two cases above would also pass for
     // a check that always refuses — and a launcher that never launches is a
@@ -2875,6 +2959,8 @@ describe('the release feed a publisher uploads', () => {
 const REPO_ROOT = join(import.meta.dirname, '..', '..');
 const MAIN_SOURCE = join(REPO_ROOT, 'apps', 'desktop', 'src', 'main');
 const UPDATE_FEED_SOURCE = join(MAIN_SOURCE, 'update-feed.ts');
+const UPDATE_SERVICE_SOURCE = join(MAIN_SOURCE, 'update-service.ts');
+const SELF_PATH = join(import.meta.dirname, 'update-integrity.test.ts');
 
 /**
  * Source text with every comment blanked, byte positions preserved.
@@ -3066,6 +3152,24 @@ function mainSources(dir: string = MAIN_SOURCE): SourceFile[] {
     });
 }
 
+/**
+ * Every `.ts` file under `dir`, counted without the scan's own reader.
+ *
+ * `mainSources()` is both the walk and half of what the assertions below
+ * check, so on its own it cannot show that nothing was skipped: an exclusion
+ * added to it — `if (entry.name === 'bootstrap.ts') continue` — would shrink
+ * the scan, and every claim about the smaller set would still hold. This counts
+ * the same tree with nothing but `readdirSync`, so "the scan reads fewer files
+ * than the directory holds" is red rather than invisible.
+ */
+function countTypeScriptFiles(dir: string): number {
+  return readdirSync(dir, { withFileTypes: true }).reduce((total, entry) => {
+    const full = join(dir, entry.name);
+    if (entry.isDirectory()) return total + countTypeScriptFiles(full);
+    return total + (entry.name.endsWith('.ts') ? 1 : 0);
+  }, 0);
+}
+
 describe('the production wiring never opens the launch-test seam', () => {
   it('reports a construction that passes beforeLaunch, with file and line', () => {
     // The concrete edit the gate exists for: a value reaches the seam where
@@ -3206,6 +3310,136 @@ describe('the production wiring never opens the launch-test seam', () => {
         .map((problem) => `${problem.path}:${problem.line} ${problem.reason} — ${constructionFix(problem.reason)}`)
         .join('; ')}`,
     ).toEqual([]);
+  });
+
+  /**
+   * The scan's scope, written down where the exemption it creates lives.
+   *
+   * `mainSources()` reads `apps/desktop/src/main/**` and nothing else, which
+   * makes every construction under `tests/` invisible to it — deliberately:
+   * those constructions pass `beforeLaunch` on purpose, because that is the
+   * only way to drive the window between the digest and the launch. Two things
+   * about that were assumptions rather than facts until here.
+   *
+   *  - **Widened by accident.** Somebody adds `tests/` (or the repository root)
+   *    to the walk to "also check the tests", and the gate goes red about its
+   *    own fixtures. The scan's root is asserted by name, and the exemption is
+   *    shown to be load-bearing: this very file is reported by the scan
+   *    function, so including it would be a red gate for a correct tree.
+   *  - **Narrowed by accident.** Somebody excludes a production file — a skip
+   *    list, a `.ts` filter, a directory the walk forgives — and production
+   *    code that opens the seam is never read. The file count is compared with
+   *    an independent walk, and the two files this gate depends on are named.
+   */
+  it('scans the main process and nothing else, on purpose', () => {
+    const files = mainSources();
+
+    // Named, not implied: the root the scan starts from is a fact of this gate.
+    expect(MAIN_SOURCE, 'the scan root moved').toBe(join(REPO_ROOT, 'apps', 'desktop', 'src', 'main'));
+
+    // Nothing outside it was read — renderer code, packages, and `tests/` are
+    // all products of the same walk if somebody widens it.
+    const outside = files.filter((file) => !file.path.startsWith('apps/desktop/src/main/'));
+    expect(
+      outside.map((file) => file.path),
+      'the scan read a file outside the main process',
+    ).toEqual([]);
+    expect(
+      files.filter((file) => file.path.startsWith('tests/')).map((file) => file.path),
+      'the scan reads test files, whose constructions pass the seam on purpose',
+    ).toEqual([]);
+
+    // Nothing inside it was skipped: the same tree, counted another way.
+    expect(
+      files.length,
+      'mainSources() read fewer files than apps/desktop/src/main holds, so a production file is excluded from the scan',
+    ).toBe(countTypeScriptFiles(MAIN_SOURCE));
+
+    // The two files the claims above depend on, by name, so "the scan is
+    // reading the right tree" is not a matter of a count agreeing.
+    const paths = files.map((file) => file.path);
+    for (const required of [
+      'apps/desktop/src/main/bootstrap.ts',
+      'apps/desktop/src/main/update-service.ts',
+    ]) {
+      expect(paths, `the scan does not read ${required}, so a seam there would be missed`).toContain(
+        required,
+      );
+    }
+  });
+
+  it('spares tests because the fixtures would be red, not because they are safe', () => {
+    // The exemption, sized: this file's own helper passes the seam (every
+    // window test needs it), so a scan that included `tests/` would report a
+    // source defect about code that is doing the right thing. Asserted rather
+    // than assumed — an exemption nobody can measure is the shape that quietly
+    // becomes a hole.
+    const problems = constructionProblems([
+      { path: 'tests/contract/update-integrity.test.ts', source: readFileSync(SELF_PATH, 'utf8') },
+    ]);
+
+    expect(
+      problems.filter((problem) => problem.reason === 'opens-the-seam').length,
+      'this file no longer constructs the service with the seam, so "tests/ is exempt" is not the ' +
+        'reason the production scan is green about it',
+    ).toBeGreaterThan(0);
+  });
+});
+
+/**
+ * The installer is reached from one place, and that place is behind the
+ * verifier.
+ *
+ * Every refusal in `the updater itself` is about `installAndRestart()`'s
+ * behaviour, and none of them says anything about the other place a future edit
+ * could put a launch: a "retry once" helper, a tray item that installs without
+ * the restart, a `shell.openPath` next to the download so the user does not have
+ * to press anything. So the one file that launches an installer is read as
+ * text, and the facts asserted are the ones a second entry point would break —
+ * one launcher, after the staged file has been opened and hashed.
+ *
+ * Textual for the same reason the wiring gate is: `update-service.ts` imports
+ * Electron at the top, so the alternative is not a stronger check but no check.
+ */
+describe('the installer is reached from one place, past the verifier', () => {
+  const source = existsSync(UPDATE_SERVICE_SOURCE)
+    ? readFileSync(UPDATE_SERVICE_SOURCE, 'utf8')
+    : '';
+  const code = blankComments(source);
+
+  it('is the file this gate is reading', () => {
+    expect(source, `update-service.ts is missing (${UPDATE_SERVICE_SOURCE})`).not.toBe('');
+    expect(code).toContain('class UpdateService');
+  });
+
+  it('has exactly one launch site, and it is after the verification', () => {
+    const launches = [...code.matchAll(/shell\.openPath\(/g)];
+    expect(
+      launches.length,
+      'update-service.ts launches an installer from more than one place; there is one launch path, and it is the verified one',
+    ).toBe(1);
+
+    const verified = code.indexOf('openStagedInstallerForLaunch(');
+    expect(
+      verified,
+      'installAndRestart() no longer opens the staged installer for launch; a plain verify-and-close would reopen the window the handle exists to hold',
+    ).toBeGreaterThan(-1);
+    expect(
+      code.indexOf('verifyStagedInstallerForLaunch('),
+      'the launch path uses the closing wrapper, which closes the descriptor before the launch decision',
+    ).toBe(-1);
+
+    expect(
+      launches[0]!.index!,
+      'the launcher is textually before the verifier, so a path exists that reaches it without one',
+    ).toBeGreaterThan(verified);
+
+    // The seam tests drive the launch with is read at that same place — a
+    // second read of it is a second launch site, and the production scan above
+    // cannot see one that is never constructed.
+    const seamUses = [...code.matchAll(/this\.opts\.openInstaller\b/g)];
+    expect(seamUses.length, 'the launch seam is read in more than one place').toBe(1);
+    expect(seamUses[0]!.index!).toBeGreaterThan(verified);
   });
 });
 
