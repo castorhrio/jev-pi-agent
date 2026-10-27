@@ -159,6 +159,7 @@ function Shell(): JSX.Element {
   const moreButtonRef = useRef<HTMLButtonElement>(null);
   const [handoff, setHandoff] = useState<ContextHandoff | null>(null);
   const [handoffHistory, setHandoffHistory] = useState<HandoffRecord[]>([]);
+  const [handoffHistoryError, setHandoffHistoryError] = useState<string | null>(null);
   const [handoffBusy, setHandoffBusy] = useState(false);
   const [permissionMode, setPermissionMode] = useState<PermissionMode>('ask');
   const [agentId, setAgentId] = useState<string>('mock');
@@ -252,6 +253,32 @@ function Shell(): JSX.Element {
     if (data.loadError) setFatal(data.loadError);
   }, [data.loadError]);
 
+  /**
+   * Reads the chain and records whether the read itself succeeded.
+   *
+   * A failed read is a fact, not an empty list: `.catch(() => undefined)` left
+   * `[]` in place, and `[]` is exactly what "this session has no handoffs"
+   * looks like, so the panel made a confident false statement. Usage and
+   * diagnostics already render read failures as themselves; the handoff
+   * history was the one surface that did not.
+   *
+   * `isCancelled` is how the opening effect keeps a slow read for a previous
+   * session from landing under the current one.
+   */
+  const refreshHandoffHistory = useCallback(
+    async (id: string, isCancelled: () => boolean = () => false): Promise<void> => {
+      try {
+        const list = await api.sessions.listHandoffs(id);
+        if (isCancelled()) return;
+        setHandoffHistory(list);
+        setHandoffHistoryError(null);
+      } catch (error) {
+        if (!isCancelled()) setHandoffHistoryError(describeError(error));
+      }
+    },
+    [api],
+  );
+
   /*
    * The handoff chain is read when the surface opens, not when a handoff is
    * generated.
@@ -266,16 +293,11 @@ function Shell(): JSX.Element {
   useEffect(() => {
     if (surface !== 'handoff' || !sessionId) return;
     let cancelled = false;
-    void api.sessions
-      .listHandoffs(sessionId)
-      .then((list) => {
-        if (!cancelled) setHandoffHistory(list);
-      })
-      .catch(() => undefined);
+    void refreshHandoffHistory(sessionId, () => cancelled);
     return () => {
       cancelled = true;
     };
-  }, [surface, sessionId, api]);
+  }, [surface, sessionId, refreshHandoffHistory]);
 
   const flash = useCallback((message: string) => {
     setToast(message);
@@ -429,17 +451,15 @@ function Shell(): JSX.Element {
       setHandoff(await api.sessions.createHandoff(sessionId));
       // The chain is read after the write, not before: creating a handoff is
       // what appends to it, so reading first would show the previous state.
-      // A failure here must not sink the handoff the user just asked for.
-      await api.sessions
-        .listHandoffs(sessionId)
-        .then(setHandoffHistory)
-        .catch(() => undefined);
+      // A failure here must not sink the handoff the user just asked for; it
+      // is reported beside the document instead.
+      await refreshHandoffHistory(sessionId);
     } catch (error) {
       flash(t('handoff.failed', { reason: describeError(error) }));
     } finally {
       setHandoffBusy(false);
     }
-  }, [api, sessionId, t, flash]);
+  }, [api, sessionId, t, flash, refreshHandoffHistory]);
 
   /**
    * Claim or complete a handoff, then re-read the chain.
@@ -463,18 +483,19 @@ function Shell(): JSX.Element {
           await api.sessions.completeHandoff(sessionId, handoffId);
           flash(t('handoff.completed'));
         }
-        setHandoffHistory(await api.sessions.listHandoffs(sessionId));
+        // Read inside the helper so a failed refresh is reported as a read
+        // failure, not as a refusal of the claim that just succeeded.
+        await refreshHandoffHistory(sessionId);
       } catch (error) {
         // A refusal here is information, not a crash: it is how the user
         // learns another agent already holds this handoff.
         flash(t('handoff.claimFailed', { reason: describeError(error) }));
-        await api.sessions
-          .listHandoffs(sessionId)
-          .then(setHandoffHistory)
-          .catch(() => undefined);
+        // Re-read the truth even after a refusal, but report a read failure
+        // rather than presenting the previous list as current.
+        await refreshHandoffHistory(sessionId);
       }
     },
-    [api, sessionId, agentId, t, flash],
+    [api, sessionId, agentId, t, flash, refreshHandoffHistory],
   );
 
   // One implementation per command, reached from the menu, the keyboard and the
@@ -962,6 +983,7 @@ function Shell(): JSX.Element {
               <HandoffPanel
                 handoff={handoff}
                 history={handoffHistory}
+                historyError={handoffHistoryError}
                 busy={handoffBusy}
                 hasSession={Boolean(sessionId)}
                 onRegenerate={() => void generateHandoff()}

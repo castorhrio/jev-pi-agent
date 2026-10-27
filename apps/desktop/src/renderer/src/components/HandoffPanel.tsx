@@ -1,6 +1,7 @@
 ﻿import { useEffect, useMemo, useState } from 'react';
 import type { ContextHandoff, HandoffRecord } from '@ucad/contracts';
 import { useI18n, useT } from '../i18n-context';
+import { ReadFailure } from './ReadFailure';
 import {
   HANDOFF_SECTIONS,
   availableSections,
@@ -27,6 +28,14 @@ export interface HandoffPanelProps {
   handoff: ContextHandoff | null;
   /** The session's handoff chain, newest first. Empty when there is none yet. */
   history: HandoffRecord[];
+  /**
+   * Why the chain could not be read, when it could not.
+   *
+   * Kept apart from `history` on purpose: an empty list from a failed read and
+   * an empty list from a session with no handoffs look identical, and only one
+   * of them may be described as "no handoff yet".
+   */
+  historyError: string | null;
   busy: boolean;
   onRegenerate: () => void;
   /**
@@ -50,6 +59,7 @@ function list<T>(value: T[] | undefined): T[] {
 export function HandoffPanel({
   handoff,
   history,
+  historyError,
   busy,
   onRegenerate,
   onStartWithHandoff,
@@ -119,13 +129,21 @@ export function HandoffPanel({
 
       {!hasSession && <div className="notice">{t('handoff.noSession')}</div>}
 
+      {hasSession && historyError && (
+        <ReadFailure label={t('handoff.historyFailed')} reason={historyError} />
+      )}
+
       {!handoff && hasSession && (
         <div className="empty-block">
-          <p>
-            {history.length > 0
-              ? t('handoff.emptyWithHistory', { count: history.length })
-              : t('handoff.empty')}
-          </p>
+          {/* Only a read that succeeded and returned nothing may say "no
+              handoff yet"; a failed read already said what happened above. */}
+          {!historyError && (
+            <p>
+              {history.length > 0
+                ? t('handoff.emptyWithHistory', { count: history.length })
+                : t('handoff.empty')}
+            </p>
+          )}
           <button className="primary" onClick={onRegenerate} disabled={busy}>
             {busy ? t('common.loading') : t('handoff.generate')}
           </button>

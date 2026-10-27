@@ -33,7 +33,7 @@ import {
   useState,
 } from 'react';
 import type { ReactNode } from 'react';
-import type { UpdateStatus } from '@ucad/contracts';
+import { UPDATE_STATES, type UpdateStatus } from '@ucad/contracts';
 import { getApi } from './api';
 import { describeError } from './error-message';
 
@@ -125,18 +125,38 @@ export function UpdateControllerProvider({ children }: { children: ReactNode }):
   // see the value from mount. The ref is the current one.
   const pendingRef = useRef<PendingAction | null>(null);
 
-  const applyStatus = useCallback((next: UpdateStatus) => {
-    setStatus(next);
-    // A real status is a better answer than a rejection or a failed read, so
-    // it replaces them rather than sitting beside them.
+  /**
+   * Drops both kinds of failure at once.
+   *
+   * They are cleared together on purpose: a real status, a fresh action and a
+   * dismissal all make the old failure stale, and clearing only the one the
+   * caller happened to think of is how `failure` and `statusFailure` came to
+   * disagree across three call sites.
+   */
+  const clearFailures = useCallback(() => {
     setFailure(null);
     setStatusFailure(null);
-    const action = pendingRef.current;
-    if (action !== null && actionCompleted(action, next.state)) {
-      pendingRef.current = null;
-      setPendingAction(null);
-    }
   }, []);
+
+  const applyStatus = useCallback(
+    (next: UpdateStatus) => {
+      // The subscription hands this function whatever Main pushed, typed only
+      // at compile time. A state outside `UPDATE_STATES` is contract drift,
+      // not a status; writing it through would make every surface render a
+      // state the tables do not know about.
+      if (!isUpdateStatus(next)) return;
+      setStatus(next);
+      // A real status is a better answer than a rejection or a failed read, so
+      // it replaces them rather than sitting beside them.
+      clearFailures();
+      const action = pendingRef.current;
+      if (action !== null && actionCompleted(action, next.state)) {
+        pendingRef.current = null;
+        setPendingAction(null);
+      }
+    },
+    [clearFailures],
+  );
 
   useEffect(() => {
     const api = getApi();
@@ -169,7 +189,10 @@ export function UpdateControllerProvider({ children }: { children: ReactNode }):
     (action: PendingAction, start: () => Promise<unknown>): void => {
       pendingRef.current = action;
       setPendingAction(action);
-      setFailure(null);
+      // Acting is a better answer than the failed read or the previous
+      // rejection, so both go; if this action fails, its own `failure` is the
+      // one the user sees.
+      clearFailures();
       void start()
         .then((next) => {
           // `installUpdate()` answers a boolean; every other call answers the
@@ -182,7 +205,7 @@ export function UpdateControllerProvider({ children }: { children: ReactNode }):
           setFailure(describeError(error));
         });
     },
-    [applyStatus],
+    [applyStatus, clearFailures],
   );
 
   const check = useCallback(() => run('check', () => getApi().app.checkUpdate()), [run]);
@@ -192,8 +215,12 @@ export function UpdateControllerProvider({ children }: { children: ReactNode }):
   const dismissFailure = useCallback(() => {
     pendingRef.current = null;
     setPendingAction(null);
-    setFailure(null);
-  }, []);
+    // Dismissing is the user saying "I have read this", so it clears the
+    // failed read too: the card and the banner share one controller, and a
+    // card still showing statusFailure after the dismissal would make the
+    // close button look broken.
+    clearFailures();
+  }, [clearFailures]);
 
   const value = useMemo<UpdateController>(
     () => ({
@@ -222,7 +249,17 @@ export function useUpdateController(): UpdateController {
   return controller;
 }
 
-/** Whether a value is the status one of the update calls promises. */
+/**
+ * Whether a value is the status one of the update calls promises.
+ *
+ * The old check was "an object with a `state` key", which accepts
+ * `{ state: 'whatever' }` — exactly the contract drift this guard exists to
+ * stop. The state must be a member of `UPDATE_STATES`, the same tuple the
+ * service derives its own policy table from, so a state added on one side and
+ * not the other is refused instead of rendered.
+ */
 function isUpdateStatus(value: unknown): value is UpdateStatus {
-  return typeof value === 'object' && value !== null && 'state' in value;
+  if (typeof value !== 'object' || value === null) return false;
+  const state = (value as { state?: unknown }).state;
+  return typeof state === 'string' && (UPDATE_STATES as readonly string[]).includes(state);
 }

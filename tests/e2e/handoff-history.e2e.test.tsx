@@ -177,6 +177,37 @@ describe('handoff history (RESEARCH §2 supersede-not-delete)', () => {
     expect(doc).toBeTruthy();
     expect(within(doc).getByText(/修复注入哈希不一致/)).toBeTruthy();
     expect(screen.queryByText('交接历史')).toBeNull();
+    // The read failure is a fact and must be readable: swallowing it left the
+    // panel looking like a session that simply had no chain.
+    expect(screen.getByRole('alert')).toHaveTextContent('交接历史读取失败');
+    expect(screen.getByRole('alert')).toHaveTextContent('history unavailable');
+  });
+
+  it('does not call a failed read an empty chain', async () => {
+    const user = userEvent.setup();
+    const fixture: Fixture = createFixtureApi('default');
+    // No document either: this is the state where the two empties used to be
+    // indistinguishable. A failed read left `[]`, and `[]` rendered as
+    // "还没有交接摘要" — a confident claim about a session nobody had read.
+    (fixture.api.sessions as { listHandoffs: () => Promise<never> }).listHandoffs = () =>
+      Promise.reject(new Error('history unavailable'));
+    (window as unknown as Record<string, unknown>).ucad = fixture.api;
+    render(<App />);
+    await settle();
+
+    await user.click(within(nav()).getByRole('button', { name: /更多/ }));
+    await user.click(await screen.findByRole('menuitem', { name: '交接' }));
+    await screen.findByText('交接摘要', { selector: 'h1' });
+
+    await waitFor(() =>
+      expect(screen.getByRole('alert'), 'the failed history read is still silent').toHaveTextContent(
+        '交接历史读取失败',
+      ),
+    );
+    expect(screen.queryByText(/还没有交接摘要/)).toBeNull();
+    // Creating one is still offered; the failed read does not disable the
+    // product, it only stops the panel from asserting what it cannot know.
+    expect(screen.getByRole('button', { name: '生成交接摘要' })).toBeTruthy();
   });
 });
 
