@@ -37,7 +37,7 @@ import * as path from 'node:path';
 import { pipeline } from 'node:stream/promises';
 import * as https from 'node:https';
 import type * as http from 'node:http';
-import { describeError } from '@ucad/contracts';
+import { describeError, type UpdateState, type UpdateStatus } from '@ucad/contracts';
 import type { Logger } from '@ucad/observability';
 import {
   checkChannelUrl,
@@ -56,40 +56,79 @@ import {
 } from './update-feed';
 import { UPDATE_FEED_REFUSAL_MESSAGE } from './update-feed-log';
 
-type UpdateState =
-  | 'idle'
-  | 'checking'
-  | 'up-to-date'
-  | 'available'
-  | 'downloading'
-  | 'ready'
-  | 'error'
-  | 'unsupported';
+// The service publishes the IPC contract's vocabulary rather than a second copy of
+// it: `bootstrap.ts` imports the status type from here, and the renderer draws the
+// same shape, so the two must be one type and not two lookalikes.
+export type { UpdateState, UpdateStatus };
 
-export interface UpdateStatus {
-  state: UpdateState;
-  currentVersion: string;
-  latestVersion?: string;
-  notes?: string;
-  /** 0..1, only meaningful while `downloading` */
-  progress?: number;
-  /** where the installer was written, when `ready` */
-  downloadedPath?: string;
-  /** true once the staged installer matched the feed's SHA-256 */
-  verified?: boolean;
-  message?: string;
-  checkedAt?: string;
-  /**
-   * Whether the build was given a feed address at all.
-   *
-   * `false` means nothing was configured — the development case, which the
-   * Settings screen says plainly. It is *not* "the feed is usable": a value
-   * that was configured and refused (`http://…`, a typo) is still a configured
-   * value, and reporting it as absent would tell the user to configure
-   * something they already configured. Such a check reports `state: 'error'`
-   * with the reason, so the two cases stay distinguishable in the UI.
-   */
-  feedConfigured: boolean;
+/**
+ * What each update state may carry, as one table.
+ *
+ * The pairing this file is about — "`available` implies a document" — used to
+ * be a comment on a field, then an overload on `set()` plus a hand-written
+ * union listing the document-less states by name. Three spellings of one rule,
+ * and only the overload was checked; the union's list of names was not tied to
+ * anything, so a state added to the vocabulary could be left out of it and
+ * still compile through the `as` in `set()`.
+ *
+ * The table is the fact now. `ServiceStatus` derives its document-less member
+ * from it (`DocumentlessState`), the `set()` overloads are keyed by it, and
+ * `statusAcceptsDocument()` asks it the one question `set()` has to answer
+ * before it writes. A state added to `UPDATE_STATES` in `@ucad/contracts` fails
+ * `npm run typecheck` here until it has a policy, which is the same
+ * array-is-the-fact move `CHANNEL_URL_REJECTIONS` makes for the URL rule.
+ *
+ * **`required` has exactly one member, and `optional` has exactly one.**
+ * `tests/contract/update-status.test.ts` pins both counts and names the members,
+ * because the difference is not cosmetic: `available` without a document is a
+ * version the user was told about and nothing to download, while `ready` may
+ * arrive from outside with a `downloadedPath` and no document (see
+ * `ServiceStatus`), and `installAndRestart()` refuses that shape by name rather
+ * than by accident.
+ */
+export type StatusDocumentPolicy = 'required' | 'optional' | 'forbidden';
+
+export const STATUS_DOCUMENT_POLICY = {
+  idle: 'forbidden',
+  checking: 'forbidden',
+  'up-to-date': 'forbidden',
+  available: 'required',
+  downloading: 'forbidden',
+  ready: 'optional',
+  error: 'forbidden',
+  unsupported: 'forbidden',
+} as const satisfies Record<UpdateState, StatusDocumentPolicy>;
+
+/**
+ * The states the table says may not hold a document — derived, not listed.
+ *
+ * A mapped type rather than `Exclude<UpdateState, 'available' | 'ready'>`: the
+ * exclusion would be a second place the two document-carrying states are named,
+ * and a third state granted a document in the table above would leave it
+ * behind.
+ */
+type DocumentlessState = {
+  [State in UpdateState]: (typeof STATUS_DOCUMENT_POLICY)[State] extends 'forbidden'
+    ? State
+    : never;
+}[UpdateState];
+
+/**
+ * Whether `state` may hold `document` — the table asked as one question.
+ *
+ * This is the rule the `set()` overloads express at compile time, in a form a
+ * test can call: `tests/` is transpiled without typechecking, so an overload no
+ * gate can reach is a rule nobody re-reads. `set()` asks it before every write,
+ * which is also what makes the `as` in `set()` checked rather than merely
+ * asserted — see the runtime half in `set()` itself.
+ */
+export function statusAcceptsDocument(
+  state: UpdateState,
+  document: UpdateFeedDocument | null,
+): boolean {
+  const policy = STATUS_DOCUMENT_POLICY[state];
+  if (policy === 'optional') return true;
+  return policy === 'required' ? document !== null : document === null;
 }
 
 /**
@@ -104,9 +143,10 @@ export interface UpdateStatus {
  *
  * Merged, the pairing is the type: `available` *carries* the document, so
  * `check()` cannot write the state without the document it is about (the
- * transition overload on `set()` refuses it), and `download()`'s read of that
- * document is a narrowing of the same value it guarded — not a second field
- * that might be null while the first says otherwise.
+ * transition overload on `set()` refuses it, and `STATUS_DOCUMENT_POLICY` is
+ * the table both the overload and the runtime check read), and `download()`'s
+ * read of that document is a narrowing of the same value it guarded — not a
+ * second field that might be null while the first says otherwise.
  *
  * `ready` allows `null` on purpose, and it is not symmetry: `ready` is the one
  * state a *rebuilt* status can arrive in from outside (a later build that
@@ -121,10 +161,7 @@ type ServiceStatus =
       readonly state: 'ready';
       readonly document: UpdateFeedDocument | null;
     })
-  | (UpdateStatus & {
-      readonly state: 'idle' | 'checking' | 'up-to-date' | 'downloading' | 'error' | 'unsupported';
-      readonly document: null;
-    });
+  | (UpdateStatus & { readonly state: DocumentlessState; readonly document: null });
 
 /**
  * A status transition, as `set()` accepts it.
@@ -216,19 +253,26 @@ const MAX_DOWNLOAD_REDIRECTS = 5;
 /**
  * What the user is told when the document the update check read is gone.
  *
- * Two call sites, one sentence, because it is one fact: the file the app would
- * download or launch can only be judged against the feed document the check
- * stored, and that document is not there any more. `download()` refuses to
- * stage bytes it cannot check; `installAndRestart()` refuses to launch a file
- * it cannot check. The fix is the same button in both cases — check again — so
- * two locally written sentences ("重新下载" at one site, "重新检查" at the other)
- * would be the same rule with two readings of it, which is exactly the drift
- * `UPDATE_FEED_REFUSAL_MESSAGE` was extracted to stop.
+ * The staged installer can only be judged against the feed document the check
+ * stored, so a status that offers an install without that document is a
+ * question with no answer — and "check again" is the same fix whoever is
+ * holding it. Its own sentence rather than `verificationMessage({ reason:
+ * 'no-hash' })`: that one says the feed published no hash, which is a
+ * statement about the publisher, while this one says the app lost the answer,
+ * which is a statement about the app. The two send the reader to different
+ * places.
  *
- * It is *not* `verificationMessage({ reason: 'no-hash' })`. That sentence says
- * the feed published no hash, which is a statement about the publisher; this
- * one says the app lost the answer, which is a statement about the app. The two
- * send the reader to two different places.
+ * **It had two call sites and has one.** `download()` used to check for a
+ * missing feed document too, because `state` and `feed` were separate fields
+ * and "`available` with no feed" was a state the two could be in. Now
+ * `available` *carries* the document (see `ServiceStatus`), so the download's
+ * branch is not relaxed — it is unreachable, and the `as` in `set()` is
+ * checked at runtime to keep it that way. What is left is the one shape a
+ * status can arrive in from outside: `ready` with a `downloadedPath` and no
+ * document, which a later build that persists the status would produce. That
+ * reader is `installAndRestart()`, and `tests/contract/update-status.test.ts`
+ * builds the shape directly (a `ready` status whose document was dropped) so
+ * the sentence has a case that reaches it.
  */
 export const STALE_UPDATE_DOCUMENT_MESSAGE = '更新信息已失效，请重新检查更新';
 
@@ -399,12 +443,30 @@ export class UpdateService {
    * gets `document: null`, which is what "no state but `available`/`ready` may
    * hold this" means in practice.
    *
-   * The `as` is the one place the pairing is asserted rather than checked: the
-   * compiler cannot correlate the spread of a union with a patch that narrows
-   * it, so the claim "this transition entered the state it says" is made here —
-   * at the single funnel every write goes through. `tests/contract/update-integrity.test.ts`
-   * scans this file for a second assignment to `status`, because a writer
-   * outside this method would be a writer the overloads never saw.
+   * **The `as` is checked, not only asserted.** The compiler cannot correlate
+   * the spread of a union with a patch that narrows it, so the assignment below
+   * has to claim "this transition entered the state it says". The three
+   * overloads are that claim's compile-time half — they bind every caller in
+   * this file — and `statusAcceptsDocument()` is the same table asked at
+   * runtime, immediately before the write. The runtime half is not decoration:
+   * the overloads say nothing about a call the compiler never saw (a cast, a
+   * future subclass, a value assembled in a loop), and the state machine is the
+   * one thing in this file whose violations are silent — an `available` with no
+   * document is a version the user was shown and a download button that can
+   * only fail.
+   *
+   * It **throws** rather than returning the old status. A refusal would leave
+   * the caller believing the transition happened, and the callers here are
+   * internal: the only way to reach this is a bug in this file, so the loud
+   * answer is the one that gets fixed. The state is left untouched, which is
+   * what makes the failure diagnosable — the last legal state is still there.
+   * `tests/contract/update-status.test.ts` drives both directions of the matrix
+   * through a cast, because the overloads themselves are only checked where
+   * `tsc` runs and this suite is transpiled without typechecking.
+   *
+   * `tests/contract/update-integrity.test.ts` scans this file for a second
+   * assignment to `status`, because a writer outside this method would be a
+   * writer the overloads never saw — and would skip the check below too.
    */
   private set(
     patch: StatusPatch & { readonly state: 'available' },
@@ -415,10 +477,21 @@ export class UpdateService {
     document: UpdateFeedDocument | null,
   ): UpdateStatus;
   private set(
-    patch: StatusPatch & { readonly state?: Exclude<UpdateState, 'available' | 'ready'> },
+    patch: StatusPatch & { readonly state?: DocumentlessState },
     document?: null,
   ): UpdateStatus;
   private set(patch: StatusPatch, document: UpdateFeedDocument | null = null): UpdateStatus {
+    // The state this transition *enters*, which is the one the document has to
+    // suit: a patch that carries no `state` keeps the current one, and dropping
+    // the document on the way is exactly what `available` may not do.
+    const nextState = patch.state ?? this.status.state;
+    if (!statusAcceptsDocument(nextState, document)) {
+      const policy = STATUS_DOCUMENT_POLICY[nextState];
+      throw new Error(
+        `update status '${nextState}' cannot hold this document (policy: ${policy}); ` +
+          'STATUS_DOCUMENT_POLICY in update-service.ts is the rule, and set() is the only writer',
+      );
+    }
     this.status = { ...this.status, ...patch, document } as ServiceStatus;
     for (const listener of this.listeners) {
       try {

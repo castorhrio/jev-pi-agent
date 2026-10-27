@@ -476,14 +476,33 @@ export interface ProviderDescriptorDto {
   supported: boolean;
 }
 
-export type UpdateState =  | 'idle'
-  | 'checking'
-  | 'up-to-date'
-  | 'available'
-  | 'downloading'
-  | 'ready'
-  | 'error'
-  | 'unsupported';
+/**
+ * The update states, as a value.
+ *
+ * The array is the fact and the union is derived from it, for the same reason
+ * `CHANNEL_URL_REJECTIONS` is an array in `update-feed.ts`: types are erased,
+ * so a test cannot enumerate a union — and this suite runs with `vitest`, which
+ * transpiles without typechecking. A hand list in a gate is a second spelling
+ * of the vocabulary, related to the type as a subset, and a state added beside
+ * it leaves the gate green while it compares a stale list.
+ *
+ * `UpdateService` derives its document policy table from this type, so a state
+ * added here fails `npm run typecheck` there until the service has said whether
+ * that state may carry the feed document — the one question the state machine
+ * is really about.
+ */
+export const UPDATE_STATES = [
+  'idle',
+  'checking',
+  'up-to-date',
+  'available',
+  'downloading',
+  'ready',
+  'error',
+  'unsupported',
+] as const;
+
+export type UpdateState = (typeof UPDATE_STATES)[number];
 
 export interface UpdateStatus {
   state: UpdateState;
