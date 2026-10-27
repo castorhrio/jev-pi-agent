@@ -219,6 +219,37 @@ describe('the update controller hands failure ownership over in sequence', () =>
     expect(field('failure')).toBe('none');
   });
 
+  it('keeps a download pending when a push is not an ending for it', async () => {
+    const user = userEvent.setup();
+    const download = deferred<UpdateStatus>();
+    const { emit } = mount({
+      initial: async () => IDLE,
+      download: () => download.promise,
+    });
+    await waitFor(() => expect(field('status')).toBe('idle'));
+
+    await user.click(screen.getByRole('button', { name: 'run download' }));
+    expect(field('pending')).toBe('download');
+
+    // A push is authoritative for the status — Main has just measured it — but
+    // only for the endings it declares. `available` is where a download starts,
+    // not where it ends, so the download the user is waiting on stays pending.
+    // The opposite rule ("any push ends the action") would silently retire it
+    // and leave a progress bar that never resolves.
+    await emit(AVAILABLE);
+    expect(field('status')).toBe('available');
+    expect(field('pending'), 'a non-terminal push retired the download').toBe('download');
+    expect(field('failure')).toBe('none');
+
+    // …and the download's own ending still releases it.
+    await act(async () => {
+      download.resolve(READY);
+      await download.promise;
+    });
+    expect(field('pending')).toBe('none');
+    expect(field('status')).toBe('ready');
+  });
+
   it('refuses a pushed value whose state is not in UPDATE_STATES and says so', async () => {
     // The refusal is the only place contract drift can be seen: the payload is
     // dropped before it reaches state, so no surface renders it and nothing

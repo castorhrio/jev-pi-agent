@@ -37,7 +37,11 @@
  *  - the ids are tried in the order `ADAPTER_LOAD_ORDER` states, because the
  *    table's declaration order *is* the attempt order (`bootstrap.ts` walks
  *    `Object.entries`) and "in the order they are tried" used to live only in
- *    a doc comment; and
+ *    a doc comment;
+ *  - no key is integer-like, because an own key that looks like an array index
+ *    is listed first by `Object.keys` regardless of where it was written —
+ *    which would reorder the attempt order while `ADAPTER_LOAD_ORDER` still
+ *    matched the positions in the source. The fixture shows the reordering;
  *  - the bullet this gate reads is the adapter bullet: it says
  *    adapter/适配器, so a new bullet inserted above it turns the gate red
  *    instead of quietly making it read a different sentence.
@@ -642,6 +646,25 @@ describe('the adapter bullet is identified, not assumed', () => {
 });
 
 /**
+ * The one key shape that breaks "declaration order is attempt order".
+ *
+ * ECMAScript lists own integer-like keys first, in ascending numeric order,
+ * before every string key in insertion order (`OrdinaryOwnPropertyKeys`). The
+ * table is described as an object literal whose written order the resolver
+ * walks, and that is true for every key *except* this shape. An adapter id that
+ * fits `ADAPTER_ID_SHAPE` starts with a letter, so today's table cannot grow one
+ * by accident — but the contract's reason says "insertion order", and this is
+ * the exception that would make the sentence false while the equality check
+ * below still passed.
+ */
+const ARRAY_INDEX_KEY = /^\d+$/;
+
+/** The keys `Object.keys` would list before the string keys. */
+function arrayLikeKeys(record: Readonly<Record<string, string>>): string[] {
+  return Object.keys(record).filter((key) => ARRAY_INDEX_KEY.test(key));
+}
+
+/**
  * `ADAPTER_CANDIDATES`'s declaration order is behaviour, not presentation.
  *
  * `bootstrap.ts` walks `Object.entries(ADAPTER_CANDIDATES)`, so the order of
@@ -666,6 +689,25 @@ describe('ADAPTER_CANDIDATES is tried in the order ADAPTER_LOAD_ORDER states', (
       Object.keys(ADAPTER_CANDIDATES),
       'the table declaration order and ADAPTER_LOAD_ORDER disagree',
     ).toEqual([...ADAPTER_LOAD_ORDER]);
+  });
+
+  it('has no integer-like keys, which Object.keys would list first', () => {
+    expect(
+      arrayLikeKeys(ADAPTER_CANDIDATES),
+      'an integer-like key sorts before the string keys, so the attempt order is no longer the declaration order',
+    ).toEqual([]);
+
+    // The fixture, written last and read first: the table's source order would
+    // stay `universal, mock, 0` while the resolver walked `0, universal, mock`.
+    // Without this case the assertion above is a regex whose silence has never
+    // been shown to mean anything.
+    const withIndexKey: Record<string, string> = {
+      universal: '@ucad/adapter-universal',
+      mock: '@ucad/adapter-mock',
+      '0': '@ucad/adapter-fixture',
+    };
+    expect(Object.keys(withIndexKey)).toEqual(['0', 'universal', 'mock']);
+    expect(arrayLikeKeys(withIndexKey)).toEqual(['0']);
   });
 
   it('keeps the order list exhaustive and duplicate-free', () => {

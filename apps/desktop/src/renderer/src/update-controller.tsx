@@ -26,6 +26,14 @@
  *    The opposite—a click's answer outranking a push—would let a stale answer
  *    overwrite what Main has just measured. `tests/e2e/update-controller.e2e.test.tsx`
  *    pins this direction;
+ *  - a push is authoritative only over the endings it declares. The status is
+ *    always updated — Main has just measured it — but the pending action is
+ *    released exactly when `ACTION_COMPLETED_STATES` says this state ends that
+ *    action. A push that is progress, or an ending for some *other* action,
+ *    therefore leaves the click in flight: a download is not over because a
+ *    background check pushed `available` (which is where a download starts).
+ *    Reading "push wins" as "any push ends the action" would retire the
+ *    download the user is waiting on; the same e2e file asserts both halves;
  *  - a pushed status whose state is not in `UPDATE_STATES` is contract drift,
  *    not a status: it is refused *and* warned about, because dropping it is
  *    otherwise invisible — no surface renders the payload, so the renderer

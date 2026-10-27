@@ -524,6 +524,13 @@ describe('resolution reports what it found and what it did not', () => {
     // `adapters resolved: (none)`, as if the adapters were at fault.
     const { log, sink } = recordingLogger();
     const written: string[] = [];
+    // The ordering half of the contract: the assertion has to run *before* the
+    // first resolve, not after the walk. A resolver spy is the only way to see
+    // that from outside — `write` staying empty would also be true of a
+    // resolver that was called and threw.
+    const resolve = vi.fn((): string => {
+      throw new Error('the resolver was reached before the empty list was refused');
+    });
 
     let caught: unknown;
     try {
@@ -532,6 +539,7 @@ describe('resolution reports what it found and what it did not', () => {
         // is for, and a test cannot reach it through the type.
         searchPaths: [] as unknown as readonly [string, ...string[]],
         candidates: { ghost: '@ucad/adapter-ghost' },
+        resolve,
         log,
         write: (line) => written.push(line),
       });
@@ -540,6 +548,13 @@ describe('resolution reports what it found and what it did not', () => {
     }
 
     expect(caught, 'the empty list was accepted').toBeInstanceOf(Error);
+    // Not a `TypeError` from reading `searchPaths[0]` on an empty list, which
+    // would be the same bug wearing a stack trace: the refusal is a coded
+    // decision the caller can act on.
+    expect(
+      caught,
+      'the empty list failed as a TypeError instead of the coded refusal',
+    ).not.toBeInstanceOf(TypeError);
     // §4.11: a refusal names a code and a component. A bare `Error` here would
     // reach the log as `UNKNOWN`, which is indistinguishable from a crash — and
     // this is the one failure that must read as "the caller is broken", not
@@ -552,6 +567,7 @@ describe('resolution reports what it found and what it did not', () => {
     // either channel: a half-walked table reported as `(none)` would look like
     // a successful run that found no adapters, and a `warn` would blame the
     // adapter for the caller's list.
+    expect(resolve, 'the empty list reached the resolver before it was refused').not.toHaveBeenCalled();
     expect(sink.records, 'the refusal was also written to the log').toEqual([]);
     expect(written, 'the refusal was also written to the console channel').toEqual([]);
   });
