@@ -308,3 +308,6 @@ npm run package  # 免安装目录，不出安装包
 ### 许可
 
 [MIT](LICENSE)
+
+## 产品过线标准（2026-10-31）
+必读 `docs/PRODUCT-DOD.md`（同源 `/opt/agent-scheduler/docs/product-dod/jev-pi-agent-dod.md`）。下一刀只许 DoD 未勾选 ∪ 反馈 ∪ 已有 TODO/next-iteration 中落在 DoD 内的项；DoD 勾满 → 停手（回归/断链/合规）。禁止发明 DoD 外功能。
