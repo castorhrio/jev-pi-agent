@@ -25,6 +25,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
+  decideAllWindowsClosed,
   decideWindowClose,
   loadTrayIcon,
   shouldPreventWindowClose,
@@ -251,5 +252,147 @@ describe('the quit flag is wired into the lifecycle', () => {
     // The old shape — reading the flag inline and then falling back to the
     // preference-only decision — is what made the two orderings diverge.
     expect(closeHandler).not.toContain('isQuitting) return;');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// after the last window closed
+// ---------------------------------------------------------------------------
+
+describe('the last window is gone', () => {
+  it('quits when the setting says 退出应用, tray or no tray', () => {
+    // The defect this rules out, caught on a real desktop session: the user set
+    // 关闭窗口时 = 退出应用, clicked the X, the window went away — and the process
+    // stayed. The old rule only asked whether a tray existed, so a usable tray
+    // (the very thing that makes "quit" mean something) kept the app alive
+    // against the user's instruction.
+    expect(
+      decideAllWindowsClosed({
+        platform: 'linux',
+        isQuitting: false,
+        trayUsable: true,
+        preference: 'quit',
+      }),
+    ).toEqual({ quit: true, reason: 'preference' });
+
+    expect(
+      decideAllWindowsClosed({
+        platform: 'win32',
+        isQuitting: false,
+        trayUsable: false,
+        trayProblem: 'no-tray',
+        preference: 'quit',
+      }),
+    ).toEqual({ quit: true, reason: 'preference' });
+  });
+
+  it('stays alive on the tray when the setting says hide', () => {
+    // The other direction of the same fix: "hide to tray" must not become a
+    // quit just because the preference is now read here.
+    expect(
+      decideAllWindowsClosed({
+        platform: 'linux',
+        isQuitting: false,
+        trayUsable: true,
+        preference: 'hide_to_tray',
+      }),
+    ).toEqual({ quit: false, reason: 'tray-keeps-it-alive' });
+  });
+
+  it('quits when there is no tray to hide to', () => {
+    expect(
+      decideAllWindowsClosed({
+        platform: 'win32',
+        isQuitting: false,
+        trayUsable: false,
+        trayProblem: 'icon-empty',
+        preference: 'hide_to_tray',
+      }),
+    ).toEqual({ quit: true, reason: 'icon-empty' });
+
+    expect(
+      decideAllWindowsClosed({
+        platform: 'linux',
+        isQuitting: false,
+        trayUsable: false,
+        preference: 'hide_to_tray',
+      }),
+    ).toEqual({ quit: true, reason: 'no-tray' });
+  });
+
+  it('keeps the macOS Dock convention, but not over the user\'s choice', () => {
+    expect(
+      decideAllWindowsClosed({
+        platform: 'darwin',
+        isQuitting: false,
+        trayUsable: false,
+        preference: 'hide_to_tray',
+      }),
+    ).toEqual({ quit: false, reason: 'macos-dock' });
+
+    expect(
+      decideAllWindowsClosed({
+        platform: 'darwin',
+        isQuitting: false,
+        trayUsable: true,
+        preference: 'quit',
+      }),
+    ).toEqual({ quit: true, reason: 'preference' });
+  });
+
+  it('lets an exit in flight through, whatever the setting says', () => {
+    // During a real quit the windows close *while* quitting. Answering "stay"
+    // here would be the same defect one event later, so the flag is checked
+    // first — and it is why the handler may skip the settings read entirely.
+    for (const preference of ['hide_to_tray', 'quit'] as const) {
+      expect(
+        decideAllWindowsClosed({
+          platform: 'darwin',
+          isQuitting: true,
+          trayUsable: true,
+          preference,
+        }),
+      ).toEqual({ quit: true, reason: 'quitting' });
+    }
+  });
+});
+
+/**
+ * And the handler above is only worth having if Main calls it.
+ *
+ * The expression it replaces — `platform !== 'darwin' && !trayUsable` — is the
+ * exact shape that shipped the defect, so it is asserted *absent*: a future
+ * edit that goes back to reading the tray alone turns this red instead of
+ * returning the bug to a real desktop where only a person would find it.
+ */
+describe('the last-window rule is wired into the lifecycle', () => {
+  const bootstrapSource = readFileSync(
+    join(repoRoot, 'apps', 'desktop', 'src', 'main', 'bootstrap.ts'),
+    'utf8',
+  );
+  const allClosed = /app\.on\('window-all-closed',[\s\S]*?\n\}\);/.exec(bootstrapSource)?.[0];
+
+  it('decides through decideAllWindowsClosed', () => {
+    expect(allClosed, 'bootstrap.ts has no window-all-closed listener').toBeDefined();
+    expect(allClosed).toContain('decideAllWindowsClosed(');
+    expect(allClosed).toMatch(/if \(decision\.quit\) app\.quit\(\);/);
+  });
+
+  it('no longer quits on the tray alone', () => {
+    expect(bootstrapSource).not.toContain("process.platform !== 'darwin' && !trayUsable");
+  });
+
+  it('does not defer a quit that has nothing to tear down', () => {
+    // The other half of "quit that did not quit": `before-quit` used to
+    // `preventDefault()` and then await `ucad?.dispose()`, so a quit arriving
+    // before the container existed was cancelled and never re-issued.
+    const beforeQuit = /app\.on\('before-quit',[\s\S]*?\n\}\);/.exec(bootstrapSource)?.[0];
+    expect(beforeQuit, 'bootstrap.ts has no before-quit listener').toBeDefined();
+    const earlyReturnAt = beforeQuit!.indexOf('if (!container) return;');
+    const preventAt = beforeQuit!.indexOf('event.preventDefault()');
+
+    expect(earlyReturnAt, 'before-quit defers before checking for a container').toBeGreaterThanOrEqual(0);
+    expect(earlyReturnAt).toBeLessThan(preventAt);
+    expect(beforeQuit).not.toContain('ucad\n    ?.dispose()');
   });
 });

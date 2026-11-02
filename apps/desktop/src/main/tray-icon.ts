@@ -143,3 +143,73 @@ export function shouldPreventWindowClose(input: {
   if (input.isQuitting) return false;
   return decideWindowClose(input).hideToTray;
 }
+
+// ---------------------------------------------------------------------------
+// after the last window is gone
+// ---------------------------------------------------------------------------
+
+/**
+ * Why the app quits (or stays) once no window is left.
+ *
+ * The four reasons are kept apart because they read differently in the log:
+ * an exit already in flight, the user's setting, a tray that could not be
+ * built, and the platform convention on macOS.
+ */
+type AllWindowsClosedReason =
+  | 'quitting'
+  | 'preference'
+  | 'no-tray'
+  | 'icon-empty'
+  | 'tray-keeps-it-alive'
+  | 'macos-dock';
+
+export interface AllWindowsClosedDecision {
+  quit: boolean;
+  reason: AllWindowsClosedReason;
+}
+
+/**
+ * What to do when the last window closed.
+ *
+ * This used to be one expression in `bootstrap.ts` — `platform !== 'darwin' &&
+ * !trayUsable` — which answered a different question than the one the user
+ * asked. Settings → 关闭窗口时 = 退出应用 cancelled the hide, the window closed,
+ * and the process then stayed in the background with no window and a tray that
+ * only offered 显示主窗口 (pointing at a window that no longer existed). The
+ * setting said quit and the app did not quit: the one outcome a user reads as a
+ * broken app, because "I closed it" and "it is still running" cannot both be
+ * true.
+ *
+ * So the preference is consulted here too, and it outranks the tray: "hide to
+ * tray" means "hide to *a tray*", while "quit" means there is nothing left to
+ * come back to. The macOS Dock convention — an app with a live icon in the Dock
+ * is not "gone" when its last window closes — is kept, but only as the default
+ * it is: a user who chose 退出应用 on macOS gets the same exit as everywhere
+ * else.
+ *
+ * `isQuitting` is listed first for the same reason it outranks everything in
+ * `shouldPreventWindowClose`: during a real exit the windows close *while*
+ * quitting, and staying here would be "the quit that does not quit" arriving
+ * one event later. It is also why the caller may skip reading the preference
+ * during a quit — the store can already be closed, and the answer cannot change
+ * the outcome.
+ */
+export function decideAllWindowsClosed(input: {
+  platform: NodeJS.Platform;
+  /** `before-quit` has run: an exit is in flight */
+  isQuitting: boolean;
+  /** a tray exists and shows a real icon */
+  trayUsable: boolean;
+  /** what the user chose in Settings */
+  preference: CloseBehaviour;
+  /** why the tray is unusable, when it is */
+  trayProblem?: TrayProblem;
+}): AllWindowsClosedDecision {
+  if (input.isQuitting) return { quit: true, reason: 'quitting' };
+  if (input.preference === 'quit') return { quit: true, reason: 'preference' };
+  if (input.platform === 'darwin') return { quit: false, reason: 'macos-dock' };
+  if (!input.trayUsable) {
+    return { quit: true, reason: input.trayProblem === 'icon-empty' ? 'icon-empty' : 'no-tray' };
+  }
+  return { quit: false, reason: 'tray-keeps-it-alive' };
+}

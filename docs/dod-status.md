@@ -22,10 +22,32 @@
    （窗口挂载 ≠ 应用可用；设置面板按钮晚一拍出现），并加 `--feed-url`，
    让「随包 feed 所在主机不可达」的机器也能跑真实网络分支，且记录用的是哪个 URL。
 
+## 本轮修的缺陷：「退出应用」点 × 不退
+
+步骤 5 抓到的那个缺陷已修，改动只在两处判定的**所有权**上，没有新功能：
+
+- `apps/desktop/src/main/tray-icon.ts` 新增 `decideAllWindowsClosed()`：最后一个窗口关掉时
+  该不该退，由它回答，且它把**用户在设置里选的那一项**算进去。原来
+  `bootstrap.ts` 里只有一句 `platform !== 'darwin' && !trayUsable`，问的是「有没有托盘」，
+  于是「关闭窗口时 = 退出应用」在有托盘时恰好得到相反答案：窗口关掉、进程留在后台、
+  托盘里的「显示主窗口」指向一个已经不存在的窗口。判定抬头写明：`quit` 压过托盘，
+  macOS 的 Dock 惯例只是默认值——用户选了退出，macOS 上也一样退。
+- 同一个「退了但没退」的另一端：`before-quit` 以前无条件 `preventDefault()` 再等
+  `ucad?.dispose()`，容器还没建起来时那个 promise 永远不会被创建，退出被取消且不再重发
+  （启动中收到一次 SIGTERM 就够）。现在没有容器就直接放行。
+- `tests/contract/tray-icon.test.ts` 的 `the last window is gone` 五条钉住判定本身，
+  `the last-window rule is wired into the lifecycle` 三条钉住接线：`window-all-closed`
+  必须走 `decideAllWindowsClosed(`，且**那句只问托盘的表达式不许再出现**，
+  `before-quit` 的容器检查必须在 `preventDefault()` 之前。回到旧写法会打红，不必等真机。
+
+门禁：`npm run typecheck && npm run lint && npm run knip && npm test && npm run test:e2e` 全绿
+（`test` 与 `test:e2e` 在有显示的环境下跑，`tests/contract/layout.test.ts` 需要 X）。
+
 ## 下一刀（按 DoD 未勾项）
 
+- **真机复跑 `--steps 5`**：判定与接线已有自动门禁，但「进程真的退出」这一条仍要一次
+  `npm run package` + `dbus-run-session`/`gnome-keyring`/`xvfb-run` 的实跑记录落进
+  `docs/manual-verification.md`。本轮 `electron-builder --dir` 在产物写完（`app.asar` 已含
+  该修复，见上）之后卡住未退出，记录因此顺延到下一轮，没有写进表里。
 - Windows 桌面补跑步骤 1–6（唯一硬缺口）。
-- **步骤 5 抓到的缺陷**：`关闭窗口时 = 退出应用` 时点 ×，窗口关掉但进程留在后台
-  （`window-all-closed` 只在没有托盘时 `app.quit()`），用户以为退出了。修在
-  `apps/desktop/src/main/bootstrap.ts`，并让 `scripts/verify-main-chain.mjs --steps 5` 转绿。
 - 步骤 6 的五个界面状态人工走查（`npm run dev:web`）。

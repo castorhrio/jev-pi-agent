@@ -22,7 +22,12 @@ import { installApplicationMenu } from './menu';
 import { UpdateService, type UpdateStatus } from './update-service';
 import { feedUrlForCheck, resolveUpdateFeed } from './update-feed';
 import { createUpdateFeedAnnouncer } from './update-feed-log';
-import { loadTrayIcon, shouldPreventWindowClose, type TrayProblem } from './tray-icon';
+import {
+  decideAllWindowsClosed,
+  loadTrayIcon,
+  shouldPreventWindowClose,
+  type TrayProblem,
+} from './tray-icon';
 import { evaluateNavigation, evaluateWindowOpen } from './navigation-guard';
 import { IPC_MENU } from './ipc-menus';
 import { createTranslator, negotiateLocale, type Locale } from '../shared/i18n';
@@ -585,9 +590,24 @@ app.whenReady().then(bootstrap).catch((error) => {
 });
 
 app.on('window-all-closed', () => {
-  // On macOS the app conventionally stays alive; everywhere else the tray keeps
-  // it alive. Quitting is explicit from the tray or the File menu.
-  if (process.platform !== 'darwin' && !trayUsable) app.quit();
+  // The window is gone and nothing on screen says so any more, which makes this
+  // the one event where the app's answer must match the user's setting. The
+  // rule lives in `decideAllWindowsClosed` (this handler used to ask only
+  // "is there a tray?", so 关闭窗口时 = 退出应用 left the process running with no
+  // window and a tray that showed a window that no longer existed).
+  const isQuitting = appState.isQuitting === true;
+  const decision = decideAllWindowsClosed({
+    platform: process.platform,
+    isQuitting,
+    trayUsable,
+    // Not read while quitting: the store may already be closed, and an exit in
+    // flight quits either way, so asking would only add a warning about a
+    // question nobody cares about.
+    preference: isQuitting ? 'quit' : closePreference(),
+    ...(trayProblem ? { trayProblem } : {}),
+  });
+  appLog?.info('all windows closed', { quit: decision.quit, reason: decision.reason });
+  if (decision.quit) app.quit();
 });
 
 app.on('activate', () => {
@@ -611,9 +631,17 @@ let teardownDone = false;
 app.on('before-quit', (event) => {
   appState.isQuitting = true;
   if (teardownDone) return;
+  const container = ucad;
+  // A quit that arrives before the container exists has nothing to tear down,
+  // and deferring it would wait for a promise that is never created: the exit
+  // is cancelled, the process keeps running with no window, and nobody can ask
+  // it to leave again. That is the same "quit that did not quit" the
+  // `window-all-closed` rule below closes, arriving at the other end of
+  // startup — a SIGTERM during adapter resolution is enough to hit it.
+  if (!container) return;
   event.preventDefault();
-  void ucad
-    ?.dispose()
+  void container
+    .dispose()
     .catch(() => undefined)
     .finally(() => {
       teardownDone = true;
