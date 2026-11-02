@@ -48,13 +48,16 @@
  * path against this feed instead of the shipped one, for hosts that cannot
  * reach `github.com`).
  *
- * Three things this script cannot do, and does not claim: it writes the
+ * Two things this script cannot do, and does not claim: it writes the
  * workspace row instead of answering the native folder picker, so no trust
- * dialog is on screen; the tray menu is a native object no DevTools method
- * reaches, so step 5 asserts what *is* observable — the window reports itself
- * hidden and the process is still alive — and prints the menu labels a person
- * should then read by eye; and the five fixture scenarios (step 6) belong to
+ * dialog is on screen; and the five fixture scenarios (step 6) belong to
  * `npm run dev:web`, which a human still walks by eye.
+ *
+ * The tray menu used to be a third: a native object no DevTools method reaches,
+ * so step 5 printed the labels and asked a person to read them off the screen.
+ * The app now writes the menu it built to its own log (`tray menu built`), and
+ * step 5 asserts the three items from that line — the menu is checked, not
+ * described.
  */
 
 import { spawn } from 'node:child_process';
@@ -790,15 +793,15 @@ async function step4(run) {
 }
 
 /**
- * The tray menu labels a person should look for, read from the product's own
+ * The labels the tray menu is expected to carry, read from the product's own
  * i18n table.
  *
- * The menu is a native object: no DevTools method reaches it, so the labels
- * cannot be *asserted* from here. They can still be *named* — read out of
- * `apps/desktop/src/shared/i18n.ts`, the same table `refreshTrayMenu()` builds
- * the menu from — so a run prints what to look for instead of leaving the
- * reader to remember it. A label renamed in the product and not here would make
- * the printed list wrong, which is why the contract test compares the two.
+ * This is the *expectation* half of step 5. The observation half is the app's
+ * own `tray menu built` log line, which names the rows it actually built; the
+ * two are compared by `trayMenuVerdict()`. Reading the expectation out of
+ * `apps/desktop/src/shared/i18n.ts` — the same table `buildTrayMenuTemplate()`
+ * translates from — is what keeps a renamed label from turning this check into
+ * a permanent failure about a sentence the product no longer has.
  */
 export function trayMenuLabels(source) {
   const labels = [];
@@ -807,6 +810,37 @@ export function trayMenuLabels(source) {
     if (hit) labels.push(hit[1]);
   }
   return labels;
+}
+
+/**
+ * Whether the menu the app built is the menu the document asks about.
+ *
+ * `logLine` is the app's own `tray menu built` line, which carries the labels of
+ * every row a user can click. Three outcomes, kept apart because they mean
+ * different things:
+ *
+ *  - no line and no tray fault: the app built no menu and said nothing, which is
+ *    the silent version of the failure the tray exists to prevent;
+ *  - no line but a tray fault: this host has no notification area, so there is
+ *    no menu to check — the document asks for that branch to be recorded, not
+ *    failed;
+ *  - a line: every expected label must be in it. A menu that lost 退出 UCAD is
+ *    the app alive with no way out, which is the defect this step is for.
+ */
+export function trayMenuVerdict({ logLine, expected, trayFault }) {
+  if (!logLine) {
+    return trayFault
+      ? {
+          ok: true,
+          message: `no tray on this host, so there is no menu to check (${trayFault.slice(0, 120)})`,
+        }
+      : { ok: false, message: 'the app built no tray menu and never said why' };
+  }
+  const missing = expected.filter((label) => !logLine.includes(label));
+  if (missing.length) {
+    return { ok: false, message: `the tray menu is missing ${missing.join(' / ')}` };
+  }
+  return { ok: true, message: `the tray menu carries ${expected.join(' / ')}` };
 }
 
 /**
@@ -882,19 +916,17 @@ async function readWindowState(run) {
  * a user cannot recover from without a task manager.
  */
 async function step5() {
-  let labels = [];
+  let expected = [];
   try {
-    labels = trayMenuLabels(
+    expected = trayMenuLabels(
       readFileSync(new URL('../apps/desktop/src/shared/i18n.ts', import.meta.url), 'utf8'),
     );
   } catch {
-    /* the source tree is not next to the script; the menu is still read by eye */
+    /* reported below: without the expectation there is nothing to compare */
   }
-  record(
-    5,
-    'tray menu items to look for',
-    labels.length ? labels.join(' / ') : '(i18n source not found next to the script)',
-  );
+  if (!expected.length) {
+    fail(5, 'the expected tray labels could not be read from apps/desktop/src/shared/i18n.ts');
+  }
 
   for (const [index, choice] of ['隐藏到托盘', '退出应用'].entries()) {
     // One process per choice. The close this script can send is
@@ -904,6 +936,25 @@ async function step5() {
     const run = AppRun.launch({ home: HOME, port: PORT + 20 + index });
     try {
       await run.attach(90000);
+      if (index === 0) {
+        // The menu is built once per process, at start-up, and the app writes
+        // what it built to its own log — so the three items are *asserted* here
+        // instead of being printed for a person to read off the screen. Read
+        // before the close: the close ends this process, and the log file is
+        // shared with the next one.
+        const menuLine = await run.waitForLog(/"msg":"tray menu built"/, 20000);
+        const trayFault = menuLine ? null : await run.waitForLog(/tray unavailable/, 5000);
+        record(
+          5,
+          'tray menu built',
+          menuLine
+            ? (/"items":\[[^\]]*\]/.exec(menuLine)?.[0] ?? menuLine.slice(0, 200))
+            : '(the app logged no tray menu)',
+        );
+        const menuVerdict = trayMenuVerdict({ logLine: menuLine, expected, trayFault });
+        if (menuVerdict.ok) pass(5, menuVerdict.message);
+        else fail(5, menuVerdict.message);
+      }
       // The choice is a pair of buttons, not a `<select>`, and they only render
       // once the settings read has come back — so the wait is on the button, and
       // the save is confirmed by the button becoming the selected one. Closing

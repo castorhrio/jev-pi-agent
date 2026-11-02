@@ -34,9 +34,14 @@ xvfb-run -a node scripts/verify-main-chain.mjs        # 或 --exec release\win-u
 生成的交接与它的历史、**真实网络**下的更新检查（外加两条被拒的 feed 与一条失败的 feed）、
 以及两种「关闭窗口时」设置下窗口是否真的离开屏幕、进程是否仍活。`--steps 1,4` 只跑其中几步。
 
-它替代不了两件事，输出里也照实写着：项目是直接写 `workspaces` 行打开的
-（没有任何 DevTools 方法能碰到原生目录选择器，所以**信任弹窗不在屏上**）；
-Xvfb 上没有托盘宿主，所以托盘只能作为「进程还活着、窗口不见了」被观察，不是一张看得见的菜单。
+它替代不了一件事，输出里也照实写着：项目是直接写 `workspaces` 行打开的
+（没有任何 DevTools 方法能碰到原生目录选择器，所以**信任弹窗不在屏上**）。
+
+托盘菜单以前是第二件：原生对象，DevTools 碰不到，所以脚本只把三个菜单项**打印**出来，
+让人自己去看。现在应用把建好的菜单写进自己的日志（`tray menu built`，带 `items` 数组），
+脚本读那一行**断言**三项都在——菜单是被检查的，不是被描述的。
+宿主上根本没有托盘时（没有通知区），脚本记下应用自己说的原因（`tray unavailable`）而不是打红，
+因为那种机器上确实没有菜单可查。
 
 ## 记录方式
 
@@ -52,12 +57,15 @@ Xvfb 上没有托盘宿主，所以托盘只能作为「进程还活着、窗口
 | 2026-11-02 | Linux x64（Ubuntu 26.04，headless + xvfb） | 同上 | 步骤 4 的拒绝路径 | 见合约测试：明文/非 URL 的 `UCAD_UPDATE_FEED` 被拒且原因进日志；真实网络下的“发现新版本”未跑 |
 | 2026-11-03 | Linux x64（Ubuntu 26.04，桌面会话：`dbus-run-session` + `gnome-keyring` + `xvfb-run`） | `npm run package` 产物 `release/linux-unpacked/ucad` | 步骤 5 | **部分通过**：`--steps 5` 打印托盘菜单项 `显示主窗口 / 打开项目… / 退出 UCAD`（读自 `i18n.ts`）；「隐藏到托盘」关窗后进程仍活、窗口不在屏上（`[ok]`）；**「退出应用」打红**：进程没退出——`window-all-closed` 只在没有托盘时 `app.quit()`，有托盘时窗口关掉、进程留在后台且没有窗口可恢复。缺陷待修 |
 | 2026-11-03 | Linux x64（Ubuntu 26.04，**桌面会话**：`dbus-run-session` + `gnome-keyring`（Secret Service）+ `xvfb-run`，`XDG_CURRENT_DESKTOP=GNOME`） | `npm run package` 产物 `release/linux-unpacked/ucad`（asar） | 步骤 1、2、3、4 | **通过（1–4）**：`node scripts/verify-main-chain.mjs` 退出码 0 之前各步 `[ok]`。步骤 1：`renderedHash=80e256b63523731c…`，同一轮换面板重读仍是同一哈希；任务描述多一个字符后 `673b97ec35b5…`；注入原文 `<ucad-context pack="cp_01M6EXDMQTDJMBTVNP3NX8N9B6" revision="1" tokens="401" estimate="heuristic_chars_div_4" strategy="hybrid" stale="true">`，估算来源 `heuristic_chars_div_4`。步骤 2：7 行决策带 rationale/confidence/引擎，样例 `route 路由 → universal route -> 'universal' (isDefaultRuntime). signals: git facts unavailable…`。步骤 3：交接带 `confidence=` 决策，`带着它开新会话` 后输入框以 `# 继续上一个会话的交接` 开头，历史 `#4 无人认领 / #3 #2 #1 已被更新的取代`。步骤 4：真实 https feed 返回 `已是最新版本`；明文覆盖 `检查更新失败: 更新源必须使用 https，请检查 UCAD_UPDATE_FEED 或 update-config.json`，日志 `update feed ignored: UCAD_UPDATE_FEED or update-config.json must be an https URL`。**注意**：本机到 `github.com` 不通（`curl https://github.com` 20s 超时），随包 feed 的地址因此取不到，步骤 4 的“有网”分支是用 `--feed-url` 指向真实 https 文档（本仓 `package.json`，version 1.0.0）跑的；随包 feed 本身仍需在能连 `github.com` 的机器上补一次。步骤 5、6 本轮未跑 |
-
 | 2026-11-03 | Linux x64（Ubuntu 26.04，headless） | `npm run package` 产物 `release/linux-unpacked`（`app.asar` 内 `apps/desktop/dist/main/bootstrap.js` 确认含新判定） | 步骤 5 的代码侧 | **缺陷已修，真机记录顺延**：`window-all-closed` 改由 `decideAllWindowsClosed()` 判定，`quit` 压过托盘；`before-quit` 在没有容器时不再 `preventDefault()`。证据是门禁而不是人眼：`tests/contract/tray-icon.test.ts` 的 `the last window is gone`（5 条）与 `the last-window rule is wired into the lifecycle`（3 条）全绿，且「只问托盘」那句旧表达式被断言**不许再出现**。**本轮没有真机行**：`electron-builder --dir` 在产物写完后卡住未退出（`release/linux-unpacked/ucad` 与 `app.asar` 已是 07:24 的新产物），`--steps 5` 的实跑因此没跑成，下一轮补 |
+| 2026-11-03 | Linux x64（Ubuntu 26.04，**桌面会话**：`dbus-run-session` + `gnome-keyring`（Secret Service）+ `xvfb-run`，`XDG_CURRENT_DESKTOP=GNOME`） | `npm run package` 产物 `release/linux-unpacked/ucad`（`app.asar` 内 `bootstrap.js` 含 `tray menu built`） | 步骤 5 | **通过（两条分支都过）**：`node scripts/verify-main-chain.mjs --steps 5` 退出码 0。托盘菜单不再靠目视——应用日志 `tray menu built` 的 `items` 为 `["显示主窗口","打开项目…","设置","退出 UCAD"]`，脚本断言三项都在（`[ok] step 5: the tray menu carries 显示主窗口 / 打开项目… / 退出 UCAD`）。「隐藏到托盘」：关窗后 `process still running`、窗口 `gone (the page target no longer exists)`，`[ok]`；「退出应用」：`process exited, code 0`，`[ok]`——上一轮那个「点了退出但没退」的缺陷在真机上确认已修。本轮 `electron-builder --dir` 正常退出（上一轮的卡住未复现） |
+
 
 **Windows 真机六步仍未跑。** 发布前必须在 Windows 桌面补一次完整记录；上面几行不能替代它。
-Linux 桌面会话那一行（2026-11-03）是第一次在**有钥匙串的桌面会话**里跑通步骤 1–4，
+Linux 桌面会话那两行（2026-11-03）是第一次在**有钥匙串的桌面会话**里跑通步骤 1–5，
 它证明的是「这条链路在真机上成立」，不是「Windows 上成立」——平台差异（DPAPI、托盘、NSIS）仍要单独跑。
+步骤 5 的两条分支（隐藏到托盘 / 退出应用）现在都有真机 `[ok]`，托盘菜单也从「目视」变成了
+「读应用自己写的 `tray menu built` 再断言」，所以下一轮复跑不需要有人盯着托盘看。
 
 ## 1. 一轮对话，读回注入原文与哈希
 

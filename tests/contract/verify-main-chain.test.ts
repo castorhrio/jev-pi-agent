@@ -38,6 +38,7 @@ import {
   closeVerdict,
   profileDataDir,
   trayMenuLabels,
+  trayMenuVerdict,
 } from '../../scripts/verify-main-chain.mjs';
 import { FEED_REFUSAL_STATUS_MESSAGE } from '../../apps/desktop/src/main/update-service';
 import { checkFeedUrl } from '../../apps/desktop/src/main/update-feed';
@@ -193,25 +194,52 @@ describe('what step 5 is allowed to call a pass', () => {
   });
 });
 
-describe('the tray menu the run tells a person to look for', () => {
-  it('reads the labels out of the product table, not out of this file', () => {
-    // The menu is native and unreadable over DevTools, so the run prints the
-    // labels instead of asserting them. Printing a stale list would send a
-    // reader looking for a menu item the build no longer has, so the list is
-    // read from `i18n.ts` — the same table `refreshTrayMenu()` builds from.
-    const source = readFileSync(join(REPO_ROOT, 'apps', 'desktop', 'src', 'shared', 'i18n.ts'), 'utf8');
-    const labels = trayMenuLabels(source);
+describe('the tray menu step 5 asserts', () => {
+  const i18nSource = readFileSync(
+    join(REPO_ROOT, 'apps', 'desktop', 'src', 'shared', 'i18n.ts'),
+    'utf8',
+  );
+  const expected = trayMenuLabels(i18nSource);
 
-    expect(labels).toHaveLength(3);
-    for (const label of labels) expect(label.length).toBeGreaterThan(0);
+  it('reads the expected labels out of the product table, not out of this file', () => {
+    // The expectation is read from `i18n.ts` — the same table
+    // `buildTrayMenuTemplate()` translates from — so a renamed label cannot
+    // leave the verifier asserting a sentence no build can produce.
+    expect(expected).toHaveLength(3);
+    for (const label of expected) expect(label.length).toBeGreaterThan(0);
     // The three things the tray has to carry: get the window back, open a
     // project, and actually quit.
-    expect(labels[0]).toContain('显示主窗口');
-    expect(labels[2]).toContain('退出');
+    expect(expected[0]).toContain('显示主窗口');
+    expect(expected[2]).toContain('退出');
   });
 
   it('says nothing rather than guessing when the table is not there', () => {
     expect(trayMenuLabels('')).toEqual([]);
+  });
+
+  it('passes only when the app logged a menu carrying all three items', () => {
+    // The observation half: the app writes the rows it built to its own log, so
+    // the menu is checked instead of described. A menu that lost 退出 UCAD is
+    // the app alive with no way out, which is the defect this step exists for.
+    const logLine = JSON.stringify({ msg: 'tray menu built', meta: { items: expected } });
+
+    expect(trayMenuVerdict({ logLine, expected, trayFault: null }).ok).toBe(true);
+    expect(trayMenuVerdict({ logLine, expected, trayFault: null }).message).toContain('退出');
+
+    const missingQuit = JSON.stringify({ msg: 'tray menu built', meta: { items: expected.slice(0, 2) } });
+    const verdict = trayMenuVerdict({ logLine: missingQuit, expected, trayFault: null });
+    expect(verdict.ok).toBe(false);
+    expect(verdict.message).toContain(expected[2]!);
+  });
+
+  it('separates "no tray here" from "a menu that said nothing"', () => {
+    // A host with no notification area has no menu to check, and the document
+    // asks for that branch to be recorded rather than failed. The same silence
+    // *with* a tray is the silent failure the tray exists to prevent.
+    expect(
+      trayMenuVerdict({ logLine: null, expected, trayFault: 'tray unavailable; closing the window will quit' }).ok,
+    ).toBe(true);
+    expect(trayMenuVerdict({ logLine: null, expected, trayFault: null }).ok).toBe(false);
   });
 });
 

@@ -25,12 +25,15 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
+  buildTrayMenuTemplate,
   decideAllWindowsClosed,
   decideWindowClose,
   loadTrayIcon,
   shouldPreventWindowClose,
   trayIconPath,
+  trayMenuLabels,
   type TrayIconContext,
+  type TrayMenuActions,
 } from '../../apps/desktop/src/main/tray-icon';
 
 const repoRoot = resolve(fileURLToPath(new URL('../..', import.meta.url)));
@@ -382,6 +385,18 @@ describe('the last-window rule is wired into the lifecycle', () => {
     expect(bootstrapSource).not.toContain("process.platform !== 'darwin' && !trayUsable");
   });
 
+  it('does not read the settings store while an exit is in flight', () => {
+    // `decideAllWindowsClosed` documents that the caller may skip the
+    // preference during a quit, because the store can already be closed by the
+    // time the last window goes. A promise in a comment is not a gate: this
+    // asserts the handler really short-circuits, so an edit that reads settings
+    // first turns red here instead of throwing on a real quit.
+    expect(allClosed).toMatch(/preference:\s*isQuitting\s*\?\s*'quit'\s*:\s*closePreference\(\)/);
+    // Exactly one read, inside that ternary — a second one elsewhere in the
+    // handler would run on the quit path again.
+    expect(allClosed!.match(/closePreference\(\)/g)).toHaveLength(1);
+  });
+
   it('does not defer a quit that has nothing to tear down', () => {
     // The other half of "quit that did not quit": `before-quit` used to
     // `preventDefault()` and then await `ucad?.dispose()`, so a quit arriving
@@ -394,5 +409,110 @@ describe('the last-window rule is wired into the lifecycle', () => {
     expect(earlyReturnAt, 'before-quit defers before checking for a container').toBeGreaterThanOrEqual(0);
     expect(earlyReturnAt).toBeLessThan(preventAt);
     expect(beforeQuit).not.toContain('ucad\n    ?.dispose()');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// the menu the tray carries
+// ---------------------------------------------------------------------------
+
+/**
+ * The tray menu is the app's only surface once the window is closed, so what it
+ * contains is a product claim, not an implementation detail.
+ *
+ * It used to be built inline in `bootstrap.ts`, which made the claim unreadable
+ * without a desktop: `docs/manual-verification.md` step 5 asked a person to open
+ * the tray and read the three items by eye, every run. The rows are a value now,
+ * and the run asserts them from the app's own log line — so this file pins the
+ * value, and the wiring below pins that the value is what gets logged.
+ */
+describe('the tray menu', () => {
+  const translate = (key: string) => `t:${key}`;
+
+  function actions(): TrayMenuActions & { called: string[] } {
+    const called: string[] = [];
+    return {
+      called,
+      show: () => called.push('show'),
+      openProject: () => called.push('openProject'),
+      openSettings: () => called.push('openSettings'),
+      quit: () => called.push('quit'),
+    };
+  }
+
+  it('carries the three things a user needs from a closed window', () => {
+    // Get the window back, open a project, and actually quit. A menu missing
+    // any of them is the app alive with no way out of one of those three.
+    const labels = trayMenuLabels(buildTrayMenuTemplate(translate, actions()));
+
+    expect(labels).toEqual(['t:tray.show', 't:tray.openProject', 't:settings.title', 't:tray.quit']);
+  });
+
+  it('keeps the title row and the separators out of the clickable list', () => {
+    // The title is the app's name and is disabled; separators carry no label.
+    // Both belong in the menu and neither is a command, so the list a
+    // verification run asserts against must not contain them.
+    const template = buildTrayMenuTemplate(translate, actions());
+
+    expect(template[0]).toEqual({ label: 't:app.name', enabled: false });
+    expect(template.filter((item) => item.type === 'separator')).toHaveLength(2);
+    expect(trayMenuLabels(template)).not.toContain('t:app.name');
+  });
+
+  it('wires each row to the action it names', () => {
+    // A menu row that looks right and does nothing is the failure a label check
+    // cannot see, so the handlers are called rather than inspected.
+    const handlers = actions();
+    const template = buildTrayMenuTemplate(translate, handlers);
+    for (const item of template) item.click?.();
+
+    expect(handlers.called).toEqual(['show', 'openProject', 'openSettings', 'quit']);
+  });
+
+  it('is built from the product table, not from literals in Main', () => {
+    // The labels come from `i18n.ts` through the translator, so a locale change
+    // relabels the tray with the rest of the app. A literal here would be the
+    // one string that stays Chinese in an English session.
+    const source = readFileSync(
+      join(repoRoot, 'apps', 'desktop', 'src', 'main', 'tray-icon.ts'),
+      'utf8',
+    );
+    const builder = /export function buildTrayMenuTemplate\([\s\S]*?\n\}/.exec(source)?.[0];
+
+    expect(builder, 'buildTrayMenuTemplate is gone').toBeDefined();
+    expect(builder).toContain("translate('tray.quit')");
+    expect(builder).not.toMatch(/label:\s*'[^']*[\u4e00-\u9fa5]/);
+  });
+});
+
+/**
+ * And the menu above is only worth having if Main builds *that* menu and says
+ * what it built.
+ *
+ * The log line is the observation half of step 5: without it the verification
+ * run has nothing to assert and falls back to asking a person to read the tray.
+ * So the wiring is pinned on the source — the template is built by the function
+ * above, and the labels are logged after the menu is set.
+ */
+describe('the tray menu is wired into the lifecycle', () => {
+  const bootstrapSource = readFileSync(
+    join(repoRoot, 'apps', 'desktop', 'src', 'main', 'bootstrap.ts'),
+    'utf8',
+  );
+  const refresh = /function refreshTrayMenu\(\): void \{[\s\S]*?\n\}/.exec(bootstrapSource)?.[0];
+
+  it('builds the menu through buildTrayMenuTemplate', () => {
+    expect(refresh, 'bootstrap.ts has no refreshTrayMenu').toBeDefined();
+    expect(refresh).toContain('buildTrayMenuTemplate(');
+    expect(refresh).toContain('Menu.buildFromTemplate(template)');
+  });
+
+  it('logs the labels it built, after the menu is set', () => {
+    expect(refresh).toContain("appLog?.info('tray menu built'");
+    expect(refresh).toContain('trayMenuLabels(template)');
+    const setAt = refresh!.indexOf('tray.setContextMenu(');
+    const logAt = refresh!.indexOf("appLog?.info('tray menu built'");
+    expect(setAt, 'the menu is never set').toBeGreaterThanOrEqual(0);
+    expect(logAt, 'the built menu is never logged').toBeGreaterThan(setAt);
   });
 });

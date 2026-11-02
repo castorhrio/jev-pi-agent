@@ -43,11 +43,27 @@
 门禁：`npm run typecheck && npm run lint && npm run knip && npm test && npm run test:e2e` 全绿
 （`test` 与 `test:e2e` 在有显示的环境下跑，`tests/contract/layout.test.ts` 需要 X）。
 
+## 本轮补上的两件事（2026-11-03 晚）
+
+1. **步骤 5 的真机行补上了**：`npm run package` 这次正常退出（上一轮的卡住未复现），
+   `dbus-run-session` + `gnome-keyring` + `xvfb-run` 下 `--steps 5` 退出码 0，两条分支都 `[ok]`：
+   「隐藏到托盘」关窗后进程仍活、窗口不在屏上；「退出应用」`process exited, code 0`。
+   上一轮那个「点了退出但没退」的缺陷在真机上确认已修。记录在 `docs/manual-verification.md`。
+2. **托盘菜单从「目视」变成「断言」**：菜单行搬进 `tray-icon.ts` 的 `buildTrayMenuTemplate()`
+   （纯函数，动作注入），`bootstrap.ts` 建完菜单后把 `trayMenuLabels(template)` 写进日志
+   （`tray menu built`），`scripts/verify-main-chain.mjs` 的步骤 5 读那一行断言三项都在。
+   真机输出：`items=["显示主窗口","打开项目…","设置","退出 UCAD"]`。
+   宿主没有通知区时脚本记下应用自己说的 `tray unavailable` 而不是打红——那种机器上确实没有菜单可查。
+   门禁：`tests/contract/tray-icon.test.ts` 钉住模板内容与接线（建菜单走 `buildTrayMenuTemplate`、
+   日志在 `setContextMenu` 之后），`tests/contract/verify-main-chain.test.ts` 钉住
+   `trayMenuVerdict()` 的三种结局（缺项打红 / 无托盘放行 / 静默打红）。
+3. **`window-all-closed` 的时序承诺变成红测**：`tray-icon.ts` 文档里写着「退出期间可以不读
+   preference（store 可能已关）」，现在 `tray-icon.test.ts` 断言调用点确实是
+   `preference: isQuitting ? 'quit' : closePreference()`，且 `closePreference()` 在处理器里只出现一次。
+
 ## 下一刀（按 DoD 未勾项）
 
-- **真机复跑 `--steps 5`**：判定与接线已有自动门禁，但「进程真的退出」这一条仍要一次
-  `npm run package` + `dbus-run-session`/`gnome-keyring`/`xvfb-run` 的实跑记录落进
-  `docs/manual-verification.md`。本轮 `electron-builder --dir` 在产物写完（`app.asar` 已含
-  该修复，见上）之后卡住未退出，记录因此顺延到下一轮，没有写进表里。
 - Windows 桌面补跑步骤 1–6（唯一硬缺口）。
 - 步骤 6 的五个界面状态人工走查（`npm run dev:web`）。
+- 随包 feed（`github.com/.../releases/latest/download/update-feed.json`）在能连 `github.com`
+  的机器上跑一次。

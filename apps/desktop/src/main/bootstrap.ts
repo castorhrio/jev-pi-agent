@@ -23,9 +23,11 @@ import { UpdateService, type UpdateStatus } from './update-service';
 import { feedUrlForCheck, resolveUpdateFeed } from './update-feed';
 import { createUpdateFeedAnnouncer } from './update-feed-log';
 import {
+  buildTrayMenuTemplate,
   decideAllWindowsClosed,
   loadTrayIcon,
   shouldPreventWindowClose,
+  trayMenuLabels,
   type TrayProblem,
 } from './tray-icon';
 import { evaluateNavigation, evaluateWindowOpen } from './navigation-guard';
@@ -476,45 +478,36 @@ function installTray(): void {
 function refreshTrayMenu(): void {
   if (!tray) return;
   const t = createTranslator(locale);
-  tray.setContextMenu(
-    Menu.buildFromTemplate([
-      { label: t('app.name'), enabled: false },
-      { type: 'separator' },
-      {
-        label: t('tray.show'),
-        click: () => {
-          mainWindow?.show();
-          mainWindow?.focus();
-        },
-      },
-      {
-        label: t('tray.openProject'),
-        click: () => {
-          mainWindow?.show();
-          mainWindow?.webContents.send(IPC_MENU.command, { command: 'open-project' });
-        },
-      },
-      { type: 'separator' },
-      {
-        label: t('settings.title'),
-        click: () => {
-          mainWindow?.show();
-          mainWindow?.webContents.send(IPC_MENU.command, { command: 'open-settings' });
-        },
-      },
-      {
-        label: t('tray.quit'),
-        click: () => {
-          // The flag is what tells the close handler this is a real exit and
-          // not a request to get out of the way. Without it the window would
-          // hide on the way down and the app would keep running with no
-          // window and no way back — the "quit" that does not quit.
-          appState.isQuitting = true;
-          app.quit();
-        },
-      },
-    ]),
-  );
+  // The rows live in `tray-icon.ts` as a value, so what the menu contains can be
+  // read without a desktop. The actions are the only part that needs Main.
+  const template = buildTrayMenuTemplate(t, {
+    show: () => {
+      mainWindow?.show();
+      mainWindow?.focus();
+    },
+    openProject: () => {
+      mainWindow?.show();
+      mainWindow?.webContents.send(IPC_MENU.command, { command: 'open-project' });
+    },
+    openSettings: () => {
+      mainWindow?.show();
+      mainWindow?.webContents.send(IPC_MENU.command, { command: 'open-settings' });
+    },
+    quit: () => {
+      // The flag is what tells the close handler this is a real exit and not a
+      // request to get out of the way. Without it the window would hide on the
+      // way down and the app would keep running with no window and no way back
+      // — the "quit" that does not quit.
+      appState.isQuitting = true;
+      app.quit();
+    },
+  });
+  tray.setContextMenu(Menu.buildFromTemplate(template));
+  // The menu is a native object no DevTools method reaches, so the labels are
+  // written down here: `scripts/verify-main-chain.mjs` step 5 asserts the three
+  // items from this line instead of asking a person to read the menu by eye.
+  // Logged after the menu is set, so a line in the log means a menu exists.
+  appLog?.info('tray menu built', { items: trayMenuLabels(template) });
 }
 
 function bootstrapTray(): void {

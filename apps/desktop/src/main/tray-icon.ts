@@ -213,3 +213,76 @@ export function decideAllWindowsClosed(input: {
   }
   return { quit: false, reason: 'tray-keeps-it-alive' };
 }
+
+// ---------------------------------------------------------------------------
+// the tray menu
+// ---------------------------------------------------------------------------
+
+/**
+ * One row of the tray menu, in the shape `Menu.buildFromTemplate` takes.
+ *
+ * Declared here rather than imported from Electron so the menu can be built and
+ * read in a test: the tray is a native object, and a menu that is only ever
+ * constructed inside `installTray()` is a menu nobody can check without a
+ * desktop. The fields are the subset the tray actually uses.
+ */
+export interface TrayMenuItem {
+  label?: string;
+  type?: 'separator';
+  enabled?: boolean;
+  click?: () => void;
+}
+
+/** What each menu row does, injected so the template stays a value. */
+export interface TrayMenuActions {
+  show: () => void;
+  openProject: () => void;
+  openSettings: () => void;
+  quit: () => void;
+}
+
+/**
+ * The tray menu, as a value.
+ *
+ * The tray is the app's home once the window is closed, so the menu has to
+ * carry the three things a user needs from there: get the window back, open a
+ * project, and actually quit. It used to be built inline in `bootstrap.ts`,
+ * which meant the only way to know what it contained was to open it on a
+ * desktop and read it — and `docs/manual-verification.md` step 5 asked a person
+ * to do exactly that, by eye, every run.
+ *
+ * Building it here makes the contents assertable: `trayMenuLabels()` reads the
+ * labels back out of the template, `bootstrap.ts` writes them to the log, and
+ * `scripts/verify-main-chain.mjs` asserts the three items from that line. The
+ * eye is no longer part of the check.
+ */
+export function buildTrayMenuTemplate(
+  translate: (key: string) => string,
+  actions: TrayMenuActions,
+): TrayMenuItem[] {
+  return [
+    // The title row is the app's name, disabled: it says which app this tray
+    // belongs to when several are running, and it is not a command.
+    { label: translate('app.name'), enabled: false },
+    { type: 'separator' },
+    { label: translate('tray.show'), click: actions.show },
+    { label: translate('tray.openProject'), click: actions.openProject },
+    { type: 'separator' },
+    { label: translate('settings.title'), click: actions.openSettings },
+    { label: translate('tray.quit'), click: actions.quit },
+  ];
+}
+
+/**
+ * The labels a person reads in the tray menu, in order.
+ *
+ * Separators carry no label and the disabled title is not a command, so what is
+ * left is exactly the rows a user can click. This is the list the verification
+ * run asserts against, which is why it is derived from the template instead of
+ * being written down a second time.
+ */
+export function trayMenuLabels(template: readonly TrayMenuItem[]): string[] {
+  return template
+    .filter((item) => item.click !== undefined && typeof item.label === 'string')
+    .map((item) => item.label as string);
+}
