@@ -97,9 +97,28 @@ const ISO = '2026-10-03T12:00:00.000Z';
 /** Monotonic id source for on-the-fly fixture results (previews, operations). */
 let previewCounter = 0;
 
-/** A finished update check: no feed configured locally, version known. */
-const updateStatus = {
-  state: 'up-to-date' as const,
+/**
+ * A finished update check: no feed configured locally, version known.
+ *
+ * Typed, not inferred, because this object is the *success path's
+ * representative* — and the whole point of typing the seed is that a field
+ * dropped here fails the build rather than the harness. `app.updateStatus()`
+ * is `Promise<UpdateStatus | null>`: `null` means the service has not measured
+ * anything yet, and the renderer is required to keep quiet about it rather
+ * than report a failure. The fixture never answers `null` (a harness that
+ * opened on "nothing measured" would render every surface in its empty state
+ * and test nothing), so the nullable half is driven by
+ * `FixtureUpdateOverrides.updateStatus`, which is typed against the contract
+ * exactly as the preload is, so the nullable half stays expressible without
+ * widening the fixture. The *type* face is checked where the object is
+ * assembled (`const api: UcadApi`), and what the default has to be is a status
+ * the real guard accepts — `tests/e2e/update-status-vocabulary.e2e.test.tsx`
+ * runs `updateStatusProblem` over every scenario's answer, so a fixture that
+ * dropped a field would go red there instead of teaching the UI a payload the
+ * product refuses.
+ */
+const updateStatus: UpdateStatus = {
+  state: 'up-to-date',
   currentVersion: '1.0.0',
   checkedAt: ISO,
   feedConfigured: false,

@@ -37,10 +37,19 @@
  *    background check pushed `available` (which is where a download starts).
  *    Reading "push wins" as "any push ends the action" would retire the
  *    download the user is waiting on; the same e2e file asserts both halves;
- *  - a pushed status whose state is not in `UPDATE_STATES` is contract drift,
- *    not a status: it is refused *and* warned about, because dropping it is
- *    otherwise invisible — no surface renders the payload, so the renderer
- *    would look like a banner that simply stopped updating;
+ *  - a pushed status that does not match the contract is drift, not a status:
+ *    a state outside `UPDATE_STATES` *or* a field of the wrong type, or a
+ *    required field that is missing (`updateStatusProblem`). It is refused
+ *    *and* warned about, with the reason, because dropping it is otherwise
+ *    invisible — no surface renders the payload, so the renderer would look
+ *    like a banner that simply stopped updating. A status with a legal state
+ *    and no `currentVersion` used to be accepted, which is how the Settings
+ *    card came to show a blank version instead of the last status it could
+ *    trust;
+ *  - that refusal is the same answer for an action's own answer. A click whose
+ *    call resolves something that is not a status is drift too: it is warned
+ *    about and the pending action is released, because leaving it set would
+ *    be the silent stuck spinner this file exists to prevent;
  *  - a failed *initial read* is a different fact from a failed action, and gets
  *    its own field (`statusFailure`). The banner stays quiet about it — the app
  *    checks on startup, and an offline launch must not open with an error
@@ -229,19 +238,23 @@ export function UpdateControllerProvider({ children }: { children: ReactNode }):
   const applyStatus = useCallback(
     (next: UpdateStatus) => {
       // The subscription hands this function whatever Main pushed, typed only
-      // at compile time. A state outside `UPDATE_STATES` is contract drift,
-      // not a status; writing it through would make every surface render a
-      // state the tables do not know about.
+      // at compile time. A payload that is not the contract's status — a state
+      // outside `UPDATE_STATES`, a required field that is missing, a field of
+      // the wrong type — is drift; writing it through would make every surface
+      // render something the contract does not describe.
       //
       // The refusal is also the *only* trace the drift leaves: the payload is
       // dropped before it reaches state, so no surface draws it and nothing
       // else in the renderer can observe it. Refusing in silence is how a
       // renamed state sits in a build for weeks looking like "the banner is
-      // just not updating". One warning, with the payload, is what turns that
-      // into a line in the console. `tests/e2e/update-controller.e2e.test.tsx`
-      // asserts it, so the warning cannot be dropped as noise.
-      if (!isUpdateStatus(next)) {
-        console.warn('[update-controller] refused an unknown update state', { next });
+      // just not updating". One warning, carrying both the payload and the
+      // reason, is what turns that into a line in the console — the reason is
+      // what decides whether the state or a field has to be fixed.
+      // `tests/e2e/update-controller.e2e.test.tsx` asserts it, so the warning
+      // cannot be dropped as noise.
+      const problem = updateStatusProblem(next);
+      if (problem !== null) {
+        warnRefusedStatus(next, problem);
         return;
       }
       setStatus(next);
@@ -336,7 +349,20 @@ export function UpdateControllerProvider({ children }: { children: ReactNode }):
           // status the subscription also sees. Applying it twice is harmless —
           // the state is the same — and it is what lets a check settle without
           // waiting for a push.
-          if (isUpdateStatus(next)) applyStatus(next);
+          const problem = updateStatusProblem(next);
+          if (problem === null) {
+            applyStatus(next as UpdateStatus);
+            return;
+          }
+          // The contract's other answer, and only for the action that has it.
+          if (action === 'install' && typeof next === 'boolean') return;
+          // Drift, and the answer a click was waiting on: warn, then end the
+          // action. A check or download whose answer is not a status would
+          // otherwise wait forever for a push that may never come, which is a
+          // spinner that never resolves and no sentence anywhere.
+          warnRefusedStatus(next, problem);
+          pendingRef.current = null;
+          setPendingAction(null);
         })
         .catch((error: unknown) => {
           if (!settle(action, token)) return;
@@ -388,23 +414,118 @@ export function useUpdateController(): UpdateController {
 }
 
 /**
- * Whether a value is the status one of the update calls promises.
+ * The field types the contract declares, as one table.
  *
- * The old check was "an object with a `state` key", which accepts
- * `{ state: 'whatever' }` — exactly the contract drift this guard exists to
- * stop. The state must be a member of `UPDATE_STATES`, the same tuple the
- * service derives its own policy table from, so a state added on one side and
- * not the other is refused instead of rendered. The set is built from that
- * tuple once, so the guard cannot acquire a second spelling of the vocabulary.
+ * The guard used to read `state` and stop there, and that is the hole this
+ * table closes: `{ state: 'available' }` was accepted, so the Settings card
+ * drew an empty version and the banner drew a progress bar at 0% — a status
+ * the contract does not describe, rendered as if it were one. A guard that
+ * answers "is this an `UpdateStatus`?" has to look at the fields
+ * `UpdateStatus` declares, not only the interesting one.
+ *
+ * `required: true` is the two fields every status carries
+ * (`currentVersion`, `feedConfigured`); the rest are optional, which means
+ * "may be absent", *not* "may be anything". `verified: 'no'` would light the
+ * "checksum verified" badge for an installer nothing checked, so a present
+ * optional field is held to its declared `typeof` too. A field that is absent
+ * is fine: every renderer of an optional field already has a fallback
+ * (`latestVersion ? … : ''`, `progress ?? 0`), so absence is a defined state.
+ *
+ * Ranges are deliberately *not* policed. `progress` is clamped by both
+ * surfaces before it is drawn, so a service that overshoots 1 still produces a
+ * truthful bar; refusing the status instead would replace a slightly wrong bar
+ * with no bar.
+ *
+ * The two aliases after the table are the compile-time half: adding a field to
+ * `UpdateStatus` in `@ucad/contracts` makes `npm run typecheck` fail here until
+ * the guard has been told what type that field is — at the edit that already
+ * has the contract open, rather than at the bug report.
+ */
+const UPDATE_STATUS_FIELDS = [
+  { name: 'currentVersion', type: 'string', required: true },
+  { name: 'feedConfigured', type: 'boolean', required: true },
+  { name: 'latestVersion', type: 'string', required: false },
+  { name: 'notes', type: 'string', required: false },
+  { name: 'progress', type: 'number', required: false },
+  { name: 'downloadedPath', type: 'string', required: false },
+  { name: 'verified', type: 'boolean', required: false },
+  { name: 'message', type: 'string', required: false },
+  { name: 'checkedAt', type: 'string', required: false },
+] as const;
+
+type _StatusField = (typeof UPDATE_STATUS_FIELDS)[number]['name'];
+/** Nothing the contract declares is left outside the table (`state` excepted). */
+type _EveryStatusFieldIsListed<
+  T extends never = Exclude<keyof UpdateStatus, 'state' | _StatusField>,
+> = T;
+/** …and the table invents no field the contract does not have. */
+type _NoListedFieldIsForeign<T extends never = Exclude<_StatusField, keyof UpdateStatus>> = T;
+
+/**
+ * Why `value` is not the status one of the update calls promises, or `null`.
+ *
+ * The reason is a *sentence about the payload* rather than a boolean, because
+ * the only place this guard's answer is used is a refusal, and a refusal
+ * nobody can act on is noise: "refused an update state" does not say whether
+ * the state is unknown (Main and renderer disagree about the vocabulary) or a
+ * field went missing (a half-built payload). This string names the field, or
+ * the offending state, which is the difference between two different fixes.
+ *
+ * `null` and "an object with a `state`" are the two answers the old guard
+ * confused: `null` is the contract's own "no status yet", and every other
+ * non-status is drift. `isUpdateStatus` is this function asked as a yes/no, so
+ * the two cannot drift apart.
  *
  * Exported for `tests/e2e/update-status-vocabulary.e2e.test.tsx`, which asks
- * the guard about every member and every plausible non-member; a hand-written
- * `state` check here would pass the refusal e2e case and fail that contract.
+ * it about every published state, every invented one, and every required or
+ * optional field missing or mistyped; a hand-written `state` check here would
+ * pass the refusal e2e case and fail that contract.
  */
 const UPDATE_STATE_SET: ReadonlySet<string> = new Set(UPDATE_STATES);
 
+function hasField(status: Record<string, unknown>, name: string): boolean {
+  return Object.prototype.hasOwnProperty.call(status, name) && status[name] !== undefined;
+}
+
+export function updateStatusProblem(value: unknown): string | null {
+  if (typeof value !== 'object' || value === null) return 'the payload is not an object';
+  const status = value as Record<string, unknown>;
+  const state = status.state;
+  if (typeof state !== 'string') return '`state` is missing or not a string';
+  if (!UPDATE_STATE_SET.has(state)) return `\`state\` is "${state}", which is not in UPDATE_STATES`;
+  for (const field of UPDATE_STATUS_FIELDS) {
+    const actual = typeof status[field.name];
+    if (!hasField(status, field.name)) {
+      if (field.required) {
+        return `\`${field.name}\` is missing (the contract requires a ${field.type})`;
+      }
+      continue;
+    }
+    if (actual !== field.type) {
+      // "an object", not "a object": the reason is read in a console at the
+      // moment somebody is deciding what to fix.
+      const article = actual === 'object' || actual === 'undefined' ? 'an' : 'a';
+      return `\`${field.name}\` is ${article} ${actual}, not a ${field.type}`;
+    }
+  }
+  return null;
+}
+
 export function isUpdateStatus(value: unknown): value is UpdateStatus {
-  if (typeof value !== 'object' || value === null) return false;
-  const state = (value as { state?: unknown }).state;
-  return typeof state === 'string' && UPDATE_STATE_SET.has(state);
+  return updateStatusProblem(value) === null;
+}
+
+/**
+ * The one sentence a refused payload leaves behind.
+ *
+ * One function rather than a closure per call site: the same refusal happens
+ * on a push and on an action's own answer, and two spellings of a warning is
+ * how one of them later loses the payload — or the reason — that makes it
+ * actionable. A plain declaration, so it is hoisted above its use.
+ */
+function warnRefusedStatus(next: unknown, problem: string): void {
+  console.warn('[update-controller] refused an update status that does not match the contract', {
+    next,
+    problem,
+  });
 }

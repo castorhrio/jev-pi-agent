@@ -277,11 +277,15 @@ describe('the update controller hands failure ownership over in sequence', () =>
       expect(field('status')).toBe('idle');
       // The payload is carried, not just the fact: a console line that says
       // "refused something" leaves the reader without the state name that has
-      // to be added to `UPDATE_STATES` (or removed from Main).
+      // to be added to `UPDATE_STATES` (or removed from Main). The reason is
+      // carried too, and it names the state rather than repeating the fact.
       expect(warn).toHaveBeenCalledTimes(1);
       expect(warn.mock.calls[0]).toEqual([
-        '[update-controller] refused an unknown update state',
-        { next: drifted },
+        '[update-controller] refused an update status that does not match the contract',
+        {
+          next: drifted,
+          problem: '`state` is "reticulating", which is not in UPDATE_STATES',
+        },
       ]);
 
       // A non-object is the same class of drift: refused, and warned about,
@@ -290,8 +294,8 @@ describe('the update controller hands failure ownership over in sequence', () =>
       expect(field('status')).toBe('idle');
       expect(warn).toHaveBeenCalledTimes(2);
       expect(warn.mock.calls[1]).toEqual([
-        '[update-controller] refused an unknown update state',
-        { next: null },
+        '[update-controller] refused an update status that does not match the contract',
+        { next: null, problem: 'the payload is not an object' },
       ]);
     } finally {
       warn.mockRestore();
@@ -362,6 +366,79 @@ describe('the update controller hands failure ownership over in sequence', () =>
     });
     expect(field('pending')).toBe('none');
     expect(field('status')).toBe('ready');
+  });
+
+  it('refuses a status with a published state but a missing required field', async () => {
+    // The state-only guard accepted this one, which is why it is a case of its
+    // own rather than another drifted state: the vocabulary was right and the
+    // payload was still not a status. Settings draws `update.currentVersion`
+    // and reads `feedConfigured` to choose its copy, so writing it through
+    // showed a blank version — or, worse, "no feed configured" for a build
+    // that has one.
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      const { emit } = mount();
+      await waitFor(() => expect(field('status')).toBe('idle'));
+
+      const partial = {
+        state: 'available',
+        latestVersion: '1.1.0',
+        feedConfigured: true,
+      } as unknown as UpdateStatus;
+      await emit(partial);
+      expect(field('status'), 'a status Settings cannot draw was written through').toBe('idle');
+      expect(warn.mock.calls[0]).toEqual([
+        '[update-controller] refused an update status that does not match the contract',
+        {
+          next: partial,
+          problem: '`currentVersion` is missing (the contract requires a string)',
+        },
+      ]);
+
+      // The other required field, for the same reason: `false` and "absent"
+      // are not the same claim, and only one of them is the contract's.
+      const noFeed = { state: 'unsupported', currentVersion: '1.0.0' } as unknown as UpdateStatus;
+      await emit(noFeed);
+      expect(field('status')).toBe('idle');
+      expect(warn.mock.calls[1]?.[1]).toEqual({
+        next: noFeed,
+        problem: '`feedConfigured` is missing (the contract requires a boolean)',
+      });
+      expect(warn).toHaveBeenCalledTimes(2);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it('ends a click whose answer is not a status, instead of waiting forever', async () => {
+    // A check or download ends at a status, so an answer the guard refuses
+    // leaves the pending action with nothing to retire it — a spinner that
+    // resolves when a push happens to arrive, which for a failed action is
+    // never. The action is over (its call settled), so it is released, and the
+    // refusal is written to the console because a stuck click is not something
+    // the user can act on.
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      mount({
+        initial: async () => IDLE,
+        check: async () => ({ state: 'up-to-date' } as unknown as UpdateStatus),
+      });
+      await waitFor(() => expect(field('status')).toBe('idle'));
+
+      await userEvent.setup().click(screen.getByRole('button', { name: 'run check' }));
+      await waitFor(() => expect(field('pending')).toBe('none'));
+
+      expect(field('status'), 'a refused answer rewrote the status').toBe('idle');
+      // Not a user-facing `failure`: drift is a bug to fix in a build, not a
+      // sentence a person should be shown about their own press.
+      expect(field('failure')).toBe('none');
+      expect(warn.mock.calls[0]?.[1]).toEqual({
+        next: { state: 'up-to-date' },
+        problem: '`currentVersion` is missing (the contract requires a string)',
+      });
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   it('releases the install action when the installer reports success', async () => {
