@@ -6,7 +6,7 @@ import {
   useUpdateController,
 } from '@renderer/update-controller';
 import { createFixtureApi } from '@renderer/dev/fixture-bridge';
-import type { UcadApi, UpdateStatus } from '@ucad/contracts';
+import type { UpdateStatus } from '@ucad/contracts';
 
 /**
  * The update controller's state transitions, as a sequence.
@@ -94,26 +94,26 @@ interface MountOptions {
 }
 
 function mount(options: MountOptions = {}) {
-  const fixture = createFixtureApi('default');
   const listeners = new Set<(next: UpdateStatus) => void>();
-  const api = {
-    ...fixture.api,
-    app: {
-      ...fixture.api.app,
-      updateStatus: options.initial ?? (async () => IDLE),
-      onUpdateStatus: (cb: (next: UpdateStatus) => void) => {
-        listeners.add(cb);
-        return () => {
-          listeners.delete(cb);
-        };
-      },
-      checkUpdate: options.check ?? (async () => IDLE),
-      downloadUpdate: options.download ?? (async () => IDLE),
-      installUpdate: options.install ?? (async () => true),
+  // The bridge's own update surface is the contract's (`FixtureUpdateOverrides`
+  // widens only `installUpdate`, for the drift case), so the object handed to
+  // the renderer is a `UcadApi` the compiler has seen — no whole-api cast, and
+  // a method added to `UcadApi` would fail `fixture-bridge.test.ts` instead of
+  // slipping past this file.
+  const fixture = createFixtureApi('default', {
+    updateStatus: options.initial ?? (async () => IDLE),
+    checkUpdate: options.check ?? (async () => IDLE),
+    downloadUpdate: options.download ?? (async () => IDLE),
+    installUpdate: options.install ?? (async () => true),
+    onUpdateStatus: (cb: (next: UpdateStatus) => void) => {
+      listeners.add(cb);
+      return () => {
+        listeners.delete(cb);
+      };
     },
-  } as unknown as UcadApi;
+  });
 
-  (window as unknown as Record<string, unknown>).ucad = api;
+  window.ucad = fixture.api;
   render(
     <UpdateControllerProvider>
       <Probe />
@@ -385,16 +385,19 @@ describe('the update controller hands failure ownership over in sequence', () =>
     expect(field('status')).toBe('ready');
   });
 
-  it('releases a status-answering install once, on the same token', async () => {
+  it('releases a status-answering install when its call settles, not from the table', async () => {
     const user = userEvent.setup();
     const check = deferred<UpdateStatus>();
     mount({
       initial: async () => READY,
-      // The install paths that stay alive may answer with a status instead of
-      // a boolean. `idle` is an ending in the install row, so this resolution
-      // takes both release paths: `settle` clears the action, then
-      // `applyStatus` finds `pendingRef` already clear and has nothing to do.
-      install: async () => IDLE,
+      // `installUpdate()` is typed `Promise<boolean>` and the fixture widens
+      // only this one method, so this is the Main-drifted value the renderer's
+      // guard exists for. `available` ends a *check*, not an install: the
+      // install row is empty. The release therefore comes from `settle` — the
+      // call settling — and `applyStatus` then finds `pendingRef` already
+      // clear. If the release came from the table, this test would still pass
+      // with a wrong row; the next test is the other half.
+      install: async () => AVAILABLE,
       check: () => check.promise,
     });
     await waitFor(() => expect(field('status')).toBe('ready'));
@@ -402,21 +405,51 @@ describe('the update controller hands failure ownership over in sequence', () =>
     await user.click(screen.getByRole('button', { name: 'run install' }));
     await waitFor(() => expect(field('pending')).toBe('none'));
 
-    expect(field('status')).toBe('idle');
+    expect(field('status')).toBe('available');
     expect(field('failure'), 'a clean install answer became a failure').toBe('none');
     expect(field('status-failure')).toBe('none');
 
-    // Both release paths are done. The controller is still usable: a new
-    // action starts and ends on its own token rather than being retired by the
-    // install's.
+    // The controller is still usable: a new action starts and ends on its own
+    // token rather than being retired by the install's.
     await user.click(screen.getByRole('button', { name: 'run check' }));
     expect(field('pending')).toBe('check');
     await act(async () => {
-      check.resolve(AVAILABLE);
+      check.resolve(UP_TO_DATE);
       await check.promise;
     });
     expect(field('pending')).toBe('none');
+    expect(field('status')).toBe('up-to-date');
+  });
+
+  it('keeps an install pending when a status that ends another action is pushed', async () => {
+    const user = userEvent.setup();
+    const install = deferred<boolean>();
+    const { emit } = mount({
+      initial: async () => READY,
+      install: () => install.promise,
+    });
+    await waitFor(() => expect(field('status')).toBe('ready'));
+
+    await user.click(screen.getByRole('button', { name: 'run install' }));
+    expect(field('pending')).toBe('install');
+
+    // `available` is where a *check* answers and where a download starts, but
+    // it says nothing about the install the user is waiting on. The install
+    // row is empty because the call's boolean is its only ending; a push that
+    // counted here would retire a running installer — and then the boolean
+    // that follows would have no action left to settle.
+    await emit(AVAILABLE);
     expect(field('status')).toBe('available');
+    expect(field('pending'), 'a check-ending push retired the install').toBe('install');
+
+    // The real ending: the call settles, with a boolean rather than a status.
+    await act(async () => {
+      install.resolve(true);
+      await install.promise;
+    });
+    expect(field('pending')).toBe('none');
+    expect(field('status')).toBe('available');
+    expect(field('failure')).toBe('none');
   });
 
   it('does not hand a later error push to the install that already ended', async () => {

@@ -10,9 +10,12 @@
  * watching, and a failure belongs to whichever surface the user acted in.
  *
  * The rules this controller implements:
- *  - every action ends at a status listed in `ACTION_COMPLETED_STATES`, and
- *    nowhere else — progress never ends one, or a download that fails after its
- *    progress bar appeared would lose the failure;
+ *  - a check and a download end at a status listed in
+ *    `ACTION_COMPLETED_STATES`, and nowhere else — progress never ends one, or
+ *    a download that fails after its progress bar appeared would lose the
+ *    failure. An install is the exception, and its row is empty on purpose:
+ *    `installUpdate()` answers a boolean, so the call settling is its only
+ *    ending (`CALL_SETTLED_ACTIONS`);
  *  - an IPC rejection is a failure with no status, so it is kept locally as
  *    `failure`. The alternative is a button that does nothing and says
  *    nothing;
@@ -74,6 +77,9 @@ export type PendingAction = 'download' | 'install' | 'check';
  * walks the cross product to check that this is the table `actionCompleted()`
  * actually reads.
  *
+ * A row may be empty only for an action named in `CALL_SETTLED_ACTIONS`, and
+ * then it is a statement rather than an omission: no status ends that action.
+ *
  * `error` is in no row on purpose — the failure is what the pending action is
  * for. Progress (`checking`, `downloading`) is in no row either: a download
  * that has shown its bar is still the download whose failure the user is
@@ -87,13 +93,27 @@ export const ACTION_COMPLETED_STATES = {
   // Only `ready`: `available` is the state a download *starts* from, so it
   // cannot be the download's answer, and `up-to-date` would be a check's.
   download: ['ready'],
-  // An install normally answers with a boolean rather than a status (the app
-  // quits), so the controller releases it when the call settles; a status is
-  // the other way an install can end, for the paths that stay alive. A failed
-  // install arrives as a rejected IPC call — `failure` — which this table never
-  // sees.
-  install: ['idle', 'up-to-date', 'available', 'ready', 'unsupported'],
+  // Empty on purpose. `installAndRestart()` resolves a boolean, never a
+  // status: every refusal sets `error` (which no row ends, because the pending
+  // action is what keeps the reason on screen), and the only stay-alive
+  // success leaves the service in `ready` — the state the install *started*
+  // from, not an ending. The call settling is the ending, so no pushed status
+  // may retire an install; `CALL_SETTLED_ACTIONS` says so, and the cross
+  // product in `tests/e2e/update-banner.e2e.test.tsx` rejects an empty row
+  // that nobody declared.
+  install: [],
 } as const satisfies Readonly<Record<PendingAction, readonly UpdateStatus['state'][]>>;
+
+/**
+ * Actions whose own call settling is the only ending they have.
+ *
+ * `install` is here because `installUpdate()` answers `true`/`false`: there is
+ * no status to wait for, and the table's empty row above is a decision this
+ * list makes visible. A status-answering install (a Main that drifted from the
+ * contract) is still released exactly once — by `settle`, before its status is
+ * applied — so the empty row cannot strand it.
+ */
+export const CALL_SETTLED_ACTIONS = ['install'] as const satisfies readonly PendingAction[];
 
 /**
  * The states no action ends at — progress and failure, on purpose.
@@ -274,8 +294,9 @@ export function UpdateControllerProvider({ children }: { children: ReactNode }):
    * local `failure` without asking for a pending action. Both outcomes go
    * through this one release, so success and failure cannot drift apart.
    *
-   * Every other action ends from `ACTION_COMPLETED_STATES` in `applyStatus`, so
-   * this function deliberately releases only `install`.
+   * `install` is the only action in `CALL_SETTLED_ACTIONS`, so it is the only
+   * one released here; check and download end from `ACTION_COMPLETED_STATES`
+   * in `applyStatus`.
    *
    * One invariant holds across both paths: for a given token, at most one call
    * clears `pendingRef`. An install that answers with a status (`idle`, say)
@@ -373,10 +394,17 @@ export function useUpdateController(): UpdateController {
  * `{ state: 'whatever' }` — exactly the contract drift this guard exists to
  * stop. The state must be a member of `UPDATE_STATES`, the same tuple the
  * service derives its own policy table from, so a state added on one side and
- * not the other is refused instead of rendered.
+ * not the other is refused instead of rendered. The set is built from that
+ * tuple once, so the guard cannot acquire a second spelling of the vocabulary.
+ *
+ * Exported for `tests/e2e/update-status-vocabulary.e2e.test.tsx`, which asks
+ * the guard about every member and every plausible non-member; a hand-written
+ * `state` check here would pass the refusal e2e case and fail that contract.
  */
-function isUpdateStatus(value: unknown): value is UpdateStatus {
+const UPDATE_STATE_SET: ReadonlySet<string> = new Set(UPDATE_STATES);
+
+export function isUpdateStatus(value: unknown): value is UpdateStatus {
   if (typeof value !== 'object' || value === null) return false;
   const state = (value as { state?: unknown }).state;
-  return typeof state === 'string' && (UPDATE_STATES as readonly string[]).includes(state);
+  return typeof state === 'string' && UPDATE_STATE_SET.has(state);
 }

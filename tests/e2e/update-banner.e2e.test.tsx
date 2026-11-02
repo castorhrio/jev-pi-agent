@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { I18nProvider } from '@renderer/i18n-context';
 import {
   ACTION_COMPLETED_STATES,
+  CALL_SETTLED_ACTIONS,
   NEVER_TERMINAL_STATES,
   UpdateControllerProvider,
   actionCompleted,
@@ -171,16 +172,45 @@ describe('the pending action ends where the table says', () => {
       'an action has no row, or a row exists for an action that is gone',
     ).toEqual([...PENDING_ACTIONS].sort());
 
+    // An empty row is a rule too, and it used to be unreadable from the table:
+    // "this action never ends" looked exactly like "nobody filled this row in".
+    // It is legal now only for an action that says so through
+    // `CALL_SETTLED_ACTIONS` — the ending is its own call settling, not a
+    // pushed status. Every other action must name at least one ending.
+    for (const action of CALL_SETTLED_ACTIONS) {
+      expect(PENDING_ACTIONS, `"${action}" is declared call-settled and is not an action`).toContain(
+        action,
+      );
+    }
+
     const known = new Set<string>(UPDATE_STATES);
     for (const action of PENDING_ACTIONS) {
       const row = ACTION_COMPLETED_STATES[action];
-      // An empty row would be "this action never ends", which is a rule — but
-      // not one anybody wrote down, and not what the banner does.
-      expect(row.length, `${action}: the row ends no status`).toBeGreaterThan(0);
+      if ((CALL_SETTLED_ACTIONS as readonly PendingAction[]).includes(action)) {
+        expect(
+          row,
+          `${action}: a status ends it, but it is declared as ending when its call settles`,
+        ).toEqual([]);
+      } else {
+        expect(row.length, `${action}: the row ends no status`).toBeGreaterThan(0);
+      }
       expect(new Set(row).size, `${action}: a status is listed twice`).toBe(row.length);
       for (const state of row) {
         expect(known.has(state), `${action}: "${state}" is not an UpdateState`).toBe(true);
       }
+    }
+  });
+
+  it('ends an install by its call, not by any status at all', () => {
+    // The row this file used to carry was `check`'s row copied verbatim, with
+    // no reachable status behind it: `installAndRestart()` resolves a boolean,
+    // refusals set `error` (never an ending), and a success that stays alive
+    // leaves `ready` — the state the install started from. The empty row is
+    // therefore the honest one, and `CALL_SETTLED_ACTIONS` names the reason.
+    expect(CALL_SETTLED_ACTIONS).toEqual(['install']);
+    expect(ACTION_COMPLETED_STATES.install).toEqual([]);
+    for (const state of UPDATE_STATES) {
+      expect(actionCompleted('install', state), `install × ${state}`).toBe(false);
     }
   });
 

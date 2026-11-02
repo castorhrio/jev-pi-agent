@@ -68,6 +68,7 @@ import type {
   ProviderDescriptorDto,
   TrustState,
   UpsertMcpServerRequest,
+  UpdateStatus,
 } from '@ucad/contracts';
 
 export type Scenario =
@@ -892,11 +893,34 @@ const FIXTURE_PROBES: Record<string, { ok: boolean; code?: string; reason?: stri
   };
 
 /**
+ * Replacements for the update calls, for a test that drives one state.
+ *
+ * The fields are typed against the contract — they are the same promises the
+ * preload returns — with one deliberate hole: `installUpdate` may answer a
+ * status. `installAndRestart()` never does (it answers a boolean), but the
+ * renderer's guard is written for the case where Main *has* drifted, and the
+ * test that proves it has to produce the drifted value. Putting that hole here,
+ * once, is what lets tests hand a `UcadApi` to the renderer without
+ * `as unknown as UcadApi`: every other method stays checked by the compiler,
+ * so a method added to the contract cannot silently go missing from a fixture.
+ */
+export interface FixtureUpdateOverrides {
+  readonly updateStatus?: () => Promise<UpdateStatus | null>;
+  readonly checkUpdate?: () => Promise<UpdateStatus>;
+  readonly downloadUpdate?: () => Promise<UpdateStatus>;
+  readonly installUpdate?: () => Promise<boolean | UpdateStatus>;
+  readonly onUpdateStatus?: (cb: (status: UpdateStatus) => void) => Unsubscribe;
+}
+
+/**
  * Builds the in-memory bridge. Exported so the contract test can assert
  * completeness without needing a DOM — the surface, not the installation, is
  * what must not rot.
  */
-export function createFixtureApi(scenario: Scenario): FixtureHandle {
+export function createFixtureApi(
+  scenario: Scenario,
+  updateOverrides: FixtureUpdateOverrides = {},
+): FixtureHandle {
   const empty = scenario === 'empty';
   const slow = scenario === 'loading';
   /** Per-instance so a claim in one window cannot change another's history. */
@@ -1682,12 +1706,18 @@ export function createFixtureApi(scenario: Scenario): FixtureHandle {
        * visible outcome. A finished check answers `up-to-date` (with the
        * current version), which the card renders as 已是最新版本.
        */
-      updateStatus: () => delay(updateStatus),
-      checkUpdate: () => delay(updateStatus),
-      downloadUpdate: () => delay(updateStatus),
-      // The contract has this one answer boolean, not a status.
-      installUpdate: () => delay(true),
-      onUpdateStatus: () => () => undefined,
+      updateStatus: updateOverrides.updateStatus ?? (() => delay(updateStatus)),
+      checkUpdate: updateOverrides.checkUpdate ?? (() => delay(updateStatus)),
+      downloadUpdate: updateOverrides.downloadUpdate ?? (() => delay(updateStatus)),
+      // The contract has this one answer boolean, not a status. An override may
+      // still answer a status (see `FixtureUpdateOverrides`): it is handed on
+      // unchanged, so the renderer's drift guard is exercised by the real code
+      // path instead of a test-local lookalike.
+      installUpdate: () => {
+        const answer = updateOverrides.installUpdate ?? (() => delay(true));
+        return answer() as Promise<boolean>;
+      },
+      onUpdateStatus: updateOverrides.onUpdateStatus ?? (() => () => undefined),
     },
   };
 
