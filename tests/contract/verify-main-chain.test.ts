@@ -35,7 +35,9 @@ import { join } from 'node:path';
 import {
   FEED_VARIANTS,
   appEnv,
+  closeVerdict,
   profileDataDir,
+  trayMenuLabels,
 } from '../../scripts/verify-main-chain.mjs';
 import { FEED_REFUSAL_STATUS_MESSAGE } from '../../apps/desktop/src/main/update-service';
 import { checkFeedUrl } from '../../apps/desktop/src/main/update-feed';
@@ -145,6 +147,71 @@ describe('the feed cases the verifier expects', () => {
 
     expect(unreachable?.value.startsWith('https://')).toBe(true);
     expect(unreachable?.expect.source).toContain('检查更新失败');
+  });
+});
+
+describe('what step 5 is allowed to call a pass', () => {
+  it('needs the window to say it is hidden, not just the process to be alive', () => {
+    // The failure this rules out is the one a user cannot recover from: the app
+    // hid itself into a tray that was never built, so the process is alive and
+    // nothing is on screen. "Is the process alive" answers yes to that.
+    expect(closeVerdict({ choice: '隐藏到托盘', exited: null, visibility: 'hidden' })).toEqual({
+      ok: true,
+      message: 'the window is hidden and the process is alive',
+    });
+    expect(closeVerdict({ choice: '隐藏到托盘', exited: null, visibility: 'visible' }).ok).toBe(false);
+    expect(
+      closeVerdict({ choice: '隐藏到托盘', exited: null, visibility: 'unreadable (the page did not answer)' }).ok,
+    ).toBe(false);
+    // A destroyed page target is the renderer-initiated close's own doing, and
+    // the window is still off screen — the claim step 5 makes holds, and the
+    // message says which close was measured.
+    const gone = closeVerdict({
+      choice: '隐藏到托盘',
+      exited: null,
+      visibility: 'gone (the page target no longer exists)',
+    });
+    expect(gone.ok).toBe(true);
+    expect(gone.message).toContain('renderer-initiated');
+  });
+
+  it('keeps the tray fault path a pass, because the app said why it quit', () => {
+    // On a host with no indicator host the app's own rule is "closing quits",
+    // and the document asks for that branch to be recorded rather than failed.
+    // The same exit *without* the log line is a silent quit, which is not.
+    expect(
+      closeVerdict({ choice: '隐藏到托盘', exited: { code: 0 }, visibility: 'n/a', trayUnavailable: true }).ok,
+    ).toBe(true);
+    expect(
+      closeVerdict({ choice: '隐藏到托盘', exited: { code: 0 }, visibility: 'n/a', trayUnavailable: false }).ok,
+    ).toBe(false);
+  });
+
+  it('holds 退出应用 to the opposite rule', () => {
+    expect(closeVerdict({ choice: '退出应用', exited: { code: 0 }, visibility: 'n/a' }).ok).toBe(true);
+    expect(closeVerdict({ choice: '退出应用', exited: null, visibility: 'hidden' }).ok).toBe(false);
+  });
+});
+
+describe('the tray menu the run tells a person to look for', () => {
+  it('reads the labels out of the product table, not out of this file', () => {
+    // The menu is native and unreadable over DevTools, so the run prints the
+    // labels instead of asserting them. Printing a stale list would send a
+    // reader looking for a menu item the build no longer has, so the list is
+    // read from `i18n.ts` — the same table `refreshTrayMenu()` builds from.
+    const source = readFileSync(join(REPO_ROOT, 'apps', 'desktop', 'src', 'shared', 'i18n.ts'), 'utf8');
+    const labels = trayMenuLabels(source);
+
+    expect(labels).toHaveLength(3);
+    for (const label of labels) expect(label.length).toBeGreaterThan(0);
+    // The three things the tray has to carry: get the window back, open a
+    // project, and actually quit.
+    expect(labels[0]).toContain('显示主窗口');
+    expect(labels[2]).toContain('退出');
+  });
+
+  it('says nothing rather than guessing when the table is not there', () => {
+    expect(trayMenuLabels('')).toEqual([]);
   });
 });
 

@@ -50,14 +50,15 @@
  *
  * Three things this script cannot do, and does not claim: it writes the
  * workspace row instead of answering the native folder picker, so no trust
- * dialog is on screen; a tray on an Xvfb display has no indicator host, so the
- * menu is only observable as "the process is alive and the window is gone"; and
- * the five fixture scenarios (step 6) belong to `npm run dev:web`, which a human
- * still walks by eye.
+ * dialog is on screen; the tray menu is a native object no DevTools method
+ * reaches, so step 5 asserts what *is* observable — the window reports itself
+ * hidden and the process is still alive — and prints the menu labels a person
+ * should then read by eye; and the five fixture scenarios (step 6) belong to
+ * `npm run dev:web`, which a human still walks by eye.
  */
 
 import { spawn } from 'node:child_process';
-import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import * as path from 'node:path';
@@ -285,6 +286,23 @@ class AppRun {
     return false;
   }
 
+  /**
+   * Whether the renderer target still exists.
+   *
+   * A renderer-initiated `window.close()` destroys the page target even when the
+   * window is only hidden, so "the page stopped answering" has two causes and
+   * they are not the same finding: a destroyed target means the window is off
+   * screen, a live-but-silent one means the renderer hung with the window up.
+   */
+  async hasPageTarget() {
+    try {
+      const res = await fetch(`http://127.0.0.1:${this.port}/json/list`);
+      return (await res.json()).some((t) => t.type === 'page');
+    } catch {
+      return false;
+    }
+  }
+
   /** The renderer target, once the app has a window. */
   async attach(timeoutMs = 90000) {
     const until = Date.now() + timeoutMs;
@@ -310,9 +328,13 @@ class AppRun {
   }
 
   async stop() {
-    if (KEEP || this.exited) return;
+    if (KEEP || this.exited || this.stopped) return;
+    this.stopped = true;
     try {
-      await this.cdp?.send('Browser.close');
+      // Raced, not awaited: `Browser.close` takes the connection down with it,
+      // so the reply never arrives and a bare `await` would hang the run with
+      // nothing left on the event loop to wake it.
+      await Promise.race([this.cdp?.send('Browser.close'), sleep(1500)]);
     } catch {
       /* already gone */
     }
@@ -768,6 +790,84 @@ async function step4(run) {
 }
 
 /**
+ * The tray menu labels a person should look for, read from the product's own
+ * i18n table.
+ *
+ * The menu is a native object: no DevTools method reaches it, so the labels
+ * cannot be *asserted* from here. They can still be *named* — read out of
+ * `apps/desktop/src/shared/i18n.ts`, the same table `refreshTrayMenu()` builds
+ * the menu from — so a run prints what to look for instead of leaving the
+ * reader to remember it. A label renamed in the product and not here would make
+ * the printed list wrong, which is why the contract test compares the two.
+ */
+export function trayMenuLabels(source) {
+  const labels = [];
+  for (const key of ['tray.show', 'tray.openProject', 'tray.quit']) {
+    const hit = new RegExp(`'${key.replace('.', '\\.')}':\\s*'([^']*)'`).exec(source);
+    if (hit) labels.push(hit[1]);
+  }
+  return labels;
+}
+
+/**
+ * What a close is allowed to have done, judged from what the run can observe.
+ *
+ * `visibility` is the renderer's own `document.visibilityState` read after the
+ * close, or the reason it could not be read. It is the difference between "the
+ * window is hidden and the app is still there" and "the process survived with
+ * nothing on screen and no way back" — the second is exactly the failure the
+ * tray exists to prevent, and a check that only asked "is the process alive"
+ * would call it a pass.
+ */
+export function closeVerdict({ choice, exited, visibility, trayUnavailable }) {
+  if (choice === '退出应用') {
+    return exited
+      ? { ok: true, message: 'the process exited on close, as the setting says' }
+      : { ok: false, message: '"退出应用" was in force and the process survived the close' };
+  }
+  if (exited) {
+    return trayUnavailable
+      ? { ok: true, message: 'the tray could not be built here, so closing quit — and said so' }
+      : { ok: false, message: 'hiding quit the process without saying why' };
+  }
+  if (visibility === 'hidden') {
+    return { ok: true, message: 'the window is hidden and the process is alive' };
+  }
+  if (visibility.startsWith('gone')) {
+    // The close this script can send is renderer-initiated, and that destroys
+    // the page target even when the window is only hidden. The claim step 5
+    // makes is still observable — the window is off screen and the process is
+    // alive — but the *reason* it is off screen is the close, not the tray, so
+    // the message says which one was measured.
+    return {
+      ok: true,
+      message:
+        'the window is off screen and the process is alive (renderer-initiated close: the page target is gone; the X button is a native close this script cannot send)',
+    };
+  }
+  return {
+    ok: false,
+    message:
+      visibility === 'visible'
+        ? 'the process survived but the window is still on screen, so nothing was hidden'
+        : `the process survived but the window could not be read back (${visibility})`,
+  };
+}
+
+/** The renderer's answer to "is the window on screen", or why it could not answer. */
+async function readWindowState(run) {
+  try {
+    const state = await run.cdp.evaluate('document.visibilityState', { timeoutMs: 10000 });
+    if (typeof state === 'string' && state) return state;
+  } catch {
+    /* the page did not answer; the target list says whether it still exists */
+  }
+  return (await run.hasPageTarget())
+    ? 'unreadable (the page did not answer)'
+    : 'gone (the page target no longer exists)';
+}
+
+/**
  * What closing the window does, in both settings, in that order.
  *
  * Hide-first, because it is the case that leaves the process alive to be asked
@@ -775,39 +875,82 @@ async function step4(run) {
  * built, the app's own rule is that closing quits — and that is the fault path
  * the document asks for, so the log line is captured rather than treated as a
  * failure.
+ *
+ * The hide case is asserted on two observations, not one: the process is still
+ * alive *and* the window says it is hidden. "Alive" alone is satisfied by an
+ * app that hid itself into a tray that does not exist, which is the one outcome
+ * a user cannot recover from without a task manager.
  */
-async function step5(run) {
-  for (const choice of ['隐藏到托盘', '退出应用']) {
-    const closed = await runPage(
-      run.cdp,
-      `if (!(await openSurface('settings'))) throw new Error('no settings surface');
-       const sel = [...document.querySelectorAll('select')].find((s) => (s.options.length === 2) && /托盘|退出/.test(s.innerText));
-       if (!sel) throw new Error('no close-behaviour picker');
-       const wanted = [...sel.options].find((o) => o.text.includes(${JSON.stringify(choice)}));
-       if (!wanted) throw new Error('the picker has no ' + ${JSON.stringify(choice)});
-       setNative(sel, wanted.value);
-       await sleep(1200);
-       window.close();
-       return true;`,
-      30000,
-    ).catch((error) => {
-      fail(5, error.message);
-      return false;
-    });
-    if (!closed) return;
-    await sleep(5000);
-    const exited = run.exited;
-    record(5, `close with "${choice}"`, exited ? `process exited, code ${exited.code}` : 'process still running, window gone');
-    if (choice === '退出应用' && !exited) fail(5, '"退出应用" was in force and the process survived the close');
-    if (choice === '隐藏到托盘') {
-      if (exited) {
-        const fault = await run.waitFor(/tray unavailable|closing the window will quit/, 3000);
-        record(5, 'tray fault path', fault ?? 'exited with no tray reason logged');
-        if (!fault) fail(5, 'hiding quit the process without saying why');
-        else pass(5, 'the tray could not be built here, so closing quit — and said so');
-        return;
-      }
-      pass(5, 'closing hid the window and kept the process alive');
+async function step5() {
+  let labels = [];
+  try {
+    labels = trayMenuLabels(
+      readFileSync(new URL('../apps/desktop/src/shared/i18n.ts', import.meta.url), 'utf8'),
+    );
+  } catch {
+    /* the source tree is not next to the script; the menu is still read by eye */
+  }
+  record(
+    5,
+    'tray menu items to look for',
+    labels.length ? labels.join(' / ') : '(i18n source not found next to the script)',
+  );
+
+  for (const [index, choice] of ['隐藏到托盘', '退出应用'].entries()) {
+    // One process per choice. The close this script can send is
+    // renderer-initiated, and that destroys the page target even when the
+    // window is only hidden — so the same process cannot be asked the second
+    // question, and a shared process would report the first answer twice.
+    const run = AppRun.launch({ home: HOME, port: PORT + 20 + index });
+    try {
+      await run.attach(90000);
+      // The choice is a pair of buttons, not a `<select>`, and they only render
+      // once the settings read has come back — so the wait is on the button, and
+      // the save is confirmed by the button becoming the selected one. Closing
+      // on a click that was never persisted would test the default, not the
+      // setting.
+      const closed = await runPage(
+        run.cdp,
+        `if (!(await openSurface('settings'))) throw new Error('no settings surface');
+         let wanted = null;
+         for (let i = 0; i < 20 && !wanted; i++) {
+           wanted = byText(${JSON.stringify(choice)});
+           if (!wanted) await sleep(500);
+         }
+         if (!wanted) throw new Error('the settings surface has no ' + ${JSON.stringify(choice)} + ' button');
+         wanted.click();
+         await sleep(1500);
+         const saved = byText(${JSON.stringify(choice)});
+         if (!saved || !/primary/.test(saved.className)) {
+           throw new Error('the choice was not saved: ' + ${JSON.stringify(choice)} + ' is not the selected button');
+         }
+         window.close();
+         return true;`,
+        30000,
+      ).catch((error) => {
+        fail(5, error.message);
+        return false;
+      });
+      if (!closed) continue;
+      await sleep(5000);
+      const exited = run.exited;
+      record(
+        5,
+        `close with "${choice}"`,
+        exited ? `process exited, code ${exited.code}` : 'process still running',
+      );
+      const visibility = exited ? 'n/a (the process is gone)' : await readWindowState(run);
+      record(5, `window after close with "${choice}"`, visibility);
+      const trayUnavailable = exited
+        ? Boolean(await run.waitFor(/tray unavailable|closing the window will quit/, 3000))
+        : false;
+      if (trayUnavailable) record(5, 'tray fault path', 'tray unavailable; closing the window will quit');
+
+      const verdict = closeVerdict({ choice, exited, visibility, trayUnavailable });
+      if (verdict.ok) pass(5, verdict.message);
+      else fail(5, verdict.message);
+    } finally {
+      await run.stop();
     }
   }
 }
@@ -857,7 +1000,13 @@ async function main() {
     if (wants(2)) await guard(2, deadline, () => step2(cdp));
     if (wants(3)) await guard(3, deadline, () => step3(cdp));
     if (wants(4)) await guard(4, deadline, () => step4(run));
-    if (wants(5)) await guard(5, deadline, () => step5(run));
+    if (wants(5)) {
+      // Step 5 brings its own processes (see the note there), so the shared run
+      // is stopped first: two instances on one profile would contend for the
+      // database, and the close under test would be ambiguous.
+      await run.stop();
+      await guard(5, deadline, () => step5());
+    }
   } catch (error) {
     fail('run', error.message);
     const tail = run.lines.filter((line) => /\[ucad\]|error/i.test(line)).slice(-12);

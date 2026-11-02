@@ -32,7 +32,7 @@ xvfb-run -a node scripts/verify-main-chain.mjs        # 或 --exec release\win-u
 它启动构建产物，用 DevTools 驱动真人会点的那些界面，并把这张表要的证据打出来：
 一轮对话的 `renderedHash` 与注入原文、决策行的 rationale/confidence/引擎、
 生成的交接与它的历史、**真实网络**下的更新检查（外加两条被拒的 feed 与一条失败的 feed）、
-以及两种「关闭窗口时」设置下的进程寿命。`--steps 1,4` 只跑其中几步。
+以及两种「关闭窗口时」设置下窗口是否真的离开屏幕、进程是否仍活。`--steps 1,4` 只跑其中几步。
 
 它替代不了两件事，输出里也照实写着：项目是直接写 `workspaces` 行打开的
 （没有任何 DevTools 方法能碰到原生目录选择器，所以**信任弹窗不在屏上**）；
@@ -50,6 +50,7 @@ Xvfb 上没有托盘宿主，所以托盘只能作为「进程还活着、窗口
 | 2026-11-02 | Linux x64（Ubuntu 26.04，headless + xvfb） | 同上 | 步骤 1–5 真机 | **阻塞**：应用在 `safeStorage.encryptString` 处退出，`Error: Encryption is not available`。该主机没有 Secret Service，启动不到窗口；Windows 上这条路径走 DPAPI，仍需在 Windows 桌面补跑 |
 | 2026-11-02 | Linux x64（Ubuntu 26.04） | `HEAD` 源码 | 步骤 1、2、3、5、6 的渲染层等价路径 | 见 `npm run test:e2e`；它用内存 fixture 驱动同一批界面，但不经过真实托盘与钥匙串 |
 | 2026-11-02 | Linux x64（Ubuntu 26.04，headless + xvfb） | 同上 | 步骤 4 的拒绝路径 | 见合约测试：明文/非 URL 的 `UCAD_UPDATE_FEED` 被拒且原因进日志；真实网络下的“发现新版本”未跑 |
+| 2026-11-03 | Linux x64（Ubuntu 26.04，桌面会话：`dbus-run-session` + `gnome-keyring` + `xvfb-run`） | `npm run package` 产物 `release/linux-unpacked/ucad` | 步骤 5 | **部分通过**：`--steps 5` 打印托盘菜单项 `显示主窗口 / 打开项目… / 退出 UCAD`（读自 `i18n.ts`）；「隐藏到托盘」关窗后进程仍活、窗口不在屏上（`[ok]`）；**「退出应用」打红**：进程没退出——`window-all-closed` 只在没有托盘时 `app.quit()`，有托盘时窗口关掉、进程留在后台且没有窗口可恢复。缺陷待修 |
 | 2026-11-03 | Linux x64（Ubuntu 26.04，**桌面会话**：`dbus-run-session` + `gnome-keyring`（Secret Service）+ `xvfb-run`，`XDG_CURRENT_DESKTOP=GNOME`） | `npm run package` 产物 `release/linux-unpacked/ucad`（asar） | 步骤 1、2、3、4 | **通过（1–4）**：`node scripts/verify-main-chain.mjs` 退出码 0 之前各步 `[ok]`。步骤 1：`renderedHash=80e256b63523731c…`，同一轮换面板重读仍是同一哈希；任务描述多一个字符后 `673b97ec35b5…`；注入原文 `<ucad-context pack="cp_01M6EXDMQTDJMBTVNP3NX8N9B6" revision="1" tokens="401" estimate="heuristic_chars_div_4" strategy="hybrid" stale="true">`，估算来源 `heuristic_chars_div_4`。步骤 2：7 行决策带 rationale/confidence/引擎，样例 `route 路由 → universal route -> 'universal' (isDefaultRuntime). signals: git facts unavailable…`。步骤 3：交接带 `confidence=` 决策，`带着它开新会话` 后输入框以 `# 继续上一个会话的交接` 开头，历史 `#4 无人认领 / #3 #2 #1 已被更新的取代`。步骤 4：真实 https feed 返回 `已是最新版本`；明文覆盖 `检查更新失败: 更新源必须使用 https，请检查 UCAD_UPDATE_FEED 或 update-config.json`，日志 `update feed ignored: UCAD_UPDATE_FEED or update-config.json must be an https URL`。**注意**：本机到 `github.com` 不通（`curl https://github.com` 20s 超时），随包 feed 的地址因此取不到，步骤 4 的“有网”分支是用 `--feed-url` 指向真实 https 文档（本仓 `package.json`，version 1.0.0）跑的；随包 feed 本身仍需在能连 `github.com` 的机器上补一次。步骤 5、6 本轮未跑 |
 
 **Windows 真机六步仍未跑。** 发布前必须在 Windows 桌面补一次完整记录；上面几行不能替代它。
@@ -162,8 +163,19 @@ Linux 桌面会话那一行（2026-11-03）是第一次在**有钥匙串的桌�
   `tray unavailable; closing the window will quit` 及原因（`icon-empty` / `no-tray`）。
 - 测完把图标文件改回来，确认托盘重新可用。
 
-**实测**：未在真机跑（headless 主机没有真实通知区）。纯逻辑分支由
-`tests/contract/tray-icon.test.ts` 固定。
+**实测**：2026-11-03 Linux 桌面会话（`--steps 5`）**部分通过**，见上表那一行。
+脚本现在断言两件事而不是一件：进程仍活，**并且**窗口不在屏上（`document.visibilityState`，
+读不到时退回「页面目标还在不在」）。只断言「进程还活着」会被「藏进一个不存在的托盘」骗过去——
+那正是用户只能靠任务管理器才能恢复的状态。
+
+**「退出应用」分支打红**，这是本轮新断言抓到的产品缺陷：`window-all-closed` 只在
+`!trayUsable` 时 `app.quit()`，所以有托盘时选「退出应用」点 ×，窗口关掉、进程留在后台。
+修在 `apps/desktop/src/main/bootstrap.ts`，下一刀连同 Windows 真机一起验。
+
+**限制**：脚本只能用渲染层的 `window.close()` 触发关闭，而它会连页面目标一起销毁；
+真机上点 × 是原生关闭，页面会活下来。所以脚本断言到的是「窗口不在屏上 + 进程仍活」，
+托盘菜单项本身仍要人工目视（脚本把该看的三个标签打出来，不靠记忆）。
+纯逻辑分支由 `tests/contract/tray-icon.test.ts` 与 `tests/contract/verify-main-chain.test.ts` 固定。
 
 ## 6. 五个界面状态逐一可见
 
