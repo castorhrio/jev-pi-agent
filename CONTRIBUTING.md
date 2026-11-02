@@ -427,6 +427,41 @@ automated one. (`readme-parity.test.ts` only keeps the two sections carrying the
 words-to-words cannot see that drift.) The script's judgement is covered by
 `tests/contract/verify-packaged-adapters.test.ts`; only the launch needs a built app.
 
+### The main chain, on a real desktop — also a command
+
+`docs/manual-verification.md` asks whether the six things UCAD exists for actually work on an
+installed build. That needs an OS key store, a display, and (for one of them) the vendor network,
+so it is not a CI job — but it was, until now, a document with no way to re-run it. So:
+
+```bash
+npm run package
+xvfb-run -a node scripts/verify-main-chain.mjs          # Linux, on a session bus that answers
+```
+
+It launches the built app, drives the same surfaces a person would over the DevTools protocol, and
+prints the evidence the document asks for: the `renderedHash` of a real turn and the bytes it was
+computed over, the decision rows with their rationale and confidence, the generated handoff and its
+history, the update check against the **real** feed plus the two refused feeds and a failing one,
+and what closing the window does under each setting. `--steps 1,3` runs a subset; on Windows pass
+`--exec release\win-unpacked\UCAD.exe`.
+
+Two things it cannot do, and says so in its own output rather than hiding: the project is opened by
+writing the `workspaces` row (no DevTools method reaches the native folder picker, so the trust
+prompt is not on screen), and an Xvfb display has no tray indicator host, so the tray is observed as
+a process lifetime, not as a menu.
+
+The key store is the precondition people trip over. On Linux Chromium picks its key store backend
+from the **declared** desktop environment, so a session bus where `secret-tool` works is not enough:
+without `XDG_CURRENT_DESKTOP` the app stops before a window exists. The script declares one for the
+child, and stops the run with that sentence when the key store still refuses — a machine problem
+reported as such, not a product defect.
+
+The decisions the script makes — the environment the child gets, the sentence each refused feed must
+produce, the columns it writes — are pinned by `tests/contract/verify-main-chain.test.ts`, which
+reads the wording from `update-service.ts` and the column list from `session-store.ts`, so a
+reworded screen or a renamed column turns this check red in CI instead of three weeks later in
+someone's terminal. Only the launch still needs a built app and a desktop.
+
 ### Release preflight
 
 Run these on the machine that produces the artifact, in this order:
@@ -439,6 +474,10 @@ Run these on the machine that produces the artifact, in this order:
 - [ ] `npm run package` — writes `release/`; a failure here is usually the Windows symlink trap
       above, not the app.
 - [ ] `node scripts/verify-packaged-adapters.mjs` — exits 0, and its summary names `universal`.
+- [ ] `node scripts/verify-main-chain.mjs --steps 1,4` — on a desktop with a working key store: one
+      real turn whose `renderedHash` and bytes are read back, and one update check over the real
+      network. Append what it printed to the table in `docs/manual-verification.md`; a row left at
+      "未跑" or "阻塞" belongs in the release notes, not in a quiet file.
 - [ ] run it once more and press `Ctrl+C` while the build is starting: the command exits `130`
       and leaves no UCAD process behind. The paragraph above makes that claim, and only a real
       signal checks it: the unit tests pin `interruptRun`'s exit codes, not the terminal's own

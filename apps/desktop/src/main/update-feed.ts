@@ -261,6 +261,18 @@ export interface ResolvedUpdateFeed {
    * person.
    */
   rejected?: UpdateFeedRejection;
+  /**
+   * The configured value that produced `rejected`, verbatim.
+   *
+   * It exists because the caller of this function gets a string back, and a
+   * refusal turned into `null` is indistinguishable from nothing configured by
+   * the time `UpdateService` re-checks it — the screen then reads 未配置更新源
+   * at a person who configured a feed, which is the exact confusion
+   * `rejected` was introduced to prevent. Handing the refused value back lets
+   * the service run the same `checkFeedUrl()` over it, so the log line and the
+   * sentence on screen name the same reason.
+   */
+  refusedValue?: string;
 }
 
 /**
@@ -301,7 +313,12 @@ export function resolveUpdateFeed(options: {
   // `empty` means nothing was configured; anything else means something was
   // configured and refused. Only the second kind stops the search.
   if (fromEnv.reason !== 'empty') {
-    return { url: null, source: 'env', rejected: fromEnv.reason };
+    return {
+      url: null,
+      source: 'env',
+      rejected: fromEnv.reason,
+      ...(typeof options.envValue === 'string' ? { refusedValue: options.envValue } : {}),
+    };
   }
 
   for (const configPath of options.configPaths ?? []) {
@@ -317,6 +334,21 @@ export function resolveUpdateFeed(options: {
   }
 
   return { url: null, source: 'none' };
+}
+
+/**
+ * The one string the update service is handed for a resolved feed.
+ *
+ * A refusal must travel as the refused value, not as `null`: `UpdateService`
+ * runs `checkFeedUrl()` over whatever it is given, and `null` re-checks as
+ * `empty`, which is the "nothing is configured" sentence on screen. That is how
+ * a build came to answer a plaintext `UCAD_UPDATE_FEED` with 未配置更新源 while the
+ * log line named the refusal — two halves of one answer disagreeing. Handing the
+ * refused value through keeps the screen and the log on the same `reason`, and
+ * gives the service no second copy of the rule.
+ */
+export function feedUrlForCheck(resolved: ResolvedUpdateFeed): string | null {
+  return resolved.rejected === undefined ? resolved.url : (resolved.refusedValue ?? null);
 }
 
 export type InstallerVerification =

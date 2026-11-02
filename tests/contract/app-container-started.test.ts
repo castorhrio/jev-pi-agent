@@ -69,6 +69,9 @@ import { REPO_ROOT, mainSources } from './main-sources';
  */
 vi.mock('electron', () => ({
   safeStorage: {
+    // The container asks this before it builds the vault (keyring-gate.ts).
+    // "available" is what lets `start()` reach the fields this test reads.
+    isEncryptionAvailable: () => true,
     encryptString: () => Buffer.alloc(0),
     decryptString: () => '',
   },

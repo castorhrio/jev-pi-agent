@@ -63,6 +63,7 @@ import {
   toWorkspaceActivationDto,
   type WorkspaceActivationOutcome,
 } from './workspace-activation';
+import { assertKeyringUsable } from './keyring-gate';
 
 export interface UcadAppOptions {
   paths: AppPaths;
@@ -310,6 +311,21 @@ export class UcadApp {
     // NFR-15: the at-rest key lives in the SecretStore's own DPAPI vault. It is
     // deliberately NOT inside the database it protects — a key stored with the
     // data it encrypts protects nothing.
+    //
+    // The gate runs before the vault is built, because "the key store cannot
+    // encrypt" is a stop and the reason for it is platform-specific. Asked
+    // here, the reader gets one line naming the remedy; asked inside the vault,
+    // the same fact arrives as a stack trace about `encryptString`.
+    try {
+      assertKeyringUsable(safeStorage, process.platform);
+    } catch (error) {
+      this.logger.error('OS key store unavailable; UCAD will not start', {
+        platform: process.platform,
+        reason: describeError(error),
+      });
+      throw error;
+    }
+
     this.secrets = new SafeStorageSecretStore({
       logger: this.logger,
       protect: (plain) => safeStorage.encryptString(plain.toString('utf8')),
@@ -1001,8 +1017,11 @@ export class UcadApp {
     // running never returned and left an orphan. Killing them here is what makes
     // quitting the app work at all.
     await this.pty?.killAll().catch(() => undefined);
-    this.secrets.flush();
-    await this.runtime.dispose().catch(() => undefined);
+    // `?.` on the two fields a start-up stop can leave unbuilt, for the same
+    // reason `pty` and `db` carry it: teardown runs after a failed `start()`,
+    // and a TypeError here would replace the reason the start stopped.
+    this.secrets?.flush();
+    await this.runtime?.dispose().catch(() => undefined);
     for (const host of this.agents.values()) {
       await host.dispose(1000).catch(() => undefined);
     }

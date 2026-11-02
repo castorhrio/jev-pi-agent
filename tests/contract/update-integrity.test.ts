@@ -56,6 +56,7 @@ import {
   checkOpenStagedInstaller,
   checkStagedFileUnchanged,
   closeStagedInstaller,
+  feedUrlForCheck,
   fileIdentity,
   isUpdateChannelScheme,
   normalizeSha256,
@@ -408,6 +409,74 @@ describe('resolving the feed', () => {
     }
   });
 
+  it('carries a refused override to the service as the refused value', async () => {
+    // What a real update check on a real machine found: the refusal was logged,
+    // while the screen said 未配置更新源 — because the seam that reads the
+    // environment collapsed `rejected` into `null`, and `null` re-checks as
+    // "nothing configured". The two sentences answer different questions, and
+    // only one of them tells a person to fix the variable they set.
+    //
+    // The composition below is bootstrap's: resolve what the environment names,
+    // hand the service the string that answer implies, ask for an update. So the
+    // assertion is on the sentence a user reads, not on an intermediate value.
+    const refused: ReadonlyArray<readonly [string, 'invalid-url' | 'not-https']> = [
+      ['http://example.test/feed.json', 'not-https'],
+      ['not a url', 'invalid-url'],
+    ];
+    let fetched = 0;
+    for (const [envValue, reason] of refused) {
+      const instance = new UpdateService({
+        logger: silentLogger('test'),
+        getFeedUrl: () => feedUrlForCheck(resolveUpdateFeed({ envValue })),
+        downloadDir: dir,
+        currentVersion: '1.0.0',
+        fetchImpl: (async () => {
+          fetched += 1;
+          throw new Error('a refused feed must not be fetched');
+        }) as unknown as typeof fetch,
+      });
+
+      const status = await instance.check();
+
+      expect(status.message, `${envValue}: the status does not name the refusal`).toBe(
+        FEED_REFUSAL_STATUS_MESSAGE[reason],
+      );
+      expect(status.message).not.toBe('未配置更新源');
+    }
+    expect(fetched, 'a refused override must not reach the network').toBe(0);
+  });
+
+  it('hands back nothing configured only when nothing was configured', () => {
+    // The other half: 未配置更新源 has to stay reachable, or the refusal fix would
+    // turn every development build into an error.
+    const configPath = join(dir, 'update-config.json');
+    writeFileSync(configPath, JSON.stringify({ feedUrl: 'https://example.test/packaged.json' }));
+
+    expect(feedUrlForCheck(resolveUpdateFeed({ envValue: '   ', configPaths: [] }))).toBeNull();
+    expect(feedUrlForCheck(resolveUpdateFeed({ configPaths: [configPath] }))).toBe(
+      'https://example.test/packaged.json',
+    );
+    expect(
+      feedUrlForCheck(resolveUpdateFeed({ envValue: 'https://example.test/override.json' })),
+    ).toBe('https://example.test/override.json');
+  });
+
+  it('keeps the bootstrap seam on the one function that knows the difference', () => {
+    // `bootstrap.ts` cannot be imported without Electron, so the composition
+    // above is as close as the check gets — which is exactly why the *writing*
+    // is pinned. Handing `resolved.url` back is what made the screen and the log
+    // disagree on a real machine, and a reader who does not know the seam exists
+    // would re-inline it in a second.
+    const code = blankComments(readFileSync(join(MAIN_SOURCE, 'bootstrap.ts'), 'utf8'));
+
+    expect(code, 'bootstrap.ts must route the feed through feedUrlForCheck').toContain(
+      'feedUrlForCheck(',
+    );
+    expect(code, 'bootstrap.ts must not hand the service `resolved.url` again').not.toContain(
+      'return resolved.url;',
+    );
+  });
+
   it('does not fall back to the packaged feed when the override is refused', () => {
     // A typo in the variable must not quietly install from the feed the operator
     // was trying to leave. Refused means refused, and the reason is reported.
@@ -495,9 +564,17 @@ describe('resolving the feed', () => {
     const usable = join(dir, 'usable.json');
     writeFileSync(usable, JSON.stringify({ feedUrl: 'https://example.test/usable.json' }));
 
+    // `refusedValue` is the half that keeps the *screen* honest: a caller that
+    // only gets `url` back has nothing to hand the service but null, and null is
+    // the "nothing configured" sentence.
     expect(
       resolveUpdateFeed({ envValue: 'http://example.test/override.json', configPaths: [usable] }),
-    ).toEqual({ url: null, source: 'env', rejected: 'not-https' });
+    ).toEqual({
+      url: null,
+      source: 'env',
+      rejected: 'not-https',
+      refusedValue: 'http://example.test/override.json',
+    });
     expect(resolveUpdateFeed({ configPaths: [cleartext, usable] })).toEqual({
       url: 'https://example.test/usable.json',
       source: 'config',

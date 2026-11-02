@@ -15,11 +15,12 @@ import { FileLogSink, Logger as UcadLogger, MemoryLogSink, MultiLogSink } from '
 import { ADAPTER_LOAD_ORDER } from './adapter-candidates';
 import { resolveFromProcess } from './adapter-resolution';
 import { UcadApp } from './app-container';
+import { KeyringUnavailableError } from './keyring-gate';
 import { resolvePaths } from './paths';
 import { registerIpc } from './ipc';
 import { installApplicationMenu } from './menu';
 import { UpdateService, type UpdateStatus } from './update-service';
-import { resolveUpdateFeed } from './update-feed';
+import { feedUrlForCheck, resolveUpdateFeed } from './update-feed';
 import { createUpdateFeedAnnouncer } from './update-feed-log';
 import { loadTrayIcon, shouldPreventWindowClose, type TrayProblem } from './tray-icon';
 import { evaluateNavigation, evaluateWindowOpen } from './navigation-guard';
@@ -546,7 +547,11 @@ function readUpdateFeed(): string | null {
   // marks nothing as said, so the line survives to the first check that can
   // print it.
   announceUpdateFeed.announce(resolved, ucad?.logger);
-  return resolved.url;
+  // The log is only half of the answer: handing back `null` for a *refused*
+  // override made the screen say 未配置更新源 to a person who had configured one,
+  // which is the sentence this function's own header rules out. The refused
+  // value travels on, and `UpdateService` re-checks it with the same rule.
+  return feedUrlForCheck(resolved);
 }
 
 /**
@@ -567,7 +572,14 @@ function updateConfigPaths(): string[] {
 
 app.whenReady().then(bootstrap).catch((error) => {
   // A failed migration must not leave a half-initialised app running (NFR-07).
-   
+  if (error instanceof KeyringUnavailableError) {
+    // The one failure whose whole point is that the reader can fix the
+    // environment and start again, so it is printed as a sentence rather than
+    // as the stack inside the vault that refused the key.
+    console.error(`[ucad] startup stopped: ${error.message}`);
+    app.exit(1);
+    return;
+  }
   console.error('[ucad] fatal startup error', error);
   app.exit(1);
 });
