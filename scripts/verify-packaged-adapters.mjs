@@ -41,9 +41,17 @@
  * ```
  *
  * Optional flags: `--require universal,mock` (default `universal`), `--timeout
- * 60000`. On a headless machine, wrap it: `xvfb-run node
- * scripts/verify-packaged-adapters.mjs`. The environment is inherited, so
- * `ELECTRON_DISABLE_SANDBOX=1` reaches the launched build if it is set.
+ * 60000`.
+ *
+ * On a headless machine, wrap it: `xvfb-run node
+ * scripts/verify-packaged-adapters.mjs`. On a Linux build whose packaged
+ * `chrome-sandbox` is not setuid-root — which is every unpacked build made by a
+ * non-root user — run it as `ELECTRON_DISABLE_SANDBOX=1 node
+ * scripts/verify-packaged-adapters.mjs`. The environment is inherited, so that
+ * variable reaches the launched build. A run started the wrong way exits 1 with
+ * the abort that stopped it and the command that fixes it (see
+ * `LAUNCH_ABORTS`), because the alternative is a reader treating a host
+ * problem as a broken build.
  *
  * ## The contract with the tests
  *
@@ -251,6 +259,136 @@ export function verifyResolution(output, { required = ['universal'] } = {}) {
     );
   }
   return problems;
+}
+
+/**
+ * The ways a packaged launch dies *before the app runs*, one entry each.
+ *
+ * ## Why the verdict alone was not enough
+ *
+ * The failure used to be one sentence — "the build printed no
+ * `[ucad] adapters resolved:` line" — plus the tail of the captured output. On
+ * a Linux host that sentence is often *true and misleading*: the build never
+ * reached resolution because Chromium aborted at startup, for a reason that has
+ * nothing to do with adapters, and the tail names that reason in terms that
+ * assume the reader already knows it. Reproduced on this repository's own
+ * build (`npm run package`, then this command as a non-root user):
+ *
+ *   `[FATAL:sandbox/linux/suid/client/setuid_sandbox_host.cc:166] The SUID
+ *   sandbox helper binary was found, but is not configured correctly. Rather
+ *   than run without sandboxing I'm aborting now. You need to make sure that
+ *   …/chrome-sandbox is owned by root and has mode 4755.`
+ *
+ * The packaging step succeeded, the app has nothing to say about adapters, and
+ * the advice in that line — make a file inside `release/` setuid-root — is not
+ * something the reader can or should do: `release/` is rewritten by the next
+ * `npm run package`, and which user owns it is a fact about the machine rather
+ * than about the build. A check whose failure sends the reader to "read this
+ * Chromium message and work out that it is about the host" is, one layer out,
+ * the same defect as "read the `adapters resolved:` line": an instruction that
+ * decays.
+ *
+ * ## Where the messages come from
+ *
+ * Every pattern here matches a message this repository's own build actually
+ * printed during a run of this command, quoted verbatim in the tests. Nothing
+ * is matched from memory or from documentation, which is also why the table is
+ * short: three aborts, three remedies, no speculation about other platforms.
+ * Windows has no entry because the abort it produces (`UCAD.exe` cannot start
+ * at all, or there is no console to print to) is a *different* failure and is
+ * described in CONTRIBUTING rather than diagnosed here.
+ *
+ * ## What a diagnosis may not be
+ *
+ * A launch that got as far as resolution has no startup abort to explain, so
+ * `diagnoseLaunchAbort` answers `null` as soon as a summary line is present —
+ * the summary line is proof the app ran, and a later Chromium complaint from a
+ * child process must not be dressed up as the reason the check failed.
+ *
+ * The explanation also never says the *build* is broken. That is the whole
+ * point: "this run proved nothing about the build, and here is how to run it
+ * again" is a different message from "your build is wrong", and only one of
+ * them is true when the host has no display.
+ */
+export const LAUNCH_ABORTS = Object.freeze([
+  {
+    kind: 'suid-sandbox',
+    /** Chromium's SUID-helper abort, in the words a packaged Linux build prints. */
+    pattern: /setuid_sandbox_host\.cc|SUID sandbox helper binary|chrome-sandbox is owned by root/i,
+    explanation:
+      'the build aborted at startup, before it reached adapter resolution: Chromium found its ' +
+      'SUID sandbox helper present but unusable — the `chrome-sandbox` file that ships inside ' +
+      'the build is not setuid-root. That is a property of the machine, not of the build, and ' +
+      'this run proved nothing about adapter resolution either way.',
+    remedy: 'ELECTRON_DISABLE_SANDBOX=1 node scripts/verify-packaged-adapters.mjs',
+  },
+  {
+    kind: 'root-sandbox',
+    /** Electron refuses its sandbox outright when the launcher is root. */
+    pattern: /Running as root without --no-sandbox is not supported/i,
+    explanation:
+      'the build aborted at startup, before it reached adapter resolution: Electron refuses to ' +
+      'start its sandbox as root. Run the check as the user who will use the app, or disable ' +
+      'the sandbox for this one launch; nothing about adapter resolution was proved.',
+    remedy: 'ELECTRON_DISABLE_SANDBOX=1 node scripts/verify-packaged-adapters.mjs',
+  },
+  {
+    kind: 'no-display',
+    /** Chromium's X11 platform, then the layer above it that gives up. */
+    pattern: /Missing X server or \$DISPLAY|The platform failed to initialize/i,
+    explanation:
+      'the build aborted at startup, before it reached adapter resolution: it found no display ' +
+      'to open a window on. The ozone and aura lines in the tail are this, not a tray failure ' +
+      'and not an adapter failure.',
+    remedy: 'xvfb-run node scripts/verify-packaged-adapters.mjs',
+  },
+]);
+
+/**
+ * Why a launch never reached the app, or `null` when it did (or cannot tell).
+ *
+ * The order of `LAUNCH_ABORTS` is the tie-break, and it is a real case rather
+ * than an abstraction: the SUID and root aborts both print at startup on a
+ * container, and the first entry is the one whose remedy applies. Matching is
+ * case-insensitive because Chromium's casing differs per line —
+ * `[FATAL:setuid_sandbox_host.cc]` next to `The SUID sandbox helper binary` —
+ * and a diagnosis that depends on which one arrived first would be a diagnosis
+ * of the run order.
+ *
+ * `undefined`/empty output is not an abort: nothing was captured, which the
+ * verdict already reports as "printed no line". Silence is not evidence of a
+ * missing display.
+ */
+export function diagnoseLaunchAbort(output) {
+  const text = typeof output === 'string' ? output : '';
+  // The app ran. Whatever follows is a child process talking, not a startup
+  // abort — see "What a diagnosis may not be" above.
+  if (SUMMARY_LINE_PATTERNS.report.test(text)) return null;
+  for (const abort of LAUNCH_ABORTS) {
+    if (abort.pattern.test(text)) return abort;
+  }
+  return null;
+}
+
+/**
+ * The failure a terminal is shown: the verdict, then a diagnosis when there is
+ * one, and nothing else.
+ *
+ * One function rather than the same `join` in three branches of `main`, because
+ * the ordering is the message: a reader has to see *what was being checked*
+ * before they are told the run did not check it. The verdict is never dropped
+ * when a diagnosis exists — "the SUID sandbox died" alone would leave the
+ * operator unsure whether the adapters were ever looked for at all.
+ */
+export function failureReport(problems, abort = null) {
+  if (abort === null) return problems.join('\n');
+  return [
+    ...problems,
+    '',
+    abort.explanation,
+    'to get past it:',
+    `  ${abort.remedy}`,
+  ].join('\n');
 }
 
 /** `--flag value` and `--flag` pairs, as `make-update-feed.mjs` reads them. */
@@ -562,6 +700,10 @@ Launches the build in release/ (written by \`npm run package\`), captures its
 output, and fails unless the \`adapters resolved:\` line names every required
 adapter. Manual on purpose: no CI job packages the app.
 
+A launch that never reached the app says why, and what to run instead:
+  headless Linux    xvfb-run node scripts/verify-packaged-adapters.mjs
+  no usable sandbox ELECTRON_DISABLE_SANDBOX=1 node scripts/verify-packaged-adapters.mjs
+
   --require universal,mock   adapters the build must have resolved (default: universal)
   --timeout 45000            how long to wait for the summary line, in ms
   --release release          the directory \`npm run package\` wrote
@@ -622,18 +764,26 @@ async function main(argv) {
     return;
   }
 
+  // A launch that never reached the app is worth telling apart from a launch
+  // that reached it and failed: the first one proved nothing, and the message
+  // says which command runs it again. See `LAUNCH_ABORTS`.
+  const abort = diagnoseLaunchAbort(output);
+
   if (reason === 'timeout') {
     throw new Error(
       `the build printed no \`adapters resolved:\` line within ${timeoutMs}ms.\n` +
-        'On a headless machine the app needs a display: try\n' +
-        `  xvfb-run node scripts/verify-packaged-adapters.mjs --timeout ${timeoutMs * 2}\n` +
+        (abort === null
+          ? 'On a headless machine the app needs a display: try\n' +
+            `  xvfb-run node scripts/verify-packaged-adapters.mjs --timeout ${timeoutMs * 2}\n`
+          : `${abort.explanation}\nto get past it:\n` +
+            `  ${abort.remedy} --timeout ${timeoutMs * 2}\n`) +
         `output tail:\n${tailOf(output)}`,
     );
   }
 
   const problems = verifyResolution(output, { required });
   if (problems.length > 0) {
-    throw new Error(`${problems.join('\n')}\noutput tail:\n${tailOf(output)}`);
+    throw new Error(`${failureReport(problems, abort)}\noutput tail:\n${tailOf(output)}`);
   }
 
   const ids = resolvedAdapterIds(output) ?? [];
