@@ -143,13 +143,15 @@ that does not.
 - **The installer is unsigned.** Windows SmartScreen warns on first run. The
   download is still checked: the feed publishes a SHA-256, and the app
   refuses to launch an installer whose digest does not match.
-- **Auto-update needs a feed URL.** Releases publish one, and the released
-  build carries it — nothing to configure. To point at another feed, set
-  `UCAD_UPDATE_FEED=https://github.com/castorhrio/jev-pi-agent/releases/latest/download/update-feed.json`
-  and the update check (Settings → 检查更新) reads it instead. The variable
-  must be `https`: a cleartext address is refused, and the app does not fall
-  back to the bundled feed. With no feed the app says so rather than failing
-  quietly.
+- **Auto-update ships with a feed; the override is `https`-only.** The released
+  build carries the release feed, so a normal install has nothing to configure.
+  `UCAD_UPDATE_FEED` replaces it for a private or self-hosted feed: set it to
+  `https://github.com/castorhrio/jev-pi-agent/releases/latest/download/update-feed.json`
+  and the update check (Settings → 检查更新) reads that instead. The override
+  must be `https`; a cleartext address and a value that is not a URL are both
+  refused with the reason logged, and the app does not fall back to the bundled
+  feed. That is separate from having no feed at all: with no feed the app says
+  so rather than failing quietly.
 - **The interactive terminal needs `node-pty`.** It is an optional dependency;
   without it the terminal panel reports that it is unavailable instead of
   pretending to work. The command channel still runs.
@@ -161,7 +163,9 @@ that does not.
   `node scripts/verify-packaged-adapters.mjs`: it launches the built app,
   captures its output, and fails unless the `adapters resolved:` line names
   `universal`. On Windows run that from a terminal: a double-clicked build has
-  no console attached, so the line has nowhere to appear.
+  no console attached, so the line has nowhere to appear. The check has been run
+  on Linux x64 (Ubuntu 26.04, unpacked build, 2026-11-02): it passed and left no
+  child process behind.
 
 ### Contributing
 
@@ -286,11 +290,12 @@ npm run package  # 免安装目录，不出安装包
   回答不代表真实模型。
 - **安装包未签名。** Windows 首次运行会有 SmartScreen 提示。下载本身仍然过校验：
   feed 里带 SHA-256，摘要对不上的安装包不会被启动。
-- **自动更新需要一个 feed 地址。** Releases 发布了一份，发布版也把它带在身上——
-  不需要配置。要指向别处，把 `UCAD_UPDATE_FEED` 设为
+- **自动更新出厂自带 feed，覆盖值只接受 `https`。** 发布版把 release feed 带在身上，
+  正常安装不需要配置。要指向私有或自建 feed，把 `UCAD_UPDATE_FEED` 设为
   `https://github.com/castorhrio/jev-pi-agent/releases/latest/download/update-feed.json`，
-  更新检查（设置 → 检查更新）即会改读它；没有配置时应用会直说，而不是静默失败。
-  这个变量只接受 `https`：明文地址会被拒绝，不会退回随包 feed。
+  更新检查（设置 → 检查更新）即会改读它。覆盖值必须是 `https`：明文地址和根本不是
+  URL 的值都会被拒绝，原因写进日志，且不会退回随包 feed。这与「完全没有 feed」是
+  两件事：没有配置时应用会直说，而不是静默失败。
 - **交互式终端依赖 `node-pty`。** 它是可选依赖；缺失时终端面板会如实说不可用，
   而不是假装能跑。命令通道仍然可用。
 - **从真实 `.asar` 归档内解析适配器只能手动验证：本地打一次包，CI 不覆盖这一步。**
@@ -299,6 +304,8 @@ npm run package  # 免安装目录，不出安装包
   手动跑 `npm run package`，再跑 `node scripts/verify-packaged-adapters.mjs`：
   它会启动产物、抓取输出，`adapters resolved:` 那一行不含 `universal` 就判失败。
   Windows 上请从命令行运行 `UCAD.exe`：双击启动的进程没有控制台，这一行没有地方可打印。
+  该脚本已在 Linux x64（Ubuntu 26.04、未打包目录构建、2026-11-02）实测通过：
+  退出后无残留子进程；Windows 上仍需从命令行跑一次。
 
 ### 参与贡献
 

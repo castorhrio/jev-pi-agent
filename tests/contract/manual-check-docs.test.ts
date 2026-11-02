@@ -190,7 +190,19 @@ function readDocument(name: string): Document {
   return { name, text: readFileSync(join(REPO_ROOT, name), 'utf8') };
 }
 
-const DOCUMENTS: readonly Document[] = ['README.md', 'CONTRIBUTING.md'].map(readDocument);
+/**
+ * Every document that tells a reader to run something.
+ *
+ * The manual verification checklist is included because it is the document a
+ * release is signed off against: a renamed script there sends the person doing
+ * the final pass to a command that does not exist, at the point where no gate
+ * is left to catch it.
+ */
+const DOCUMENTS: readonly Document[] = [
+  'README.md',
+  'CONTRIBUTING.md',
+  'docs/manual-verification.md',
+].map(readDocument);
 const README = DOCUMENTS[0]!;
 
 const PACKAGE_SCRIPTS: readonly string[] = Object.keys(
