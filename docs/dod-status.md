@@ -7,7 +7,7 @@
 |---|---|---|---|
 | 可证明注入 | **有证据** | Context Pack 纯函数 + 内容哈希；真机步骤 1 通过：`renderedHash=80e256b63523731c…`，同一轮重读同哈希，任务描述多一个字符变 `673b97ec35b5…`，注入原文与 `estimate="heuristic_chars_div_4"` 同屏（`docs/manual-verification.md` 2026-11-03 行） | Windows 桌面复跑一次 |
 | 可解释路由 | **有证据** | 真机步骤 2 通过：7 行决策各带 rationale / confidence / 引擎，回落如实记录；`tests/contract/decision-chain.test.ts` 钉住链与实跑一致 | Windows 桌面复跑一次 |
-| 权限门不可绕 | **有证据（自动化）** | 执行前允许/拒绝进事件流，审计可查；`tests/contract/permission-*.test.ts`、`tests/e2e/critical-path.e2e.test.tsx` | 真机步骤 6 的权限弹窗人工走查未做 |
+| 权限门不可绕 | **有证据（自动化 + 五态断言）** | 执行前允许/拒绝进事件流，审计可查；`tests/contract/permission-*.test.ts`、`tests/e2e/critical-path.e2e.test.tsx`；步骤 6 的权限弹窗已进 `tests/e2e/scenarios.e2e.test.tsx`（类别/风险/资源/命令/理由五件可读，四个回答都在，点拒绝后弹窗消失且事件流里出现 `permission.resolved`） | 真机上的**视觉**走查（排版、长中文、窄窗口）仍未做 |
 | Windows 安装包航运 · NSIS 产出与安装 | **未验证** | `npm run dist` 走 electron-builder 的 `nsis` 目标（`package.json` 的 `build.win`），产物 `UCAD-Setup-<版本>.exe`；未签名 | **Windows 桌面**：装一次、过 SmartScreen、把提示原文记进 `docs/manual-verification.md` |
 | Windows 安装包航运 · 随包 feed 真实网络 | **未验证** | feed 合约（`https` + `sha256`）由 `tests/contract/update-feed.test.ts` 覆盖；Linux 桌面会话用 `--feed-url` 指向真实 https 文档跑通「已是最新版本」 | 随包 feed（`github.com/.../releases/latest/download/update-feed.json`）在能连 `github.com` 的机器上跑一次 |
 | Windows 安装包航运 · 拒绝路径（明文 / 非 URL） | **有证据** | 真机步骤 4：明文覆盖 → `检查更新失败: 更新源必须使用 https…`，日志 `update feed ignored: …`；`tests/contract/update-feed.test.ts` | — |
@@ -76,9 +76,31 @@
    `bootstrap.js`/`.map`，并由 `tests/contract/repo-root.test.ts` 钉住：入口点必须在 `dist/` 下、
    根目录不得有同名的编译副本、根目录不得提交任何编译产物。
 
+## 本轮（2026-11-03 深夜）步骤 6：五个界面状态进门禁
+
+DoD 的「步骤 6 人工走查」以前只有 fixture 的**接口完整性**测试（`fixture-bridge.test.ts`）与
+happy path（`critical-path.e2e.test.tsx`），五个状态各自画了什么，没有任何断言——
+一个空白面板、一个把未到达的历史写成「还没有对话」的加载窗口，都是绿的。
+
+`tests/e2e/scenarios.e2e.test.tsx` 把清单上那四句问题变成断言，逐状态回答：
+`empty` 有引导语与三步且没有「加载中」；`loading` 在读取尚未返回的那一帧拍照，两处都在说加载中且**不**说「还没有对话」；
+`error` 有标题、fixture 的原始失败文本与重试按钮；`partial` 保留健康面板、会话列说「读取失败」并带原因；
+`permission` 的弹窗五个字段可读、四个回答都在、点「拒绝」后弹窗消失并且 `permission.resolved` 进了事件流。
+
+写这批断言时抓到的缺陷在 **fixture 不是产品**，但正是它让人工走查走不完：
+
+- `permissions.respond` 返回成功却**不**发 `permission.resolved`。`usePermissionQueue` 等这条事件才让请求落地
+  （真机 Host 会发），所以 `dev:web` 里点「拒绝」弹窗一动不动，点第二次也一样——安全回路在唯一能看它的地方看起来是坏的。
+  现在它按同一套连续 `seq` 发事件，`events.since` 回放也看得到这次决定：决定是日志的一部分，不是只改 UI。
+- `permissions.revokeRule` 返回成功但规则还在。现在真的删行，面板重读时那行确实消失。
+
+两处合起来才是「允许/拒绝都能走」；只改其中一处，另一个仍然在说谎。
+门禁：`npm run test:e2e` 147 项全绿（新增 6 项），`npm test` 1186 项全绿（`layout.test.ts` 需 X，`xvfb-run` 下过）。
+
 ## 下一刀（按 DoD 未勾项）
 
 - Windows 桌面补跑步骤 1–6（唯一硬缺口）。
-- 步骤 6 的五个界面状态人工走查（`npm run dev:web`）。
+- 步骤 6 的**视觉**走查（DOM 断言管不到排版与观感），在 Windows 那一行里一起记。
 - 随包 feed（`github.com/.../releases/latest/download/update-feed.json`）在能连 `github.com`
-  的机器上跑一次。
+  的机器上跑一次；顺带记录「版本相等 → 已是最新版本」与「版本更高 → 发现新版本」两条分支，
+  后者要等一个真比 `1.0.0` 新的 release。

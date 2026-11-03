@@ -72,6 +72,10 @@ Linux 桌面会话那两行（2026-11-03）是第一次在**有钥匙串的桌�
 步骤 5 的两条分支（隐藏到托盘 / 退出应用）现在都有真机 `[ok]`，托盘菜单也从「目视」变成了
 「读应用自己写的 `tray menu built` 再断言」，所以下一轮复跑不需要有人盯着托盘看。
 
+**环境备注（2026-11-03）**：`electron-builder --dir` 在 07:24 那次产物写完后**卡住未退出**，
+下一轮同一命令正常退出。这是环境 flake，不是产品问题；若再复现，先看 `release/linux-unpacked` 的时间戳
+（产物已是新的就说明打包其实完成了），不要当产品缺陷查。
+
 ## 1. 一轮对话，读回注入原文与哈希
 
 **操作**
@@ -211,8 +215,29 @@ npm run dev:web
 **期望**：每个状态都不是空白页；失败有原因；加载态不假装已经加载完；
 权限弹窗能看清在请求什么，再做决定。
 
-**实测**：未逐个人工走查。fixture 本身由 `tests/contract/fixture-bridge.test.ts` 校验，
-界面状态由 `tests/e2e/critical-path.e2e.test.tsx` 覆盖。
+**实测（自动化部分，2026-11-03）**：`tests/e2e/scenarios.e2e.test.tsx` 把上面四句话变成了断言，
+每个状态各自回答一句，`npm run test:e2e` 每次都会跑：
+
+- `empty`：首启不是空白页——`empty.chat` 的引导语与三个步骤都在，会话列说的是「还没有项目」而不是「没有会话」，
+  且屏幕上**没有**任何「加载中」（已经加载完就不许再声称在加载）。
+- `loading`：在读取**还没回来**的那一帧拍照（`fixture.pending() > 0` 之后再看），会话列与对话区都在说加载中，
+  并且**不出现**「还没有对话」——把未到达的历史渲染成「空」，是对还没读到的数据下确定结论。
+- `error`：`error.title` 与 fixture 的原始失败文本 `[fixture:error] workspace.listRecent failed` 同屏，
+  并给出重试按钮；不是一句「出错了」也不是空面板。
+- `partial`：工作区读成功（项目名在屏上），会话列说「读取失败」并带原因 `[fixture:partial] sessions.list failed`，
+  且不把失败渲染成「没有会话」。
+- `permission`：弹窗 `aria-modal="true"`、由 `aria-labelledby` 指向的标题可读，正文里有类别 `SHELL`、
+  风险 `high`、资源、命令与理由五件；四个回答都在；点「拒绝」后弹窗**消失**，
+  事件流里出现 `permission.resolved{requestId:'req-1',decision:'deny'}`；撤销规则后规则列表真的少一行。
+
+这一轮写这些断言时抓到的缺陷在 **fixture**，不在产品：`permissions.respond` 返回成功却什么事件都不发，
+于是 `dev:web` 里点「拒绝」弹窗不动（`usePermissionQueue` 要等 `permission.resolved`，真机 Host 会发，
+fixture 不发），第五个状态因此根本没法人工走查完；`revokeRule` 同样返回成功但规则还在。
+两处都改成了真的写：发一条带连续 `seq` 的 `permission.resolved`（`events.since` 回放也看得到），撤销真的删行。
+
+**仍未做**：人眼对**视觉**的判断（空态的引导语是否够醒目、失败信息的排版是否压过内容、长中文在窄窗口是否撑破）。
+DOM 断言证明「该有的字在屏上、不该有的不在」，证明不了「看上去像不像首启」。这一条留给 Windows 桌面的
+一次完整走查，和上表那一行一起记。
 
 ## 发布前必须满足
 

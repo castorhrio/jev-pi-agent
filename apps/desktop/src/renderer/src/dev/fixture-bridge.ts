@@ -975,6 +975,8 @@ export function createFixtureApi(
     /** providerId -> secretKey, mirroring the real vault's shape. */
     secrets: new Map<string, string>(),
     retentionDays: settings.storage.retentionDays,
+    /** The persisted permission rules; `revokeRule` really removes one. */
+    permissionRules: permissionRules.map((rule) => ({ ...rule })),
     locale: settings.locale as 'zh-CN' | 'en-US',
     decisionChain: [...settings.decision.chain],
   };
@@ -1266,10 +1268,60 @@ export function createFixtureApi(
     agents: { list: () => delay(agents) },
 
     permissions: {
-      respond: () => delay(undefined),
+      /*
+       * Answering a request really answers it.
+       *
+       * This used to return `undefined` and emit nothing, so the dialog stayed
+       * on screen after a click: `usePermissionQueue` keeps a request pending
+       * until `permission.resolved` arrives, which is correct — the real host
+       * emits it — and the fixture never did. In `dev:web` that made the
+       * security loop look broken in the one place a person goes to look at it
+       * (click 拒绝, nothing happens, click again, nothing happens), and it made
+       * the fifth interface state impossible to walk through by hand.
+       *
+       * The event is emitted with the same gapless per-session `seq` the rest
+       * of the fixture uses, so a replay (`events.since`) sees the decision
+       * too — the answer is part of the log, not a UI-only side effect.
+       */
+      respond: (requestId: string, decision: string) => {
+        const owner = [...eventLog.entries()].find(([, log]) =>
+          log.some(
+            (event) =>
+              event.type === 'permission.requested' &&
+              (event.payload as { requestId?: string }).requestId === requestId,
+          ),
+        );
+        if (owner === undefined) return boom(`permission ${requestId}`)();
+        const [sessionId, log] = owner;
+        const request = log.find(
+          (event) =>
+            event.type === 'permission.requested' &&
+            (event.payload as { requestId?: string }).requestId === requestId,
+        );
+        const seq = nextSeq.get(sessionId) ?? 1;
+        nextSeq.set(sessionId, seq + 1);
+        emit({
+          eventId: `e${seq}`,
+          seq,
+          sessionId,
+          turnId: request?.turnId ?? 'turn-1',
+          ts: new Date().toISOString(),
+          type: 'permission.resolved',
+          source: { kind: 'ucad' },
+          payload: { requestId, decision, decider: 'user' },
+        } as unknown as TurnEvent);
+        return delay(undefined);
+      },
       listRules: () =>
-        failSoft ? boom('permissions.listRules')() : delay(permissionRules),
-      revokeRule: () => delay(undefined),
+        failSoft ? boom('permissions.listRules')() : delay(state.permissionRules),
+      // Removes the rule, so the panel's re-read shows it gone. A revoke that
+      // returns success and leaves the row in place is the same lie as a
+      // discarded write anywhere else in this harness.
+      revokeRule: (ruleId: string) => {
+        const at = state.permissionRules.findIndex((rule) => rule.id === ruleId);
+        if (at >= 0) state.permissionRules.splice(at, 1);
+        return delay(undefined);
+      },
     },
 
     secrets: {
