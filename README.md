@@ -10,17 +10,21 @@
 
 ## English
 
-When you run more than one coding agent, two questions stay open:
+Three coding agents are working on one repository. One of them rewrites a file
+you did not expect it to touch, and the only explanation on offer is that the
+model decided to. The prompt you wrote is not the prompt it saw: a broker
+trimmed it, a budget ledger dropped two files, a token estimator guessed at the
+rest, and the engine that answered may not be the one you configured. Nothing
+on screen can tell you what actually went in, or why it went that way.
 
-- **What context did the agent actually get?** The prompt you wrote, the files
-  that were summarised, the rules that were prepended — after three hops through
-  a broker, a budget ledger and a token estimator, the answer is usually "roughly
-  that".
-- **Why did it take that route?** Which engine decided, on what signal, with how
-  much confidence, and did anything fall back?
+UCAD is the control plane for that gap. It is not an editor, a terminal agent or
+a model provider — it is the place where two questions get an answer you can
+check: **what bytes did the agent receive**, and **why did it take that route**.
+The context pack is a pure function with a content hash, so you can read the
+text and compare the digest; every decision records its engine, its rationale
+and its confidence, and a fallback is recorded as a fallback.
 
-UCAD is a control plane for that. It does not try to be an editor, a terminal
-agent, or a model provider. It makes the two answers checkable.
+That is the product. The rest of this page is how it is done.
 
 ### What it does
 
@@ -60,8 +64,10 @@ agent, or a model provider. It makes the two answers checkable.
 |---|---|
 | ![Chat](docs/screenshots/chat.png) | ![Decision](docs/screenshots/decision.png) |
 | The conversation surface, with the session list and workspace tree. | The decision plane: engines, what they may decide, and the audit trail. |
-| ![Handoff](docs/screenshots/handoff.png) | |
-| The handoff chain: every record with its claim state, newest first — the entry a next agent resumes from. | |
+| ![Handoff](docs/screenshots/handoff.png) | ![Empty](docs/screenshots/empty.png) |
+| The handoff chain: every record with its claim state, newest first — the entry a next agent resumes from. | First run: no project open yet, and the three steps that start one. |
+| ![Error](docs/screenshots/error.png) | |
+| A load that failed outright: what broke, in the words the failure used, and the retry. | |
 
 ### Installers
 
@@ -166,6 +172,14 @@ that does not.
   refused with the reason logged, and the app does not fall back to the bundled
   feed. That is separate from having no feed at all: with no feed the app says
   so rather than failing quietly.
+- **The published v1.0.0 feed is missing its `sha256`.** The asset on the
+  Releases page was written before the feed check existed: it carries a version,
+  notes and a `releases/latest` URL, and no digest and no size. The app
+  therefore announces the version and installs nothing from it — the safe
+  direction, but a real defect in a shipped release rather than a hypothetical
+  one. The corrected document has been generated and judged clean by
+  `scripts/verify-release-feed.mjs`; replacing the asset needs a GitHub write
+  token this machine does not have. It is fixed before 1.1.0 ships.
 - **The interactive terminal needs `node-pty`.** It is an optional dependency;
   without it the terminal panel reports that it is unavailable instead of
   pretending to work. The command channel still runs.
@@ -194,14 +208,17 @@ repository expects of a change, and how to add a workspace package.
 
 ## 中文
 
-同时跑多个编码 Agent 时，有两个问题始终没有答案：
+三个编码 Agent 在同一个仓库上干活。其中一个改了你没料到它会碰的文件，而它能给出的
+解释只有「模型自己决定的」。你写的提示词也不是它看到的提示词：broker 裁过、预算账本
+丢过两个文件、token 估算器猜过剩下的部分，最后回答的那个引擎可能也不是你配的那个。
+屏幕上没有任何东西能告诉你：到底进去了什么，以及为什么走了这条路。
 
-- **Agent 到底拿到了什么上下文？** 你写的提示词、被摘要的文件、被前置的规则——
-  经过 broker、预算账本、token 估算器三层之后，答案通常只是"大概那些"。
-- **它为什么走了这条路由？** 哪个引擎、依据什么信号、置信度多少、有没有发生回落？
+UCAD 就是补这个缺口的控制面。它不当编辑器、不当终端 Agent、不当模型厂商——它是让两个
+问题得到**可核对**答案的地方：**Agent 到底收到了哪些字节**，以及**它为什么走了这条路由**。
+Context Pack 是带内容哈希的纯函数，你可以读原文、比对摘要；每次决策都记下引擎、
+rationale 和 confidence，回落就写成回落。
 
-UCAD 就是为这两个问题做的控制面。它不试图当编辑器、当终端 Agent、当模型厂商，
-它让这两个答案**可核对**。
+这就是这个产品。下面写的是它怎么做到的。
 
 ### 它能做什么
 
@@ -232,8 +249,10 @@ UCAD 就是为这两个问题做的控制面。它不试图当编辑器、当终
 |---|---|
 | ![对话](docs/screenshots/chat.png) | ![决策](docs/screenshots/decision.png) |
 | 对话界面，左侧会话列表与工作区文件树。 | 决策平面：可用引擎、各自的决策类型、审计记录。 |
-| ![交接](docs/screenshots/handoff.png) | |
-| 交接链：每一份记录及其认领状态，最新在前——下一个 Agent 从那一条继续。 | |
+| ![交接](docs/screenshots/handoff.png) | ![空态](docs/screenshots/empty.png) |
+| 交接链：每一份记录及其认领状态，最新在前——下一个 Agent 从那一条继续。 | 首次启动：还没有打开项目，以及开始的三步。 |
+| ![失败态](docs/screenshots/error.png) | |
+| 一次彻底失败的加载：坏在哪、失败原文怎么说的、以及重试。 | |
 
 ### 安装包
 
@@ -322,6 +341,11 @@ npm run package  # 免安装目录，不出安装包
   更新检查（设置 → 检查更新）即会改读它。覆盖值必须是 `https`：明文地址和根本不是
   URL 的值都会被拒绝，原因写进日志，且不会退回随包 feed。这与「完全没有 feed」是
   两件事：没有配置时应用会直说，而不是静默失败。
+- **已发布的 v1.0.0 feed 缺 `sha256`。** Releases 页上那份 asset 写在 feed 判定存在
+  之前：只有版本、说明和一个 `releases/latest` 地址，没有摘要也没有大小。应用因此会
+  播报版本、但不会从中安装任何东西——这是安全的方向，但它是一个已发布版本里的真实缺陷，
+  不是假设。修正版文档已经生成，并用 `scripts/verify-release-feed.mjs` 判过、零 finding；
+  覆盖那份 asset 需要本机没有的 GitHub 写权限令牌。1.1.0 发布前会修掉。
 - **交互式终端依赖 `node-pty`。** 它是可选依赖；缺失时终端面板会如实说不可用，
   而不是假装能跑。命令通道仍然可用。
 - **从真实 `.asar` 归档内解析适配器只能手动验证：本地打一次包，CI 不覆盖这一步。**

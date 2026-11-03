@@ -383,3 +383,28 @@ INCOMPLETE — the host did not answer, so this is not a verdict on the feed; 1 
 
 **仍未做**（与上一节相同，不假装完成）：上传修正版 feed（本机无 GitHub 写权限令牌）、
 Windows 桌面六步（无 Windows 机器）、步骤 6 的人眼视觉走查（无真机）。
+
+## 2026-11-04：首屏与五态截图（发布前产品收口）
+
+这一轮不改产品行为，只补「读者能看见的东西」，并把一处已发布版本的破绽写进产品自述。
+
+1. **README 首屏从规格书改成产品**（中英各一段，具名 pass：clarify + quieter）：
+   开篇不再是「两个问题 + 十条能力」，而是一段场景（三个 Agent 在同一个仓库上，
+   一个改了你没料到的文件，而屏幕说不清它收到了什么、为什么走这条路），
+   接一句电梯陈述（可核对的注入字节 + 可解释的路由），能力清单原样保留、退到第二屏。
+   事实段一个字没动：`readme-parity` / `readme-update-parity` / `scenario-states` 仍绿。
+2. **空态与失败态第一次出现在 README 里**：`docs/screenshots/empty.png`、
+   `docs/screenshots/error.png` 取自布局门禁在真实 Chromium 里拍的那两张
+   （`npm test` 的 `layout.test.ts` 会把每个 target 的截图写进 `.run-logs/layout/`，
+   文件名形如 `state-empty-chat.png`，1440×900，与产品开窗尺寸一致）。
+   门禁：新增 `tests/contract/screenshots.test.ts`——README 展示的每张图必须存在、
+   是 PNG、且尺寸等于 `bootstrap.ts` 里 `createWindow()` 的开窗尺寸；空态与失败态必须被展示。
+   红测证明：把 `empty.png` 换成 100×100 的图，该用例报
+   `docs/screenshots/empty.png is 100x100 and the app opens at 1440x900`。
+3. **已发布 v1.0.0 feed 缺 `sha256` 这件事写进 README 的「当前局限」**（中英各一条，
+   并进 `readme-parity.test.ts` 的 `LIMITATIONS` 表）。本机仍无 GitHub 写权限令牌、
+   `gh` 未安装，覆盖 release asset 这一步**仍未做**——所以它现在是一条产品自述里的
+   已知缺陷，而不是只躺在 `docs/` 里的一句话。1.1.0 发布前必须修掉。
+
+**仍未做**（不假装完成）：上传修正版 feed（无令牌）、Windows 桌面六步（无 Windows 机器）、
+步骤 6 的人眼观感走查（无真机）。

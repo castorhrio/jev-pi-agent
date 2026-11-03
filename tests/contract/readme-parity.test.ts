@@ -109,6 +109,18 @@ const LIMITATIONS: readonly Limitation[] = [
     en: ['feed', 'cleartext', 'failing quietly'],
     zh: ['feed', '明文', '静默'],
   },
+  // The defect that is in a *shipped* release, not in the code: the v1.0.0
+  // asset on the Releases page predates the feed check and carries no digest.
+  // It is stated in the README rather than only in `docs/`, because a reader
+  // deciding whether to trust the update channel is the person it affects —
+  // and because "we know, here is what it means, here is when it is fixed" is
+  // the honest form of a limitation. The three keywords are the three facts
+  // that make it actionable: which release, what is missing, when it is fixed.
+  {
+    id: 'the published v1.0.0 feed has no `sha256`',
+    en: ['v1.0.0', 'sha256', '1.1.0'],
+    zh: ['v1.0.0', 'sha256', '1.1.0'],
+  },
   { id: 'the terminal needs `node-pty`', en: ['node-pty'], zh: ['node-pty'] },
   // Five keywords, because "verified somehow" is not the claim that matters.
   // The bullet has to say (a) there is no CI job, and (b) how a reader closes
@@ -135,6 +147,21 @@ const LIMITATIONS: readonly Limitation[] = [
     zh: ['asar', 'ci 不覆盖', 'npm run package', 'adapters resolved', '从命令行'],
   },
 ];
+
+/**
+ * One row of the table, by `id`.
+ *
+ * The cases below used to index `LIMITATIONS` positionally, so inserting a row
+ * anywhere above them changed what they were testing while their names and
+ * assertions stayed the same — a fixture that quietly stops being the fixture.
+ * Looking the row up by the id it declares makes an inserted row a no-op here
+ * and a deleted one a loud failure.
+ */
+function row(id: string): Limitation {
+  const found = LIMITATIONS.find((limitation) => limitation.id === id);
+  if (found === undefined) throw new Error(`LIMITATIONS has no row "${id}"`);
+  return found;
+}
 
 /**
  * The body under a heading, up to the next heading of the same or a higher
@@ -366,7 +393,9 @@ describe('README limitations, English and Chinese', () => {
           '**安装包未签名。** Windows 首次运行会有 SmartScreen 提示。',
         ],
       },
-      [LIMITATIONS[1]!, LIMITATIONS[3]!],
+      // Indexed by `id`, not by position: this case is about the *message*, and
+      // a row inserted above these two must not silently change what it tests.
+      [row('the installer is unsigned'), row('the terminal needs `node-pty`')],
     );
     expect(problems).toHaveLength(2);
     expect(problems[0]).toContain('zh: limitation 1 does not state "the installer is unsigned"');
