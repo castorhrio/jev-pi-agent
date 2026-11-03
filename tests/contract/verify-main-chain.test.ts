@@ -33,10 +33,14 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import {
+  DRIVEN_STEPS,
   FEED_VARIANTS,
+  MANUAL_STEPS,
   appEnv,
   closeVerdict,
+  parseSteps,
   profileDataDir,
+  stepCoverage,
   trayMenuLabels,
   trayMenuVerdict,
 } from '../../scripts/verify-main-chain.mjs';
@@ -104,6 +108,89 @@ describe('the environment a verification child is launched with', () => {
       'https://example.test/f.json',
     );
     expect(appEnv('/tmp/p', {}, { platform: 'linux', parentEnv }).UCAD_UPDATE_FEED).toBeUndefined();
+  });
+});
+
+describe('the steps the verifier will and will not drive', () => {
+  it('accepts the five steps it has code for, in the order asked', () => {
+    expect(parseSteps('1,2,3,4,5')).toEqual({ steps: [1, 2, 3, 4, 5], rejected: [] });
+    // Repeated and out-of-order requests are a request for each step once; the
+    // order is kept because the transcript reads in the order it ran.
+    expect(parseSteps('2,1,2')).toEqual({ steps: [2, 1], rejected: [] });
+  });
+
+  it('refuses step 6 instead of passing having driven nothing', () => {
+    // The defect this rules out: `--steps 6` used to launch the app, drive no
+    // step at all, and exit 0 with "PASS — steps 6 recorded above". Step 6 is
+    // the five fixture states a person walks under `npm run dev:web`, so the
+    // honest answer is a refusal that names the other command.
+    const verdict = parseSteps('6');
+
+    expect(verdict.steps).toEqual([]);
+    expect(verdict.rejected).toHaveLength(1);
+    expect(verdict.rejected[0]!.reason).toContain('npm run dev:web');
+    // The sentence is read from the table, not retyped here.
+    expect(MANUAL_STEPS[6]).toContain('npm run dev:web');
+  });
+
+  it('refuses a number that is not a step, and a token that is not a number', () => {
+    expect(parseSteps('9').rejected[0]!.reason).toContain(DRIVEN_STEPS.join(', '));
+    const mixed = parseSteps('1,bogus');
+    // The drivable half is still reported, so the refusal can say what it would
+    // have run — but a non-empty `rejected` ends the run, so nothing half-runs.
+    expect(mixed.steps).toEqual([1]);
+    expect(mixed.rejected[0]!.reason).toContain('bogus');
+  });
+
+  it('refuses an empty request rather than defaulting to nothing at all', () => {
+    const verdict = parseSteps('');
+
+    expect(verdict.steps).toEqual([]);
+    expect(verdict.rejected).toHaveLength(1);
+    expect(verdict.rejected[0]!.reason).toContain('--steps');
+  });
+
+  it('has a dispatch for every step it declares, and declares every dispatch', () => {
+    // Both directions, because the two lists can drift apart silently: a step in
+    // `DRIVEN_STEPS` with no `wants(n)` behind it runs nothing and (before
+    // `stepCoverage`) said so to nobody, and a `wants(n)` naming a step that is
+    // not declared can never fire.
+    const source = readFileSync(join(REPO_ROOT, 'scripts', 'verify-main-chain.mjs'), 'utf8');
+    const dispatched = [...source.matchAll(/wants\((\d+)\)/g)].map((match) => Number(match[1]));
+
+    expect([...new Set(dispatched)].sort()).toEqual([...DRIVEN_STEPS].sort());
+    expect(source).toContain(`parseSteps(flag('steps', DRIVEN_STEPS.join(',')))`);
+  });
+
+  it('turns a requested step that neither passed nor failed into a failure', () => {
+    // The silent skip: a step whose selector stopped matching records evidence,
+    // takes an `if` with no `else`, and ends without a verdict. Silence used to
+    // read as success, because the verdict only counted failures.
+    expect(stepCoverage({ requested: [1, 2], passed: [1], failed: [] })).toEqual([
+      { step: 2, message: expect.stringContaining('neither passed nor failed') },
+    ]);
+    // A step that failed is already accounted for; a step that passed needs no
+    // second opinion.
+    expect(stepCoverage({ requested: [1], passed: [], failed: [1] })).toEqual([]);
+    expect(stepCoverage({ requested: [1, 2], passed: [1, 2], failed: [] })).toEqual([]);
+  });
+
+  it('wires both refusals into the run, in the order that matters', () => {
+    const source = readFileSync(join(REPO_ROOT, 'scripts', 'verify-main-chain.mjs'), 'utf8');
+
+    // The `--steps` refusal comes before anything is launched: a run that starts
+    // the app and then reports the problem has already spent the operator's
+    // display and key store on a request it was never going to honour.
+    expect(source.indexOf('if (STEP_REQUEST.rejected.length)')).toBeGreaterThan(-1);
+    expect(source.indexOf('if (STEP_REQUEST.rejected.length)')).toBeLessThan(
+      source.indexOf('await seedWorkspace()'),
+    );
+    // And the coverage check comes before the PASS line, or the verdict is
+    // printed about a set of steps that never checked for gaps.
+    expect(source.indexOf('for (const gap of stepCoverage({')).toBeGreaterThan(-1);
+    expect(source.indexOf('for (const gap of stepCoverage({')).toBeLessThan(
+      source.indexOf("STEPS.join(', ')} recorded above"),
+    );
   });
 });
 

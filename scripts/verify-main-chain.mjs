@@ -53,6 +53,10 @@
  * dialog is on screen; and the five fixture scenarios (step 6) belong to
  * `npm run dev:web`, which a human still walks by eye.
  *
+ * The second one is now a refusal rather than a quiet nothing: `--steps`
+ * accepts 1–5, and `--steps 6` stops the run with the reason instead of
+ * exiting 0 having driven no step at all (see `parseSteps()`).
+ *
  * The tray menu used to be a third: a native object no DevTools method reaches,
  * so step 5 printed the labels and asked a person to read them off the screen.
  * The app now writes the menu it built to its own log (`tray menu built`), and
@@ -75,6 +79,91 @@ import sqlite3Wasm from 'node-sqlite3-wasm';
 const { Database: WasmDatabase } = sqlite3Wasm;
 
 // ---------------------------------------------------------------------------
+// what this script can drive, and what it refuses to pretend to drive
+// ---------------------------------------------------------------------------
+
+/**
+ * The steps this file actually drives.
+ *
+ * A value rather than a range, because of what the parse below used to do:
+ * take whatever followed `--steps`, keep the tokens that looked like numbers,
+ * and print `PASS` at the end regardless of what was left. `--steps 6` — step 6
+ * is the five fixture states a person walks by eye under `npm run dev:web` —
+ * launched the app, drove nothing, recorded nothing, and ended with
+ * `PASS — steps 6 recorded above`. A verifier whose silence reads as a pass is
+ * worse than no verifier: the transcript looks green and proves nothing.
+ *
+ * `tests/contract/verify-main-chain.test.ts` pins this list against the
+ * `wants(n)` dispatch in `main()` in both directions, so a step declared here
+ * with no function behind it — or a `wants(n)` with no entry here — is red
+ * instead of being silently skipped.
+ */
+export const DRIVEN_STEPS = Object.freeze([1, 2, 3, 4, 5]);
+
+/** The steps that belong to a human at another command, and why. */
+export const MANUAL_STEPS = Object.freeze({
+  6: 'the five fixture states are walked by eye under `npm run dev:web`',
+});
+
+/**
+ * What `--steps` asked for, and every token that cannot be honoured.
+ *
+ * `rejected` is not a warning list: a non-empty one stops the run before the
+ * app is launched. Half-honouring a request — `--steps 1,2,6` driving the first
+ * two and quietly dropping the third — is the reading this returns instead of.
+ */
+export function parseSteps(raw) {
+  const tokens = String(raw)
+    .split(',')
+    .map((token) => token.trim())
+    .filter(Boolean);
+  const steps = [];
+  const rejected = [];
+  for (const token of tokens) {
+    if (!/^\d+$/.test(token)) {
+      rejected.push({ token, reason: `\`${token}\` is not a step number` });
+      continue;
+    }
+    const step = Number(token);
+    if (Object.hasOwn(MANUAL_STEPS, step)) {
+      rejected.push({ token, reason: `step ${step} is not this script's to drive: ${MANUAL_STEPS[step]}` });
+      continue;
+    }
+    if (!DRIVEN_STEPS.includes(step)) {
+      rejected.push({
+        token,
+        reason: `there is no step ${step}; this script drives ${DRIVEN_STEPS.join(', ')}`,
+      });
+      continue;
+    }
+    if (!steps.includes(step)) steps.push(step);
+  }
+  if (steps.length === 0 && rejected.length === 0) {
+    rejected.push({ token: '', reason: `no steps requested; pass e.g. --steps ${DRIVEN_STEPS.join(',')}` });
+  }
+  return { steps, rejected };
+}
+
+/**
+ * The requested steps that ended up neither passing nor failing.
+ *
+ * Every branch inside a step is supposed to end in `pass()` or `fail()`. A step
+ * that ends in neither has taken a path nobody wrote — a selector that stopped
+ * matching and an `if` with no `else`, which is how a check for "the screen says
+ * X" degrades into a check for nothing while still printing evidence. The run's
+ * own verdict reads this, so "no complaint and no evidence" is a failure at the
+ * end of the transcript rather than the silence that used to pass for success.
+ */
+export function stepCoverage({ requested, passed, failed }) {
+  return requested
+    .filter((step) => !failed.includes(step) && !passed.includes(step))
+    .map((step) => ({
+      step,
+      message: 'the step neither passed nor failed, so nothing about it was verified',
+    }));
+}
+
+// ---------------------------------------------------------------------------
 // arguments
 // ---------------------------------------------------------------------------
 
@@ -87,10 +176,9 @@ function flag(name, fallback) {
   return next === undefined || next.startsWith('--') ? fallback : next;
 }
 
-const STEPS = String(flag('steps', '1,2,3,4,5'))
-  .split(',')
-  .map((s) => Number(s.trim()))
-  .filter(Number.isFinite);
+/** What `--steps` asked for, and why the run will refuse to start, if it will. */
+const STEP_REQUEST = parseSteps(flag('steps', DRIVEN_STEPS.join(',')));
+const STEPS = STEP_REQUEST.steps;
 const PORT = Number(flag('port', 9411));
 const TIMEOUT_MS = Number(flag('timeout', 420000));
 const KEEP = argv.includes('--keep');
@@ -187,6 +275,8 @@ const wants = (step) => STEPS.includes(step);
 
 const evidence = [];
 const failures = [];
+/** Every step that reached a `pass()`, in the order it got there. */
+const passedSteps = new Set();
 
 function record(step, key, value) {
   const line = `${step}:${key}=${value}`;
@@ -200,6 +290,7 @@ function fail(step, message) {
 }
 
 function pass(step, message) {
+  passedSteps.add(step);
   console.log(`[ok] step ${step}: ${message}`);
 }
 
@@ -607,6 +698,16 @@ async function step2(cdp) {
      return { chain: (t.match(/引擎链[^\\n]*/) || [''])[0], engines: [...document.querySelectorAll('table tr')].length };`,
   );
   record(2, 'engine chain as configured', before.chain);
+  // The claim step 2 makes in the document is "设置里引擎链与实跑一致", and it
+  // cannot be made at all if the configured chain is not on the screen. This
+  // line used to be recorded and never judged, so a renamed heading — or a
+  // panel that failed to render — produced one blank evidence line and a pass.
+  if (!before.chain) {
+    fail(
+      2,
+      'the decision surface shows no 引擎链 line, so the configured chain cannot be compared with the one that ran',
+    );
+  }
 
   const ran = await runPage(
     cdp,
@@ -1011,6 +1112,13 @@ async function step5() {
 // ---------------------------------------------------------------------------
 
 async function main() {
+  // Asked before anything is launched: a request this script cannot honour has
+  // to end the run with a failure, not with a partial run and a `PASS` about
+  // the steps that happened to be drivable. See `parseSteps()`.
+  if (STEP_REQUEST.rejected.length) {
+    for (const { reason } of STEP_REQUEST.rejected) console.error(`[FAIL] --steps: ${reason}`);
+    return 1;
+  }
   console.log(`[run] executable ${EXEC}`);
   if (!existsSync(EXEC)) {
     console.error('[FAIL] no built executable there. Run `npm run package` first, or pass --exec.');
@@ -1068,6 +1176,17 @@ async function main() {
 
   console.log('\n===== evidence =====');
   for (const line of evidence) console.log(`  ${line}`);
+  // A requested step that reached neither verdict took a path nobody wrote.
+  // Counted here, before the transcript is written, so the exit code, the
+  // printed verdict and the `--json` file all answer to it.
+  for (const gap of stepCoverage({
+    requested: STEPS,
+    passed: [...passedSteps],
+    failed: failures.map((failure) => failure.step),
+  })) {
+    failures.push({ step: gap.step, message: gap.message });
+  }
+
   if (JSON_OUT) {
     writeFileSync(
       JSON_OUT,

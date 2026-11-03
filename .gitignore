@@ -1,6 +1,12 @@
 node_modules/
 dist/
 out/
+# A hand-run `tsc` (or a copy step) can leave compiled JavaScript at the
+# repository root, where it looks like source and never changes again once
+# committed. Output belongs in a `dist/` directory; see
+# tests/contract/repo-root.test.ts.
+/bootstrap.js
+/bootstrap.js.map
 release/
 *.tsbuildinfo
 .ucad-data/

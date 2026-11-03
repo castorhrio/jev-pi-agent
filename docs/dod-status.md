@@ -61,6 +61,21 @@
    preference（store 可能已关）」，现在 `tray-icon.test.ts` 断言调用点确实是
    `preference: isQuitting ? 'quit' : closePreference()`，且 `closePreference()` 在处理器里只出现一次。
 
+## 本轮（2026-11-03 夜）门禁侧的两处收口
+
+1. **`scripts/verify-main-chain.mjs` 的失败语义**：`--steps` 以前把看不懂的 token 丢掉、
+   剩下的照跑，于是 `--steps 6` 会启动应用、一步不驱动，然后以
+   `PASS — steps 6 recorded above` 结束——这是「沉默即通过」，与 DoD「门禁即 DoD」相反。
+   现在 `parseSteps()` 认 1–5（步骤 6 属 `npm run dev:web`，请求它直接拒绝并退出 1），
+   并且 `stepCoverage()` 会把「既没 `[ok]` 也没 `[FAIL]`」的被请求步骤按失败计。
+   步骤 2 的「引擎链」行以前只记录不判定（标题改了或面板没渲染都算过），现在缺了就是红。
+   `tests/contract/verify-main-chain.test.ts` 双向钉住声明与实际 `wants(n)` 派发。
+2. **根目录陈旧产物**：`03f8135` 误提交的 `bootstrap.js` 与
+   `apps/desktop/dist/main/bootstrap.js` 逐字节相同，且没有任何地方引用它——它只是让审查者
+   在「入口点该在的位置」读到一份不再更新的副本。已删除，`.gitignore` 补上根目录的
+   `bootstrap.js`/`.map`，并由 `tests/contract/repo-root.test.ts` 钉住：入口点必须在 `dist/` 下、
+   根目录不得有同名的编译副本、根目录不得提交任何编译产物。
+
 ## 下一刀（按 DoD 未勾项）
 
 - Windows 桌面补跑步骤 1–6（唯一硬缺口）。
