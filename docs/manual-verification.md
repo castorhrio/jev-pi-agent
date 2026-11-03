@@ -354,3 +354,32 @@ $ echo $?
 默认参数（`releases/download/v<版本>/UCAD-Setup-<版本>.exe`）照旧通过，并把校验命令的提醒一起打出来。
 门禁：`tests/contract/feed-writer.test.ts` 12 项（判定四种错法各一条、线上 v1.0.0 文档一条、
 源码线序一条、CLI 退出码与「不落文件」两条）。
+
+## 2026-11-04 深夜：主机不应答时，命令说的是「没跑完」而不是「feed 坏了」
+
+这一节记的是**命令自己的输出**，不是应用的行为。本机到 release 主机的路由时通时不通，不通的那次
+`node scripts/verify-release-feed.mjs` 打印的是：
+
+```
+[FAIL] feed-unreachable: the feed could not be fetched, so every update check fails — This operation was aborted
+FAIL — 1 failure(s), 0 warning(s)
+```
+
+同一台机器上 `curl -sSL` 对同一个 URL 挂满 90 秒、一个字节也没回来（`exit=124`），所以那 20 秒里
+什么都没读到——「feed 是坏的」这个结论没有依据。修完之后，同样的情形（本地起一个只接受连接、
+永不回话的 TLS 主机，`--timeout 400`）打印的是：
+
+```
+feed: https://127.0.0.1:35517/update-feed.json
+version: this build is 1.0.0
+[FAIL] feed-timeout: the feed host did not answer in time, so nothing about the document was judged — a host result, not a verdict on the feed — no answer within 400ms — https://127.0.0.1:35517/update-feed.json (retry with --timeout <ms> if the host is slow)
+INCOMPLETE — the host did not answer, so this is not a verdict on the feed; 1 failure(s), 0 warning(s)
+```
+
+退出码仍是 1（没看到就不能算绿），但词换了：`INCOMPLETE` 说的是「这次没跑完」，`FAIL` 说的是
+「文档有问题」。路由恢复后对**线上那份 v1.0.0 feed** 重跑，输出仍是上一节那三行（`no-sha256` /
+`no-size` / `installer-latest-url`，`FAIL — 2 failure(s), 1 warning(s)`，退出码 1）——也就是说
+这一轮改的是**误诊**，不是结论：发布出去的 feed 仍然缺哈希，仍然只差一次上传。
+
+**仍未做**（与上一节相同，不假装完成）：上传修正版 feed（本机无 GitHub 写权限令牌）、
+Windows 桌面六步（无 Windows 机器）、步骤 6 的人眼视觉走查（无真机）。

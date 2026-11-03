@@ -45,6 +45,7 @@
 
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { createServer, type Server, type Socket } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -110,12 +111,48 @@ function refusedForMissingBuild(result: RunResult): boolean {
   return true;
 }
 
+const openServers: Server[] = [];
+const openSockets: Socket[] = [];
+
 afterEach(() => {
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop();
     if (dir) rmSync(dir, { recursive: true, force: true });
   }
+  while (openSockets.length > 0) {
+    openSockets.pop()?.destroy();
+  }
+  while (openServers.length > 0) {
+    const server = openServers.pop();
+    if (server) {
+      server.close();
+    }
+  }
 });
+
+/**
+ * A host that accepts the connection and then says nothing.
+ *
+ * This is the shape of a blocked route: the TCP connection is made, the TLS
+ * handshake never completes, and the fetch sits there until the command's own
+ * timeout fires. It is deterministic and offline, which is what makes the
+ * timeout branch testable at all — a real unreachable host is either slow or
+ * fast depending on the network the suite happens to run on.
+ */
+async function silentHost(): Promise<string> {
+  const server = createServer((socket) => {
+    openSockets.push(socket);
+    socket.on('error', () => {
+      /* the client aborts; that is the point of the fixture */
+    });
+    // Deliberately no write: a TLS handshake needs a ServerHello to finish.
+  });
+  openServers.push(server);
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const address = server.address();
+  if (address === null || typeof address === 'string') throw new Error('no port');
+  return `https://127.0.0.1:${address.port}/update-feed.json`;
+}
 
 describe('the document the writer writes is the document the verifier accepts', () => {
   it('takes one command’s output as the next command’s input, with no network', () => {
@@ -239,6 +276,30 @@ describe('a document that would break the release is red through the same comman
     // A typo in the path must not be a clean run over an empty set.
     expect(judged.code).toBe(1);
     expect(judged.stdout).toContain('feed-unreadable');
+  });
+});
+
+describe('a host that does not answer is reported as such, not as a broken feed', () => {
+  it('says INCOMPLETE and names the timeout, instead of blaming the feed', async () => {
+    // The defect: a blocked route produced `feed-unreachable` — whose sentence
+    // is "the feed could not be fetched, so every update check fails" — with
+    // `This operation was aborted` as the detail. An operator reading that
+    // re-uploads a feed that was fine. The run still exits 1 (it could not
+    // look), but the word is `INCOMPLETE` and the finding names the window.
+    const url = await silentHost();
+
+    const judged = run(VERIFIER, ['--feed', url, '--timeout', '100']);
+    if (refusedForMissingBuild(judged)) return;
+
+    expect(judged.code, 'a run that could not look must not exit 0').toBe(1);
+    expect(judged.stdout).toContain('feed-timeout');
+    expect(judged.stdout).toContain('100ms');
+    expect(judged.stdout).toContain('INCOMPLETE');
+    // The two things that would make this the old, misleading output.
+    expect(judged.stdout, 'a timeout is not a verdict on the document').not.toContain(
+      'feed-unreachable',
+    );
+    expect(judged.stdout).not.toContain('FAIL —');
   });
 });
 

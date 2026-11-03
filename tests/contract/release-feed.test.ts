@@ -45,10 +45,15 @@ import {
   FEED_FINDING_SEVERITY,
   hasFailure,
   installerNameFor,
+  isIncomplete,
+  isTimeoutError,
   judgeFeedAddress,
   judgeFeedDocument,
+  judgeFetchFailure,
   judgeInstallerHead,
   shippedFeedUrl,
+  summaryLine,
+  TIMEOUT_FINDINGS,
 } from '../../scripts/verify-release-feed.mjs';
 import { checkChannelUrl, normalizeSha256 } from '../../apps/desktop/src/main/update-feed';
 import { blankComments } from './source-scan';
@@ -260,6 +265,94 @@ describe('the finding vocabulary is complete', () => {
     expect(hasFailure([{ code: 'no-sha256', detail: '' }])).toBe(true);
     expect(hasFailure([{ code: 'no-size', detail: '' }])).toBe(false);
     expect(hasFailure([])).toBe(false);
+  });
+});
+
+describe('a host that does not answer is not a verdict on the feed', () => {
+  /** The error `AbortController.abort()` produces, without waiting for one. */
+  function abortError(): Error {
+    const error = new Error('This operation was aborted');
+    error.name = 'AbortError';
+    return error;
+  }
+
+  it('names a timeout as a timeout, for each of the two fetches', () => {
+    // The defect this pins: a blocked route used to be reported as
+    // `feed-unreachable` — "the feed could not be fetched, so every update check
+    // fails" — with the runtime's `This operation was aborted` as the detail.
+    // That sentence is a verdict on the document, and a timeout is not one.
+    const feed = judgeFetchFailure(abortError(), {
+      url: 'https://example.test/update-feed.json',
+      timeoutMs: 20_000,
+      kind: 'feed',
+    });
+    expect(feed.code).toBe('feed-timeout');
+    expect(feed.detail).toContain('20000ms');
+    expect(feed.detail).toContain('https://example.test/update-feed.json');
+
+    const installer = judgeFetchFailure(abortError(), {
+      url: 'https://example.test/UCAD-Setup-1.0.0.exe',
+      timeoutMs: 5_000,
+      kind: 'installer',
+    });
+    expect(installer.code).toBe('installer-timeout');
+    expect(installer.detail).toContain('5000ms');
+  });
+
+  it('keeps a host that answered and refused as a finding about the feed', () => {
+    // The other direction: a DNS failure or a refused connection *is* an answer
+    // about the address, and it must not be softened into "we did not look".
+    const dns = Object.assign(new Error('getaddrinfo ENOTFOUND example.test'), { name: 'TypeError' });
+    const feed = judgeFetchFailure(dns, {
+      url: 'https://example.test/update-feed.json',
+      timeoutMs: 20_000,
+      kind: 'feed',
+    });
+    expect(feed.code).toBe('feed-unreachable');
+    expect(feed.detail).toContain('ENOTFOUND');
+    expect(isTimeoutError(dns)).toBe(false);
+  });
+
+  it('recognises both shapes a timeout arrives in', () => {
+    // `AbortController.abort()` throws `AbortError`; `AbortSignal.timeout()`
+    // throws `TimeoutError`. A check that knew only one would classify half of
+    // its own timeouts as host answers.
+    expect(isTimeoutError(abortError())).toBe(true);
+    expect(isTimeoutError(Object.assign(new Error('timed out'), { name: 'TimeoutError' }))).toBe(true);
+    expect(isTimeoutError(new Error('boom'))).toBe(false);
+    expect(isTimeoutError(undefined)).toBe(false);
+  });
+
+  it('says INCOMPLETE instead of FAIL, and still fails the run', () => {
+    const timedOut = [{ code: 'feed-timeout', detail: 'no answer within 20000ms' }];
+    expect(isIncomplete(timedOut)).toBe(true);
+    expect(hasFailure(timedOut), 'a run that could not look must not exit 0').toBe(true);
+    expect(summaryLine(timedOut)).toContain('INCOMPLETE');
+    expect(summaryLine(timedOut)).not.toContain('FAIL');
+    // The three outcomes are three words, so a reader can tell "fix the feed"
+    // from "retry the fetch" without reading the findings.
+    expect(summaryLine([{ code: 'no-sha256', detail: 'null' }])).toContain('FAIL');
+    expect(summaryLine([{ code: 'no-size', detail: 'absent' }])).toContain('PASS');
+    expect(isIncomplete([{ code: 'no-sha256', detail: 'null' }])).toBe(false);
+  });
+
+  it('keeps the count of checks that did not run on every outcome', () => {
+    const skipped = ['the installer URL: not fetched (--no-installer)'];
+    expect(summaryLine([], skipped)).toContain('1 check(s) did not run');
+    expect(summaryLine([{ code: 'feed-timeout', detail: '' }], skipped)).toContain(
+      '1 check(s) did not run',
+    );
+  });
+
+  it('lists exactly the two timeout codes as "did not look"', () => {
+    // A code added to this list without a sentence would print `undefined`; the
+    // vocabulary test above catches that. This one catches the opposite: a
+    // timeout code that is not in the list, so `INCOMPLETE` never fires.
+    expect([...TIMEOUT_FINDINGS].sort()).toEqual(['feed-timeout', 'installer-timeout']);
+    for (const code of TIMEOUT_FINDINGS) {
+      expect(FEED_FINDINGS).toContain(code);
+      expect(FEED_FINDING_SEVERITY[code]).toBe('fail');
+    }
   });
 });
 

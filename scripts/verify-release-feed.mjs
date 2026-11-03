@@ -76,6 +76,26 @@
  * A reader can still get a green run without a network; they cannot get one
  * without being told what it does not cover.
  *
+ * ## Why a host that does not answer is not a verdict
+ *
+ * Every finding above is a statement about the document. A fetch that times out
+ * is not: nothing was read, so nothing was judged. The command used to report
+ * both with the same code — `feed-unreachable`, whose sentence is "the feed
+ * could not be fetched, so every update check fails" — and the detail was
+ * whatever the runtime said, which for a timeout is `This operation was
+ * aborted`. On a machine whose route to the release host is blocked, that reads
+ * as "the published feed is broken", and the operator's next move is to
+ * re-upload a feed that was fine.
+ *
+ * This is the same misdiagnosis the unknown-option refusal above names ("reports
+ * a host problem as a feed problem"), and it is the expensive direction to get
+ * wrong. So a timeout is its own finding (`feed-timeout` / `installer-timeout`),
+ * its sentence says the check did not complete, its detail carries the window
+ * and the URL, and the summary line says `INCOMPLETE` rather than `FAIL`. The
+ * exit code is still 1: a run that could not look must not be mistaken for a
+ * green one. What changes is what the reader does next — retry the fetch, or fix
+ * the feed.
+ *
  * ## Usage
  *
  * ```bash
@@ -99,7 +119,8 @@
  * Exit code 0 when nothing failed; 1 when a finding is a failure, or when the
  * arguments name no document this command can judge. Warnings (`no-size`) are
  * printed and do not fail the run: the app installs a feed without a size, it
- * just loses the cheap truncation check.
+ * just loses the cheap truncation check. A run whose summary says `INCOMPLETE`
+ * also exits 1 — the host did not answer, so there is no verdict to report.
  */
 
 import { readFileSync } from 'node:fs';
@@ -122,6 +143,7 @@ export const FEED_FINDINGS = [
   'feed-invalid-url',
   'feed-not-https',
   'feed-unreachable',
+  'feed-timeout',
   'feed-unreadable',
   'feed-not-json',
   'not-an-object',
@@ -137,6 +159,7 @@ export const FEED_FINDINGS = [
   'installer-not-this-release',
   'installer-name-mismatch',
   'installer-unreachable',
+  'installer-timeout',
   'installer-size-mismatch',
 ];
 
@@ -152,6 +175,7 @@ export const FEED_FINDING_SEVERITY = {
   'feed-invalid-url': 'fail',
   'feed-not-https': 'fail',
   'feed-unreachable': 'fail',
+  'feed-timeout': 'fail',
   'feed-unreadable': 'fail',
   'feed-not-json': 'fail',
   'not-an-object': 'fail',
@@ -167,6 +191,7 @@ export const FEED_FINDING_SEVERITY = {
   'installer-not-this-release': 'fail',
   'installer-name-mismatch': 'fail',
   'installer-unreachable': 'fail',
+  'installer-timeout': 'fail',
   'installer-size-mismatch': 'fail',
 };
 
@@ -181,6 +206,8 @@ export const FEED_FINDING_MESSAGE = {
   'feed-invalid-url': 'the feed address is not a URL, so the app reports 未配置更新源',
   'feed-not-https': 'the feed address is not https, so the app refuses it and logs the refusal',
   'feed-unreachable': 'the feed could not be fetched, so every update check fails',
+  'feed-timeout':
+    'the feed host did not answer in time, so nothing about the document was judged — a host result, not a verdict on the feed',
   'feed-unreadable': 'the document named on the command line could not be read, so nothing was judged',
   'feed-not-json': 'the feed is not JSON, so the app reports a failed check',
   'not-an-object': 'the feed is not a JSON object, so the app has no fields to read',
@@ -196,6 +223,8 @@ export const FEED_FINDING_MESSAGE = {
   'installer-not-this-release': 'the installer URL does not name this version’s release',
   'installer-name-mismatch': 'the installer file name does not carry this version',
   'installer-unreachable': 'the installer URL does not resolve, so the download fails',
+  'installer-timeout':
+    'the installer host did not answer in time, so "the file is there, at that size" was not proven',
   'installer-size-mismatch': 'the size the feed publishes is not the size the host serves',
 };
 
@@ -350,6 +379,85 @@ export function judgeInstallerHead(head, document) {
 /** Whether a finding list contains anything that fails the run. */
 export function hasFailure(findings) {
   return findings.some((entry) => FEED_FINDING_SEVERITY[entry.code] === 'fail');
+}
+
+/**
+ * The findings that mean "the host did not answer", not "the feed is wrong".
+ *
+ * These are failures — a run that could not look at the document must not exit
+ * 0 — but they are a different kind of failure, and the summary says so in a
+ * different word (`INCOMPLETE`). See the header's "why a host that does not
+ * answer is not a verdict".
+ */
+export const TIMEOUT_FINDINGS = ['feed-timeout', 'installer-timeout'];
+
+/** Whether a fetch error is the timeout this command imposed, not the host's answer. */
+export function isTimeoutError(error) {
+  const name = error && typeof error === 'object' ? error.name : undefined;
+  // `AbortController.abort()` surfaces as `AbortError`; `AbortSignal.timeout()`
+  // as `TimeoutError`. Both mean the same thing here: no answer in the window.
+  return name === 'AbortError' || name === 'TimeoutError';
+}
+
+/**
+ * What a failed fetch means, as a finding.
+ *
+ * The distinction this function exists for: a host that never answers and a
+ * feed that is wrong used to produce the same code (`feed-unreachable`), so a
+ * blocked network read as "the published feed is broken, every update check
+ * fails". That is the misdiagnosis this repository keeps closing elsewhere —
+ * `verify-release-feed.mjs`'s own unknown-option refusal names it ("reports a
+ * host problem as a feed problem") — and it is the expensive direction to get
+ * wrong: it sends the operator to re-upload a feed that was fine.
+ *
+ * `kind` is `'feed'` or `'installer'`, because the two fetches answer different
+ * questions and the fix for each is in a different place.
+ */
+export function judgeFetchFailure(error, { url, timeoutMs, kind }) {
+  const timedOut = isTimeoutError(error);
+  const code = timedOut
+    ? kind === 'installer'
+      ? 'installer-timeout'
+      : 'feed-timeout'
+    : kind === 'installer'
+      ? 'installer-unreachable'
+      : 'feed-unreachable';
+  const detail = timedOut
+    ? `no answer within ${timeoutMs}ms — ${url} (retry with --timeout <ms> if the host is slow)`
+    : `${error instanceof Error ? error.message : String(error)} — ${url}`;
+  return finding(code, detail);
+}
+
+/** Whether this run could not judge, because a host did not answer. */
+export function isIncomplete(findings) {
+  return findings.some((entry) => TIMEOUT_FINDINGS.includes(entry.code));
+}
+
+/**
+ * The last line of a run.
+ *
+ * Three outcomes, three words. `PASS` and `FAIL` are verdicts on the document;
+ * `INCOMPLETE` says the run did not get far enough to have one. The exit code
+ * is 1 for both of the last two — the difference is what the reader should do
+ * next: fix the feed, or retry the fetch.
+ *
+ * The count of checks that did not run rides on every line, so a green run
+ * cannot be read as "all of it was checked" when part of it was not.
+ */
+export function summaryLine(findings, notChecked = []) {
+  const failures = findings.filter((entry) => FEED_FINDING_SEVERITY[entry.code] === 'fail').length;
+  const warnings = findings.length - failures;
+  const partial = notChecked.length === 0 ? '' : `; ${notChecked.length} check(s) did not run`;
+  if (failures === 0) {
+    return `PASS — ${warnings} warning(s), nothing the app would refuse${partial}`;
+  }
+  if (isIncomplete(findings)) {
+    return (
+      `INCOMPLETE — the host did not answer, so this is not a verdict on the feed; ` +
+      `${failures} failure(s), ${warnings} warning(s)${partial}`
+    );
+  }
+  return `FAIL — ${failures} failure(s), ${warnings} warning(s)${partial}`;
 }
 
 /**
@@ -546,7 +654,7 @@ async function main(argv) {
           raw = await response.text();
         }
       } catch (error) {
-        findings.push(finding('feed-unreachable', error instanceof Error ? error.message : String(error)));
+        findings.push(judgeFetchFailure(error, { url: source.url, timeoutMs, kind: 'feed' }));
       }
     }
   }
@@ -577,7 +685,7 @@ async function main(argv) {
           findings.push(...judgeInstallerHead(await headInstaller(installer.url, timeoutMs), document));
         } catch (error) {
           findings.push(
-            finding('installer-unreachable', error instanceof Error ? error.message : String(error)),
+            judgeFetchFailure(error, { url: installer.url, timeoutMs, kind: 'installer' }),
           );
         }
       }
@@ -593,6 +701,9 @@ async function main(argv) {
           expectedVersion,
           findings,
           notChecked,
+          // A run that could not look is not a verdict; the JSON says which it
+          // was, so a script reading this does not have to infer it from codes.
+          incomplete: isIncomplete(findings),
         },
         null,
         2,
@@ -603,16 +714,8 @@ async function main(argv) {
     for (const entry of notChecked) {
       console.log(`[skipped] ${entry}`);
     }
-    const failures = findings.filter((entry) => FEED_FINDING_SEVERITY[entry.code] === 'fail').length;
-    const warnings = findings.length - failures;
-    // The summary carries the number of checks that did not run, so a green run
-    // cannot be read as "all of it was checked" when part of it was not.
-    const partial = notChecked.length === 0 ? '' : `; ${notChecked.length} check(s) did not run`;
-    console.log(
-      failures === 0
-        ? `PASS — ${warnings} warning(s), nothing the app would refuse${partial}`
-        : `FAIL — ${failures} failure(s), ${warnings} warning(s)${partial}`,
-    );
+    // One printer for the last line, so the three outcomes cannot drift apart.
+    console.log(summaryLine(findings, notChecked));
   }
 
   return hasFailure(findings) ? 1 : 0;

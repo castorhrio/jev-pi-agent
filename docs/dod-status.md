@@ -288,3 +288,48 @@ permission 真有模态、empty 真没有工作区）对两者都生效；新增
   文档本身（离线、可复跑），证明不了「发布出去的就是这一份」。
 - **Windows 桌面六步**：唯一硬缺口，需要一台 Windows 机器，不是代码。
 - 步骤 6 的**视觉**走查（DOM 断言管不到排版与观感）与排版分寸（正文行长、行首禁则），同上。
+
+## 本轮（2026-11-04 深夜）主机不应答，不再被写成「feed 是坏的」
+
+上一轮把「写」和「判」接成了一条命令链，剩下的红只有一条：v1.0.0 发布出去的 feed 缺 `sha256`/`size`、
+URL 钉在 `latest`，修正版已验证干净，只差一次上传。这一轮本机仍然没有 GitHub 写权限令牌（`gh` 也未安装），
+所以上传这一步照旧做不了——但**为了做这一步而跑的那条命令**，本轮暴露了一个会把人带错方向的缺陷。
+
+**量到的缺陷**：本机到 release 主机的路由时通时不通。不通的那次，`node scripts/verify-release-feed.mjs` 打印的是
+
+```
+[FAIL] feed-unreachable: the feed could not be fetched, so every update check fails — This operation was aborted
+FAIL — 1 failure(s), 0 warning(s)
+```
+
+这句话是**对文档的判决**，而实际发生的是「20 秒内没有应答，什么都没读到」。同一台机器上 `curl` 对同一个
+URL 挂满 90 秒也没有回一个字节，所以这不是 feed 的问题。方向错得很贵：读到这句话的人会去重传一份本来
+没问题的 feed，而真正该做的是重试抓取或换网络。
+
+这正是本仓自己已经命名过的失败形状——`verify-release-feed.mjs` 拒绝未知选项时写的理由是
+「reports a host problem as a feed problem」——只是那条规则当时只覆盖了旗标，没覆盖抓取本身。
+
+**改法**（`scripts/verify-release-feed.mjs`）：
+
+1. 超时是它自己的 finding：`feed-timeout` / `installer-timeout`，severity 仍是 `fail`（没看到就不能算绿），
+   但句子说的是「这次检查没跑完」，detail 带上窗口与 URL，并提示 `--timeout <ms>`。
+2. 分类收进纯函数 `judgeFetchFailure(error, { url, timeoutMs, kind })`：`AbortError`（`AbortController.abort()`）
+   与 `TimeoutError`（`AbortSignal.timeout()`）都算超时；DNS 失败、连接被拒这类**主机给了答案**的错误
+   仍然是 `feed-unreachable` / `installer-unreachable`，不被软化。
+3. 总结行收进纯函数 `summaryLine(findings, notChecked)`，三种结局三个词：`PASS` / `FAIL` / `INCOMPLETE`。
+   `INCOMPLETE` 的退出码同样是 1，差别只在读者下一步做什么。`--json` 多一个 `incomplete` 字段，
+   读 JSON 的脚本不必从 code 里反推。
+
+**证明它会红**：`tests/contract/release-feed.test.ts` 新增 6 项（两种超时各一条、主机给了答案的那条不被软化、
+两种超时形状都认、`INCOMPLETE` 与 `FAIL` 不混、跳过计数在三种结局上都在、超时码表与词表对齐）；
+`tests/contract/feed-pipeline.test.ts` 新增 1 项**端到端**：起一个只接受连接、永不回话的本地 TLS 主机
+（`net.createServer` 不写 ServerHello，握手永远不完成），`--feed https://127.0.0.1:<port>/… --timeout 100`
+必须退出 1、输出含 `feed-timeout` 与 `INCOMPLETE`，且**不含** `feed-unreachable` 与 `FAIL —`。
+把 `judgeFetchFailure` 里的超时分支删掉（回到一律 `feed-unreachable`），这两组同时红。
+
+**顺带量到的一件事**（记下来，不改）：超时之后命令的判决行立刻打印，但进程还要约 10 秒才退出——
+undici 把被 abort 的那条连接留在事件循环里。所以那条端到端用例本身要跑 10 秒左右；这是运行时行为，
+不是判定行为，判决在打印那一刻就已经完整。
+
+**这一轮没有做的事**：上传修正版 feed（无写权限）、Windows 桌面六步（无 Windows 机器）、
+步骤 6 的人眼视觉走查（无真机）。三条都仍是上表里的缺口，不假装完成。

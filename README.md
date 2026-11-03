@@ -102,7 +102,10 @@ node scripts/verify-release-feed.mjs                                      # the 
 
 It judges them with the rules the app itself enforces, and it names every
 check it did not run — `[skipped]`, with the count in the summary — so a green
-run never reads as more than it proved.
+run never reads as more than it proved. A host that never answers is reported
+as `INCOMPLETE` with a `feed-timeout` finding, not as a broken feed: the run
+still exits 1, but the next move is to retry the fetch, not to re-upload a feed
+that was fine.
 
 ### Quick start
 
@@ -265,7 +268,9 @@ node scripts/verify-release-feed.mjs                                      # 已�
 ```
 
 它会把自己没跑过的检查逐条标成 `[skipped]`，并在总结行里报数量——所以一次
-绿色的运行不会被读成「全部都查过了」。
+绿色的运行不会被读成「全部都查过了」。主机一直不应答时，总结行写的是
+`INCOMPLETE` 并给出 `feed-timeout`，而不是把 feed 判成坏的：退出码仍是 1，
+但下一步是重试这次抓取，不是去重传一份本来没问题的 feed。
 
 ### 快速开始
 
