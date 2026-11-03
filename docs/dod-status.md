@@ -9,7 +9,7 @@
 | 可解释路由 | **有证据** | 真机步骤 2 通过：7 行决策各带 rationale / confidence / 引擎，回落如实记录；`tests/contract/decision-chain.test.ts` 钉住链与实跑一致 | Windows 桌面复跑一次 |
 | 权限门不可绕 | **有证据（自动化 + 五态断言）** | 执行前允许/拒绝进事件流，审计可查；`tests/contract/permission-*.test.ts`、`tests/e2e/critical-path.e2e.test.tsx`；步骤 6 的权限弹窗已进 `tests/e2e/scenarios.e2e.test.tsx`（类别/风险/资源/命令/理由五件可读，四个回答都在，点拒绝后弹窗消失且事件流里出现 `permission.resolved`） | 真机上的**视觉**走查（排版、长中文、窄窗口）仍未做 |
 | Windows 安装包航运 · NSIS 产出与安装 | **未验证** | `npm run dist` 走 electron-builder 的 `nsis` 目标（`package.json` 的 `build.win`），产物 `UCAD-Setup-<版本>.exe`；未签名 | **Windows 桌面**：装一次、过 SmartScreen、把提示原文记进 `docs/manual-verification.md` |
-| Windows 安装包航运 · 随包 feed 真实网络 | **未验证** | feed 合约（`https` + `sha256`）由 `tests/contract/update-feed.test.ts` 覆盖；Linux 桌面会话用 `--feed-url` 指向真实 https 文档跑通「已是最新版本」 | 随包 feed（`github.com/.../releases/latest/download/update-feed.json`）在能连 `github.com` 的机器上跑一次 |
+| Windows 安装包航运 · 随包 feed 真实网络 | **红（已量到，未修）** | 在能连 `github.com` 的机器上跑了随包 feed：`node scripts/verify-release-feed.mjs` 退出码 1，`no-sha256` + `installer-latest-url`（见 `docs/manual-verification.md` 末节）。发布出去的 `update-feed.json` 只有 `version`/`notes`/`url`，没有 `sha256`/`size`，URL 用的是 `releases/latest` | 用 `make-update-feed.mjs` 重算并覆盖上传 release asset（需 GitHub 写权限 + 安装包本体）；之后重跑脚本应为 0 |
 | Windows 安装包航运 · 拒绝路径（明文 / 非 URL） | **有证据** | 真机步骤 4：明文覆盖 → `检查更新失败: 更新源必须使用 https…`，日志 `update feed ignored: …`；`tests/contract/update-feed.test.ts` | — |
 | 门禁即 DoD | **有证据** | `npm run typecheck && lint && knip && test && test:e2e` 全绿；注入/交接/凭据/更新合约测试能打红 | CI 等价跑一次留档 |
 | 诚实估计与凭据 | **有证据** | 估算来源上屏（`heuristic_chars_div_4`）；凭据只进 OS 钥匙串，钥匙串不可用时启动即停并给平台补救话（`apps/desktop/src/main/keyring-gate.ts`，`tests/contract/keyring-gate.test.ts`） | Windows DPAPI 路径真机确认 |
@@ -97,6 +97,43 @@ happy path（`critical-path.e2e.test.tsx`），五个状态各自画了什么，
 两处合起来才是「允许/拒绝都能走」；只改其中一处，另一个仍然在说谎。
 门禁：`npm run test:e2e` 147 项全绿（新增 6 项），`npm test` 1186 项全绿（`layout.test.ts` 需 X，`xvfb-run` 下过）。
 
+## 本轮（2026-11-04）五个界面状态在真实布局引擎里被测量
+
+步骤 6 的五态以前有两条通道：happy-dom 里断言「每一态画了什么」（`scenarios.e2e.test.tsx`），
+真实 Chromium 里量几何的 `layout.test.ts` 却只量了 default。门禁把五态当五份状态名，
+写在三处：fixture 的 union + 数组、E2E 的 mount 列表、探针 target 的 `?scenario=`。
+改一处忘两处不会红——这正是它五轮没被人看过的原因。
+
+1. **状态名收敛成一份事实**：`apps/desktop/src/renderer/src/dev/scenarios.ts` 导出
+   `SCENARIOS` / `STATE_SCENARIOS` / `IN_FLIGHT_SCENARIO` 与 `scenarioFromLocation()`，
+   类型由数组派生（`as const` + `satisfies`），所以「加到 union 没加到数组」现在编译不过。
+   `tests/contract/scenario-states.test.ts` 把四个消费者钉在一起：E2E 挂载的集合、
+   布局门禁 import 的常量（且 target 里不许再手写状态名）、README 中英两半（每态各两次）、
+   以及 `docs/manual-verification.md` 的走查清单。
+2. **`loadURL` 只有一处**：探针原来把「丢 axe、换 URL、记住当前页」三件事写在三个调用点，
+   少写一行就静默地把下一个 target 量在上一页上。现在只有 `loadOnly()` 调 `loadURL`，
+   复位与记录在同一处完成，契约测试断言调用点恰好一个。
+3. **量得到的两个真缺陷（都在门禁侧，不是产品）**：
+   - 量测脚本假定 shell 在场：`?scenario=error` 走的是 App.tsx 的 `if (fatal)` 分支，
+     没有 `.project-chip`，`text(null)` 抛 TypeError，整个 target 报
+     「Script failed to execute」——报的是探针，不是屏幕。`text()` / `visible()` 现在接受缺失元素。
+   - 控制台错误被记到了错误的帧上：`consoleErrors` 累积整轮，每个结果带的是「到目前为止」，
+     于是真正抛错的那一帧干净、后面每一帧背着同一条错。现在每个 target 开始时快照长度，
+     归属还原为「这一帧在屏上时发生的事」。
+4. **五态进几何门禁**：`state-<name>` target 由 `STATE_SCENARIOS` 生成，五条内容断言
+   （量到的正是它自称的状态、empty 没有会话行且 chip 是「打开项目文件夹」、
+   error 真的是错误面板且没有预览列、permission 真的有 `role="dialog" aria-modal` 的弹窗），
+   加上现有的全部几何不变量（不横向溢出、无塌缩、无裁切、无文字叠字、无控件出屏、无控制台错误）。
+   窗口级不变量对五态照旧生效；「量到的是有数据的应用」只对 happy path 的 target 成立，
+   由 `POPULATED` 区分——把五态从 `GEOMETRY` 里摘掉才是错的做法。
+
+**证明它会红**：把 `if (target.url !== loadedUrl)` 改成不重载（回到上一轮之前的写法）后，
+5 条「`?scenario=X` measured another state」+ error 面板 + 弹窗 + empty 行数共 8 条断言打红；
+恢复后 30/30 绿。
+
+门禁：`npm run typecheck` / `npm run lint` / `npm test`（含 `xvfb-run` 下的
+`tests/contract/layout.test.ts`，30 项）/ `npm run test:e2e` 全绿。
+
 ## 下一刀（按 DoD 未勾项）
 
 - Windows 桌面补跑步骤 1–6（唯一硬缺口）。
@@ -104,3 +141,29 @@ happy path（`critical-path.e2e.test.tsx`），五个状态各自画了什么，
 - 随包 feed（`github.com/.../releases/latest/download/update-feed.json`）在能连 `github.com`
   的机器上跑一次；顺带记录「版本相等 → 已是最新版本」与「版本更高 → 发现新版本」两条分支，
   后者要等一个真比 `1.0.0` 新的 release。
+
+## 本轮（2026-11-04 深夜）发布出去的 feed 被当成被测对象
+
+上面每一行问的都是「应用在真机上做了什么」。这一轮问的是另一件事：**发布出去的那份 feed 文档本身对不对**。
+
+README 中英两半都写着「安装包必须带 `sha256`，没有哈希就不会安装」，`update-feed.ts` 真的这么执行，
+`tests/contract/update-integrity.test.ts` 钉住了它。但这些说的都是**代码**。没有一条在检查**发布出去的字节**，
+而字节才是用户的应用真正读的东西。
+
+1. **`scripts/verify-release-feed.mjs`**：取随包 `update-config.json` 指的那份 feed，用**应用自己的规则**判它
+   （`checkChannelUrl` / `normalizeSha256` 从 `apps/desktop/dist/main/update-feed.js` 导入，不写第二份），
+   再对安装包 URL 发一次 HEAD，把「feed 描述的是一份真的在那里的文件」量出来而不是假定。
+   退出码 0/1；`no-size` 是唯一的 warn（应用能装，只是丢掉截断检查）。
+2. **量到的真缺陷**：`v1.0.0` 发布出去的 `update-feed.json` 没有 `sha256`、没有 `size`，URL 还是
+   `releases/latest/download/...`。版本检查读得动，所以「已发布版本 == 已安装版本」期间完全看不见；
+   等 1.1.0 发布，每个用户的下载都会被 `no-hash` 拒绝，更新通道对所有人同时坏掉。
+   这一条在表里记的是**红**，不是「未验证」——差别在于现在有命令、有输出、有修法。
+3. **`tests/contract/release-feed.test.ts`（24 项）**：判定的表驱动（每种错法产出指名它的 finding，
+   一份正确的 feed 产出零条——不能变绿的门禁会被关掉）、词表完整性（每个 code 都有 severity 与句子，
+   `no-size` 是唯一的 warn）、以及「不许重述规则」的源码扫描（脚本里不许出现 64 位十六进制模式或
+   `'https:'` 比较）。安装包文件名从 `package.json` 的 `build.productName` 读，产品改名会让这里先红。
+
+**证明它会红**：把 `judgeFeedDocument` 里的 `normalizeSha256` 判断删掉，`no-sha256` 那组立刻红；
+把 `installer-latest-url` 的正则去掉，`releases/latest` 那组红。恢复后 24/24 绿。
+
+门禁：`npx vitest run tests/contract/release-feed.test.ts` 24 项全绿；`npx eslint` 与 `npx knip` 无新增问题。

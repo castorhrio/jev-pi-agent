@@ -243,3 +243,51 @@ DOM 断言证明「该有的字在屏上、不该有的不在」，证明不了�
 
 - 上表至少有一行来自 **Windows 桌面**，覆盖步骤 1–6。
 - 任何一步写的是「阻塞」或「未跑」，发布说明里就得如实写出来，不能当作通过。
+
+## 已发布的 feed 本身（2026-11-04，`scripts/verify-release-feed.mjs`）
+
+上面每一行问的都是「应用在真机上做了什么」。这一行问的是另一件事：**发布出去的那份 feed 文档本身对不对**。
+README 中英两半都写着「安装包必须带 `sha256`，没有哈希就不会安装」，`update-feed.ts` 也真的这么执行，
+`tests/contract/update-integrity.test.ts` 钉住了它——但这些说的都是**代码**，没有一条在检查**发布出去的字节**。
+
+在能连 `github.com` 的机器上跑：
+
+```bash
+npm run build:main -w @ucad/desktop
+node scripts/verify-release-feed.mjs
+```
+
+2026-11-04 对 `v1.0.0` 的真实结果（退出码 1）：
+
+```
+feed: https://github.com/castorhrio/jev-pi-agent/releases/latest/download/update-feed.json
+version: this build is 1.0.0
+[FAIL] no-sha256: the feed publishes no sha256, so the app refuses to install what it downloads — null
+[warn] no-size: the feed publishes no size, so a truncated download is only caught after hashing — absent
+[FAIL] installer-latest-url: the installer URL uses releases/latest, which 404s once a newer release exists
+FAIL — 2 failure(s), 1 warning(s)
+```
+
+发布出去的 `update-feed.json` 只有 `version` / `notes` / `url` 三个字段。这意味着：
+
+- **版本检查读得动，安装读不动。** 应用读这份 feed 会答「已是最新版本」，所以缺陷在「已发布版本 == 已安装版本」
+  期间完全看不见；等 1.1.0 发布的那一天，每个用户的检查都会说「发现新版本」，下载跑完，
+  `verifyInstaller()` 以 `no-hash` 拒绝——更新通道对所有人同时坏掉，而那一刻没人在看 feed。
+- **`releases/latest/download/UCAD-Setup-1.0.0.exe` 是 `make-update-feed.mjs` 开头专门警告过的坑**：
+  `latest` 指向最新 release，1.1.0 一发布，这个 URL 就 404。
+
+修法就是仓库里已有的那条命令（它会把哈希算进文档、并把 URL 钉到 `v<version>` 的 release）：
+
+```bash
+node scripts/make-update-feed.mjs --version 1.0.0 \
+  --installer release/UCAD-Setup-1.0.0.exe \
+  --out release/update-feed.json
+```
+
+然后把 `release/update-feed.json` 作为 release asset 覆盖上传。**本轮没有做这一步**：覆盖已发布 release 的
+资产需要 GitHub 写权限，本机没有 token，且 122 MB 的安装包在这台机器上下载不下来（无法重算哈希）。
+所以这一条在 `docs/dod-status.md` 里记的是「红」，不是「通过」。
+
+脚本能证明什么、不能证明什么：它证明 feed **带**哈希、哈希**是**哈希、feed 写的 `size` 与宿主实际服务的
+`Content-Length` 一致、URL 钉在本次 release 而不是 `latest`。它**不**下载安装包，所以证明不了发布的哈希
+就是发布文件的哈希——那是 120 MB 的读取，正确的位置是算哈希的那一步（`make-update-feed.mjs`）。

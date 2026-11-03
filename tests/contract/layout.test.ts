@@ -41,6 +41,10 @@ import { fileURLToPath } from 'node:url';
 import electronPath from 'electron';
 import { createServer, type ViteDevServer } from 'vite';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import {
+  IN_FLIGHT_SCENARIO,
+  STATE_SCENARIOS,
+} from '../../apps/desktop/src/renderer/src/dev/scenarios';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(here, '..', '..');
@@ -124,6 +128,17 @@ interface Measurement {
   height: number;
   url: string;
   mounted: boolean;
+  /** The scenario the fixture says it installed, read off <html data-ucad-fixture>. */
+  scenario?: string;
+  /**
+   * The state this target exists to measure, when it is one of the five.
+   *
+   * Absent on the width sweeps and the surface walk, which open the populated
+   * happy path. The distinction is load-bearing below: "measured a populated
+   * app" is a rule about those targets and a false one about `?scenario=empty`
+   * — which is *supposed* to have no sessions in the rail.
+   */
+  state?: string;
   error?: string;
   viewport: { width: number; height: number };
   document: { scrollWidth: number; scrollHeight: number; clientWidth: number };
@@ -131,6 +146,10 @@ interface Measurement {
     treeRows: number;
     projectChip: string;
     previewVisible: boolean;
+    /** App.tsx's 'if (fatal)' screen: the pane a failed first load paints. */
+    errorPane: boolean;
+    /** The permission prompt, the one overlay that announces itself as a modal. */
+    dialogOpen: boolean;
     bodyChars: number;
   };
   horizontalOverflow: number;
@@ -180,6 +199,14 @@ function loadingMarkers(): string[] {
     'could not read common.loading out of the dictionary, so the loading check would be vacuous',
   ).toBeGreaterThan(0);
   return found;
+}
+
+/** The dictionary's copy for one key, in every locale that defines it. */
+function copyFor(key: string): string[] {
+  const source = fs.readFileSync(I18N, 'utf8');
+  const escaped = key.replace(/[.]/g, '\\.');
+  const pattern = new RegExp(`'${escaped}':\\s*'([^']+)'`, 'g');
+  return [...source.matchAll(pattern)].map((m) => m[1]!);
 }
 
 let server: ViteDevServer | undefined;
@@ -291,6 +318,27 @@ beforeAll(async () => {
       surfaces: [...SURFACES],
     },
     /*
+     * The five interface states of step 6, measured instead of assumed.
+     *
+     * These are built from `STATE_SCENARIOS` rather than written out, because
+     * a hand-written list beside the fixture's own list is two facts that
+     * drift: a sixth state would be walked by hand, asserted by the E2E suite,
+     * and measured by nobody. `tests/contract/scenario-states.test.ts` keeps
+     * this import, the E2E suite and the prose on the same names.
+     *
+     * What this adds that the DOM assertions cannot: every geometry rule below
+     * now runs over a first-run screen, a failed load, a half-broken load and a
+     * modal — the states where a column collapses or a control leaves the
+     * window, and the states no width sweep ever visited.
+     */
+    ...STATE_SCENARIOS.map((state) => ({
+      name: `state-${state}`,
+      state,
+      width: PANEL_WIDTH,
+      height: HEIGHT,
+      url: `${base}?scenario=${state}`,
+    })),
+    /*
      * The frame where the app is still fetching, which had been checked by
      * hand for five rounds and never managed to be seen.
      */
@@ -298,7 +346,7 @@ beforeAll(async () => {
       name: 'loading-frame',
       width: PANEL_WIDTH,
       height: HEIGHT,
-      url: `${base}?scenario=loading`,
+      url: `${base}?scenario=${IN_FLIGHT_SCENARIO}`,
       inFlight: true,
       markers: loadingMarkers(),
     },
@@ -326,7 +374,18 @@ beforeAll(async () => {
   measurements = parsed.results;
   failure = parsed.failure;
   // Derived here, not at module scope: see the note on `GEOMETRY` below.
-  GEOMETRY = measurements.filter((m) => m.geometry !== false);
+  /*
+   * Only frames that were measured *and* mounted.
+   *
+   * An unmounted target is already a failure, reported by "mounted the app at
+   * every gated width" with the probe's own reason. Letting its empty slot into
+   * these loops turns that sentence into a TypeError about comparing null with
+   * a number — a stack trace naming the assertion instead of the screen that
+   * did not load. Skips are for frames that carry no geometry at all (the
+   * in-flight one), which is `geometry: false`.
+   */
+  GEOMETRY = measurements.filter((m) => m.geometry !== false && m.mounted);
+  POPULATED = GEOMETRY.filter((m) => m.state === undefined);
   fs.rmSync(outFile, { force: true });
 }, 240_000);
 
@@ -356,6 +415,21 @@ beforeAll(async () => {
  */
 let GEOMETRY: Measurement[] = [];
 
+/**
+ * The measured frames that opened the populated happy path.
+ *
+ * The geometry rules below fall into two kinds: invariants of the *window*
+ * (no sideways scrolling, nothing pushed off screen, no collapsed region),
+ * which every measured frame must satisfy, and invariants of a *populated
+ * workspace* (rows in the rail, a workspace chip), which are true of the width
+ * sweeps and the surface walk and deliberately false of `?scenario=empty`.
+ * Running the second kind over every frame made "measured the app, not a shell
+ * that had not loaded yet" fail on the first-run screen it was never about —
+ * and the tempting repair, dropping the state targets from `GEOMETRY`, would
+ * have quietly exempted five screens from the invariants that matter.
+ */
+let POPULATED: Measurement[] = [];
+
 afterAll(async () => {
   await server?.close();
 });
@@ -379,6 +453,118 @@ function lines(rows: Array<Record<string, unknown>>): string {
 function codeOnly(source: string): string {
   return source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
 }
+
+describe('the interface states are measured, not assumed', () => {
+  /*
+   * `state-<name>` targets measure the five states step 6 asks a person to
+   * open. Two things are asserted here, and neither is about pixels:
+   *
+   *  - the frame measured is the state that was asked for. The probe loads a
+   *    URL per target, and the round before this one found that it had been
+   *    reporting the first scenario's geometry under the other four names —
+   *    a clean result about the wrong screen. The fixture stamps the installed
+   *    scenario onto `<html>`, the measurement carries it back, and this is
+   *    the assertion that closes it.
+   *  - a first-run screen really is one. `empty` has no workspace and no
+   *    sessions, so a measurement that found tree rows was measuring a
+   *    different state (or a stale page) no matter what the URL said.
+   *
+   * The geometry rules below apply to these targets too: they are the states
+   * where a column collapses or a control leaves the window, and no width
+   * sweep ever visited them.
+   */
+  it.each(STATE_SCENARIOS)('%s was measured on the state it names', (state) => {
+    const found = measurements.filter((m) => m.name === `state-${state}`);
+    expect(found.length, `no measurement for ?scenario=${state}`).toBeGreaterThan(0);
+    expect(found.map((m) => m.error ?? ''), `?scenario=${state} did not mount`).toEqual(
+      found.map(() => ''),
+    );
+    expect(found.map((m) => m.scenario), `?scenario=${state} measured another state`).toEqual(
+      found.map(() => state),
+    );
+  });
+
+  it('the failed-load state really is the failed-load pane', () => {
+    /*
+     * `?scenario=error` is the one state that does not paint the shell: every
+     * core read rejects and App.tsx takes its 'if (fatal)' branch, so there is
+     * no rail, no statusbar and no preview column. That made it the state the
+     * probe could not photograph at all until this round — it waited for a
+     * statusbar that was never coming, and the measurement script threw on the
+     * missing chip before that.
+     *
+     * The assertion is therefore about the pane being on screen *instead of*
+     * the shell: the error pane is there, and the preview column is not. A
+     * frame that said `state: error` while showing the populated shell would
+     * pass a geometry check and be a clean result about the wrong screen.
+     */
+    const error = measurements.filter((m) => m.name === 'state-error');
+    expect(error.length, 'no measurement for ?scenario=error').toBeGreaterThan(0);
+    for (const m of error) {
+      expect(m.mounted, `?scenario=error did not mount: ${m.error ?? ''}`).toBe(true);
+      expect(m.content.errorPane, '?scenario=error measured the shell, not the error pane').toBe(
+        true,
+      );
+      expect(m.content.previewVisible, 'the error pane has no preview column').toBe(false);
+    }
+    const shellStates = GEOMETRY.filter(
+      (other) => other.state !== undefined && other.state !== 'error',
+    );
+    for (const m of shellStates) {
+      expect(m.content.errorPane, `?scenario=${m.state} painted the failed-load pane`).toBe(false);
+    }
+  });
+
+  it('the permission state really has a prompt on screen', () => {
+    /*
+     * The security loop is only walkable if the prompt is *there*: the E2E
+     * suite asserts its five fields and the two answers in happy-dom, and this
+     * asserts that the same scenario, in a real layout engine at 1440px, still
+     * has an overlay on screen — and that the four other states have none. A
+     * modal that stopped rendering would leave the panel behind it looking
+     * fine at every width.
+     */
+    const permission = measurements.filter((m) => m.name === 'state-permission');
+    expect(permission.length, 'no measurement for ?scenario=permission').toBeGreaterThan(0);
+    for (const m of permission) {
+      expect(m.mounted, `?scenario=permission did not mount: ${m.error ?? ''}`).toBe(true);
+      expect(m.content.dialogOpen, '?scenario=permission had no permission prompt on screen').toBe(
+        true,
+      );
+    }
+    const otherStates = GEOMETRY.filter(
+      (other) => other.state !== undefined && other.state !== 'permission',
+    );
+    for (const m of otherStates) {
+      expect(m.content.dialogOpen, `?scenario=${m.state} had an unexpected modal open`).toBe(false);
+    }
+  });
+
+  it('the first-run state really has no workspace', () => {
+    /*
+     * The topbar chip shows the workspace name, or the invitation to open one
+     * when there is no workspace. So "no workspace" is not an empty chip — it
+     * is a chip that asks the user to open a folder, and asserting the empty
+     * string would have failed on a perfectly correct screen. The copy comes
+     * out of the dictionary in every locale it defines, so the assertion is
+     * about the product's own words rather than a string typed here.
+     */
+    const invitations = copyFor('welcome.open');
+    expect(invitations.length, 'could not read welcome.open out of the dictionary').toBeGreaterThan(
+      0,
+    );
+    const empty = measurements.filter((m) => m.name === 'state-empty');
+    expect(empty.length).toBeGreaterThan(0);
+    for (const m of empty) {
+      expect(m.content.treeRows, 'the empty state rendered session rows').toBe(0);
+      expect(
+        invitations.some((copy) => m.content.projectChip.includes(copy)),
+        `the empty state's chip names a workspace instead of offering to open one: ` +
+          JSON.stringify(m.content.projectChip),
+      ).toBe(true);
+    }
+  });
+});
 
 describe('layout in a real browser engine', () => {
   /*
@@ -460,8 +646,9 @@ describe('layout in a real browser engine', () => {
     // measured, and reported a clean 1440px — of a first-run screen with no
     // workspace and no sessions, because every read was still in flight. A
     // green measurement of the wrong screen is worse than no gate, so the
-    // state that was measured is part of what gets asserted.
-    for (const m of GEOMETRY) {
+    // state that was measured is part of what gets asserted. Only the targets
+    // that opened the populated scenario can answer it; see POPULATED.
+    for (const m of POPULATED) {
       expect(
         m.content.treeRows,
         `${m.width}px: measured before the data arrived (no rows in the rail); ` +
@@ -493,7 +680,10 @@ describe('layout in a real browser engine', () => {
       ...shedBlocks.map((block) => Number(/\(max-width:\s*(\d+)px\)/.exec(block)![1])),
     );
 
-    for (const m of GEOMETRY) {
+    // `state-error` is excluded with the rest: the failed-load pane has no
+    // preview column at all, and that is the screen working, not the media
+    // query failing.
+    for (const m of POPULATED) {
       // Only the chat surface keeps the preview column; the panels take the
       // full main column, so "no preview there" is correct, not a failure.
       if (m.surface !== 'chat') continue;

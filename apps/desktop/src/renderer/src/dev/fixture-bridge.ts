@@ -35,6 +35,15 @@
  *   `error`     core reads reject, to inspect error states
  *   `partial`   some panels healthy, some broken (the realistic failure)
  *   `permission` a pending permission request, for the security loop
+ *
+ * The names themselves live in `./scenarios.ts`, not here. They used to be a
+ * hand-written union beside a hand-written array in this file — two spellings
+ * of one fact, so a state added to the union and not the array type-checked
+ * and was then unreachable from a URL (`scenarioFromLocation` validated
+ * against the array). The list is the fact now, the type is derived from it,
+ * and `tests/contract/scenario-states.test.ts` keeps the four consumers — this
+ * bridge, the E2E suite, the layout gate, and the prose above — on the same
+ * five state names.
  */
 
 import type {
@@ -70,23 +79,14 @@ import type {
   UpsertMcpServerRequest,
   UpdateStatus,
 } from '@ucad/contracts';
+import { scenarioFromLocation, type Scenario } from './scenarios';
 
-export type Scenario =
-  | 'default'
-  | 'empty'
-  | 'loading'
-  | 'error'
-  | 'partial'
-  | 'permission';
-
-export const SCENARIOS: Scenario[] = [
-  'default',
-  'empty',
-  'loading',
-  'error',
-  'partial',
-  'permission',
-];
+/*
+ * Re-exported rather than redefined: every existing importer (`tests/e2e/*`,
+ * `tests/contract/fixture-bridge.test.ts`) keeps working, and there is still
+ * only one place the names are written down.
+ */
+export { SCENARIOS, type Scenario } from './scenarios';
 
 // ---------------------------------------------------------------------------
 // seed data
@@ -1793,12 +1793,6 @@ export function createFixtureApi(
   };
 
   return { api, emit, menu, idle, pending };
-}
-
-/** Reads the scenario from `?scenario=`; defaults to `default`. */
-function scenarioFromLocation(search: string): Scenario {
-  const raw = new URLSearchParams(search).get('scenario');
-  return (SCENARIOS as string[]).includes(raw ?? '') ? (raw as Scenario) : 'default';
 }
 
 /**

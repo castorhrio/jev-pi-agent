@@ -29,9 +29,22 @@ export const MEASURE = `(() => {
       : '';
     return el.tagName.toLowerCase() + id + cls;
   };
-  const text = (el) => (el.innerText || el.textContent || '').trim();
+  /*
+   * Both helpers take a possibly-missing element on purpose.
+   *
+   * The first version assumed the shell was on screen: the measurement asked
+   * '.project-chip' for its text, and the one state that does *not* paint the
+   * shell — the error pane a first load that failed outright shows — made the
+   * whole script throw a TypeError. The gate then reported "state-error:
+   * Script failed to execute", which names the harness rather than the screen,
+   * and its console error was attributed to whichever frame happened to be
+   * measured next. A measurement of 'this element is not here' is a fact; only
+   * a measurement of 'nothing at all' is a failure.
+   */
+  const text = (el) => (el ? (el.innerText || el.textContent || '').trim() : '');
   const visible = (el) =>
-    typeof el.checkVisibility === 'function' ? el.checkVisibility() : true;
+    el !== null && el !== undefined &&
+    (typeof el.checkVisibility === 'function' ? el.checkVisibility() : true);
 
   const viewportWidth = window.innerWidth;
   const viewportHeight = window.innerHeight;
@@ -255,6 +268,16 @@ export const MEASURE = `(() => {
   }
 
   return JSON.stringify({
+    /*
+     * Which state this frame actually is.
+     *
+     * The fixture stamps the installed scenario onto <html>, so a measurement
+     * can say what it photographed instead of relying on the caller to
+     * remember which URL it asked for — the round that measured five states
+     * against the first one's geometry is exactly what that bookkeeping
+     * missed.
+     */
+    scenario: (document.documentElement.dataset.ucadFixture || ''),
     viewport: { width: viewportWidth, height: viewportHeight },
     document: {
       scrollWidth: doc.scrollWidth,
@@ -269,10 +292,20 @@ export const MEASURE = `(() => {
     content: {
       treeRows: document.querySelectorAll('.rail .tree-row').length,
       projectChip: text(document.querySelector('.project-chip')).slice(0, 60),
-      previewVisible: (() => {
-        const el = document.querySelector('.preview');
-        return el !== null && visible(el);
-      })(),
+      previewVisible: visible(document.querySelector('.preview')),
+      /*
+       * The two screens that are *not* the shell, named rather than inferred.
+       *
+       * A measurement that reports geometry alone cannot tell "the error pane
+       * is laid out correctly" from "the shell was on screen again because the
+       * URL was ignored". These two are read exactly as App.tsx paints them:
+       * the fatal branch is a '.pane' directly under '.app' with an h1, and the
+       * permission dialog is the one overlay that announces itself as a modal.
+       */
+      errorPane:
+        document.querySelector('.app > .pane > .pane-head h1') !== null &&
+        document.querySelector('.app > .pane > .row-gap') !== null,
+      dialogOpen: document.querySelector('.dialog[role="dialog"][aria-modal="true"]') !== null,
       bodyChars: text(document.body).length,
     },
     horizontalOverflow: round(horizontalOverflow),
@@ -299,11 +332,31 @@ export const SETTLE = `(async () => {
   // Two frames: one for the state to be committed, one for the layout that
   // commit produced to be flushed.
   await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+  /*
+   * Two shapes count as settled, which is why this reports a shape rather than
+   * a boolean.
+   *
+   * A first load that succeeds paints the shell, whose statusbar carries text.
+   * A first load that *fails* paints the error pane instead (App.tsx's
+   * 'if (fatal)' branch): no rail, no statusbar, an h1 and a retry button. That
+   * is a settled screen — it is the screen a person sees when the store cannot
+   * be read — and waiting only for a statusbar made '?scenario=error'
+   * unmeasurable: the probe waited out its whole budget and then reported "the
+   * app never settled" about a window that had settled long before.
+   *
+   * '.app > .pane' is the error pane's own shape: in the ordinary shell the
+   * topbar, the body and the statusbar are the direct children of '.app', and
+   * every other pane lives inside '.body'.
+   */
+  const errorPane =
+    document.querySelector('.app > .pane > .pane-head h1') !== null &&
+    document.querySelector('.app > .pane > .row-gap') !== null;
   return JSON.stringify({
     seam: true,
     scenario: seam.scenario,
     treeRows: document.querySelectorAll('.rail .tree-row').length,
     hasStatusbar: Boolean((document.querySelector('.statusbar')?.innerText || '').trim()),
+    hasErrorPane: errorPane,
   });
 })()`;
 

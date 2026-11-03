@@ -139,7 +139,10 @@ async function waitForData(win, timeoutMs = 30_000) {
       const answer = await win.webContents.executeJavaScript(SETTLE);
       const parsed = JSON.parse(answer);
       last = JSON.stringify(parsed);
-      if (parsed.seam && parsed.hasStatusbar) {
+      // Either settled shape: the shell with data in it, or the error pane a
+      // first load that failed outright paints. See SETTLE for why both are
+      // settled and why the second one used to hang this loop.
+      if (parsed.seam && (parsed.hasStatusbar || parsed.hasErrorPane)) {
         step(`data settled: ${last}`);
         return parsed;
       }
@@ -220,6 +223,17 @@ async function runTargets(targets) {
 
   const results = [];
   /*
+   * Console errors are attributed to the frame that produced them.
+   *
+   * The listener appends to one list for the whole run, and every result used
+   * to carry `[...consoleErrors]` — the list *so far*. That reads correctly
+   * only while there are none. The first real one (a measurement script that
+   * threw on the error pane) showed up not on the frame that threw but on every
+   * frame after it, so the report named the wrong screen and the failing one
+   * looked clean. Snapshotting the length at the start of each target keeps the
+   * attribution to "messages seen while this target was on screen".
+   */
+  /*
    * axe is injected once per page load and survives surface navigation
    * (visitScript clicks, it does not reload). Any loadURL wipes it, so the
    * flag is reset wherever the page is reloaded below.
@@ -232,7 +246,8 @@ async function runTargets(targets) {
     step('axe-core injected');
   };
   /*
-   * The URL the window is currently showing.
+   * Loading a page is one operation, because it has more than one
+   * consequence.
    *
    * Every target used to be measured against `first.url`, because the window is
    * loaded once and then only resized. That is correct for the width sweep —
@@ -241,16 +256,44 @@ async function runTargets(targets) {
    * *first* scenario's geometry under the second scenario's name. The five
    * interface states therefore could not be measured at all, and the failure
    * mode is the one this file is written against: a clean result about the
-   * wrong screen. A target whose URL differs now reloads first.
+   * wrong screen.
+   *
+   * Loading is not one line of work. It is three: drop the axe bundle (a page
+   * load takes the injected script with it), load the URL, and remember what
+   * is on screen so the next target can tell whether it needs a load at all.
+   * The probe had no page load when it was written, so this only became
+   * interesting when state targets arrived — and it was written out at three
+   * call sites, each of which has to remember all three or the next target is
+   * measured (or scanned) against the previous page. Missing the reset is
+   * *silent* whenever the following target reloads anyway, i.e. the bug hides
+   * behind the order of a fixture list.
+   *
+   * Kept by construction instead: `loadOnly()` is the only caller of
+   * `loadURL` in this file and it resets in the same breath, so a call site
+   * added later cannot forget. `tests/contract/scenario-states.test.ts`
+   * asserts there is exactly one such call site.
    */
-  let loadedUrl = first.url;
-  try {
-    step(`loading ${first.url}`);
-    await win.loadURL(first.url);
+  let loadedUrl = '';
+  const loadOnly = async (url) => {
+    step(`loading ${url}`);
+    await win.loadURL(url);
+    // A page load takes the injected axe bundle with it. Resetting here rather
+    // than at each call site is what makes "the next surface is scanned" true
+    // for every caller, including one written later.
     axeInjected = false;
-    await waitForData(win);
+    loadedUrl = url;
+  };
+  /** Load, then wait for the app to have data — the settled page. */
+  const showSettled = async (url) => {
+    await loadOnly(url);
+    return await waitForData(win);
+  };
+
+  try {
+    await showSettled(first.url);
 
     for (const target of targets) {
+      const errorsAtStart = consoleErrors.length;
       /*
        * An in-flight target wants the frame where the app is still fetching,
        * which means its own page load and **not** the settled wait. It is
@@ -259,8 +302,10 @@ async function runTargets(targets) {
        */
       if (target.inFlight === true) {
         try {
-          step(`${target.name}: loading ${target.url} to catch the in-flight frame`);
-          await win.loadURL(target.url);
+          // Deliberately *not* `showSettled`: this target exists for the frame
+          // before the reads come back.
+          await loadOnly(target.url);
+          step(`${target.name}: caught the in-flight frame`);
           const flight = JSON.parse(
             await win.webContents.executeJavaScript(
               inFlightScript(target.markers ?? []),
@@ -281,7 +326,7 @@ async function runTargets(targets) {
             geometry: false,
             mounted: flight.shell === true && flight.pending > 0,
             flight,
-            consoleErrors: [...consoleErrors],
+            consoleErrors: consoleErrors.slice(errorsAtStart),
           });
         } catch (error) {
           results.push({
@@ -295,20 +340,13 @@ async function runTargets(targets) {
           });
         }
         step(`${target.name}: restoring the settled shell`);
-        await win.loadURL(first.url);
-        axeInjected = false;
-        await waitForData(win);
-        loadedUrl = first.url;
+        await showSettled(first.url);
         continue;
       }
 
       try {
         if (target.url !== loadedUrl) {
-          step(`${target.name}: loading ${target.url}`);
-          await win.loadURL(target.url);
-          axeInjected = false;
-          await waitForData(win);
-          loadedUrl = target.url;
+          await showSettled(target.url);
         }
         step(`${target.name}: resizing to ${target.width}x${target.height}`);
         win.setContentSize(target.width, target.height ?? 900);
@@ -374,7 +412,7 @@ async function runTargets(targets) {
               label,
               ...measured,
               ...(target.surfaces ? { violations, ...(axeError ? { axeError } : {}) } : {}),
-              consoleErrors: [...consoleErrors],
+              consoleErrors: consoleErrors.slice(errorsAtStart),
               mounted: true,
             });
           } catch (error) {
