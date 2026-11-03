@@ -253,7 +253,7 @@ README 中英两半都写着「安装包必须带 `sha256`，没有哈希就不�
 在能连 `github.com` 的机器上跑：
 
 ```bash
-npm run build:main -w @ucad/desktop
+npm run typecheck
 node scripts/verify-release-feed.mjs
 ```
 
@@ -291,3 +291,61 @@ node scripts/make-update-feed.mjs --version 1.0.0 \
 脚本能证明什么、不能证明什么：它证明 feed **带**哈希、哈希**是**哈希、feed 写的 `size` 与宿主实际服务的
 `Content-Length` 一致、URL 钉在本次 release 而不是 `latest`。它**不**下载安装包，所以证明不了发布的哈希
 就是发布文件的哈希——那是 120 MB 的读取，正确的位置是算哈希的那一步（`make-update-feed.mjs`）。
+
+## 2026-11-03 复量：本机现在能连 `github.com`，于是把上面这条又跑了一遍
+
+上一节写的「本机到 `github.com` 不通」是那台机器的状态。同一天晚些时候网络通了，重跑：
+
+```
+$ npm run typecheck            # 只为拿到 apps/desktop/dist/main/update-feed.js
+$ node scripts/verify-release-feed.mjs
+feed: https://github.com/castorhrio/jev-pi-agent/releases/latest/download/update-feed.json
+version: this build is 1.0.0
+[FAIL] no-sha256: the feed publishes no sha256, so the app refuses to install what it downloads — null
+[warn] no-size: the feed publishes no size, so a truncated download is only caught after hashing — absent
+[FAIL] installer-latest-url: the installer URL uses releases/latest, which 404s once a newer release exists — https://github.com/castorhrio/jev-pi-agent/releases/latest/download/UCAD-Setup-1.0.0.exe
+FAIL — 2 failure(s), 1 warning(s)
+```
+
+退出码 1，与上一节一致——变的不是结论，是**证据的来源**：这次 feed 与安装包 URL 都真的取到了
+（`HEAD` 回 200），所以「红」不再依赖一台连不上网的机器的转述。
+
+顺带把「修好之后长什么样」也量了出来，用的是 GitHub 自己对该资产的陈述，不是人抄的哈希：
+
+```
+host asset: sha256:76bbe0c612ac67575ac40a543929a7691ba9f9e185343297cbc3badda9ea5a48  size 122806279
+HEAD https://github.com/castorhrio/jev-pi-agent/releases/download/v1.0.0/UCAD-Setup-1.0.0.exe
+  → 200, content-length: 122806279
+```
+
+把这三个数（URL 钉 `download/v1.0.0/`、`sha256`、`size`）写成修正版文档，交给同一套判定：
+
+```
+PASS — the corrected document produces no findings, and the host serves 122806279 bytes
+hasFailure: false
+```
+
+也就是说**剩下的只有一次上传**：本机没有任何 GitHub 令牌（`gh` 也未安装），覆盖 release asset 这一步
+在别处做。上传后重跑一次 `node scripts/verify-release-feed.mjs`，期望退出码 0。
+
+### 写 feed 的那一步现在也跑同一套判定
+
+`scripts/make-update-feed.mjs` 以前写完就退出，于是「写出来的是不是能装的 feed」由另一条命令在另一天回答。
+现在它在写之前问，被拒就**不写文件**、退出码 1：
+
+```
+$ node scripts/make-update-feed.mjs --version 1.0.0 --installer /tmp/feeddemo/UCAD-Setup-1.0.0.exe \
+    --url https://github.com/castorhrio/jev-pi-agent/releases/latest/download/UCAD-Setup-1.0.0.exe \
+    --out /tmp/feeddemo/update-feed.json
+[FAIL] installer-latest-url: the installer URL uses releases/latest, which 404s once a newer release exists — https://github.com/castorhrio/jev-pi-agent/releases/latest/download/UCAD-Setup-1.0.0.exe
+
+refused: /tmp/feeddemo/update-feed.json was not written — the app's own feed check rejects this document.
+Fix the URL (a release tag, not `latest`) or the version, then run this again.
+$ echo $?
+1
+```
+
+这就是 v1.0.0 那份文档的 URL 形状：以前它能被原样写出来，现在写不出来。
+默认参数（`releases/download/v<版本>/UCAD-Setup-<版本>.exe`）照旧通过，并把校验命令的提醒一起打出来。
+门禁：`tests/contract/feed-writer.test.ts` 12 项（判定四种错法各一条、线上 v1.0.0 文档一条、
+源码线序一条、CLI 退出码与「不落文件」两条）。

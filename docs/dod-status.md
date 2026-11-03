@@ -9,9 +9,9 @@
 | 可解释路由 | **有证据** | 真机步骤 2 通过：7 行决策各带 rationale / confidence / 引擎，回落如实记录；`tests/contract/decision-chain.test.ts` 钉住链与实跑一致 | Windows 桌面复跑一次 |
 | 权限门不可绕 | **有证据（自动化 + 五态断言）** | 执行前允许/拒绝进事件流，审计可查；`tests/contract/permission-*.test.ts`、`tests/e2e/critical-path.e2e.test.tsx`；步骤 6 的权限弹窗已进 `tests/e2e/scenarios.e2e.test.tsx`（类别/风险/资源/命令/理由五件可读，四个回答都在，点拒绝后弹窗消失且事件流里出现 `permission.resolved`） | 真机上的**视觉**走查（排版、长中文、窄窗口）仍未做 |
 | Windows 安装包航运 · NSIS 产出与安装 | **未验证** | `npm run dist` 走 electron-builder 的 `nsis` 目标（`package.json` 的 `build.win`），产物 `UCAD-Setup-<版本>.exe`；未签名 | **Windows 桌面**：装一次、过 SmartScreen、把提示原文记进 `docs/manual-verification.md` |
-| Windows 安装包航运 · 随包 feed 真实网络 | **红（已量到，未修）** | 在能连 `github.com` 的机器上跑了随包 feed：`node scripts/verify-release-feed.mjs` 退出码 1，`no-sha256` + `installer-latest-url`（见 `docs/manual-verification.md` 末节）。发布出去的 `update-feed.json` 只有 `version`/`notes`/`url`，没有 `sha256`/`size`，URL 用的是 `releases/latest` | 用 `make-update-feed.mjs` 重算并覆盖上传 release asset（需 GitHub 写权限 + 安装包本体）；之后重跑脚本应为 0 |
+| Windows 安装包航运 · 随包 feed 真实网络 | **红（已量到；修正版已验证干净，差一次上传）** | 能连 `github.com` 的机器上跑 `node scripts/verify-release-feed.mjs`：退出码 1，`no-sha256` + `installer-latest-url`；发布出去的 `update-feed.json` 只有 `version`/`notes`/`url`。修正版文档（URL 钉 `download/v1.0.0/`、`sha256=76bbe0c6…`、`size=122806279`，取自 GitHub 自己给该资产的 digest，不是人抄的）用同一套判定跑出**零 finding**，宿主 HEAD 回的 `content-length` 也正是 122806279（见 `docs/manual-verification.md`） | 覆盖上传 `update-feed.json` 这个 release asset——本机没有任何 GitHub 写权限令牌，`gh` 也未安装；上传后重跑一次脚本应为 0 |
 | Windows 安装包航运 · 拒绝路径（明文 / 非 URL） | **有证据** | 真机步骤 4：明文覆盖 → `检查更新失败: 更新源必须使用 https…`，日志 `update feed ignored: …`；`tests/contract/update-feed.test.ts` | — |
-| 门禁即 DoD | **有证据** | `npm run typecheck && lint && knip && test && test:e2e` 全绿；注入/交接/凭据/更新合约测试能打红 | CI 等价跑一次留档 |
+| 门禁即 DoD | **有证据** | `npm run typecheck && lint && knip && test && test:e2e` 全绿；注入/交接/凭据/更新合约测试能打红；发布物由 `tests/contract/release-feed.test.ts`（判定）与 `tests/contract/feed-writer.test.ts`（写之前跑判定）钉住 | CI 等价跑一次留档 |
 | 诚实估计与凭据 | **有证据** | 估算来源上屏（`heuristic_chars_div_4`）；凭据只进 OS 钥匙串，钥匙串不可用时启动即停并给平台补救话（`apps/desktop/src/main/keyring-gate.ts`，`tests/contract/keyring-gate.test.ts`） | Windows DPAPI 路径真机确认 |
 
 ## 本轮据此做的两件事
@@ -134,14 +134,6 @@ happy path（`critical-path.e2e.test.tsx`），五个状态各自画了什么，
 门禁：`npm run typecheck` / `npm run lint` / `npm test`（含 `xvfb-run` 下的
 `tests/contract/layout.test.ts`，30 项）/ `npm run test:e2e` 全绿。
 
-## 下一刀（按 DoD 未勾项）
-
-- Windows 桌面补跑步骤 1–6（唯一硬缺口）。
-- 步骤 6 的**视觉**走查（DOM 断言管不到排版与观感），在 Windows 那一行里一起记。
-- 随包 feed（`github.com/.../releases/latest/download/update-feed.json`）在能连 `github.com`
-  的机器上跑一次；顺带记录「版本相等 → 已是最新版本」与「版本更高 → 发现新版本」两条分支，
-  后者要等一个真比 `1.0.0` 新的 release。
-
 ## 本轮（2026-11-04 深夜）发布出去的 feed 被当成被测对象
 
 上面每一行问的都是「应用在真机上做了什么」。这一轮问的是另一件事：**发布出去的那份 feed 文档本身对不对**。
@@ -167,3 +159,66 @@ README 中英两半都写着「安装包必须带 `sha256`，没有哈希就不�
 把 `installer-latest-url` 的正则去掉，`releases/latest` 那组红。恢复后 24/24 绿。
 
 门禁：`npx vitest run tests/contract/release-feed.test.ts` 24 项全绿；`npx eslint` 与 `npx knip` 无新增问题。
+
+## 本轮（2026-11-03 夜）写 feed 的那一步，跑读取方的检查
+
+上一轮把「发布出去的字节」变成了被测对象：`scripts/verify-release-feed.mjs` 会取 release 上的
+`update-feed.json`，用应用自己的规则判它。但那是**另一条命令**、**另一台机器**、**发布之后**的事。
+真正写出那份文档的是 `scripts/make-update-feed.mjs`，而它在此之前从不问自己写出来的东西能不能装。
+
+这不是假想的缺口，`--url` 就是那条缝：它存在是为了让镜像可用，而它同样能一字不差地写出
+v1.0.0 发布的那份文档——`releases/latest/download/UCAD-Setup-1.0.0.exe`。于是错误由一个命令犯下，
+由另一个命令在几天后发现。
+
+现在判定在写之前跑：
+
+- `make-update-feed.mjs` 把刚构好的文档交给 `judgeFeedDocument()`（`verify-release-feed.mjs` 里那一个，
+  规则仍从应用自己的 `update-feed.ts` 载入），有任何 fail 就**不写文件**、退出码 1，
+  并把 verifier 会打印的那几行原样打到 stderr——两条命令用同一个 `findingLine()`，不各写一套。
+- 新增 `feedRefusals(document, rules)` 纯函数，测试不用 build 也不用网络就能驱动它。
+  被拒的四种写法各有一条：`releases/latest`、指向别的 release 的镜像、文件名不带版本的安装包、明文镜像。
+  另有一条直接喂**线上那份 v1.0.0 文档**，断言它被拒（`no-sha256` / `no-size` / `installer-latest-url`）。
+- 线序也进了门禁：`tests/contract/feed-writer.test.ts` 读源码断言 `hasFailure(refusals)` 出现在
+  `writeFileSync(outPath` 之前——门在写之后，拒的就是一个已经在磁盘上等着被上传的文件。
+
+**证明它会红**：把判定整段挪到 `writeFileSync` 之后，`checks the document before anything is written to disk`
+与 CLI 那条 `exits 1 for a latest URL` 同时打红（2 项）；恢复后 12/12 绿。
+
+真实命令行（本机，v1.0.0 的 URL 形状）：
+
+```
+$ node scripts/make-update-feed.mjs --version 1.0.0 --installer /tmp/feeddemo/UCAD-Setup-1.0.0.exe \
+    --url https://github.com/castorhrio/jev-pi-agent/releases/latest/download/UCAD-Setup-1.0.0.exe \
+    --out /tmp/feeddemo/update-feed.json
+[FAIL] installer-latest-url: the installer URL uses releases/latest, which 404s once a newer release exists — https://github.com/castorhrio/jev-pi-agent/releases/latest/download/UCAD-Setup-1.0.0.exe
+
+refused: /tmp/feeddemo/update-feed.json was not written — the app's own feed check rejects this document.
+```
+
+退出码 1，`/tmp/feeddemo/` 里只有安装包，没有 feed。
+
+同时本机这轮能连 `github.com` 了，于是把「已发布 feed」这条重测了一遍（结果仍是红，但现在是
+**带宿主自述的**红）：`verify-release-feed.mjs` 仍报 `no-sha256` + `installer-latest-url`；
+GitHub 对该 release 的 `UCAD-Setup-1.0.0.exe` 自报 `sha256:76bbe0c612ac67575ac40a543929a7691ba9f9e185343297cbc3badda9ea5a48`、
+`size: 122806279`，安装包 URL 的 HEAD 也真的回 `content-length: 122806279`。
+把这三个数写进修正版文档，用同一套判定跑 → **零 finding**（`docs/manual-verification.md` 末节有完整输出）。
+所以剩下的不是「怎么修」，而是「谁有这个仓库的写权限」：本机没有任何 GitHub 令牌，`gh` 也没装。
+
+## 已知盲区（故意不做，防止后来者误补）
+
+1. **`verify-release-feed.mjs` 不比对哈希与文件本体**：它不下载安装包，所以证明不了「发布的
+   `sha256` 就是发布文件的哈希」。要证明只有两条路——120 MB 的流式读取，或 GitHub 的 asset `digest`
+   接口（本轮人工用过一次，见上）。两条都属于**发布步骤**（`make-update-feed.mjs` 算哈希的那一刻，
+   以及本轮的写前判定），不属于这条只做 HEAD 的命令；在这里补一个下载会把它变成一个 120 MB 的门禁。
+2. **布局门禁不管 `:hover` / `:focus-visible` 的观感**：几何量的是稳定帧，悬停与聚焦态要么抖要么需要
+   合成事件，量出来的断言比它防的问题更脆。`tests/contract/focus-indicator.test.ts` 管的是焦点可见性
+   这条**规则**，不是某个状态下的像素。
+3. **`release-feed.test.ts` 的源码扫描对格式敏感**：`['"]https:['"]` 这类断言只看字面量写法，
+   改写风格（比如抽成常量）会让它误报。现有意图清晰（"不许出现第二份 https 规则"），暂不改为语法级扫描——
+   语法级扫描要读 TypeScript，代价远大于它现在挡住的风险。
+
+## 下一刀
+
+- **上传修正版 feed**：这是表里唯一还剩的「红」，且已经验证过判定为绿，只差写权限。
+- **Windows 桌面六步**：唯一硬缺口，需要一台 Windows 机器，不是代码。
+- 步骤 6 的**视觉**走查（DOM 断言管不到排版与观感），同上。

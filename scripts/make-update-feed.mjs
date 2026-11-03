@@ -23,6 +23,28 @@
  * there. The default here is `releases/download/v<version>/<file>`, which
  * keeps working.
  *
+ * ## Why the writer runs the reader's check
+ *
+ * `make-update-feed` and `verify-release-feed` are two halves of one rule, and
+ * for one release they disagreed. The v1.0.0 feed was produced while the app
+ * already refused to install a feed without a hash, and while
+ * `verify-release-feed.mjs` already reported `no-sha256` and
+ * `installer-latest-url` for it — but nothing asked the writer whether the
+ * document it was about to publish was one the checker would accept. The
+ * mistake was therefore made by a command, and found by a different command,
+ * on a different machine, days later.
+ *
+ * So the judgement runs here, before the file is written: the document is
+ * handed to `judgeFeedDocument()` — the same function the verifier and its
+ * contract tests use, over the same rules imported from the app's own
+ * `update-feed.ts` — and if it would fail, nothing is written and the command
+ * exits 1. `--url` is the reason this is not theoretical: it exists so a
+ * mirror can be used, and it is exactly the flag that can point a release back
+ * at `releases/latest`.
+ *
+ * The refusal lists the findings the verifier would have printed, so the two
+ * commands report a broken feed the same way.
+ *
  * ## Usage
  *
  * ```bash
@@ -32,13 +54,23 @@
  * ```
  *
  * `--notes <file>` reads release notes from a file; `--url <url>` overrides
- * the installer URL (a self-hosted mirror, say).
+ * the installer URL (a self-hosted mirror, say) and is still held to the
+ * release-pinned rule above.
+ *
+ * Exit codes: 0 when the feed was written, 1 when the arguments are wrong or
+ * the resulting document would fail the app's own feed check.
  */
 
 import { createHash } from 'node:crypto';
 import { createReadStream, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import {
+  findingLine,
+  hasFailure,
+  judgeFeedDocument,
+  loadAppRules,
+} from './verify-release-feed.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -108,6 +140,23 @@ export async function buildFeedDocument({
   return JSON.parse(JSON.stringify(document));
 }
 
+/**
+ * What the app's own feed check says about a document about to be written.
+ *
+ * The version is passed as the *expected* version because that is the question
+ * worth asking here: this build of the feed claims to be for `version`, so the
+ * installer URL has to name that release and that file. A mirror URL is
+ * welcome; a URL that points at another release, or at `latest`, is not a
+ * mirror — it is the trap this file's header describes.
+ *
+ * Returned rather than thrown so the decision is testable without a filesystem
+ * and so `main()` can print every finding rather than the first.
+ */
+export function feedRefusals(document, rules) {
+  const version = typeof document?.version === 'string' ? document.version : '';
+  return judgeFeedDocument(document, { expectedVersion: version, rules });
+}
+
 /** Reads `--flag value` pairs out of argv. */
 function parseArgs(argv) {
   const args = {};
@@ -140,6 +189,24 @@ async function main(argv) {
 
   const out = typeof args.out === 'string' ? args.out : 'release/update-feed.json';
   const outPath = resolve(root, out);
+
+  // The reader's check, run by the writer. A feed this refuses is a feed the
+  // app would refuse to install from, or a URL that stops resolving — and the
+  // cheapest moment to find that out is before the file exists, not after it
+  // is uploaded and a different machine runs `verify-release-feed.mjs`.
+  const refusals = feedRefusals(document, await loadAppRules());
+  if (hasFailure(refusals)) {
+    for (const entry of refusals) {
+      process.stderr.write(`${findingLine(entry)}\n`);
+    }
+    process.stderr.write(
+      `\nrefused: ${out} was not written — the app's own feed check rejects this document.\n` +
+        'Fix the URL (a release tag, not `latest`) or the version, then run this again.\n',
+    );
+    process.exitCode = 1;
+    return;
+  }
+
   writeFileSync(outPath, `${JSON.stringify(document, null, 2)}\n`, 'utf8');
 
   process.stdout.write(`${JSON.stringify(document, null, 2)}\n`);
@@ -147,6 +214,10 @@ async function main(argv) {
   process.stdout.write(
     'upload this file to the release as `update-feed.json` — the app reads it from the\n' +
       'release it belongs to, and the installer URL must resolve for that release.\n',
+  );
+  process.stdout.write(
+    'then check the published bytes: `node scripts/verify-release-feed.mjs` (it fetches the\n' +
+      'feed the shipped configuration names and judges it the way the app does).\n',
   );
 }
 

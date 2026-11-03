@@ -388,10 +388,22 @@ async function headInstaller(url, timeoutMs) {
   };
 }
 
+/**
+ * One finding as one line, in the shape both callers print.
+ *
+ * `make-update-feed.mjs` prints the same lines when it refuses to publish a
+ * feed this judgement rejects. Two printers would eventually disagree about
+ * where the code goes, and the reader comparing a refusal with a red run would
+ * have to work out that they are the same finding.
+ */
+export function findingLine(entry) {
+  const severity = FEED_FINDING_SEVERITY[entry.code] === 'warn' ? 'warn' : 'FAIL';
+  return `[${severity}] ${entry.code}: ${FEED_FINDING_MESSAGE[entry.code]} — ${entry.detail}`;
+}
+
 function printFindings(findings) {
   for (const entry of findings) {
-    const severity = FEED_FINDING_SEVERITY[entry.code] === 'warn' ? 'warn' : 'FAIL';
-    console.log(`[${severity}] ${entry.code}: ${FEED_FINDING_MESSAGE[entry.code]} — ${entry.detail}`);
+    console.log(findingLine(entry));
   }
 }
 
