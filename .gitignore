@@ -8,6 +8,10 @@ out/
 /bootstrap.js
 /bootstrap.js.map
 release/
+# `docs/release/` holds the feed document that is waiting to be uploaded as a
+# release asset, not build output — the packaging directory above is ignored,
+# this one is committed on purpose.
+!/docs/release/
 *.tsbuildinfo
 .ucad-data/
 .DS_Store

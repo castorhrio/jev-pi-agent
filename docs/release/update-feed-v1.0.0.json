@@ -1,0 +1,7 @@
+{
+  "version": "1.0.0",
+  "notes": "First release published on GitHub Releases. Layout order restored; transcript no longer amputates history; handoff chain visible on open; failed reads reported instead of rendered as empty.",
+  "url": "https://github.com/castorhrio/jev-pi-agent/releases/download/v1.0.0/UCAD-Setup-1.0.0.exe",
+  "sha256": "76bbe0c612ac67575ac40a543929a7691ba9f9e185343297cbc3badda9ea5a48",
+  "size": 122806279
+}
