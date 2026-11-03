@@ -389,7 +389,7 @@ function PackDetails({
           <span className="k">{t('context.budget')}</span>
           <span className="v mono">
             {pack.budget.usedTokens} / {pack.budget.limitTokens}
-            <span className="faint"> · {t('context.remaining')} {pack.budget.remainingTokens}</span>
+            <span className="faint fs-note"> · {t('context.remaining')} {pack.budget.remainingTokens}</span>
           </span>
         </div>
         <div className="def">
@@ -405,7 +405,7 @@ function PackDetails({
           <span className="v mono">{pack.revision}</span>
         </div>
       </div>
-      <div className="faint fs-fine mt-2">
+      <div className="faint fs-note mt-2">
         {t('context.estimateNote')}
         {pack.budget.truncated ? ` · ${t('context.truncated')}` : ''}
       </div>
@@ -474,7 +474,7 @@ function ItemRow({ item }: { item: ContextItem }): JSX.Element {
         <div className="truncate" title={reference} style={{ maxWidth: 320 }}>
           {reference}
         </div>
-        <div className="faint fs-fine truncate" title={item.reason}>
+        <div className="faint fs-note truncate" title={item.reason}>
           {item.source.providerId} · {item.reason}
         </div>
       </td>

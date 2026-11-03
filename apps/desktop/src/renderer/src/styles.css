@@ -81,13 +81,28 @@
   --sp-4: 16px;
   --sp-5: 24px;
 
-  /* -- type roles: prose is sans at three sizes, identifiers are mono -----
+  /* -- type roles: prose is sans, identifiers are mono --------------------
      The "quiet note" role was written inline at 11.5px, 11px and 10.5px
      interchangeably (81 inline fontSize declarations across five values),
      so the same sentence role rendered at three sizes on one page. A role
-     has one size; these are the three. */
+     has one size; these are the roles.
+
+     --fs-min-cjk is a floor, not a role, and it is a different number from the
+     Latin one for a reason that has nothing to do with taste: a Han character
+     fills most of its em box with strokes, so at 10.5px 会话 collapses into a
+     grey block while a Latin word of the same size still resolves. The app
+     shipped section labels, table headers, badges and status-bar segments at
+     10.5-11.5px — every one of them Chinese — and nothing measured type size,
+     so "readable" was an opinion the CSS never had to defend.
+
+     Identifiers keep the smaller sizes: a path, a hash, a seq number, a count
+     or an arrow glyph is ASCII, and the floor only governs boxes with Han text.
+     The number below is the same one the layout gate measures with
+     (scripts/layout-page-scripts.mjs → CJK_FLOOR_PX); tests/contract/typography
+     .test.ts fails if the two ever disagree. */
+  --fs-min-cjk: 12px;
   --fs-body: 13px;
-  --fs-note: 11.5px;
+  --fs-note: var(--fs-min-cjk);
   --fs-fine: 10.5px;
 
   --r-sm: 4px;
@@ -257,7 +272,7 @@ button.link {
   border: none;
   color: var(--accent);
   padding: 0 4px;
-  font-size: 11.5px;
+  font-size: var(--fs-min-cjk);
   border-radius: 0;
 }
 
@@ -422,7 +437,7 @@ code,
 .locale {
   width: auto;
   padding: 3px 24px 3px 7px;
-  font-size: 11.5px;
+  font-size: var(--fs-min-cjk);
   background-color: transparent;
   border-color: transparent;
   -webkit-app-region: no-drag;
@@ -522,7 +537,7 @@ code,
   align-items: center;
   justify-content: space-between;
   padding: 11px 12px 6px;
-  font-size: 10.5px;
+  font-size: var(--fs-min-cjk);
   font-weight: 600;
   letter-spacing: 0.09em;
   text-transform: uppercase;
@@ -806,7 +821,15 @@ code,
   margin: 0 0 var(--sp-1);
   font-size: 18px;
   font-weight: 600;
-  letter-spacing: -0.01em;
+  /*
+   * No negative tracking here. It was -0.01em, copied from Latin display type
+   * where tightening a large heading is a habit; every heading in this app is
+   * Chinese (文件, 变更, 上下文…), and Han glyphs already sit close to their
+   * neighbours, so the only thing -0.18px did was make the strokes touch. The
+   * layout gate measures letter-spacing on Chinese text, which is how this
+   * was found rather than argued about.
+   */
+  letter-spacing: 0;
 }
 
 .pane-head p {
@@ -848,7 +871,7 @@ code,
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 11px;
+  font-size: var(--fs-min-cjk);
   letter-spacing: 0.04em;
   text-transform: uppercase;
   color: var(--text-3);
@@ -891,7 +914,7 @@ code,
   gap: 8px;
   padding: 7px 11px;
   font-family: var(--mono);
-  font-size: 11.5px;
+  font-size: var(--fs-min-cjk);
   color: var(--text-2);
 }
 
@@ -1094,7 +1117,7 @@ code,
   border-radius: var(--r-sm);
   background: transparent;
   color: var(--text-3);
-  font-size: 11.5px;
+  font-size: var(--fs-min-cjk);
   white-space: nowrap;
 }
 
@@ -1195,7 +1218,7 @@ code,
   justify-content: space-between;
   gap: var(--sp-2);
   margin-bottom: var(--sp-2);
-  font-size: 10.5px;
+  font-size: var(--fs-min-cjk);
   font-weight: 600;
   letter-spacing: 0.09em;
   text-transform: uppercase;
@@ -1234,7 +1257,7 @@ code,
   padding: 0 12px;
   border-top: 1px solid var(--border);
   background: var(--bg);
-  font-size: 11px;
+  font-size: var(--fs-min-cjk);
   color: var(--text-3);
   font-family: var(--mono);
   overflow: hidden;
@@ -1358,7 +1381,7 @@ code,
   padding: 1px 7px;
   border-radius: 999px;
   border: 1px solid var(--border);
-  font-size: 10.5px;
+  font-size: var(--fs-min-cjk);
   color: var(--text-2);
   white-space: nowrap;
   font-family: var(--mono);
@@ -1442,7 +1465,7 @@ code,
  */
 .card h2 {
   margin: 0 0 var(--sp-2);
-  font-size: 10.5px;
+  font-size: var(--fs-min-cjk);
   font-weight: 600;
   letter-spacing: 0.09em;
   text-transform: uppercase;
@@ -1466,7 +1489,7 @@ table.grid th {
   text-align: left;
   color: var(--text-3);
   font-weight: 500;
-  font-size: 11px;
+  font-size: var(--fs-min-cjk);
   letter-spacing: 0.04em;
   text-transform: uppercase;
   border-bottom: 1px solid var(--border);
@@ -1774,7 +1797,7 @@ table.grid .num {
 
 .rail-note {
   padding: 4px 9px;
-  font-size: 11.5px;
+  font-size: var(--fs-min-cjk);
   line-height: 1.6;
 }
 
@@ -1789,7 +1812,7 @@ table.grid .num {
 
 .rail-note-detail {
   margin-top: 2px;
-  font-size: 10.5px;
+  font-size: var(--fs-min-cjk);
 }
 
 .surfaces::-webkit-scrollbar,
@@ -1844,7 +1867,7 @@ table.grid .num {
 }
 
 .field-label {
-  font-size: 11px;
+  font-size: var(--fs-min-cjk);
   color: var(--text-3);
   white-space: nowrap;
 }
@@ -1855,7 +1878,7 @@ table.grid .num {
   max-width: 190px;
   height: 25px;
   padding: 0 22px 0 9px;
-  font-size: 11.5px;
+  font-size: var(--fs-min-cjk);
   border-radius: 999px;
   background-color: var(--surface-2);
   border-color: transparent;
@@ -2037,7 +2060,7 @@ table.grid .num {
 .terminal-note {
   max-width: 72ch;
   margin-bottom: 10px;
-  font-size: 11px;
+  font-size: var(--fs-min-cjk);
   line-height: 1.6;
 }
 
@@ -2119,7 +2142,7 @@ table.grid .num {
   border: 1px solid var(--border);
   border-radius: var(--r-sm);
   background: var(--surface);
-  font-size: 11.5px;
+  font-size: var(--fs-min-cjk);
   color: var(--text-2);
 }
 
@@ -2131,7 +2154,7 @@ table.grid .num {
 
 .cap .cap-state {
   margin-left: auto;
-  font-size: 10.5px;
+  font-size: var(--fs-min-cjk);
   color: var(--text-3);
   white-space: nowrap;
 }
@@ -2192,7 +2215,7 @@ table.grid .num {
 }
 
 .editor-hint {
-  font-size: 11px;
+  font-size: var(--fs-min-cjk);
 }
 
 /* ===========================================================================
@@ -2212,7 +2235,7 @@ table.grid .num {
 .panel-stack summary {
   cursor: pointer;
   color: var(--text-3);
-  font-size: 11.5px;
+  font-size: var(--fs-min-cjk);
   user-select: none;
 }
 
@@ -2345,7 +2368,7 @@ table.grid .num {
 }
 
 .handoff-meta {
-  font-size: 11px;
+  font-size: var(--fs-min-cjk);
 }
 
 /*
@@ -2443,7 +2466,7 @@ table.grid .num {
   align-items: baseline;
   gap: 8px;
   padding: 5px 10px;
-  font-size: 11.5px;
+  font-size: var(--fs-min-cjk);
   border-bottom: 1px solid var(--border);
 }
 

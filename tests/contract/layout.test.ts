@@ -165,6 +165,33 @@ interface Measurement {
   }>;
   overlaps: Array<{ a: string; b: string; sharedWidth: number; sharedHeight: number }>;
   textBoxes: number;
+  /**
+   * Type, as measured rather than declared.
+   *
+   * Geometry cannot see the size of the letters: 10.5px Chinese captions were
+   * never outside anything, never collapsed, never clipped and never
+   * overlapping — they were just too small to read on a 1x display.
+   */
+  typography: {
+    /** The floor the measurement itself used; imported from the page script. */
+    cjkFloor: number;
+    /** How many Chinese-bearing boxes this frame had, so the rule is not vacuous. */
+    cjkCount: number;
+    tooSmall: Array<{ element: string; fontSize: number; count: number; text: string }>;
+    negativeTracking: Array<{
+      element: string;
+      letterSpacing: number;
+      count: number;
+      text: string;
+    }>;
+    tightLeading: Array<{
+      element: string;
+      fontSize: number;
+      lineHeight: number;
+      lines: number;
+      text: string;
+    }>;
+  };
   /** axe-core violations, present only on surfaces-bearing targets (round 34). */
   violations?: Array<{
     id: string;
@@ -841,6 +868,62 @@ describe('layout in a real browser engine', () => {
       expect(m.clipped, `${m.width}px: text clipped by its own box\n${lines(m.clipped)}`).toEqual(
         [],
       );
+    }
+  });
+
+  it('sets Chinese text no smaller than Chinese can be read at', () => {
+    /*
+     * The gap this closes is a category, not a rule.
+     *
+     * Every assertion above is about where boxes are. None of them can see how
+     * big the type is, so the app shipped section labels at 10.5px, table
+     * headers at 11px and a caret at 9px — all Chinese — through every round of
+     * this gate and a green E2E suite. Han characters fill most of their em
+     * box with strokes, so the size at which they stop resolving is genuinely
+     * higher than for Latin; the floor lives in scripts/layout-page-scripts.mjs
+     * (CJK_FLOOR_PX) and travels in the measurement so this file cannot drift
+     * from the stylesheet's contract test.
+     *
+     * Identifiers keep their small sizes: a path, a hash, a seq number or an
+     * arrow glyph is ASCII and the rule only applies to boxes with Han text.
+     */
+    for (const m of GEOMETRY) {
+      expect(
+        m.typography.cjkCount,
+        `${m.label}: measured ${m.typography.cjkCount} Chinese boxes — the typography ` +
+          'rule had nothing to look at on this target',
+        // Four, not more: the smallest frame in the product is the failed-load
+        // pane (?scenario=error), which is a heading, a sentence, a reason line
+        // and a retry button. A threshold above that would be this gate
+        // failing on the product's smallest screen rather than on type size.
+      ).toBeGreaterThan(3);
+      expect(
+        m.typography.tooSmall,
+        `${m.label}: Chinese set below the ${m.typography.cjkFloor}px floor\n` +
+          lines(m.typography.tooSmall),
+      ).toEqual([]);
+    }
+  });
+
+  it('does not tighten Chinese, and gives a wrapped paragraph room to breathe', () => {
+    /*
+     * Two ways to make dense text worse without making it smaller: pull the
+     * letters together (Han already fills its box) and set a multi-line
+     * paragraph at a leading close to solid. Both are measurable, so both are
+     * measured — the declaration (`letter-spacing: -0.01em`) and the result
+     * (a range over the text returning two line boxes 1.2 apart).
+     */
+    for (const m of GEOMETRY) {
+      expect(
+        m.typography.negativeTracking,
+        `${m.label}: Chinese tracked tighter than its own glyphs\n` +
+          lines(m.typography.negativeTracking),
+      ).toEqual([]);
+      expect(
+        m.typography.tightLeading,
+        `${m.label}: wrapped Chinese paragraphs set closer than 1.45 line\n` +
+          lines(m.typography.tightLeading),
+      ).toEqual([]);
     }
   });
 

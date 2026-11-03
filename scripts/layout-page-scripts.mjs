@@ -19,6 +19,28 @@
  * body. Comments in this file therefore say 'quoted' rather than `quoted`.
  */
 
+/**
+ * The smallest size a Chinese character may be set at, in px.
+ *
+ * Not a taste number. Han characters are dense: the strokes of 需 and 量 fill
+ * most of the em box, so at 10-11px they collapse into a grey block, while a
+ * Latin word of the same size still resolves because its letters are mostly
+ * white space. This app shipped section labels, table headers, badges and
+ * status-bar segments at 10-11px — every one of them Chinese — and no gate
+ * measured type size at all, so "readable" was an opinion the CSS never had to
+ * defend.
+ *
+ * 12px is where the dense small-caps labels stop dissolving on a 1x display.
+ * It is the floor, not the body size: prose is 13 (--fs-body), and only
+ * identifiers and glyphs — paths, hashes, counts, arrows, all ASCII — are
+ * allowed under it (--fs-mono).
+ *
+ * The number lives here rather than inside the page script so the stylesheet's
+ * contract test can import it: two copies of "12" is how a floor becomes a
+ * suggestion.
+ */
+export const CJK_FLOOR_PX = 12;
+
 /** The measurement itself, evaluated in the page. */
 export const MEASURE = `(() => {
   const round = (n) => Math.round(n * 10) / 10;
@@ -290,6 +312,114 @@ export const MEASURE = `(() => {
     }
   }
 
+  /*
+   * 7. Typography: text a person has to read must be large enough to read.
+   *
+   * Every rule above is geometry — where a box is, whether it fits, whether two
+   * boxes share pixels. None of them can see the *size of the letters*, which
+   * is why 10.5px Chinese section labels, 11px table headers and a 9px caret
+   * survived every round of this gate: they were never outside anything, never
+   * collapsed, never clipped and never overlapping. They were just too small.
+   *
+   * The rule is deliberately about Chinese only. Han characters carry far more
+   * ink per em than Latin letters do, so the size at which they stop resolving
+   * is genuinely higher, and the small sizes this app uses for identifiers
+   * (paths, hashes, seq numbers, arrow glyphs) are ASCII and stay legal. The
+   * floor itself is imported from this module (CJK_FLOOR_PX) so the
+   * stylesheet's contract test and this measurement cannot disagree.
+   *
+   * Grouped by element and size so one undersized rule reports once with a
+   * count, rather than a hundred lines of the same defect — a report nobody
+   * can read is a report nobody fixes.
+   */
+  const CJK = /[\u3400-\u9fff\uf900-\ufaff]/;
+  const cjkFloor = ${CJK_FLOOR_PX};
+  const ownText = (el) =>
+    Array.from(el.childNodes)
+      .filter((node) => node.nodeType === 3)
+      .map((node) => node.textContent || '')
+      .join('')
+      .trim();
+  const small = new Map();
+  const tracked = new Map();
+  const tightLeading = [];
+  /*
+   * How many Chinese-bearing boxes this frame actually had. A typography rule
+   * that measured nothing is indistinguishable from one that found nothing, so
+   * the count travels in the result and the gate asserts it is not near zero.
+   */
+  let cjkCount = 0;
+  for (const el of all) {
+    if (!visible(el)) continue;
+    const own = ownText(el);
+    if (own.length === 0) continue;
+    if (!CJK.test(own)) continue;
+    /*
+     * A screen-reader-only box is not on screen, so its size is not a reading
+     * problem; flagging it would be this gate complaining about the
+     * accessibility feature working.
+     */
+    if (el.closest('.sr-only') !== null) continue;
+    cjkCount += 1;
+    const style = getComputedStyle(el);
+    const size = round(parseFloat(style.fontSize));
+    if (size < cjkFloor) {
+      const key = describe(el) + ' @' + size + 'px';
+      const group = small.get(key) || {
+        element: describe(el),
+        fontSize: size,
+        count: 0,
+        text: own.slice(0, 30),
+      };
+      group.count += 1;
+      small.set(key, group);
+    }
+    /*
+     * Negative tracking on Han text: the letters are already dense, so pulling
+     * them together is the one direction that makes them worse. Latin-only
+     * headings may still be tightened.
+     */
+    const tracking = parseFloat(style.letterSpacing);
+    if (Number.isFinite(tracking) && tracking < 0) {
+      const key = describe(el) + ' @' + tracking + 'px';
+      const group = tracked.get(key) || {
+        element: describe(el),
+        letterSpacing: tracking,
+        count: 0,
+        text: own.slice(0, 30),
+      };
+      group.count += 1;
+      tracked.set(key, group);
+    }
+    /*
+     * Leading, for the case where it matters: a Chinese paragraph that wrapped
+     * onto more than one line.
+     *
+     * A single line has no leading to judge, so the check counts line *boxes*
+     * rather than dividing the element's height by the line height: a padded
+     * one-line caption would pass that division off as three lines and be
+     * reported as cramped. A Range over the element's own text returns one rect
+     * per line box, which is exactly the question being asked.
+     */
+    const lineHeight = parseFloat(style.lineHeight);
+    if (Number.isFinite(lineHeight) && lineHeight > 0 && own.length >= 24) {
+      const range = document.createRange();
+      range.selectNodeContents(el);
+      const lineBoxes = Array.from(range.getClientRects()).filter(
+        (rect) => rect.width > 1 && rect.height > 1,
+      ).length;
+      if (lineBoxes >= 2 && lineHeight / size < 1.45) {
+        tightLeading.push({
+          element: describe(el),
+          fontSize: size,
+          lineHeight: round(lineHeight / size),
+          lines: lineBoxes,
+          text: own.slice(0, 30),
+        });
+      }
+    }
+  }
+
   return JSON.stringify({
     /*
      * Which state this frame actually is.
@@ -338,6 +468,18 @@ export const MEASURE = `(() => {
     offscreenControls: offscreenControls.slice(0, 12),
     overlaps: overlaps.slice(0, 12),
     textBoxes: textBoxes.length,
+    /*
+     * Typography, as measured rather than declared. The floor travels with the
+     * result so a reader of the JSON can tell which rule produced the numbers
+     * without opening this file.
+     */
+    typography: {
+      cjkFloor: cjkFloor,
+      cjkCount: cjkCount,
+      tooSmall: Array.from(small.values()).slice(0, 12),
+      negativeTracking: Array.from(tracked.values()).slice(0, 12),
+      tightLeading: tightLeading.slice(0, 12),
+    },
   });
 })()`;
 

@@ -151,7 +151,7 @@ function ContextTab({
           <Row k="mode" v={view.context.injectionMode} />
           <Row k={t('context.estimateSource')} v={view.context.estimateSource} />
         </div>
-        <div className="faint fs-fine mt-2">
+        <div className="faint fs-note mt-2">
           {t('context.estimateNote')}
         </div>
       </div>
