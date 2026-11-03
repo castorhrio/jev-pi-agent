@@ -43,10 +43,11 @@
  * Optional flags: `--exec <path>` (the built executable, when `release/` holds
  * more than one), `--home <dir>` (a throwaway profile; default
  * `<tmp>/ucad-main-chain`), `--project <dir>` (a throwaway project), `--steps
- * 1,2,3,4,5`, `--port <n>`, `--json <file>`, `--timeout 420000`, `--keep` (leave
- * the app and its profile in place), `--feed-url <https url>` (check the happy
- * path against this feed instead of the shipped one, for hosts that cannot
- * reach `github.com`).
+ * 1,2,3,4,5`, `--port <n>`, `--json <file>`, `--report <file>` (the same run as
+ * a document a person can carry home — see `buildReport()`), `--timeout
+ * 420000`, `--keep` (leave the app and its profile in place), `--feed-url
+ * <https url>` (check the happy path against this feed instead of the shipped
+ * one, for hosts that cannot reach `github.com`).
  *
  * Two things this script cannot do, and does not claim: it writes the
  * workspace row instead of answering the native folder picker, so no trust
@@ -65,7 +66,7 @@
  */
 
 import { spawn } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import * as path from 'node:path';
@@ -183,6 +184,19 @@ const PORT = Number(flag('port', 9411));
 const TIMEOUT_MS = Number(flag('timeout', 420000));
 const KEEP = argv.includes('--keep');
 const JSON_OUT = flag('json', null);
+/**
+ * Where the run writes the report a person can carry home.
+ *
+ * The six steps belong on a Windows desktop, and this machine is not one. The
+ * transcript below is the evidence, but a transcript is a wall of text in a
+ * terminal that closes — so `--report` writes the same facts as a document:
+ * which platform, which build, and for every step a verdict plus the evidence
+ * lines that step recorded. Whoever runs it on the machine that matters copies
+ * one file back, and the record stops being a retelling.
+ *
+ * What it cannot do is prove the run happened: see `buildReport()`.
+ */
+const REPORT_OUT = flag('report', null);
 const HOME = path.resolve(flag('home', path.join(tmpdir(), 'ucad-main-chain')));
 const PROJECT = path.resolve(flag('project', path.join(HOME, 'project')));
 const EXEC = path.resolve(flag('exec', defaultExecutable()));
@@ -292,6 +306,109 @@ function fail(step, message) {
 function pass(step, message) {
   passedSteps.add(step);
   console.log(`[ok] step ${step}: ${message}`);
+}
+
+/**
+ * The report a run can be carried home in.
+ *
+ * ## Why a document and not the transcript
+ *
+ * The steps this script drives need a Windows desktop, and the machine that
+ * runs them is usually not the machine that reads the result. A terminal
+ * transcript is evidence only while the terminal is open: it gets retyped,
+ * summarised, or lost, and "it passed on Windows" then rests on a memory. This
+ * turns the same facts into a file with a fixed shape, so the person who ran it
+ * copies one artefact and the reader gets the verdicts and the evidence lines
+ * that produced them.
+ *
+ * ## What the shape proves, and what it does not
+ *
+ * It proves the run *printed* these verdicts and these evidence lines. It does
+ * not prove the steps were performed on the machine `platform` names, or at
+ * all: a report is a document, and a document can be written by hand. The gate
+ * that reads it (`tests/contract/verify-main-chain.test.ts`) therefore checks
+ * the shape only — three keys, a verdict and evidence for every step — and the
+ * `note` field says so in the file itself, so a reader who never opens the test
+ * still knows what they are holding.
+ *
+ * ## The three verdicts
+ *
+ * `pass` and `fail` are the run's own. `skip` is a step the run was not asked
+ * for (`--steps 1,4`), and it is kept in the report rather than dropped: a
+ * reader comparing two reports needs to see that the second one did not cover
+ * step 5, not to infer it from a missing row. A step that was asked for and
+ * reached neither verdict is `fail` — the same rule `stepCoverage()` applies to
+ * the exit code, because "no complaint and no evidence" is not a pass.
+ */
+export function buildReport({ platform, build, requested, driven, passed, failed, evidence, ranAt }) {
+  const verdictOf = (step) => {
+    // Failure wins over a pass in the same step: a step that asserted three
+    // things and failed the fourth is not a step that passed.
+    if (failed.includes(step)) return 'fail';
+    if (passed.includes(step)) return 'pass';
+    if (requested.includes(step)) return 'fail';
+    return 'skip';
+  };
+  // Every step the script can drive, not only the ones this run was asked for:
+  // a partial run (`--steps 1,4`) has to read as "2, 3 and 5 were not covered"
+  // rather than as a report that happens to have two rows.
+  const steps = [...new Set([...(driven ?? []), ...requested, ...passed, ...failed])]
+    .filter((step) => Number.isInteger(step))
+    .sort((a, b) => a - b)
+    .map((step) => {
+      const lines = evidence.filter((line) => line.startsWith(`${step}:`));
+      return {
+        n: step,
+        verdict: verdictOf(step),
+        // Never an empty array: a step with no evidence line is a fact worth
+        // reading, and an empty list reads as "nothing to say" instead.
+        evidence: lines.length
+          ? lines
+          : [
+              requested.includes(step)
+                ? '(the step recorded no evidence line)'
+                : '(not requested in this run)',
+            ],
+      };
+    });
+  return {
+    platform,
+    build,
+    ranAt,
+    steps,
+    note:
+      'This file records what a run printed. The gate that reads it checks the shape — ' +
+      'platform, build, and a verdict plus evidence for every step — and cannot check that ' +
+      'the steps were performed on the machine `platform` names. A report whose verdicts are ' +
+      '`fail` is a real result and should be carried home as it is.',
+  };
+}
+
+/**
+ * Which build was measured, as far as this host can say.
+ *
+ * The executable path alone is not enough to tell two runs apart: a rebuild
+ * keeps the path and changes the bytes. Size and mtime are cheap and are what
+ * a reader needs to answer "is this the build I shipped?"; the version comes
+ * from `package.json` because the packaged app does not print it at start-up.
+ * Every field is allowed to be null — this is a description, not a check, and
+ * the executable's existence is already asserted before the run starts.
+ */
+function buildIdentity() {
+  const identity = { executable: EXEC, version: null, sizeBytes: null, modifiedAt: null };
+  try {
+    identity.version = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version ?? null;
+  } catch {
+    /* the version is a convenience; the path and the bytes are the identity */
+  }
+  try {
+    const stat = statSync(EXEC);
+    identity.sizeBytes = stat.size;
+    identity.modifiedAt = stat.mtime.toISOString();
+  } catch {
+    /* reported as null rather than guessed */
+  }
+  return identity;
 }
 
 // ---------------------------------------------------------------------------
@@ -1193,6 +1310,24 @@ async function main() {
       JSON.stringify({ ranAt: new Date().toISOString(), executable: EXEC, platform: process.platform, evidence, failures }, null, 2),
     );
     console.log(`  json: ${JSON_OUT}`);
+  }
+  if (REPORT_OUT) {
+    // Written after the coverage pass above, so a step that reached neither
+    // verdict is already a failure here and cannot be carried home as a skip.
+    const report = buildReport({
+      platform: process.platform,
+      build: buildIdentity(),
+      requested: STEPS,
+      driven: DRIVEN_STEPS,
+      passed: [...passedSteps],
+      failed: failures.map((failure) => failure.step),
+      evidence,
+      ranAt: new Date().toISOString(),
+    });
+    const target = path.resolve(REPORT_OUT);
+    mkdirSync(path.dirname(target), { recursive: true });
+    writeFileSync(target, JSON.stringify(report, null, 2));
+    console.log(`  report: ${target}`);
   }
   console.log('\n===== verdict =====');
   for (const failure of failures) console.log(`FAIL step ${failure.step}: ${failure.message}`);

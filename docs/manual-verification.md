@@ -48,6 +48,49 @@ xvfb-run -a node scripts/verify-main-chain.mjs        # 或 --exec release\win-u
 宿主上根本没有托盘时（没有通知区），脚本记下应用自己说的原因（`tray unavailable`）而不是打红，
 因为那种机器上确实没有菜单可查。
 
+## 如何从 Windows 机器带回证据
+
+步骤 1–5 的跑分可以**带回**：`--report <路径>` 把每一步的 `[ok]` / `[FAIL]` / `skip` 与它自己记下的
+证据行写成一份结构化 JSON。于是「在 Windows 上跑过」不必靠转述——跑的人复制一个文件回来，
+读的人拿到的是判定和产生判定的那几行原文。
+
+在 Windows 桌面（PowerShell 或 cmd，仓库根目录，先 `npm run package`）：
+
+```bat
+node scripts\verify-main-chain.mjs --exec release\win-unpacked\UCAD.exe --report win-report.json
+```
+
+把 `win-report.json` 原样带回，放到 `docs/manual-verification/win-YYYYMMDD.json`，
+并在下面的表里追加一行指向它（`结果 / 证据` 写 `见 docs/manual-verification/win-YYYYMMDD.json`，
+再补一句结论）。文件长这样：
+
+```json
+{
+  "platform": "win32",
+  "build": { "executable": "…\\UCAD.exe", "version": "1.0.0", "sizeBytes": 122806279, "modifiedAt": "…" },
+  "ranAt": "…",
+  "steps": [
+    { "n": 1, "verdict": "pass", "evidence": ["1:turn 1 renderedHash=80e256b63523731c…"] },
+    { "n": 2, "verdict": "fail", "evidence": ["2:table rows=0"] },
+    { "n": 5, "verdict": "skip", "evidence": ["(not requested in this run)"] }
+  ],
+  "note": "…"
+}
+```
+
+三件必须知道的事：
+
+- **门禁只保证格式可回传，不保证内容为真。** `tests/contract/verify-main-chain.test.ts` 断言
+  `platform` / `build` / `steps` 三键都在、每步都有 `verdict` 与 `evidence`；它无法证明这些步骤
+  真的在 `platform` 写的那台机器上跑过。这句话也写在 JSON 自己的 `note` 字段里，因为读这份文件的
+  人正是它要保护的人。
+- **`verdict: "fail"` 的报告照样要带回。** 一份红的报告是结果，不是一次失败的上传；把它改成绿才是。
+- **被阻塞的运行（退出码 2）不写报告。** 钥匙串不可用时应用在开窗之前就停下，那一段
+  `[BLOCKED] …` 的控制台原文就是证据，请连同它一起贴回来。
+
+`--report` 与 `--json` 是两件事：`--json` 是给脚本读的原始证据流（含 `boot:` 行与失败列表），
+`--report` 是给人读的、按步骤归位的判定。两者都不改变退出码。
+
 ## 记录方式
 
 在下面的表里**追加**一行，不要覆盖旧行。`结果` 写三件事：跑到了哪一步、结论、证据
@@ -65,6 +108,7 @@ xvfb-run -a node scripts/verify-main-chain.mjs        # 或 --exec release\win-u
 | 2026-11-03 | Linux x64（Ubuntu 26.04，headless） | `npm run package` 产物 `release/linux-unpacked`（`app.asar` 内 `apps/desktop/dist/main/bootstrap.js` 确认含新判定） | 步骤 5 的代码侧 | **缺陷已修，真机记录顺延**：`window-all-closed` 改由 `decideAllWindowsClosed()` 判定，`quit` 压过托盘；`before-quit` 在没有容器时不再 `preventDefault()`。证据是门禁而不是人眼：`tests/contract/tray-icon.test.ts` 的 `the last window is gone`（5 条）与 `the last-window rule is wired into the lifecycle`（3 条）全绿，且「只问托盘」那句旧表达式被断言**不许再出现**。**本轮没有真机行**：`electron-builder --dir` 在产物写完后卡住未退出（`release/linux-unpacked/ucad` 与 `app.asar` 已是 07:24 的新产物），`--steps 5` 的实跑因此没跑成，下一轮补 |
 | 2026-11-03 | Linux x64（Ubuntu 26.04，**桌面会话**：`dbus-run-session` + `gnome-keyring`（Secret Service）+ `xvfb-run`，`XDG_CURRENT_DESKTOP=GNOME`） | `npm run package` 产物 `release/linux-unpacked/ucad`（`app.asar` 内 `bootstrap.js` 含 `tray menu built`） | 步骤 5 | **通过（两条分支都过）**：`node scripts/verify-main-chain.mjs --steps 5` 退出码 0。托盘菜单不再靠目视——应用日志 `tray menu built` 的 `items` 为 `["显示主窗口","打开项目…","设置","退出 UCAD"]`，脚本断言三项都在（`[ok] step 5: the tray menu carries 显示主窗口 / 打开项目… / 退出 UCAD`）。「隐藏到托盘」：关窗后 `process still running`、窗口 `gone (the page target no longer exists)`，`[ok]`；「退出应用」：`process exited, code 0`，`[ok]`——上一轮那个「点了退出但没退」的缺陷在真机上确认已修。本轮 `electron-builder --dir` 正常退出（上一轮的卡住未复现） |
 | 2026-11-04 | Linux x64（Ubuntu 26.04，headless + `xvfb-run`，**真实 Chromium**） | `HEAD` 源码（`npm test` 的布局门禁 `tests/contract/layout.test.ts`） | 步骤 6 五态（机器走查 + 截图落盘） | **通过（可测量部分）**：33 项全绿，五态在 1440×900 与 768×700 各量一次（不横向溢出、不塌缩、不裁字、控件不出屏、不压字、无控制台错误）。截图落盘：`docs/screenshots/states/loading.png`、`states/partial.png`、`states/permission.png`（1440×900，与产品开窗尺寸一致），首启与失败态沿用 `docs/screenshots/empty.png`、`error.png`。**人眼观感仍未做**，见步骤 6 末段 |
+| 2026-11-04 | Linux x64（Ubuntu 26.04，headless） | `HEAD` 源码 | 步骤 1–5 的**证据回传通道** | **通过（通道本身，不是一次 Windows 跑分）**：`scripts/verify-main-chain.mjs --report <路径>` 写出的 JSON 含 `platform` / `build` / `steps` 三键，每步带 `verdict`（`pass` / `fail` / `skip`）与它自己的 `evidence` 行；`tests/contract/verify-main-chain.test.ts` 新增 7 项钉住形状（含「同一步里 pass 不许盖住 fail」「被请求却无判定按 fail 计」「未请求的步骤记 skip」）。**Windows 六步仍未跑**，这一行只证明「跑一次的输出可以被人从 Windows 机器带回」 |
 
 **Windows 真机六步仍未跑。** 发布前必须在 Windows 桌面补一次完整记录；上面几行不能替代它。
 Linux 桌面会话那两行（2026-11-03）是第一次在**有钥匙串的桌面会话**里跑通步骤 1–5，

@@ -199,6 +199,14 @@ that does not.
   no console attached, so the line has nowhere to appear. The check has been run
   on Linux x64 (Ubuntu 26.04, unpacked build, 2026-11-02): it passed and left no
   child process behind.
+- **The five interface states have not been walked through by eye.** They are
+  asserted, measured and photographed: `npm run test:e2e` checks what each one
+  paints, the layout gate measures all five in a real Chromium at 1440×900 and
+  at the tightest window, and the images in `docs/screenshots/` are taken by
+  that gate. What has not happened is a person looking at them and saying they
+  read as a first run, a failure, a permission prompt. `docs/manual-verification.md`
+  step 6 records this as not done, and it is the one thing a screenshot cannot
+  answer for itself.
 
 ### Contributing
 
@@ -365,6 +373,11 @@ npm run package  # 免安装目录，不出安装包
   Windows 上请从命令行运行 `UCAD.exe`：双击启动的进程没有控制台，这一行没有地方可打印。
   该脚本已在 Linux x64（Ubuntu 26.04、未打包目录构建、2026-11-02）实测通过：
   退出后无残留子进程；Windows 上仍需从命令行跑一次。
+- **五个界面状态还没有被人眼走查过。** 它们被断言、被测量、被拍照：
+  `npm run test:e2e` 检查每一态画了什么，布局门禁在真实 Chromium 里把五态在 1440×900
+  与最小窗口各量一次，`docs/screenshots/` 里的图就是那道门禁拍的。没发生的是**有人看过它们**
+  并说「这看起来像首启 / 像失败 / 像权限请求」。`docs/manual-verification.md` 步骤 6
+  记着这件事没做——这是截图自己回答不了的那一问。
 
 ### 参与贡献
 

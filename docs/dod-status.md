@@ -8,7 +8,7 @@
 | 可证明注入 | **有证据** | Context Pack 纯函数 + 内容哈希；真机步骤 1 通过：`renderedHash=80e256b63523731c…`，同一轮重读同哈希，任务描述多一个字符变 `673b97ec35b5…`，注入原文与 `estimate="heuristic_chars_div_4"` 同屏（`docs/manual-verification.md` 2026-11-03 行） | Windows 桌面复跑一次 |
 | 可解释路由 | **有证据** | 真机步骤 2 通过：7 行决策各带 rationale / confidence / 引擎，回落如实记录；`tests/contract/decision-chain.test.ts` 钉住链与实跑一致 | Windows 桌面复跑一次 |
 | 权限门不可绕 | **有证据（自动化 + 五态断言）** | 执行前允许/拒绝进事件流，审计可查；`tests/contract/permission-*.test.ts`、`tests/e2e/critical-path.e2e.test.tsx`；步骤 6 的权限弹窗已进 `tests/e2e/scenarios.e2e.test.tsx`（类别/风险/资源/命令/理由五件可读，四个回答都在，点拒绝后弹窗消失且事件流里出现 `permission.resolved`） | 真机上的**视觉**走查（排版、长中文、窄窗口）仍未做 |
-| Windows 安装包航运 · NSIS 产出与安装 | **未验证** | `npm run dist` 走 electron-builder 的 `nsis` 目标（`package.json` 的 `build.win`），产物 `UCAD-Setup-<版本>.exe`；未签名 | **Windows 桌面**：装一次、过 SmartScreen、把提示原文记进 `docs/manual-verification.md` |
+| Windows 安装包航运 · NSIS 产出与安装 | **等待带回报告** | `npm run dist` 走 electron-builder 的 `nsis` 目标（`package.json` 的 `build.win`），产物 `UCAD-Setup-<版本>.exe`；未签名。**回传通道已就绪**：`node scripts\verify-main-chain.mjs --exec release\win-unpacked\UCAD.exe --report win-report.json` 把每一步的判定与证据写成结构化 JSON（`docs/manual-verification.md`「如何从 Windows 机器带回证据」） | **Windows 桌面**：装一次、过 SmartScreen、跑一次带 `--report` 的六步，把 `win-report.json` 放进 `docs/manual-verification/` 并在表里加一行。**本轮没有跑**，不假装跑过 |
 | Windows 安装包航运 · 随包 feed 真实网络 | **红（已量到；修正版已验证干净，差一次上传；缺陷已写进 README「当前局限」中英两条）** | 能连 `github.com` 的机器上跑 `node scripts/verify-release-feed.mjs`：退出码 1，`no-sha256` + `installer-latest-url`；发布出去的 `update-feed.json` 只有 `version`/`notes`/`url`。修正版文档（URL 钉 `download/v1.0.0/`、`sha256=76bbe0c6…`、`size=122806279`，取自 GitHub 自己给该资产的 digest，不是人抄的）用同一套判定跑出**零 finding**，宿主 HEAD 回的 `content-length` 也正是 122806279（见 `docs/manual-verification.md`） | 覆盖上传 `update-feed.json` 这个 release asset——本机没有任何 GitHub 写权限令牌，`gh` 也未安装；上传后重跑一次脚本应为 0 |
 | Windows 安装包航运 · 拒绝路径（明文 / 非 URL） | **有证据** | 真机步骤 4：明文覆盖 → `检查更新失败: 更新源必须使用 https…`，日志 `update feed ignored: …`；`tests/contract/update-feed.test.ts` | — |
 | 门禁即 DoD | **有证据** | `npm run typecheck && lint && knip && test && test:e2e` 全绿；注入/交接/凭据/更新合约测试能打红；发布物由 `tests/contract/release-feed.test.ts`（判定）与 `tests/contract/feed-writer.test.ts`（写之前跑判定）钉住 | CI 等价跑一次留档 |
@@ -370,3 +370,22 @@ undici 把被 abort 的那条连接留在事件循环里。所以那条端到端
 
 **这一轮没有做的事**：上传修正版 feed（无令牌）、Windows 桌面六步（无 Windows 机器）、
 步骤 6 的**人眼**观感签字（图有了，看的人还没有）。
+
+## 本轮（2026-11-04 深夜）Windows 六步的证据可以带回来了，README 承认五态没人看过
+
+三条真实卡点全是「外部条件 + 人眼」，本轮不碰产品行为，只把其中两条往前推一步。
+
+1. **`verify-main-chain.mjs --report <路径>`**：六步属于 Windows 桌面，而跑它的机器通常不是读结果的机器。
+   终端里的 transcript 只在终端开着的时候是证据，于是 `--report` 把同一次运行写成一份文档：
+   `platform` / `build`（可执行文件、版本、字节数、mtime）/ `steps`（每步 `verdict` + 它自己记的证据行）。
+   判定三态：`pass` / `fail` / `skip`（`--steps 1,4` 这种部分运行里，没跑的步骤记 `skip` 而不是消失）；
+   被请求却既没 `[ok]` 也没 `[FAIL]` 的步骤记 `fail`——与 `stepCoverage()` 对退出码的规则同一条。
+   **它证明不了什么**：报告是文档，文档可以手写。这句话写在 JSON 自己的 `note` 字段里，
+   门禁（`tests/contract/verify-main-chain.test.ts` 新增 7 项）只钉形状：三键都在、每步有 `verdict` 与 `evidence`。
+2. **README 中英两半各加一条「五个界面状态还没有被人眼走查过」**：它们被断言、被测量、被拍照，
+   但没有人看过并说「这看起来像首启 / 像失败 / 像权限请求」。`readme-parity.test.ts` 的 `LIMITATIONS`
+   表按 id 加了一行（三个关键词：哪五态、没人看过、记在哪）。门禁绿的假象是主动误导，这条不补，
+   前面所有「如实记录」都被前门抵消。
+
+**本轮没做**：排版三项底线（行长 / 行首禁则 / 中英空隙）——留给下一刀；上传修正版 feed（无令牌）；
+Windows 真机六步（无 Windows 机器）；步骤 6 的人眼观感签字。

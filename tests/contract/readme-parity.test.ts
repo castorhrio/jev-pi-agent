@@ -146,6 +146,24 @@ const LIMITATIONS: readonly Limitation[] = [
     en: ['asar', 'ci does not cover', 'npm run package', 'adapters resolved', 'from a terminal'],
     zh: ['asar', 'ci 不覆盖', 'npm run package', 'adapters resolved', '从命令行'],
   },
+  // The one limitation that is about a *person*, not a gate. The five states
+  // are asserted, measured and photographed, and every one of those is a
+  // machine answering a machine's question; whether they read as a first run,
+  // a failure and a permission prompt is a judgement no gate can make. It is
+  // stated in the README because a reader deciding whether to trust the
+  // screenshots is the person it affects — and because a green gate over an
+  // unwalked screen is the kind of quiet overclaim this repository keeps
+  // finding in itself.
+  //
+  // Three keywords per language, and they are the three facts that make it
+  // checkable rather than a disclaimer: which states, that nobody has looked,
+  // and where the omission is recorded. A bullet that drifted back to "the
+  // states are covered" would drop the middle one and go red here.
+  {
+    id: 'the five interface states have not been walked through by eye',
+    en: ['five interface states', 'by eye', 'step 6'],
+    zh: ['五个界面状态', '人眼', '步骤 6'],
+  },
 ];
 
 /**

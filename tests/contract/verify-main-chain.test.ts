@@ -37,6 +37,7 @@ import {
   FEED_VARIANTS,
   MANUAL_STEPS,
   appEnv,
+  buildReport,
   closeVerdict,
   parseSteps,
   profileDataDir,
@@ -346,5 +347,133 @@ describe('the workspace row the verifier seeds', () => {
     const inserted = /INSERT OR REPLACE INTO workspaces \(([^)]+)\)/.exec(script)?.[1];
     expect(inserted).toBeTruthy();
     expect(inserted!.replace(/\s+/g, ' ').trim()).toBe(declared!.replace(/\s+/g, ' ').trim());
+  });
+});
+
+describe('the report a run can be carried home in', () => {
+  /*
+   * The six steps belong on a Windows desktop, and the machine that runs them
+   * is usually not the machine that reads the result. `--report` writes the
+   * run's verdicts and evidence lines as a document, so "it passed on Windows"
+   * stops resting on a retelling.
+   *
+   * What is pinned here is the *shape*, and only the shape. A report is a
+   * document; a document can be written by hand, and no gate can tell a real
+   * run from a plausible one. The `note` field says so in the file itself, and
+   * the last case here asserts that sentence is still there — a report that
+   * reads as proof is worse than no report.
+   */
+  const base = {
+    platform: 'win32',
+    build: {
+      executable: 'C:\\repo\\release\\win-unpacked\\UCAD.exe',
+      version: '1.0.0',
+      sizeBytes: 122806279,
+      modifiedAt: '2026-11-04T00:00:00.000Z',
+    },
+    requested: [1, 2, 3],
+    driven: [1, 2, 3, 4, 5],
+    passed: [1, 3],
+    failed: [2],
+    evidence: ['1:turn 1 renderedHash=80e256b63523731c', '2:table rows=0', 'boot:profile=C:\\tmp'],
+    ranAt: '2026-11-04T00:00:00.000Z',
+  };
+
+  it('carries the three keys a reader needs to tell one run from another', () => {
+    const report = buildReport(base);
+
+    expect(Object.keys(report)).toEqual(expect.arrayContaining(['platform', 'build', 'steps']));
+    expect(report.platform).toBe('win32');
+    expect(report.build.executable).toContain('UCAD.exe');
+    // The build is described, not asserted: a rebuild keeps the path and
+    // changes the bytes, so size and mtime are what tell two runs apart.
+    expect(report.build.sizeBytes).toBe(122806279);
+  });
+
+  it('gives every step a verdict and its own evidence lines', () => {
+    const report = buildReport(base);
+
+    // Every drivable step is listed, so a partial run reads as "these were not
+    // covered" rather than as a report that happens to have fewer rows.
+    expect(report.steps.map((step) => step.n)).toEqual([1, 2, 3, 4, 5]);
+    for (const step of report.steps) {
+      expect(['pass', 'fail', 'skip']).toContain(step.verdict);
+      expect(Array.isArray(step.evidence)).toBe(true);
+      // Never empty: a step with no evidence line is a fact worth reading, and
+      // an empty list reads as "nothing to say" instead.
+      expect(step.evidence.length).toBeGreaterThan(0);
+      for (const line of step.evidence) expect(typeof line).toBe('string');
+    }
+    // Evidence is attributed to the step that recorded it, not to the run.
+    expect(report.steps[0]!.evidence).toEqual(['1:turn 1 renderedHash=80e256b63523731c']);
+    expect(report.steps[1]!.verdict).toBe('fail');
+  });
+
+  it('does not let a pass in the same step hide a failure', () => {
+    // A step that asserted three things and failed the fourth is not a step
+    // that passed, and a report that said `pass` would be the one artefact a
+    // reader trusts.
+    const report = buildReport({ ...base, passed: [1, 2], failed: [2] });
+
+    expect(report.steps.find((step) => step.n === 2)!.verdict).toBe('fail');
+  });
+
+  it('counts a requested step with neither verdict as a failure, not a skip', () => {
+    // The same rule `stepCoverage()` applies to the exit code: a step that
+    // recorded evidence and reached no verdict took a path nobody wrote.
+    const report = buildReport({
+      ...base,
+      requested: [1, 2],
+      passed: [1],
+      failed: [],
+      evidence: ['1:turn 1 renderedHash=80e256b63523731c'],
+    });
+
+    expect(report.steps.find((step) => step.n === 2)!.verdict).toBe('fail');
+    expect(report.steps.find((step) => step.n === 2)!.evidence).toEqual([
+      '(the step recorded no evidence line)',
+    ]);
+  });
+
+  it('keeps a step the run was not asked for, marked as skipped', () => {
+    // `--steps 1,4` is a partial run, and a reader comparing two reports has to
+    // see that the second one did not cover step 5 — not infer it from a
+    // missing row.
+    const report = buildReport({ ...base, requested: [1], passed: [1], failed: [], evidence: ['1:x=1'] });
+
+    expect(report.steps.map((step) => [step.n, step.verdict])).toEqual([
+      [1, 'pass'],
+      [2, 'skip'],
+      [3, 'skip'],
+      [4, 'skip'],
+      [5, 'skip'],
+    ]);
+    expect(report.steps[1]!.evidence).toEqual(['(not requested in this run)']);
+  });
+
+  it('says in the file itself that the shape is all it proves', () => {
+    // The one sentence that keeps a carried-home report from being read as a
+    // certificate. It is in the JSON, not only in this test, because the reader
+    // of the JSON is the person it protects.
+    const note = buildReport(base).note;
+
+    expect(note).toContain('shape');
+    expect(note).toContain('cannot check');
+  });
+
+  it('is wired into the run, and written before the verdict is printed', () => {
+    const source = readFileSync(join(REPO_ROOT, 'scripts', 'verify-main-chain.mjs'), 'utf8');
+
+    expect(source).toContain("flag('report'");
+    expect(source.indexOf('const report = buildReport({')).toBeGreaterThan(-1);
+    // After the coverage pass, so a step that reached neither verdict is
+    // already a failure in the file; before the PASS line, so a run that
+    // printed PASS cannot have written a report that disagrees with it.
+    expect(source.indexOf('const report = buildReport({')).toBeGreaterThan(
+      source.indexOf('for (const gap of stepCoverage({'),
+    );
+    expect(source.indexOf('const report = buildReport({')).toBeLessThan(
+      source.indexOf("STEPS.join(', ')} recorded above"),
+    );
   });
 });
