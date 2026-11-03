@@ -225,7 +225,22 @@ export const MEASURE = `(() => {
    *     extended past the pane's bottom edge and across the status bar's rect
    *     while being clipped by it. A box the user cannot see is not covering
    *     anything.
+   *   - **both must be in the same layer.** A modal is a layer: the permission
+   *     prompt is drawn over the transcript on purpose, and every text node
+   *     inside '.dialog' is statically positioned even though the '.overlay'
+   *     around it is not, so the first exemption stopped one level short of the
+   *     thing it was exempting. This was invisible while the five states were
+   *     only ever measured at 1440x900, where the dialog happens to land on
+   *     empty transcript; measured at the tightest window the probe reported
+   *     'Agent 请求权限' as lying on top of a chat message, on a screen that is
+   *     correct. The layer is the modal the app declares ('role="dialog"' +
+   *     'aria-modal="true"', the same selector that answers dialogOpen), so a
+   *     text node inside it is compared with the dialog's own contents and not
+   *     with the page behind the overlay. Overlaps *inside* one dialog are
+   *     still failures - that is the round-4 defect's shape (a description on
+   *     top of its own risk row), and the page-vs-page rule is untouched.
    */
+  const modalOf = (el) => el.closest('[role="dialog"][aria-modal="true"]');
   const scrolledOutOf = (el, rect) => {
     for (let p = el.parentElement; p && p !== document.body; p = p.parentElement) {
       const style = getComputedStyle(p);
@@ -250,7 +265,12 @@ export const MEASURE = `(() => {
     const rect = el.getBoundingClientRect();
     if (rect.width < 2 || rect.height < 2) continue;
     if (scrolledOutOf(el, rect)) continue;
-    textBoxes.push({ el, rect, label: describe(el) + ' ' + JSON.stringify(text(el).slice(0, 24)) });
+    textBoxes.push({
+      el,
+      rect,
+      layer: modalOf(el),
+      label: describe(el) + ' ' + JSON.stringify(text(el).slice(0, 24)),
+    });
   }
 
   const overlaps = [];
@@ -260,6 +280,9 @@ export const MEASURE = `(() => {
       const b = textBoxes[j];
       // Containment is a layout; only shared area between siblings is a clash.
       if (a.el.contains(b.el) || b.el.contains(a.el)) continue;
+      // Different layers are drawn on top of each other on purpose; see the
+      // modal note above.
+      if (a.layer !== b.layer) continue;
       const w = Math.min(a.rect.right, b.rect.right) - Math.max(a.rect.left, b.rect.left);
       const h = Math.min(a.rect.bottom, b.rect.bottom) - Math.max(a.rect.top, b.rect.top);
       if (w <= 2 || h <= 2) continue;

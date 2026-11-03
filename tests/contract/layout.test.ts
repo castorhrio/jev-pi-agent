@@ -331,13 +331,31 @@ beforeAll(async () => {
      * modal — the states where a column collapses or a control leaves the
      * window, and the states no width sweep ever visited.
      */
-    ...STATE_SCENARIOS.map((state) => ({
-      name: `state-${state}`,
-      state,
-      width: PANEL_WIDTH,
-      height: HEIGHT,
-      url: `${base}?scenario=${state}`,
-    })),
+    /*
+     * Each state at two sizes: the window the product opens at, and the
+     * tightest window it allows. The tight one is load-bearing — the five
+     * states had only ever been measured at 1440x900, and that is *why* the
+     * probe's overlap rule had never met a modal in a narrow window (see the
+     * modal-layer note in `layout-page-scripts.mjs`). It is also the size the
+     * manual checklist asks a person to judge by eye ("长中文在窄窗口是否撑破"),
+     * so the measurable half of that question is measured rather than deferred.
+     */
+    ...STATE_SCENARIOS.flatMap((state) => [
+      {
+        name: `state-${state}`,
+        state,
+        width: PANEL_WIDTH,
+        height: HEIGHT,
+        url: `${base}?scenario=${state}`,
+      },
+      {
+        name: `state-${state}-tight`,
+        state,
+        width: TIGHT.width,
+        height: TIGHT.height,
+        url: `${base}?scenario=${state}`,
+      },
+    ]),
     /*
      * The frame where the app is still fetching, which had been checked by
      * hand for five rounds and never managed to be seen.
@@ -474,7 +492,14 @@ describe('the interface states are measured, not assumed', () => {
    * sweep ever visited them.
    */
   it.each(STATE_SCENARIOS)('%s was measured on the state it names', (state) => {
-    const found = measurements.filter((m) => m.name === `state-${state}`);
+    /*
+     * Filtered by the state the *target* declared, not by the target's name:
+     * every walkable state is now measured twice (default window, tightest
+     * window), and a name filter would quietly check only one of them — which
+     * is the same "measured the state once and called it covered" shape this
+     * suite was written against.
+     */
+    const found = measurements.filter((m) => m.state === state);
     expect(found.length, `no measurement for ?scenario=${state}`).toBeGreaterThan(0);
     expect(found.map((m) => m.error ?? ''), `?scenario=${state} did not mount`).toEqual(
       found.map(() => ''),
@@ -498,7 +523,7 @@ describe('the interface states are measured, not assumed', () => {
      * frame that said `state: error` while showing the populated shell would
      * pass a geometry check and be a clean result about the wrong screen.
      */
-    const error = measurements.filter((m) => m.name === 'state-error');
+    const error = measurements.filter((m) => m.state === 'error');
     expect(error.length, 'no measurement for ?scenario=error').toBeGreaterThan(0);
     for (const m of error) {
       expect(m.mounted, `?scenario=error did not mount: ${m.error ?? ''}`).toBe(true);
@@ -524,7 +549,7 @@ describe('the interface states are measured, not assumed', () => {
      * modal that stopped rendering would leave the panel behind it looking
      * fine at every width.
      */
-    const permission = measurements.filter((m) => m.name === 'state-permission');
+    const permission = measurements.filter((m) => m.state === 'permission');
     expect(permission.length, 'no measurement for ?scenario=permission').toBeGreaterThan(0);
     for (const m of permission) {
       expect(m.mounted, `?scenario=permission did not mount: ${m.error ?? ''}`).toBe(true);
@@ -537,6 +562,26 @@ describe('the interface states are measured, not assumed', () => {
     );
     for (const m of otherStates) {
       expect(m.content.dialogOpen, `?scenario=${m.state} had an unexpected modal open`).toBe(false);
+    }
+  });
+
+  it('measures every walkable state at the tightest window too', () => {
+    /*
+     * The narrow measurement is the one that had never happened, and a
+     * silently-dropped second target would leave this suite green with the
+     * same blind spot it had before. The sizes are read off TIGHT, which the
+     * drift tests above keep equal to the product's own `minWidth`/`minHeight`,
+     * so "the tightest window" cannot come to mean something the product does
+     * not allow.
+     */
+    for (const state of STATE_SCENARIOS) {
+      const tight = measurements.filter(
+        (m) => m.state === state && m.width === TIGHT.width && m.height === TIGHT.height,
+      );
+      expect(
+        tight.map((m) => m.scenario ?? '(not measured)'),
+        `?scenario=${state} was not measured at ${TIGHT.width}x${TIGHT.height}`,
+      ).toEqual([state]);
     }
   });
 
@@ -553,7 +598,7 @@ describe('the interface states are measured, not assumed', () => {
     expect(invitations.length, 'could not read welcome.open out of the dictionary').toBeGreaterThan(
       0,
     );
-    const empty = measurements.filter((m) => m.name === 'state-empty');
+    const empty = measurements.filter((m) => m.state === 'empty');
     expect(empty.length).toBeGreaterThan(0);
     for (const m of empty) {
       expect(m.content.treeRows, 'the empty state rendered session rows').toBe(0);
