@@ -231,6 +231,19 @@ async function runTargets(targets) {
     axeInjected = true;
     step('axe-core injected');
   };
+  /*
+   * The URL the window is currently showing.
+   *
+   * Every target used to be measured against `first.url`, because the window is
+   * loaded once and then only resized. That is correct for the width sweep —
+   * one state, seven widths — and silently wrong for any target that names a
+   * different `?scenario=`: the probe resized, measured, and reported the
+   * *first* scenario's geometry under the second scenario's name. The five
+   * interface states therefore could not be measured at all, and the failure
+   * mode is the one this file is written against: a clean result about the
+   * wrong screen. A target whose URL differs now reloads first.
+   */
+  let loadedUrl = first.url;
   try {
     step(`loading ${first.url}`);
     await win.loadURL(first.url);
@@ -285,10 +298,18 @@ async function runTargets(targets) {
         await win.loadURL(first.url);
         axeInjected = false;
         await waitForData(win);
+        loadedUrl = first.url;
         continue;
       }
 
       try {
+        if (target.url !== loadedUrl) {
+          step(`${target.name}: loading ${target.url}`);
+          await win.loadURL(target.url);
+          axeInjected = false;
+          await waitForData(win);
+          loadedUrl = target.url;
+        }
         step(`${target.name}: resizing to ${target.width}x${target.height}`);
         win.setContentSize(target.width, target.height ?? 900);
         // Let the resize propagate through layout before reading geometry.
