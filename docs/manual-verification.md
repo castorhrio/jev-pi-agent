@@ -64,7 +64,7 @@ xvfb-run -a node scripts/verify-main-chain.mjs        # 或 --exec release\win-u
 | 2026-11-03 | Linux x64（Ubuntu 26.04，**桌面会话**：`dbus-run-session` + `gnome-keyring`（Secret Service）+ `xvfb-run`，`XDG_CURRENT_DESKTOP=GNOME`） | `npm run package` 产物 `release/linux-unpacked/ucad`（asar） | 步骤 1、2、3、4 | **通过（1–4）**：`node scripts/verify-main-chain.mjs` 退出码 0 之前各步 `[ok]`。步骤 1：`renderedHash=80e256b63523731c…`，同一轮换面板重读仍是同一哈希；任务描述多一个字符后 `673b97ec35b5…`；注入原文 `<ucad-context pack="cp_01M6EXDMQTDJMBTVNP3NX8N9B6" revision="1" tokens="401" estimate="heuristic_chars_div_4" strategy="hybrid" stale="true">`，估算来源 `heuristic_chars_div_4`。步骤 2：7 行决策带 rationale/confidence/引擎，样例 `route 路由 → universal route -> 'universal' (isDefaultRuntime). signals: git facts unavailable…`。步骤 3：交接带 `confidence=` 决策，`带着它开新会话` 后输入框以 `# 继续上一个会话的交接` 开头，历史 `#4 无人认领 / #3 #2 #1 已被更新的取代`。步骤 4：真实 https feed 返回 `已是最新版本`；明文覆盖 `检查更新失败: 更新源必须使用 https，请检查 UCAD_UPDATE_FEED 或 update-config.json`，日志 `update feed ignored: UCAD_UPDATE_FEED or update-config.json must be an https URL`。**注意**：本机到 `github.com` 不通（`curl https://github.com` 20s 超时），随包 feed 的地址因此取不到，步骤 4 的“有网”分支是用 `--feed-url` 指向真实 https 文档（本仓 `package.json`，version 1.0.0）跑的；随包 feed 本身仍需在能连 `github.com` 的机器上补一次。步骤 5、6 本轮未跑 |
 | 2026-11-03 | Linux x64（Ubuntu 26.04，headless） | `npm run package` 产物 `release/linux-unpacked`（`app.asar` 内 `apps/desktop/dist/main/bootstrap.js` 确认含新判定） | 步骤 5 的代码侧 | **缺陷已修，真机记录顺延**：`window-all-closed` 改由 `decideAllWindowsClosed()` 判定，`quit` 压过托盘；`before-quit` 在没有容器时不再 `preventDefault()`。证据是门禁而不是人眼：`tests/contract/tray-icon.test.ts` 的 `the last window is gone`（5 条）与 `the last-window rule is wired into the lifecycle`（3 条）全绿，且「只问托盘」那句旧表达式被断言**不许再出现**。**本轮没有真机行**：`electron-builder --dir` 在产物写完后卡住未退出（`release/linux-unpacked/ucad` 与 `app.asar` 已是 07:24 的新产物），`--steps 5` 的实跑因此没跑成，下一轮补 |
 | 2026-11-03 | Linux x64（Ubuntu 26.04，**桌面会话**：`dbus-run-session` + `gnome-keyring`（Secret Service）+ `xvfb-run`，`XDG_CURRENT_DESKTOP=GNOME`） | `npm run package` 产物 `release/linux-unpacked/ucad`（`app.asar` 内 `bootstrap.js` 含 `tray menu built`） | 步骤 5 | **通过（两条分支都过）**：`node scripts/verify-main-chain.mjs --steps 5` 退出码 0。托盘菜单不再靠目视——应用日志 `tray menu built` 的 `items` 为 `["显示主窗口","打开项目…","设置","退出 UCAD"]`，脚本断言三项都在（`[ok] step 5: the tray menu carries 显示主窗口 / 打开项目… / 退出 UCAD`）。「隐藏到托盘」：关窗后 `process still running`、窗口 `gone (the page target no longer exists)`，`[ok]`；「退出应用」：`process exited, code 0`，`[ok]`——上一轮那个「点了退出但没退」的缺陷在真机上确认已修。本轮 `electron-builder --dir` 正常退出（上一轮的卡住未复现） |
-
+| 2026-11-04 | Linux x64（Ubuntu 26.04，headless + `xvfb-run`，**真实 Chromium**） | `HEAD` 源码（`npm test` 的布局门禁 `tests/contract/layout.test.ts`） | 步骤 6 五态（机器走查 + 截图落盘） | **通过（可测量部分）**：33 项全绿，五态在 1440×900 与 768×700 各量一次（不横向溢出、不塌缩、不裁字、控件不出屏、不压字、无控制台错误）。截图落盘：`docs/screenshots/states/loading.png`、`states/partial.png`、`states/permission.png`（1440×900，与产品开窗尺寸一致），首启与失败态沿用 `docs/screenshots/empty.png`、`error.png`。**人眼观感仍未做**，见步骤 6 末段 |
 
 **Windows 真机六步仍未跑。** 发布前必须在 Windows 桌面补一次完整记录；上面几行不能替代它。
 Linux 桌面会话那两行（2026-11-03）是第一次在**有钥匙串的桌面会话**里跑通步骤 1–5，
@@ -235,7 +235,27 @@ npm run dev:web
 fixture 不发），第五个状态因此根本没法人工走查完；`revokeRule` 同样返回成功但规则还在。
 两处都改成了真的写：发一条带连续 `seq` 的 `permission.resolved`（`events.since` 回放也看得到），撤销真的删行。
 
+**实测（2026-11-04，机器走查 + 截图落盘）**：这一轮把「五个状态长什么样」从「只有断言」变成「有图可看」。
+`xvfb-run -a npx vitest run tests/contract/layout.test.ts` 33 项全绿，五态在真实 Chromium 里各拍一张
+1440×900（与 `bootstrap.ts` 的开窗尺寸一致），其中三张此前**从未在仓库里出现过**，已提交：
+
+| 状态 | 图 | 这一张证明什么 |
+|---|---|---|
+| 首启 | `docs/screenshots/empty.png` | 引导语 + 三步在屏上，会话列说的是「还没有会话」，没有「加载中…」 |
+| 加载 | `docs/screenshots/states/loading.png` | 读取未返回的那一帧：会话列与对话区都在说「加载中…」，**不**说「还没有对话」 |
+| 失败 | `docs/screenshots/error.png` | 标题「出错了」+ 原始失败文本 + 「重试」按钮，不是空面板 |
+| 部分失败 | `docs/screenshots/states/partial.png` | 项目名在屏上，会话列说「会话列表读取失败（不是空的）」并带原因 |
+| 权限 | `docs/screenshots/states/permission.png` | 弹窗五件可读（类别 `SHELL` / 风险 `high` / 资源 / 命令 / 原因），四个回答都在 |
+
+图是门禁拍的，不是手绘也不是 mock：`npm test` 的布局门禁把每个 target 的截图写进 `.run-logs/layout/`
+（该目录被忽略），上面五张是从那里挑出来提交的，所以**任何人重跑一次都能得到同一批图**。
+`tests/contract/screenshots.test.ts` 现在还会比对「图与渲染层源码是否同步」：
+`docs/screenshots/sources.json` 记着每张图与每个渲染层源文件的 sha256，改了组件没重拍图就是红
+（`node scripts/screenshot-sources.mjs` 报告漂移，`--write` 记录一次确认）。
+
 **仍未做**：人眼对**视觉**的判断（空态的引导语是否够醒目、失败信息的排版是否压过内容、长中文在窄窗口是否撑破）。
+上面五张图让这件事**可以远程做**——把图发给任何一个人看，他就能回答这三问，不必先装应用；
+但「有人真的看过并签了字」这件事，本轮仍然没有发生，所以这一条不算通过。
 DOM 断言证明「该有的字在屏上、不该有的不在」，证明不了「看上去像不像首启」。这一条留给 Windows 桌面的
 一次完整走查，和上表那一行一起记。
 
@@ -408,3 +428,63 @@ Windows 桌面六步（无 Windows 机器）、步骤 6 的人眼视觉走查（
 
 **仍未做**（不假装完成）：上传修正版 feed（无令牌）、Windows 桌面六步（无 Windows 机器）、
 步骤 6 的人眼观感走查（无真机）。
+
+## 交接：上传修正版 feed（唯一剩下的红，需要写权限）
+
+这一节写给**下一个拿到令牌的人**，不是写给「原班人马」。它是一行可执行的交接：
+变量名、命令、期望输出、失败时贴什么。做完之后要改的地方也写在下面。
+
+**为什么还没做**：本机没有任何 GitHub 写权限令牌（`GITHUB_TOKEN` / `GH_TOKEN` 都未设置），
+`gh` 也未安装。这不是「不知道怎么修」——修正版文档 `docs/release/update-feed-v1.0.0.json`
+早就提交在仓库里，且被应用自己的规则判为零 finding。
+
+**谁持有**：仓库 `castorhrio/jev-pi-agent` 的 release 写权限（`contents: write` 的 PAT 或
+GitHub App token）。持有者只需要跑一条命令，不需要克隆之外的任何准备。
+
+**命令**（在仓库根目录，`npm install` 之后）：
+
+```bash
+node scripts/publish-feed.mjs                       # 先看计划，不联网、不上传
+GITHUB_TOKEN=<有 contents:write 的令牌> node scripts/publish-feed.mjs --apply --verify
+```
+
+**期望输出**（最后一行是判据）：
+
+```
+feed: docs/release/update-feed-v1.0.0.json
+version: 1.0.0
+installer: UCAD-Setup-1.0.0.exe (76bbe0c6…, 122806279 bytes)
+target: update-feed.json on castorhrio/jev-pi-agent v1.0.0
+…
+PASS — update-feed.json on castorhrio/jev-pi-agent v1.0.0 now carries sha256=76bbe0c6…
+```
+
+`--verify` 会在上传后**再跑一次** `verify-release-feed.mjs`，所以「修好了」是这条命令的输出，
+不是一句声明。2026-11-04 本机跑 dry run 的计划行（无令牌，未上传）：
+
+```
+[plan] GET https://api.github.com/repos/castorhrio/jev-pi-agent/releases/tags/v1.0.0
+[plan] compare the feed’s sha256/size with the host’s digest for UCAD-Setup-1.0.0.exe
+[plan] DELETE https://api.github.com/repos/castorhrio/jev-pi-agent/releases/assets/<existing update-feed.json id> (if present)
+[plan] POST https://uploads.github.com/repos/castorhrio/jev-pi-agent/releases/<release id>/assets?name=update-feed.json
+[plan] token: none — --apply needs GITHUB_TOKEN or GH_TOKEN
+```
+
+**失败时贴什么**（原样贴进本文件，不要转述）：
+
+- `token: none — --apply needs GITHUB_TOKEN or GH_TOKEN` → 令牌没传进环境，不是权限问题。
+- `the host disagrees about the installer` → 宿主对 `UCAD-Setup-1.0.0.exe` 的 digest 与 feed 里的
+  `sha256`/`size` 不一致；**不要**改 feed 去迁就，先查这个资产是不是被替换过。
+- `401` / `403` → 令牌没有 `contents: write`，或已过期。
+- `INCOMPLETE — the host did not answer` → 网络问题，重试；**这不是对 feed 的判决**。
+
+**做完之后要改的三处**（一次改完，别只改一处）：
+
+1. 本文件：把上面那次运行的完整 stdout/stderr 追加成一节（含 `PASS —` 那一行）。
+2. `docs/dod-status.md`：「Windows 安装包航运 · 随包 feed 真实网络」那一行从**红**改成**有证据**，
+   证据写 `node scripts/verify-release-feed.mjs` 退出码 0。
+3. `README.md` 中英两半的「当前局限」里那条「v1.0.0 的 feed 缺 sha256」——修掉之后它就不再是局限，
+   删掉它，并同步 `tests/contract/readme-parity.test.ts` 的 `LIMITATIONS` 表（那张表会打红提醒）。
+
+**不要**为了让它变绿而降低门槛：不许允许无 digest 上传，不许把 URL 放回 `releases/latest`。
+`scripts/publish-feed.mjs` 在找令牌**之前**先跑判定，就是为了让「有凭据的人」也发不出一份应用会拒绝的文档。

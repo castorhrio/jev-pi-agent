@@ -30,18 +30,50 @@
  * required: this file is a floor on what a reader can see, not a rule that
  * every state must be photographed.
  *
+ * ## Whether the picture is still the picture
+ *
+ * "Up to date with the last CSS change" used to be listed here as unjudgeable,
+ * and that was the gap that mattered: the three cases above are all claims
+ * about the *file* (it exists, it is a PNG, it is 1440x900), and none of them
+ * is a claim about the *picture*. `styles.css` could be rewritten and the
+ * README would keep showing the old window, green.
+ *
+ * It is judgeable without pixels. `scripts/screenshot-sources.mjs` records the
+ * sha256 of every renderer source and of every committed screenshot in
+ * `docs/screenshots/sources.json`; the cases at the bottom of this file fail
+ * when either side moved, and name the file that moved.
+ *
+ * The two obvious alternatives were rejected on purpose:
+ *
+ *  - **mtime.** `git clone` and `git checkout` stamp every file with the
+ *    checkout time, so in CI every screenshot is exactly as old as every
+ *    source and the comparison is green no matter what changed. A gate that
+ *    cannot go red is worse than no gate — this repository has said so about
+ *    `--steps` and about `skipIf`.
+ *  - **pixel diffing.** Re-rendering and comparing pixels breaks on every
+ *    innocent change (font hinting, a scrollbar, a subpixel edge) and gets
+ *    switched off; see the note at the top of `scripts/layout-probe.mjs`.
+ *
  * ## What it does not judge
  *
- * Whether a screenshot looks good, whether it is up to date with the last CSS
- * change, or whether the pixels show what the caption says. Image diffing is
- * deliberately not used anywhere in this repository (see the note at the top of
- * `scripts/layout-probe.mjs`): it breaks on every innocent change and gets
- * switched off. Dimensions and existence are checkable; taste is not.
+ * Whether a screenshot looks good, or whether the pixels show what the caption
+ * says. And the hash cannot tell whether the images were actually retaken:
+ * `--write` records "the sources are now these bytes", and a person can run it
+ * without looking at a single pixel. That is a limit of every non-pixel gate;
+ * the gate's job is to make the omission deliberate instead of silent.
  */
 
 import { describe, expect, it } from 'vitest';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import {
+  MANIFEST_PATH,
+  buildManifest,
+  drift,
+  driftLines,
+  isClean,
+  readManifest,
+} from '../../scripts/screenshot-sources.mjs';
 
 const REPO_ROOT = join(import.meta.dirname, '..', '..');
 const README_PATH = join(REPO_ROOT, 'README.md');
@@ -138,5 +170,104 @@ describe('the screenshots the README shows', () => {
         `docs/screenshots/${state}.png`,
       );
     }
+  });
+});
+
+/**
+ * The screenshots must be pictures of the renderer that is in the tree.
+ *
+ * The cases above check the file; these check the claim. `sources.json` is the
+ * acknowledgement that somebody looked at the renderer as it is now and
+ * retook the images — or at least decided not to.
+ */
+describe('the screenshots are in sync with the renderer', () => {
+  const manifest = readManifest(REPO_ROOT);
+
+  it('has a manifest, so the checks below are not vacuous', () => {
+    // First and unconditional, the house rule: a deleted manifest must be the
+    // first red, not a run in which every case below compares two empty maps.
+    expect(manifest, `${MANIFEST_PATH} is missing — run node scripts/screenshot-sources.mjs --write`)
+      .not.toBeNull();
+    expect(Object.keys(manifest!.renderer).length, 'the manifest records no renderer source')
+      .toBeGreaterThan(0);
+    expect(Object.keys(manifest!.screenshots).length, 'the manifest records no screenshot')
+      .toBeGreaterThan(0);
+  });
+
+  it('records the renderer sources that are actually in the tree', () => {
+    // Both directions: a changed file and a new file are the same defect from
+    // the reader's side ("the picture is of something else now"), but they need
+    // different sentences, so `drift()` keeps them apart.
+    const report = drift(manifest, REPO_ROOT);
+    expect(
+      report.sourcesChanged,
+      `these renderer sources changed after the screenshots were taken — retake them, then run ` +
+        `node scripts/screenshot-sources.mjs --write:\n${report.sourcesChanged.join('\n')}`,
+    ).toEqual([]);
+    expect(
+      report.sourcesAdded,
+      `these renderer sources were added and no screenshot was taken of them:\n` +
+        report.sourcesAdded.join('\n'),
+    ).toEqual([]);
+    expect(
+      report.sourcesRemoved,
+      `the manifest records renderer sources that no longer exist:\n` +
+        report.sourcesRemoved.join('\n'),
+    ).toEqual([]);
+  });
+
+  it('records the screenshots that are actually on disk', () => {
+    const report = drift(manifest, REPO_ROOT);
+    expect(
+      report.screenshotsChanged,
+      `these screenshots were replaced without recording it — run ` +
+        `node scripts/screenshot-sources.mjs --write:\n${report.screenshotsChanged.join('\n')}`,
+    ).toEqual([]);
+    expect(
+      report.screenshotsMissing,
+      `the manifest records screenshots that are gone:\n${report.screenshotsMissing.join('\n')}`,
+    ).toEqual([]);
+    expect(
+      report.screenshotsUnlisted,
+      `these screenshots are in docs/screenshots/ and nobody recorded them:\n` +
+        report.screenshotsUnlisted.join('\n'),
+    ).toEqual([]);
+  });
+
+  it('covers every screenshot the README shows', () => {
+    // The README is the front door, so an image it shows must be one the
+    // manifest knows about — otherwise the newest picture in the document is
+    // the one nothing keeps honest.
+    const recorded = new Set(Object.keys(manifest?.screenshots ?? {}));
+    for (const path of shown) {
+      expect(recorded, `${path} is shown in the README and is not in ${MANIFEST_PATH}`).toContain(
+        path,
+      );
+    }
+  });
+
+  it('names the file that moved, so a red run is actionable', () => {
+    // The gate's value is the sentence it prints. Driven against a synthetic
+    // manifest so this case proves the report can go red without touching the
+    // tree — the same reason `feedRefusals()` is a pure function.
+    const current = buildManifest(REPO_ROOT);
+    const stale = {
+      renderer: { ...current.renderer },
+      screenshots: { ...current.screenshots },
+    };
+    const [firstSource] = Object.keys(stale.renderer);
+    const [firstShot] = Object.keys(stale.screenshots);
+    stale.renderer[firstSource!] = 'sha256:0000';
+    stale.screenshots[firstShot!] = 'sha256:0000';
+    stale.renderer['apps/desktop/src/renderer/src/components/New.tsx'] = 'sha256:1111';
+
+    const report = drift(stale, REPO_ROOT);
+    expect(isClean(report)).toBe(false);
+    const lines = driftLines(report);
+    expect(lines).toContain(`changed since the screenshots were taken: ${firstSource}`);
+    expect(lines).toContain(`screenshot replaced without recording it: ${firstShot}`);
+    expect(lines).toContain(
+      'recorded renderer source is gone: apps/desktop/src/renderer/src/components/New.tsx',
+    );
   });
 });

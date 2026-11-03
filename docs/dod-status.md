@@ -333,3 +333,40 @@ undici 把被 abort 的那条连接留在事件循环里。所以那条端到端
 
 **这一轮没有做的事**：上传修正版 feed（无写权限）、Windows 桌面六步（无 Windows 机器）、
 步骤 6 的人眼视觉走查（无真机）。三条都仍是上表里的缺口，不假装完成。
+
+## 本轮（2026-11-04 深夜）截图与渲染层源码同步，五态第一次有图可看
+
+上表里「步骤 6 的**视觉**走查」一直是同一句话：DOM 断言证明「该有的字在屏上」，
+证明不了「看上去像不像首启」。这一轮没有假装把它做完，而是把它拆成两半，做掉能机器做的那一半。
+
+1. **截图与 UI 同步进门禁**（`tests/contract/screenshots.test.ts` 扩展，不新建文件）。
+   以前这个文件只判三件事：图存在、是 PNG、尺寸等于 `bootstrap.ts` 的开窗尺寸——全是关于**文件**的断言，
+   没有一条是关于**画面**的。`styles.css` 重写一遍、README 继续展示旧窗口，门禁照样绿。
+   现在 `scripts/screenshot-sources.mjs` 把每个渲染层源文件与每张已提交截图的 sha256 记进
+   `docs/screenshots/sources.json`，门禁重算并**指名**移动的那个文件；重拍图后
+   `node scripts/screenshot-sources.mjs --write` 是那次确认。
+   - **为什么不用 mtime**：`git clone` / `git checkout` 把每个文件都盖成检出时间，CI 里截图永远和源码
+     一样新，比较恒绿——一个不能变红的门禁比没有门禁更糟（本仓对 `--steps` 与 `skipIf` 说过同样的话）。
+   - **为什么不做像素比对**：`layout-probe.mjs` 开头已经写过理由，字体渲染、滚动条、亚像素边缘都会让它在
+     第一次无辜改动上打红，然后被关掉。
+   - **它做不到什么**：它证明不了图**真的重拍过**——`--write` 可以在没看一眼的情况下跑。这是所有非像素
+     门禁的共同上限，写在这里而不是糊过去：门禁的职责是让「没重拍」变成**显式决定**，不是让它不可能。
+   - **证明它会红**：往 `styles.css` 末尾加一行注释后，`node scripts/screenshot-sources.mjs` 退出 1 并打印
+     `[drift] changed since the screenshots were taken: apps/desktop/src/renderer/src/styles.css`，
+     `screenshots.test.ts` 的 `records the renderer sources that are actually in the tree` 同时打红；
+     恢复后 9/9 绿。
+2. **五个界面状态第一次有图**：`npm test` 的布局门禁在真实 Chromium 里拍的五态截图，此前只落在被忽略的
+   `.run-logs/layout/`。其中三张从未在仓库里出现过，已提交为
+   `docs/screenshots/states/{loading,partial,permission}.png`（1440×900，与开窗尺寸一致），
+   首启与失败态沿用 `docs/screenshots/{empty,error}.png`。于是「观感」这件事**可以远程做**：
+   把图发给任何一个人，他不必装应用就能回答「引导语够不够醒目、失败信息压不压过内容」。
+3. **演示脚本的步骤 6 拆成逐条可演示动作**（`docs/demo-script.md` 第四个演示动作）：
+   每个状态一行——做什么 / 屏幕上应看到什么 / **失败长什么样**。最后一句是给现场用的：
+   屏幕上出现的是「失败长什么样」那一列，就说明这个状态坏了，不要往下讲。
+4. **上传修正版 feed 的交接写成一行可执行说明**（`docs/manual-verification.md` 末节）：
+   变量名（`GITHUB_TOKEN` / `GH_TOKEN`）、命令（`node scripts/publish-feed.mjs --apply --verify`）、
+   期望输出（`PASS — update-feed.json on castorhrio/jev-pi-agent v1.0.0 now carries sha256=…`）、
+   失败时贴什么、做完要改的三处。本机仍无写权限令牌，所以这一条**仍是红**，不假装完成。
+
+**这一轮没有做的事**：上传修正版 feed（无令牌）、Windows 桌面六步（无 Windows 机器）、
+步骤 6 的**人眼**观感签字（图有了，看的人还没有）。
