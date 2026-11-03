@@ -79,6 +79,7 @@ import {
   resolvedAdapterIds,
   stop,
   tailOf,
+  unknownFlags,
   verifyResolution,
 } from '../../scripts/verify-packaged-adapters.mjs';
 import { readWorkflowFiles, workflowsPackageTheApp } from './ci-shape';
@@ -357,6 +358,16 @@ describe('the flags the command reads', () => {
 
   it('ignores bare words, which are not options', () => {
     expect(parseArgs(['package', '--timeout', '1000', 'extra'])).toEqual({ timeout: '1000' });
+  });
+
+  it('names the options it does not know, instead of falling back to a default', () => {
+    // The misspelling that matters: `--requires universal,mock` parses as an
+    // unknown key, so `required` falls back to `universal` and a check asked to
+    // prove two adapters proves one and reports OK. The flag is refused now.
+    expect(unknownFlags(['--requires', 'universal,mock'])).toEqual(['--requires']);
+    expect(unknownFlags(['--require', 'universal', '--timeout', '1000'])).toEqual([]);
+    expect(unknownFlags(['--help'])).toEqual([]);
+    expect(unknownFlags(['package', 'extra'])).toEqual([]);
   });
 
   it('resolves --release against the repository, not the caller\'s cwd', () => {

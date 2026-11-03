@@ -49,25 +49,61 @@
  * size the host serves, and that the URL names this release rather than
  * `latest`. Those are the four ways a feed is wrong while looking fine.
  *
+ * ## Why it can judge a file on disk, and not only a URL
+ *
+ * The document a release publishes is written by another command,
+ * `make-update-feed.mjs`, and that command already runs this judgement before
+ * it writes. What it did not offer was a way to ask *this* command about the
+ * same bytes: "the writer said yes" and "the published feed is fine" were two
+ * statements made by two processes that never met, and the only run that
+ * compared them needed a network, a published release, and a human to look at
+ * two outputs.
+ *
+ * `--feed-file <path>` closes that: it judges the document on disk, through the
+ * same `judgeFeedDocument()` / `judgeInstallerHead()` path, so the document half
+ * of a release can be proved before anything is uploaded — on a machine with no
+ * network, in CI, as part of the gate. The address rule does not apply (a file
+ * has no address) and the run says so instead of quietly skipping it; the
+ * installer check still runs unless `--no-installer` says otherwise.
+ *
+ * ## Why "not run" is printed
+ *
+ * `--no-installer` and `--feed-file` both leave something unchecked, and a
+ * verdict that looks identical whether or not a check ran is the failure mode
+ * this repository keeps closing: `PASS` would mean "the feed is fine" and
+ * "half of it was never fetched" in the same words. So every check that did not
+ * run is printed as `[skipped]`, and the summary line says how many there were.
+ * A reader can still get a green run without a network; they cannot get one
+ * without being told what it does not cover.
+ *
  * ## Usage
  *
  * ```bash
  * npm run build:main -w @ucad/desktop
  * node scripts/verify-release-feed.mjs
+ * node scripts/verify-release-feed.mjs --feed-file release/update-feed.json
  * ```
  *
  * Optional flags: `--feed <url>` (judge this feed instead of the shipped one),
- * `--expect-version <v>` (default: `package.json`'s version), `--timeout <ms>`
- * (default 20000), `--no-installer` (skip the network check of the installer
- * URL), `--json` (print the findings as JSON).
+ * `--feed-file <path>` (judge a document on disk — the bytes about to be
+ * uploaded; exclusive with `--feed`), `--expect-version <v>` (default:
+ * `package.json`'s version), `--timeout <ms>` (default 20000), `--no-installer`
+ * (skip the network check of the installer URL), `--json` (print the findings
+ * as JSON).
  *
- * Exit code 0 when nothing failed; 1 when a finding is a failure. Warnings
- * (`no-size`) are printed and do not fail the run: the app installs a feed
- * without a size, it just loses the cheap truncation check.
+ * An option this command does not know is an error, not a default: a typo in
+ * `--feed-file` used to fall through to fetching the shipped feed, which is the
+ * wrong document judged with the right machinery — green or red for reasons the
+ * operator did not ask about.
+ *
+ * Exit code 0 when nothing failed; 1 when a finding is a failure, or when the
+ * arguments name no document this command can judge. Warnings (`no-size`) are
+ * printed and do not fail the run: the app installs a feed without a size, it
+ * just loses the cheap truncation check.
  */
 
 import { readFileSync } from 'node:fs';
-import { basename, dirname, join } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -86,6 +122,7 @@ export const FEED_FINDINGS = [
   'feed-invalid-url',
   'feed-not-https',
   'feed-unreachable',
+  'feed-unreadable',
   'feed-not-json',
   'not-an-object',
   'no-version',
@@ -115,6 +152,7 @@ export const FEED_FINDING_SEVERITY = {
   'feed-invalid-url': 'fail',
   'feed-not-https': 'fail',
   'feed-unreachable': 'fail',
+  'feed-unreadable': 'fail',
   'feed-not-json': 'fail',
   'not-an-object': 'fail',
   'no-version': 'fail',
@@ -143,6 +181,7 @@ export const FEED_FINDING_MESSAGE = {
   'feed-invalid-url': 'the feed address is not a URL, so the app reports 未配置更新源',
   'feed-not-https': 'the feed address is not https, so the app refuses it and logs the refusal',
   'feed-unreachable': 'the feed could not be fetched, so every update check fails',
+  'feed-unreadable': 'the document named on the command line could not be read, so nothing was judged',
   'feed-not-json': 'the feed is not JSON, so the app reports a failed check',
   'not-an-object': 'the feed is not a JSON object, so the app has no fields to read',
   'no-version': 'the feed names no version, so the app cannot tell whether it is newer',
@@ -367,6 +406,51 @@ export function parseArgs(argv) {
   return args;
 }
 
+/** The options this command understands. Anything else is a typo, not a default. */
+export const KNOWN_FLAGS = ['feed', 'feed-file', 'expect-version', 'timeout', 'no-installer', 'json'];
+
+/**
+ * The `--options` in argv this command does not know.
+ *
+ * `parseArgs` skips what it does not recognise, which is the right shape for a
+ * shell that may pass a stray word and the wrong shape for a flag: `--no-installer`
+ * misspelled as `--no-installers` runs the network check the operator meant to
+ * skip (and reports a host problem as a feed problem), and `--feed-file` with a
+ * typo falls back to fetching the shipped feed — a different document, judged
+ * by the right machinery, answering a question nobody asked. Both look like a
+ * verdict. So an unknown option is refused, with the known ones listed.
+ */
+export function unknownFlags(argv) {
+  const unknown = [];
+  for (const token of argv) {
+    if (!token || !token.startsWith('--')) continue;
+    const name = token.slice(2).split('=')[0];
+    if (!KNOWN_FLAGS.includes(name)) unknown.push(token);
+  }
+  return unknown;
+}
+
+/**
+ * What this run judges: an address, or a document already on disk.
+ *
+ * Kept apart from `main()` so the choice — including "you named both" — is a
+ * pure function the tests can drive without a network or a filesystem.
+ * `--feed-file` wins nothing and overrides nothing: naming two different
+ * documents is a mistake about which one the verdict is for.
+ */
+export function resolveSource(args) {
+  const feedFile = typeof args['feed-file'] === 'string' ? args['feed-file'] : null;
+  const feed = typeof args.feed === 'string' ? args.feed : null;
+  if (feedFile !== null && feed !== null) {
+    throw new Error(
+      'both --feed and --feed-file were given: they name two different documents, ' +
+        'and this command judges one per run',
+    );
+  }
+  if (feedFile !== null) return { kind: 'file', path: feedFile };
+  return { kind: 'url', url: feed ?? shippedFeedUrl() };
+}
+
 /** A fetch that gives up, so a wedged host is a finding and not a hung shell. */
 async function fetchWithTimeout(url, init, timeoutMs) {
   const controller = new AbortController();
@@ -408,48 +492,86 @@ function printFindings(findings) {
 }
 
 async function main(argv) {
-  const args = parseArgs(argv);
-  const rules = await loadAppRules();
+  const unknown = unknownFlags(argv);
+  if (unknown.length > 0) {
+    throw new Error(
+      `unknown option(s): ${unknown.join(', ')}\n` +
+        `known options: ${KNOWN_FLAGS.map((name) => `--${name}`).join(', ')}`,
+    );
+  }
 
-  const feedUrl = typeof args.feed === 'string' ? args.feed : shippedFeedUrl();
+  const args = parseArgs(argv);
+  const source = resolveSource(args);
+  const rules = await loadAppRules();
   const expectedVersion =
     typeof args['expect-version'] === 'string' ? args['expect-version'] : packageVersion();
   const timeoutMs = Number.parseInt(String(args.timeout ?? '20000'), 10) || 20_000;
 
   const findings = [];
-  console.log(`feed: ${feedUrl ?? '(nothing configured)'}`);
+  /**
+   * What this run did not look at, in the words of the check that did not run.
+   * Printed rather than implied: see the header's "why not run is printed".
+   */
+  const notChecked = [];
+
+  console.log(
+    source.kind === 'file'
+      ? `feed: ${resolve(root, source.path)} (a document, not an address)`
+      : `feed: ${source.url ?? '(nothing configured)'}`,
+  );
   console.log(`version: this build is ${expectedVersion}`);
 
-  findings.push(...judgeFeedAddress(feedUrl, rules));
+  let raw;
+  if (source.kind === 'file') {
+    // A document on disk has no address, so the address rule has nothing to
+    // answer. Saying that out loud is the difference between a partial run and
+    // a run that looks complete.
+    notChecked.push('the feed address rule: a document on disk has no address to check');
+    try {
+      raw = readFileSync(resolve(root, source.path), 'utf8');
+    } catch (error) {
+      findings.push(
+        finding('feed-unreadable', `${source.path}: ${error instanceof Error ? error.message : String(error)}`),
+      );
+    }
+  } else {
+    findings.push(...judgeFeedAddress(source.url, rules));
+
+    if (findings.length === 0) {
+      try {
+        const response = await fetchWithTimeout(source.url, { redirect: 'follow' }, timeoutMs);
+        if (!response.ok) {
+          findings.push(finding('feed-unreachable', `HTTP ${response.status}`));
+        } else {
+          raw = await response.text();
+        }
+      } catch (error) {
+        findings.push(finding('feed-unreachable', error instanceof Error ? error.message : String(error)));
+      }
+    }
+  }
 
   let document = null;
-  let raw;
-  if (findings.length === 0) {
+  if (raw !== undefined) {
     try {
-      const response = await fetchWithTimeout(feedUrl, { redirect: 'follow' }, timeoutMs);
-      if (!response.ok) {
-        findings.push(finding('feed-unreachable', `HTTP ${response.status}`));
-      } else {
-        raw = await response.text();
-      }
-    } catch (error) {
-      findings.push(finding('feed-unreachable', error instanceof Error ? error.message : String(error)));
-    }
-
-    if (raw !== undefined) {
-      try {
-        document = JSON.parse(raw);
-      } catch {
-        findings.push(finding('feed-not-json', `${raw.length} bytes that do not parse`));
-      }
+      document = JSON.parse(raw);
+    } catch {
+      findings.push(finding('feed-not-json', `${raw.length} bytes that do not parse`));
     }
   }
 
   if (document !== null) {
     findings.push(...judgeFeedDocument(document, { expectedVersion, rules }));
 
-    if (args['no-installer'] !== true) {
+    if (args['no-installer'] === true) {
+      notChecked.push(
+        'the installer URL: not fetched (--no-installer), so "the file is there, at that size" is not proven',
+      );
+    } else {
       const installer = rules.checkChannelUrl(document.url);
+      // An installer URL the document judgement already refused needs no HEAD:
+      // the finding is on the list, and a fetch of an address the app will not
+      // use proves nothing.
       if (installer.ok) {
         try {
           findings.push(...judgeInstallerHead(await headInstaller(installer.url, timeoutMs), document));
@@ -463,15 +585,33 @@ async function main(argv) {
   }
 
   if (args.json === true) {
-    console.log(JSON.stringify({ feedUrl, expectedVersion, findings }, null, 2));
+    console.log(
+      JSON.stringify(
+        {
+          feedUrl: source.kind === 'url' ? source.url : null,
+          feedFile: source.kind === 'file' ? resolve(root, source.path) : null,
+          expectedVersion,
+          findings,
+          notChecked,
+        },
+        null,
+        2,
+      ),
+    );
   } else {
     printFindings(findings);
+    for (const entry of notChecked) {
+      console.log(`[skipped] ${entry}`);
+    }
     const failures = findings.filter((entry) => FEED_FINDING_SEVERITY[entry.code] === 'fail').length;
     const warnings = findings.length - failures;
+    // The summary carries the number of checks that did not run, so a green run
+    // cannot be read as "all of it was checked" when part of it was not.
+    const partial = notChecked.length === 0 ? '' : `; ${notChecked.length} check(s) did not run`;
     console.log(
       failures === 0
-        ? `PASS — ${warnings} warning(s), nothing the app would refuse`
-        : `FAIL — ${failures} failure(s), ${warnings} warning(s)`,
+        ? `PASS — ${warnings} warning(s), nothing the app would refuse${partial}`
+        : `FAIL — ${failures} failure(s), ${warnings} warning(s)${partial}`,
     );
   }
 

@@ -409,6 +409,30 @@ export function parseArgs(argv) {
   return args;
 }
 
+/** The options this command understands. Anything else is a typo, not a default. */
+export const KNOWN_FLAGS = ['require', 'timeout', 'release', 'help'];
+
+/**
+ * The `--options` in argv this command does not know.
+ *
+ * `parseArgs` skips what it does not recognise, which is right for a stray word
+ * and wrong for a flag — and the flag that matters here is `--require`. A
+ * misspelling (`--requires universal,mock`) used to fall through to the default
+ * `universal`, so a check that was asked to prove two adapters proved one and
+ * reported `OK`. That is the silent pass this repository closes wherever it is
+ * found (`verify-main-chain.mjs`'s `--steps`): the run looks like a verdict on
+ * the question asked, and answers a different one.
+ */
+export function unknownFlags(argv) {
+  const unknown = [];
+  for (const token of argv) {
+    if (!token || !token.startsWith('--')) continue;
+    const name = token.slice(2).split('=')[0];
+    if (!KNOWN_FLAGS.includes(name)) unknown.push(token);
+  }
+  return unknown;
+}
+
 /**
  * Where to look for the build: `--release` is relative to the repository, not
  * to the directory the command happened to be run from.
@@ -711,6 +735,13 @@ A launch that never reached the app says why, and what to run instead:
 `;
 
 async function main(argv) {
+  const unknown = unknownFlags(argv);
+  if (unknown.length > 0) {
+    throw new Error(
+      `unknown option(s): ${unknown.join(', ')}\n` +
+        `known options: ${KNOWN_FLAGS.map((name) => `--${name}`).join(', ')}\n\n${USAGE}`,
+    );
+  }
   const args = parseArgs(argv);
   if (args.help) {
     process.stdout.write(USAGE);

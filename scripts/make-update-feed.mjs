@@ -215,8 +215,13 @@ async function main(argv) {
     'upload this file to the release as `update-feed.json` — the app reads it from the\n' +
       'release it belongs to, and the installer URL must resolve for that release.\n',
   );
+  // Two checks, and they are not the same check: this one judges the bytes that
+  // are about to be uploaded (no network, so it works before the release
+  // exists), and the one after it judges the bytes that were published.
   process.stdout.write(
-    'then check the published bytes: `node scripts/verify-release-feed.mjs` (it fetches the\n' +
+    `check it before uploading: \`node scripts/verify-release-feed.mjs --feed-file ${out}\`\n` +
+      'judges this exact document with the app’s own rules, offline.\n' +
+      'then check the published bytes: `node scripts/verify-release-feed.mjs` (it fetches the\n' +
       'feed the shipped configuration names and judges it the way the app does).\n',
   );
 }

@@ -232,6 +232,42 @@ permission 真有模态、empty 真没有工作区）对两者都生效；新增
 窄窗口的**可测量**那一半（不横向溢出、不塌缩、不裁字、控件不出屏、不压字）现在有门禁；
 剩下的仍然要人眼，见 `docs/manual-verification.md` 步骤 6。
 
+## 本轮（2026-11-04 深夜）写与判接成一条命令链，且「没跑」在输出里显形
+
+上一轮把判定搬进了写之前，但两条命令仍然各判各的：写的一方验的是自己手里的对象，
+判的一方验的是网上那份文档，中间那份**刚写到磁盘、等着被上传**的文件，没有任何一条命令碰过。
+这正是 v1.0.0 那份坏 feed 的形状——错由一条命令犯下，由另一条命令在几天后、另一台机器上发现。
+
+1. **`verify-release-feed.mjs --feed-file <路径>`**：把「即将上传的那份文档」交给同一条判定
+   （`judgeFeedDocument` / `judgeInstallerHead`，规则仍从应用自己的 `update-feed.ts` 载入），
+   于是文档那一半可以在**没有网络、没有 release** 的情况下被证明，也能进 CI。
+   地址规则对文件不适用——这一点被**打印出来**（`[skipped]`）而不是咽下去。
+2. **「没跑」不再和「跑过」长得一样**：`--no-installer` 与 `--feed-file` 各自留下未检查项，
+   现在逐条打成 `[skipped] …`，总结行带「`N check(s) did not run`」。以前两种运行都打印同一句
+   `PASS`——一次只证明了文档的运行，和一次全查的运行，读起来一模一样。
+3. **不认识的选项是错误，不是默认值**（`verify-release-feed.mjs` 与 `verify-packaged-adapters.mjs`）：
+   `parseArgs` 会跳过看不懂的 token，这对散落的单词是对的，对旗标是错的。
+   `--no-installers` 会让本该跳过的网络检查照跑（把主机问题报成 feed 问题）；
+   `--requires universal,mock` 会退回默认的 `universal`，于是「要证两个适配器」的检查证了一个并报 OK。
+   现在两条命令都打印未知选项 + 已知选项表并以 1 退出。
+4. **端到端门禁 `tests/contract/feed-pipeline.test.ts`（7 项）**：临时目录里真的跑
+   `make-update-feed.mjs` 生成文档，再把**同一个文件**喂给 `verify-release-feed.mjs --feed-file`，
+   断言零 FAIL、退出码 0，且 feed 里的 `size` 等于安装包的实际字节数；反向四条：线上 v1.0.0 那份文档
+   经同一条命令红（`no-sha256` + `installer-latest-url`）、路径打错时红（`feed-unreadable`，
+   而不是在空集合上报绿）、未知选项红、`--feed` 与 `--feed-file` 同时给时红。
+
+**证明它会红**：删掉 `[skipped]` 的打印 → 「says out loud which checks it did not run」红；
+把写入器的 `sha256` 一行去掉 → 端到端三条同时红（写入器自己先拒绝写）。恢复后 7/7 绿。
+
+`layout-probe.mjs` 这一路复核结论是**已经收口**：结果文件缺失直接抛错、`GEOMETRY` 在
+`beforeAll` 之后由数据派生（历史上曾在模块作用域算出空数组，让 11 条几何断言在探针首屏就挂掉时全绿），
+`--steps` 那一路由 `verify-main-chain.mjs` 的 `parseSteps` / `stepCoverage` 管着。
+三者里只有上面两条命令还有「静默」的缝，本轮补上。
+
+门禁：`npm test`（含 `tests/contract/layout.test.ts`，需 X）、`npm run lint`、`npm run knip`、
+`npm run typecheck` 全绿；README 中英两半同步加了「上传前后用同一条命令」的段落，
+`readme*.test.ts` 与 `doc-citations.test.ts` 保持绿。
+
 ## 已知盲区（故意不做，防止后来者误补）
 
 1. **`verify-release-feed.mjs` 不比对哈希与文件本体**：它不下载安装包，所以证明不了「发布的
@@ -248,5 +284,7 @@ permission 真有模态、empty 真没有工作区）对两者都生效；新增
 ## 下一刀
 
 - **上传修正版 feed**：这是表里唯一还剩的「红」，且已经验证过判定为绿，只差写权限。
+  上传后 `node scripts/verify-release-feed.mjs` 应退出 0；在那之前，`--feed-file` 只能证明
+  文档本身（离线、可复跑），证明不了「发布出去的就是这一份」。
 - **Windows 桌面六步**：唯一硬缺口，需要一台 Windows 机器，不是代码。
-- 步骤 6 的**视觉**走查（DOM 断言管不到排版与观感），同上。
+- 步骤 6 的**视觉**走查（DOM 断言管不到排版与观感）与排版分寸（正文行长、行首禁则），同上。

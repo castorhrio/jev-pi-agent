@@ -93,6 +93,17 @@ Upload the result as `update-feed.json` on the release. It must carry a
 that does not match. A feed without a hash can announce a version, but
 nothing is installed from it — the update button says why.
 
+The same command judges a document before and after it is published:
+
+```bash
+node scripts/verify-release-feed.mjs --feed-file release/update-feed.json  # the bytes about to be uploaded
+node scripts/verify-release-feed.mjs                                      # the bytes that were published
+```
+
+It judges them with the rules the app itself enforces, and it names every
+check it did not run — `[skipped]`, with the count in the summary — so a green
+run never reads as more than it proved.
+
 ### Quick start
 
 Requires Node.js 22.12 or newer (the Electron 44 packaging toolchain and the
@@ -245,6 +256,16 @@ node scripts/make-update-feed.mjs --version 1.1.0 \
 把生成的文件作为 `update-feed.json` 上传到该 release。它必须带 `sha256`：
 应用会对下载到的安装包做哈希校验，对不上的绝不启动。没有哈希的 feed 仍能
 播报新版本，但不会从中安装任何东西——更新按钮会说明原因。
+
+上传前后用的是同一条命令，判的是同一套规则：
+
+```bash
+node scripts/verify-release-feed.mjs --feed-file release/update-feed.json  # 即将上传的那份字节
+node scripts/verify-release-feed.mjs                                      # 已经发布出去的那份字节
+```
+
+它会把自己没跑过的检查逐条标成 `[skipped]`，并在总结行里报数量——所以一次
+绿色的运行不会被读成「全部都查过了」。
 
 ### 快速开始
 
