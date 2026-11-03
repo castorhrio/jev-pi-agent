@@ -433,3 +433,51 @@ Windows 真机六步（无 Windows 机器）；步骤 6 的人眼观感签字。
 
 **这一轮没有做的事**：上传修正版 feed（无令牌）、Windows 桌面六步（无 Windows 机器）、
 步骤 6 的**人眼**观感签字（图有了，看的人还没有）。三条仍是上表里的缺口，不假装完成。
+
+## 本轮（2026-11-04）五态走查从「去看一眼」变成可交接的判据与签字表
+
+上表里「权限门不可绕」还差的那半句是「真机上的**视觉**走查」，而它连着三轮的写法都是同一句
+「仍未做」。这句话诚实，但它没有下一步：**「去看一眼」不是一件可以交接的事**——没有要回答的问题、
+没有写答案的地方、也没有「答了会怎样」。所以它挂了三轮。
+
+这一轮不碰产品行为，只把这件事变成可交接的：
+
+1. **`docs/state-walkthrough.md`**：每态三条**能用「是 / 否」回答**的判据，每条锚在屏幕上真的会出现的字上
+   （取自 `apps/desktop/src/shared/i18n.ts`，例如首启态「第一眼落在 `还没有对话。…` 上而不是空列头上」、
+   权限态「`拒绝` 不比允许更难找」），并写明**不合格长什么样**——现场看到那一句就说明这个状态坏了。
+   两条路都写在文件里：有应用走 `npm run dev:web` 的五个 URL，只有图就直接看五张截图（远程可做）。
+2. **记录表**：`日期 / 走查人 / 看了哪几张 / 五态判据 / 不合格项 / 结论`，出厂只有一行 `未走查` 占位。
+   **一行带日期的记录就是一次签字**；写「OK」不算记录，要写「第 N 条不满足：屏幕上看到什么」。
+3. **`tests/contract/state-walkthrough.test.ts`（10 项）** 把三件事钉在一起：
+   - 每个 `STATE_SCENARIOS` 状态都有 `### <state>` 一节、至少三条判据、且每条判据都点名一个反引号字面量
+     （**写这份文件时它当场抓到我自己的 5 条判据在说空话**——「加载态看起来是在等」没有锚点，
+     改成「没有 `重试` 按钮」才过）；
+   - 每节点名的截图必须真的在仓库里（远程走查那条路不能烂成 404）；
+   - **README 与记录表不许互相矛盾**：表里没有带日期的一行时，README 中英两半都必须仍然写着
+     「没人看过」（`by eye` / `人眼`）；一旦签了字，README 必须带上那个日期。两个方向各有一条红测，
+     外加一条「签了字且 README 带上日期 → 零问题」的绿测，免得规则变成永远失败。
+4. **README 中英各补一句**指向这份文件（`readme-parity.test.ts` 的 `LIMITATIONS` 关键词原样保留），
+   `docs/manual-verification.md` 步骤 6 与 `docs/demo-script.md` 的演示动作 4 各补一段「现场照着判据念」。
+
+**这一轮没有做的事**：走查本身（没有人看那五张图）、上传修正版 feed（无令牌）、
+Windows 桌面六步（无 Windows 机器）。三条仍是上表里的缺口，不假装完成——本轮只是让第一条
+**从「没人做」变成「谁都能做，且做了会留下痕迹」**。
+
+## 排版三项底线的证据索引（答辩时 30 秒定位）
+
+| 结论 | 证据在哪 | 门禁 |
+|---|---|---|
+| 一屏只有四档字号（18 / 13 / 12 / 10.5） | `apps/desktop/src/renderer/src/styles.css` 的 `--fs-display` / `--fs-body` / `--fs-note` / `--fs-fine` | `tests/contract/typography.test.ts`（加一条裸 `12.5px` 会打红） |
+| 中文不小于 12px，且与 `--fs-note` 是同一个数 | 同上，`--fs-min-cjk` | `tests/contract/typography.test.ts` |
+| 正文行长 ≤ 40 汉字（`--measure-prose: 36em`，落在 28–40 带内） | `styles.css` 的 `--measure-prose`；量测常量 `MAX_PROSE_LINE_CJK` 在 `scripts/layout-page-scripts.mjs` | `tests/contract/layout.test.ts`（五态 × 两个窗口尺寸） |
+| 行首 / 行尾禁则（句号不顶行首） | `LINE_START_FORBIDDEN` / `LINE_END_FORBIDDEN`，同上文件 | `tests/contract/layout.test.ts` |
+| 中英空隙：**量过，决定不做** | 扫 `apps/desktop/src/shared/i18n.ts` 全部字面量，「汉字紧邻拉丁字母/数字」出现 0 次 | 无门禁，理由见上一节（会拒绝「第1步」这类正常写法） |
+| 五态观感：判据已就位，**等一个人签字** | `docs/state-walkthrough.md` | `tests/contract/state-walkthrough.test.ts`（判据锚点 + README 与签字表不许矛盾） |
+
+## 三条外部阻塞（本轮仍阻塞，不假装完成）
+
+| 阻塞 | 解除条件 | 一行命令 | 本轮状态 |
+|---|---|---|---|
+| 已发布 v1.0.0 的 feed 缺 `sha256` | 拿到 `castorhrio/jev-pi-agent` 的 `contents: write` 令牌的人跑一次 | `node scripts/publish-feed.mjs --apply --verify` | **仍阻塞**：本机无令牌、`gh` 未安装。修正版文档已判零 finding，只差上传 |
+| Windows 桌面六步 | 一台 Windows 机器 + 一次 `npm run package` | `node scripts\verify-main-chain.mjs --exec release\win-unpacked\UCAD.exe --report win-report.json` | **仍阻塞**：无 Windows 机器。回传通道（`--report`）已就绪并被门禁钉住形状 |
+| 五态人眼走查 | 一个人按判据看五张图（或走五个 URL）并签一行 | 打开 `docs/state-walkthrough.md`，逐条回答 | **仍阻塞**：判据与签字表本轮就位，签字还没有发生 |

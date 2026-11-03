@@ -72,9 +72,15 @@ npm run dev:web          # 默认 http://localhost:5173
 `tests/contract/screenshots.test.ts` 保证上面五张图与渲染层源码同步。
 人眼走查的记录在 `docs/manual-verification.md` 步骤 6。
 
+**现场怎么判「这一屏对不对」**：不要凭感觉。`docs/state-walkthrough.md` 给每一态写了三条
+能用「是 / 否」回答的判据（例如首启态「第一眼落在引导语上而不是空列头上」「三步一眼能数出」），
+每条都锚在屏幕上真的会出现的字上。现场照着念、照着答；答「否」就停在那一条，别往下讲——
+那正是这个状态坏了的样子。走查完在文件末尾的记录表里签一行（日期 / 看了哪几张 / 结论），
+签了字之后 README 里「还没被人眼走查过」那句才该改。
+
 **被问到「这五个状态是真机跑的吗」**：图是 `npm test` 的布局门禁在真实 Chromium 里拍的，
 不是手绘也不是 mock 图；但**观感**（引导语够不够醒目、失败信息压不压过内容）仍然要人眼看，
-这一条在 `docs/manual-verification.md` 里如实写着「仍未做」。
+这一条在 `docs/manual-verification.md` 里如实写着「仍未做」，判据与签字表在 `docs/state-walkthrough.md`。
 
 ## 凭什么只有它能做
 
