@@ -1,7 +1,7 @@
 {
   "note": "Written by scripts/screenshot-sources.mjs. The screenshots in this directory were taken while the renderer sources below were at these hashes. Retake the images, then run `node scripts/screenshot-sources.mjs --write`.",
   "renderer": {
-    "apps/desktop/src/renderer/src/App.tsx": "sha256:2117f840aec35dbbc48ab33d2302c452808d5e4b9007ea5aeda8b38ae8b62389",
+    "apps/desktop/src/renderer/src/App.tsx": "sha256:61d92648fabc3b3e57bd11049e2c2aeb6229ba7f5e00c149a2f864c1b8ccd4ae",
     "apps/desktop/src/renderer/src/api.ts": "sha256:bbfd1f919033390000ff68a9612eeda6b39ca39048f141a55f31dd78e14ba3da",
     "apps/desktop/src/renderer/src/components/ChatLog.tsx": "sha256:0270c296f63c3e1b7eae19c55d78fbcbe2835d9eb688c11fa6a8fe3f09dffe2e",
     "apps/desktop/src/renderer/src/components/Composer.tsx": "sha256:66a644844adc4930d24634f842c3b94f96584e193bfb9538e2fefbb9000bdca3",
@@ -31,19 +31,19 @@
     "apps/desktop/src/renderer/src/main.tsx": "sha256:fd5b8eb4f8e6bb94e05c95638a63a194b507c16c95762931751a8acb66cc26d4",
     "apps/desktop/src/renderer/src/state/hooks.ts": "sha256:8d8cfb9f1678dc92fec430ef68efb34d413da7c2ae13ce2684683eedb415b359",
     "apps/desktop/src/renderer/src/state/session-reducer.ts": "sha256:e82390a35ca33d11b22652ddbc6a22e7bec5024d1430c6d85ca280c69ed01410",
-    "apps/desktop/src/renderer/src/styles.css": "sha256:0d9bf7f43a3efca9a729298cd59973a4697b0d2dadfd07bac15d18d7777fd23e",
+    "apps/desktop/src/renderer/src/styles.css": "sha256:4be549590df220331b4ba2d9bb89112f50f685cb7268c74facc934d0916cd421",
     "apps/desktop/src/renderer/src/update-controller.tsx": "sha256:a7f96869b392804ee90a67877732d3ccf63ebbc33969ec7dea195830981586ab",
     "apps/desktop/src/shared/i18n.ts": "sha256:351cace8ea0774eb47dfad39c71e727f1e70988ba6a3c4d6542640bc9877eba6"
   },
   "screenshots": {
     "docs/screenshots/chat.png": "sha256:d9490b3da03231833ce39d0ffec6e6c8a9085065f9315c1082360c3dc1122624",
-    "docs/screenshots/context.png": "sha256:f5a750c5895bc57b7227ac8695ed20143b73ad31c34fdd9498c7475098e3dbd1",
-    "docs/screenshots/decision.png": "sha256:3d9d519a6b6b870313b6562eecb3a175d794c2cd5fa621cddf0f98933ff45315",
-    "docs/screenshots/empty.png": "sha256:c62bc81fea45e86228252c68a9f8392db2483da4e6fac92caf30204d8565e4a9",
+    "docs/screenshots/context.png": "sha256:b8b1ddcc9258efe7f7c56af9d1da7af3571c7aa2d062d1e4090a84cb208fa575",
+    "docs/screenshots/decision.png": "sha256:922e564638a71dd029aeef4a7fc9ec19946c2affbb59bb725278958d7d51c39a",
+    "docs/screenshots/empty.png": "sha256:de8cfc081c3ceabf19c41411c744d3fac0c80652509136403374ec38b9f07e0e",
     "docs/screenshots/error.png": "sha256:d9cc8eca376e704968cf02bf17e9e71f9f1b9b7438c55ed7261feeb757c20e76",
     "docs/screenshots/handoff.png": "sha256:de181c826cfc3f78b991d10bc368a8c3ea73ff6cc7ab0b4944eb857b0cd6c71c",
     "docs/screenshots/states/loading.png": "sha256:d9490b3da03231833ce39d0ffec6e6c8a9085065f9315c1082360c3dc1122624",
-    "docs/screenshots/states/partial.png": "sha256:11bcdb2d847f57ba3a5ae3b59a264df6df06cbb865a481f880a5627e293e2679",
+    "docs/screenshots/states/partial.png": "sha256:7be6342442ceca3ceb221c2ae0a8ea358e76718485b7ffca36fb68686d3ad972",
     "docs/screenshots/states/permission.png": "sha256:e133b5715e39ab3929ce22b69d17f86c76addda247ee86d2c66992be62d9404a"
   }
 }

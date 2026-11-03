@@ -152,6 +152,21 @@ interface Measurement {
     /** The permission prompt, the one overlay that announces itself as a modal. */
     dialogOpen: boolean;
     bodyChars: number;
+    /**
+     * The first-run block's hierarchy, as the engine computed it.
+     *
+     * `null` when the block is not on screen — a state without a first run is
+     * not a state with an empty one, and the assertion below says so.
+     */
+    firstRun: {
+      leadSize: number;
+      leadColor: string;
+      stepSize: number;
+      stepColor: string;
+      bodyColor: string;
+      stepMarkers: number;
+      listStyle: string;
+    } | null;
   };
   horizontalOverflow: number;
   escaping: Array<{ element: string; overflowRight: number; overflowLeft: number; text: string }>;
@@ -686,6 +701,75 @@ describe('the interface states are measured, not assumed', () => {
         `the empty state's chip names a workspace instead of offering to open one: ` +
           JSON.stringify(m.content.projectChip),
       ).toBe(true);
+    }
+  });
+
+  it('the first-run block has an entry point, and counts its steps once', () => {
+    /*
+     * `docs/state-walkthrough.md` asks a walker two things about the empty
+     * state that are not matters of taste: the eye lands on the lead sentence
+     * first, and the three steps can be counted at a glance. Both were false
+     * in the stylesheet and nothing measured them, so the walkthrough could
+     * only ever have been answered "no" — and a criterion nobody can pass is a
+     * criterion that gets quietly reworded.
+     *
+     * The lead was `--text-2` at `--fs-body` while the steps beneath it were
+     * `--text-2` at `--fs-note`: the same colour, one pixel apart, so the
+     * block was four paragraphs of equal weight. It is now the body colour —
+     * the colour of the transcript it stands in for — and the steps are not.
+     * That is the whole assertion: the entry point is painted as primary text
+     * and the text under it is not. It says nothing about which colour is
+     * prettier, and `contrast.test.ts` still owns whether either is readable.
+     *
+     * The count is the list's own marker now. Each step used to carry an 18px
+     * bordered circle — a second, smaller drawing of `.step-n`, which carries
+     * *state* on the help page rather than order. `stepMarkers` is the number
+     * of those circles still on screen, and it has to be 0 while the list
+     * still counts: a `list-style` of `none` with the circles gone would be a
+     * block that stopped being countable, which is the other way to fail the
+     * same criterion.
+     */
+    const empty = measurements.filter((m) => m.state === 'empty');
+    expect(empty.length, 'no measurement for ?scenario=empty').toBeGreaterThan(0);
+    for (const m of empty) {
+      const first = m.content.firstRun;
+      expect(first, `?scenario=empty at ${m.width}x${m.height} has no first-run block`).not.toBeNull();
+      expect(
+        first!.leadColor,
+        'the first-run lead is not painted as primary text, so the block has no entry point',
+      ).toBe(first!.bodyColor);
+      expect(
+        first!.stepColor,
+        'the first-run steps are painted as primary text too, so nothing leads',
+      ).not.toBe(first!.bodyColor);
+      expect(
+        first!.leadSize,
+        'the first-run lead is not larger than the steps it introduces',
+      ).toBeGreaterThanOrEqual(first!.stepSize);
+      expect(
+        first!.stepMarkers,
+        'the first-run steps carry their own numbered circles again; the list marker is the count',
+      ).toBe(0);
+      expect(
+        first!.listStyle,
+        'the first-run steps are no longer counted by the list, so "three steps" is not visible',
+      ).toBe('decimal');
+    }
+    /*
+     * And the block is not painted by the three states that always carry
+     * content: a `firstRun` reading there would mean the first-run pitch had
+     * leaked into a screen that has data to show. `loading` is deliberately
+     * not in this list — it is photographed on the frame where the history has
+     * not arrived, and what that frame paints is `tests/e2e/scenarios.e2e
+     * .test.tsx`'s question (it must say 加载中 and must not say 还没有对话),
+     * not this one's.
+     */
+    const CONTENT_STATES = ['error', 'partial', 'permission'];
+    for (const m of measurements.filter((other) => CONTENT_STATES.includes(other.state ?? ''))) {
+      expect(
+        m.content.firstRun,
+        `?scenario=${m.state} painted the first-run block`,
+      ).toBeNull();
     }
   });
 });

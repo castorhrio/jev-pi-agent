@@ -899,19 +899,21 @@ function Shell(): JSX.Element {
                       <div className="block-title mt-5">
                         {t('empty.chatSteps')}
                       </div>
+                      {/*
+                        * An ordered list, counted by its own markers.
+                        *
+                        * Each step used to carry a `<span className="n">` inside
+                        * an 18px bordered circle — a second, smaller drawing of
+                        * the idea `.step-n` already draws at 22px for the help
+                        * page, where the circle carries *state* (✓ done, accent
+                        * current). Here it carried only *order*, which is what
+                        * a list marker is for. The count is still on screen and
+                        * still countable; it is just drawn once.
+                        */}
                       <ol className="first-run-steps">
-                        <li>
-                          <span className="n">1</span>
-                          <span>{t('empty.chatStep1')}</span>
-                        </li>
-                        <li>
-                          <span className="n">2</span>
-                          <span>{t('empty.chatStep2')}</span>
-                        </li>
-                        <li>
-                          <span className="n">3</span>
-                          <span>{t('empty.chatStep3')}</span>
-                        </li>
+                        <li>{t('empty.chatStep1')}</li>
+                        <li>{t('empty.chatStep2')}</li>
+                        <li>{t('empty.chatStep3')}</li>
                       </ol>
                     </div>
                   ) : (

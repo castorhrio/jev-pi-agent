@@ -649,6 +649,44 @@ export const MEASURE = `(() => {
         document.querySelector('.app > .pane > .row-gap') !== null,
       dialogOpen: document.querySelector('.dialog[role="dialog"][aria-modal="true"]') !== null,
       bodyChars: text(document.body).length,
+      /*
+       * The first-run block's hierarchy, as computed rather than as declared.
+       *
+       * 'docs/state-walkthrough.md' asks a walker whether the eye lands on the
+       * lead sentence first, "and it is more prominent than the text around
+       * it". That half is not a matter of taste: it is a colour and a size, and
+       * both are readable from the engine. It was --text-2 at --fs-body while
+       * the three steps beneath it were --text-2 at --fs-note - the same
+       * colour, one pixel apart - so the block had no entry point at all and
+       * the walkthrough could not have passed it.
+       *
+       * stepMarkers counts the span.n circles the steps used to carry; it is 0
+       * now, and the assertion that it stays 0 is what keeps a second drawing
+       * of .step-n from coming back. listStyle is the replacement: the count is
+       * the list's own marker. (The tokens are named without their leading
+       * dashes and without quoting so this comment cannot end the string it
+       * lives in - see the note at the top of this file.)
+       *
+       * null when the block is not on screen, so a state that has no first-run
+       * block cannot be read as one that has an empty one.
+       */
+      firstRun: (() => {
+        const lead = document.querySelector('.first-run-lead');
+        const step = document.querySelector('.first-run-steps li');
+        const list = document.querySelector('.first-run-steps');
+        if (lead === null || step === null || list === null) return null;
+        const leadStyle = getComputedStyle(lead);
+        const stepStyle = getComputedStyle(step);
+        return {
+          leadSize: round(parseFloat(leadStyle.fontSize)),
+          leadColor: leadStyle.color,
+          stepSize: round(parseFloat(stepStyle.fontSize)),
+          stepColor: stepStyle.color,
+          bodyColor: getComputedStyle(document.body).color,
+          stepMarkers: document.querySelectorAll('.first-run-steps .n').length,
+          listStyle: getComputedStyle(list).listStyleType,
+        };
+      })(),
     },
     horizontalOverflow: round(horizontalOverflow),
     escaping: escaping.slice(0, 12),

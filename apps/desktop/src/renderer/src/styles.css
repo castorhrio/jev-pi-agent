@@ -2027,48 +2027,72 @@ table.grid .num {
    conversation's, and the block that stands in for the conversation takes it.
    That column is now the prose measure (--measure-prose), so the empty state
    is set to the same line length as the transcript it replaces.
+
+   Round 41, a `distill` pass on this one block. It had four paragraphs of
+   equal weight and a second copy of the step-number circle; both are gone.
+   The vertical margin was 40px, which is not one of the five steps the
+   stylesheet declares and had no reason recorded next to it — the file's own
+   rule is that a gap off the scale needs one, so it takes `--sp-5`.
 */
 .first-run {
-  margin: 40px 0;
+  margin: var(--sp-5) 0;
   text-align: left;
 }
 
+/*
+ * The lead is the block's entry point, so it is painted as primary text.
+ *
+ * It was `--text-2` at `--fs-body`: the same colour as the three steps
+ * directly beneath it, one pixel larger. On the empty screen that made four
+ * paragraphs of equal weight with nothing for the eye to land on first — and
+ * `docs/state-walkthrough.md` asks a walker to check exactly that ("第一眼落在
+ * … 上 … 且比周围文字更醒目"). The walkthrough could not answer that question
+ * while the stylesheet said no, so the fix belongs here rather than in the
+ * criteria. The layout gate now measures it instead of trusting this comment:
+ * `content.firstRun` in scripts/layout-page-scripts.mjs carries the lead's and
+ * the steps' computed colour and size, and tests/contract/layout.test.ts
+ * asserts the lead is the body colour and the steps are not.
+ */
 .first-run-lead {
-  color: var(--text-2);
+  color: var(--text);
   font-size: var(--fs-body);
   line-height: 1.7;
 }
 
+/*
+ * The steps are counted by the list, not by a second circle.
+ *
+ * Each step carried an 18px bordered circle around a mono numeral — the same
+ * idea as `.step-n` (22px, filled, and carrying *state*: ✓ when done, accent
+ * when current) drawn a second time, four pixels smaller, for a list that only
+ * needs *order*. Two drawings of one idea is what makes a screen read as
+ * assembled rather than designed. Order is what a list marker is for, so the
+ * marker does it, in the same mono and the same `--text-3` the circles used.
+ *
+ * `display: flex` went with them: a flex container blockifies its children,
+ * which drops `display: list-item` and with it the marker. The gap between
+ * steps is a sibling margin on the scale rather than a `gap` of 10px.
+ */
 .first-run-steps {
-  list-style: none;
   margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
+  padding-left: 1.9em;
+  list-style: decimal;
 }
 
 .first-run-steps li {
-  display: flex;
-  gap: 11px;
-  align-items: flex-start;
   font-size: var(--fs-note);
   color: var(--text-2);
   line-height: 1.65;
 }
 
-.first-run-steps .n {
-  flex: 0 0 18px;
-  height: 18px;
-  border-radius: 50%;
-  border: 1px solid var(--border-strong);
-  color: var(--text-3);
+.first-run-steps li + li {
+  margin-top: var(--sp-2);
+}
+
+.first-run-steps li::marker {
   font-family: var(--mono);
   font-size: var(--fs-fine);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  margin-top: 1px;
+  color: var(--text-3);
 }
 
 /* ===========================================================================
