@@ -89,6 +89,131 @@ describe('the Chinese type floor', () => {
 });
 
 /**
+ * The type scale: four sizes, and every rule has to pick one of them.
+ *
+ * ## Why a count is the check
+ *
+ * The roles above were declared and then ignored. Forty-seven rules wrote their
+ * own `font-size` — 9, 10, 10.5, 11, 11.5, 12, 12.5, 13, 13.5, 14 and 18px —
+ * so one screen carried a section label at 12.5px beside an identical one at
+ * 12px, and a table at 12.5px above a card at 12px. None of those is wrong on
+ * its own; together they are the reason the app reads as assembled rather than
+ * designed. A half-pixel is not a decision, it is the residue of eleven rounds
+ * each picking a number that looked right in isolation.
+ *
+ * ## What is asserted, and what is not
+ *
+ * Two things, both mechanical:
+ *
+ *  1. every `font-size` in the stylesheet is a `var(--fs-…)` — a raw `12.5px`
+ *     is the failure mode, and it is caught by name;
+ *  2. the sizes those tokens resolve to number **at most four**.
+ *
+ * Not asserted: which rule gets which role. That is a design judgement, and a
+ * test that pinned it would have to be rewritten every time a panel is
+ * restyled — the kind of gate that gets deleted. The count is the part that
+ * cannot be argued with: a fifth size is a decision, and it has to be made
+ * here rather than typed into a rule.
+ *
+ * The tokens are resolved through their `var()` aliases rather than compared
+ * as strings, because `--fs-note: var(--fs-min-cjk)` is the same size as
+ * `--fs-min-cjk` and counting the two spellings as two tiers would make the
+ * gate lie in the safe direction — it would pass a stylesheet with five real
+ * sizes as long as two of them shared a name.
+ */
+describe('the type scale', () => {
+  /** Every `--fs-*` token in `:root`, resolved through its `var()` aliases. */
+  function scale(): Map<string, string> {
+    const root = /:root\s*\{([\s\S]*?)\n\}/.exec(codeOnly(styles));
+    expect(root, 'styles.css has no :root block').not.toBeNull();
+
+    const declared = new Map<string, string>();
+    for (const match of root![1]!.matchAll(/--(fs-[\w-]+):\s*([^;]+);/g)) {
+      declared.set(match[1]!, match[2]!.trim());
+    }
+    expect(declared.size, 'styles.css declares no --fs-* token at all').toBeGreaterThan(0);
+
+    const resolve = (name: string, depth = 0): string => {
+      const value = declared.get(name);
+      expect(value, `--${name} is used but never declared`).toBeDefined();
+      const alias = /^var\(--([\w-]+)\)$/.exec(value!);
+      if (!alias) return value!;
+      expect(depth, `--${name} resolves through more than four aliases`).toBeLessThan(4);
+      return resolve(alias[1]!, depth + 1);
+    };
+
+    return new Map([...declared.keys()].map((name) => [name, resolve(name)]));
+  }
+
+  /** Every `font-size` declaration in the file, with the selector that wrote it. */
+  function declarations(): Array<{ selector: string; value: string }> {
+    const found: Array<{ selector: string; value: string }> = [];
+    for (const rule of codeOnly(styles).matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+      const size = /font-size:\s*([^;]+);/.exec(rule[2]!);
+      if (size) found.push({ selector: rule[1]!.trim().replace(/\s+/g, ' '), value: size[1]!.trim() });
+    }
+    return found;
+  }
+
+  it('declares four roles, and they are four different sizes', () => {
+    const roles = scale();
+    // The floor is a token, not a role: it is the number the note role resolves
+    // to, and it exists so the layout gate and the stylesheet can be compared.
+    expect([...roles.keys()].sort()).toEqual([
+      'fs-body',
+      'fs-display',
+      'fs-fine',
+      'fs-min-cjk',
+      'fs-note',
+    ]);
+
+    const px = (name: string): number => {
+      const value = roles.get(name)!;
+      const number = Number(/^(\d+(?:\.\d+)?)px$/.exec(value)?.[1]);
+      expect(number, `--${name} is ${value}, which is not a length in px`).toBeGreaterThan(0);
+      return number;
+    };
+
+    // Ordered, because a scale that is not ordered is a set of numbers.
+    expect(px('fs-display'), 'the display role must be the largest').toBeGreaterThan(px('fs-body'));
+    expect(px('fs-body'), 'body must be larger than the note role').toBeGreaterThan(px('fs-note'));
+    expect(px('fs-note'), 'the note role must be larger than the identifier role').toBeGreaterThan(
+      px('fs-fine'),
+    );
+    // And the note role *is* the floor: a note may never fall under it.
+    expect(roles.get('fs-note'), 'the note role and the Chinese floor must be one number').toBe(
+      roles.get('fs-min-cjk'),
+    );
+  });
+
+  it('writes no raw size anywhere — every rule picks a role', () => {
+    const raw = declarations().filter((decl) => !/^var\(--fs-[\w-]+\)$/.test(decl.value));
+    expect(
+      raw.map((decl) => `${decl.selector} { font-size: ${decl.value} }`),
+      'these rules set a size of their own instead of picking a role',
+    ).toEqual([]);
+  });
+
+  it('puts at most four sizes on a screen', () => {
+    const roles = scale();
+    const used = new Set<string>();
+    for (const decl of declarations()) {
+      const name = /^var\(--(fs-[\w-]+)\)$/.exec(decl.value)?.[1];
+      expect(name, `${decl.selector} does not use a --fs-* token`).toBeDefined();
+      used.add(roles.get(name!)!);
+    }
+
+    // Four is what a screen holds without the reader noticing the type at all.
+    // A fifth size is a decision; make it here, in this number, with a reason.
+    expect(
+      [...used].sort(),
+      `the stylesheet sets ${used.size} sizes; four is the ceiling`,
+    ).toHaveLength(4);
+    expect(used.size, 'the stylesheet sets fewer sizes than it declares roles').toBe(4);
+  });
+});
+
+/**
  * The prose measure: how long a line may be, and where it may break.
  *
  * The layout gate measures both in a real engine (`tests/contract/layout.test.ts`,

@@ -99,8 +99,33 @@
      or an arrow glyph is ASCII, and the floor only governs boxes with Han text.
      The number below is the same one the layout gate measures with
      (scripts/layout-page-scripts.mjs → CJK_FLOOR_PX); tests/contract/typography
-     .test.ts fails if the two ever disagree. */
+     .test.ts fails if the two ever disagree.
+
+     -- four tiers, and no more -------------------------------------------
+     Declaring the roles was not enough. The rules below still wrote their own
+     numbers — 47 of them, across nine values (9, 10, 10.5, 11, 11.5, 12,
+     12.5, 13, 13.5, 14, 18) — so one screen showed a section label at 12.5px
+     next to an identical one at 12px, and a table at 12.5px above a card at
+     12px. Half-pixel differences are not a scale; they are the residue of
+     eleven rounds each picking a number that looked right in isolation.
+
+     Every `font-size` in this file is now one of these four, and
+     tests/contract/typography.test.ts resolves the tokens and fails if a
+     fifth size appears:
+
+       --fs-display  18px    the pane's <h1>, once per screen
+       --fs-body     13px    prose, inputs, the composer
+       --fs-note     12px    secondary prose, tables, code, labels
+                             (== --fs-min-cjk: the floor and the note role are
+                             the same number, so a note can never fall under it)
+       --fs-fine   10.5px    ASCII chrome only: keycaps, counts, carets,
+                             step numbers, glyphs
+
+     Four is the number a screen can hold without the reader noticing the
+     type at all. A fifth size is a decision, and it has to be argued for in
+     that test rather than typed into a rule. */
   --fs-min-cjk: 12px;
+  --fs-display: 18px;
   --fs-body: 13px;
   --fs-note: var(--fs-min-cjk);
   --fs-fine: 10.5px;
@@ -164,7 +189,7 @@ body {
   background: var(--bg);
   color: var(--text);
   font-family: var(--sans);
-  font-size: 13px;
+  font-size: var(--fs-body);
   line-height: 1.6;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
@@ -329,7 +354,7 @@ textarea::placeholder {
 textarea {
   resize: none;
   font-family: var(--sans);
-  font-size: 13px;
+  font-size: var(--fs-body);
   line-height: 1.6;
 }
 
@@ -350,7 +375,7 @@ select:hover {
 
 kbd {
   font-family: var(--mono);
-  font-size: 10.5px;
+  font-size: var(--fs-fine);
   background: var(--surface-2);
   border: 1px solid var(--border);
   border-bottom-color: var(--border-strong);
@@ -363,7 +388,7 @@ kbd {
 code,
 .mono {
   font-family: var(--mono);
-  font-size: 11.5px;
+  font-size: var(--fs-note);
 }
 
 /* ===========================================================================
@@ -392,7 +417,7 @@ code,
   align-items: center;
   gap: 7px;
   font-weight: 600;
-  font-size: 12.5px;
+  font-size: var(--fs-note);
   letter-spacing: 0.02em;
 }
 
@@ -412,7 +437,7 @@ code,
   border-radius: var(--r-sm);
   background: var(--surface);
   color: var(--text-2);
-  font-size: 12px;
+  font-size: var(--fs-note);
   -webkit-app-region: no-drag;
   cursor: pointer;
 }
@@ -567,7 +592,7 @@ code,
 
 .rail-head button {
   padding: 1px 6px;
-  font-size: 14px;
+  font-size: var(--fs-body);
   line-height: 1.2;
   background: transparent;
   border-color: transparent;
@@ -610,7 +635,7 @@ code,
 }
 
 .row-item .t {
-  font-size: 12.5px;
+  font-size: var(--fs-note);
   line-height: 1.4;
 }
 
@@ -619,7 +644,7 @@ code,
   width: 100%;
   padding: 1px 4px;
   font: inherit;
-  font-size: 12.5px;
+  font-size: var(--fs-note);
   color: var(--text);
   background: var(--bg);
   border: 1px solid var(--accent);
@@ -631,7 +656,7 @@ code,
    stays a title and a status line rather than a toolbar. */
 .row-item .m button {
   padding: 0 4px;
-  font-size: 11px;
+  font-size: var(--fs-fine);
   line-height: 1.4;
   color: var(--text-2);
   background: transparent;
@@ -655,7 +680,7 @@ code,
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 10.5px;
+  font-size: var(--fs-fine);
   color: var(--text-3);
   font-family: var(--mono);
 }
@@ -668,7 +693,7 @@ code,
   padding: 3px 8px;
   border-radius: var(--r-sm);
   cursor: pointer;
-  font-size: 12.5px;
+  font-size: var(--fs-note);
   color: var(--text-2);
 }
 
@@ -684,7 +709,7 @@ code,
 
 .tree-row .caret {
   color: var(--text-3);
-  font-size: 9px;
+  font-size: var(--fs-fine);
   width: 9px;
 }
 
@@ -720,7 +745,7 @@ code,
   border-radius: 0;
   background: transparent;
   color: var(--text-3);
-  font-size: 12.5px;
+  font-size: var(--fs-note);
   white-space: nowrap;
 }
 
@@ -748,7 +773,7 @@ code,
 .surface-tab .count {
   margin-left: 6px;
   font-family: var(--mono);
-  font-size: 10px;
+  font-size: var(--fs-fine);
   color: var(--text-3);
 }
 
@@ -839,7 +864,7 @@ code,
 
 .pane-head h1 {
   margin: 0 0 var(--sp-1);
-  font-size: 18px;
+  font-size: var(--fs-display);
   font-weight: 600;
   /*
    * No negative tracking here. It was -0.01em, copied from Latin display type
@@ -859,7 +884,7 @@ code,
 .pane-head p {
   margin: 0;
   color: var(--text-2);
-  font-size: 13px;
+  font-size: var(--fs-body);
   max-width: var(--measure-prose);
 }
 
@@ -963,7 +988,7 @@ code,
   border-top: 1px solid var(--border);
   background: var(--inset);
   font-family: var(--mono);
-  font-size: 11px;
+  font-size: var(--fs-note);
   line-height: 1.55;
   color: var(--text-2);
   white-space: pre-wrap;
@@ -979,8 +1004,15 @@ code,
   border: 1px solid var(--border);
   border-left-width: 2px;
   border-radius: var(--r-sm);
-  font-size: 12.5px;
+  font-size: var(--fs-note);
   background: var(--surface);
+  /* A notice is a sentence, so it takes the prose measure like every other
+     sentence. It was set to whatever the pane happened to be wide, and the
+     layout gate caught it the moment the note role dropped from 12.5px to
+     12px: at 768×700 the terminal's notice came out at 41.8 Han characters
+     per line, over the ceiling. The same width, one half-pixel smaller, and
+     the line grew past the point the eye re-reads. */
+  max-width: var(--measure-prose);
 }
 
 .notice.warn {
@@ -1036,7 +1068,7 @@ code,
   padding: 11px 13px 4px;
   min-height: 46px;
   max-height: 220px;
-  font-size: 13px;
+  font-size: var(--fs-body);
 }
 
 .composer-box textarea:focus {
@@ -1101,7 +1133,7 @@ code,
   padding: 5px 8px;
   border-radius: var(--r-sm);
   cursor: pointer;
-  font-size: 12.5px;
+  font-size: var(--fs-note);
 }
 
 .mention:hover,
@@ -1111,7 +1143,7 @@ code,
 
 .mention .p {
   font-family: var(--mono);
-  font-size: 11.5px;
+  font-size: var(--fs-note);
   color: var(--text-3);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1214,7 +1246,7 @@ code,
   align-items: baseline;
   padding: 5px 0;
   border-bottom: 1px solid var(--border-soft);
-  font-size: 12px;
+  font-size: var(--fs-note);
 }
 
 .def:last-child {
@@ -1268,7 +1300,7 @@ code,
  */
 .block-title.is-path {
   font-family: var(--mono);
-  font-size: 11.5px;
+  font-size: var(--fs-note);
   font-weight: 400;
   letter-spacing: 0;
   text-transform: none;
@@ -1497,11 +1529,11 @@ code,
  * level is correct now.
  *
  * The treatment itself is the same small-caps label as `.rail-head` and
- * `.block-title`: 10.5px, 600, 0.09em. It had drifted to 11px / 0.07em, so the
- * three places this app writes a section label rendered at two different sizes
- * — a half-pixel and a hundredth of an em apart, which is enough to look like a
- * mistake on a card that sits next to a `.block-title` (the storage panel has
- * both, one under the other).
+ * `.block-title`: the note role, 600, 0.09em. It had drifted to 11px / 0.07em,
+ * so the three places this app writes a section label rendered at two different
+ * sizes — a half-pixel and a hundredth of an em apart, which is enough to look
+ * like a mistake on a card that sits next to a `.block-title` (the storage
+ * panel has both, one under the other).
  */
 .card h2 {
   margin: 0 0 var(--sp-2);
@@ -1524,7 +1556,7 @@ code,
 table.grid {
   width: 100%;
   border-collapse: collapse;
-  font-size: 12.5px;
+  font-size: var(--fs-note);
 }
 
 table.grid th {
@@ -1588,7 +1620,7 @@ table.grid .num {
 
 .code {
   font-family: var(--mono);
-  font-size: 11.5px;
+  font-size: var(--fs-note);
   line-height: 1.6;
   background: var(--inset);
   border: 1px solid var(--border);
@@ -1626,7 +1658,7 @@ table.grid .num {
 .empty {
   padding: 16px 16px;
   color: var(--text-2);
-  font-size: 12.5px;
+  font-size: var(--fs-note);
   border: 1px dashed var(--border-strong);
   border-radius: var(--r);
   line-height: 1.7;
@@ -1645,7 +1677,7 @@ table.grid .num {
 .error-text {
   color: var(--err);
   font-family: var(--mono);
-  font-size: 12px;
+  font-size: var(--fs-note);
   word-break: break-word;
 }
 
@@ -1694,7 +1726,7 @@ table.grid .num {
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 11px;
+  font-size: var(--fs-fine);
   font-weight: 600;
   font-family: var(--mono);
 }
@@ -1712,7 +1744,7 @@ table.grid .num {
 
 .diff {
   font-family: var(--mono);
-  font-size: 11.5px;
+  font-size: var(--fs-note);
   line-height: 1.6;
   border: 1px solid var(--border);
   border-radius: var(--r-sm);
@@ -1753,7 +1785,7 @@ table.grid .num {
   padding: 7px 14px;
   border-bottom: 1px solid var(--border);
   background: var(--surface);
-  font-size: 12.5px;
+  font-size: var(--fs-note);
   flex: 0 0 auto;
 }
 
@@ -1766,7 +1798,7 @@ table.grid .num {
 
 .banner button {
   padding: 3px 10px;
-  font-size: 12px;
+  font-size: var(--fs-note);
 }
 
 .progress {
@@ -1865,7 +1897,7 @@ table.grid .num {
 .surface-tab .count,
 .preview-tab .count {
   font-family: var(--mono);
-  font-size: 10px;
+  font-size: var(--fs-fine);
   color: var(--text-3);
 }
 
@@ -1957,7 +1989,7 @@ table.grid .num {
   background: none;
   border: none;
   color: var(--text-3);
-  font-size: 10px;
+  font-size: var(--fs-fine);
   padding: 0;
   line-height: 1;
 }
@@ -1973,7 +2005,7 @@ table.grid .num {
   gap: 9px;
   margin-top: 10px;
   cursor: pointer;
-  font-size: 12.5px;
+  font-size: var(--fs-note);
   color: var(--text-2);
 }
 
@@ -2003,7 +2035,7 @@ table.grid .num {
 
 .first-run-lead {
   color: var(--text-2);
-  font-size: 13.5px;
+  font-size: var(--fs-body);
   line-height: 1.7;
 }
 
@@ -2020,7 +2052,7 @@ table.grid .num {
   display: flex;
   gap: 11px;
   align-items: flex-start;
-  font-size: 12.5px;
+  font-size: var(--fs-note);
   color: var(--text-2);
   line-height: 1.65;
 }
@@ -2032,7 +2064,7 @@ table.grid .num {
   border: 1px solid var(--border-strong);
   color: var(--text-3);
   font-family: var(--mono);
-  font-size: 10px;
+  font-size: var(--fs-fine);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -2056,7 +2088,7 @@ table.grid .num {
   border-radius: var(--r-sm);
   background: var(--inset);
   font-family: var(--mono);
-  font-size: 11.5px;
+  font-size: var(--fs-note);
   line-height: 1.6;
   color: var(--text-2);
   white-space: pre-wrap;
@@ -2073,7 +2105,7 @@ table.grid .num {
   text-align: center;
   color: var(--text-3);
   font-family: var(--sans);
-  font-size: 12.5px;
+  font-size: var(--fs-note);
 }
 
 .console-line.sent {
@@ -2093,7 +2125,7 @@ table.grid .num {
   background: var(--accent-soft);
   color: var(--accent);
   font-family: var(--sans);
-  font-size: 10px;
+  font-size: var(--fs-fine);
   vertical-align: 1px;
   user-select: none;
 }
@@ -2124,12 +2156,12 @@ table.grid .num {
 
 .console-in input {
   font-family: var(--mono);
-  font-size: 12px;
+  font-size: var(--fs-note);
 }
 
 .console-caret {
   font-family: var(--mono);
-  font-size: 13px;
+  font-size: var(--fs-body);
   color: var(--accent);
 }
 
@@ -2164,7 +2196,7 @@ table.grid .num {
   pointer-events: none;
   color: var(--text-3);
   font-family: var(--sans);
-  font-size: 12.5px;
+  font-size: var(--fs-note);
 }
 
 /* ===========================================================================
@@ -2194,7 +2226,7 @@ table.grid .num {
 
 .cap .glyph {
   font-family: var(--mono);
-  font-size: 11px;
+  font-size: var(--fs-fine);
   flex: 0 0 auto;
 }
 
@@ -2252,7 +2284,7 @@ table.grid .num {
   min-height: 46vh;
   max-height: 62vh;
   font-family: var(--mono);
-  font-size: 12.5px;
+  font-size: var(--fs-note);
   line-height: 1.6;
   background: var(--inset);
   white-space: pre;
@@ -2437,7 +2469,7 @@ table.grid .num {
   border: 1px dashed var(--border-strong);
   border-radius: var(--r);
   color: var(--text-2);
-  font-size: 12.5px;
+  font-size: var(--fs-note);
   line-height: 1.7;
 }
 
