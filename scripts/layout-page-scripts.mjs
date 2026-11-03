@@ -41,6 +41,53 @@
  */
 export const CJK_FLOOR_PX = 12;
 
+/**
+ * The longest a line of Chinese prose may be, in CJK-equivalent characters.
+ *
+ * Not a taste number either. A Han character is roughly one em wide, so a line
+ * length in em *is* a line length in characters, and the reading research on
+ * Chinese agrees with the Latin one on the shape of the answer: past about 40
+ * characters the eye loses the start of the next line on the return sweep, and
+ * the reader re-reads. This app's prose column was 780px wide at 13px body —
+ * 60 characters — which is why a paragraph of Chinese read as a wall.
+ *
+ * The floor of the range (28) is a design choice, not a defect: a narrow panel
+ * legitimately sets shorter lines. Only the ceiling is gated, because only the
+ * ceiling is a reading problem.
+ */
+export const MAX_PROSE_LINE_CJK = 40;
+
+/**
+ * Characters that may not begin a line (行首禁则).
+ *
+ * Closing punctuation, closing brackets and the marks that attach to the
+ * character before them. A line that starts with '。' leaves the reader with a
+ * full stop floating at the left margin, which reads as a typo.
+ */
+export const LINE_START_FORBIDDEN = '。，、；：？！）〕］｝〉》」』】”’·…‥%‰℃';
+
+/**
+ * Characters that may not end a line (行尾禁则).
+ *
+ * Opening brackets and quotes: the character they open must be on the same
+ * line, otherwise the bracket dangles at the right margin with nothing after
+ * it.
+ */
+export const LINE_END_FORBIDDEN = '（〔［｛〈《「『【“‘';
+
+/**
+ * How much text a box needs before it counts as prose.
+ *
+ * A two-character tab label, a status segment or a badge is not a paragraph: it
+ * has no line length to judge and no break to check, and walking its characters
+ * one by one is the expensive half of the measurement. Twenty characters is
+ * roughly where a Chinese sentence starts being able to wrap at all at the
+ * widths this app uses, so it is the point below which the question does not
+ * arise. It lives here, exported, so the contract test can pin it rather than
+ * let it drift into the measurement as a bare number.
+ */
+export const PROSE_MIN_CHARS = 20;
+
 /** The measurement itself, evaluated in the page. */
 export const MEASURE = `(() => {
   const round = (n) => Math.round(n * 10) / 10;
@@ -420,6 +467,148 @@ export const MEASURE = `(() => {
     }
   }
 
+  /*
+   * 8. Typeset: how long a line of prose is, and where it is allowed to break.
+   *
+   * Everything above measures boxes. This measures the *lines inside* them,
+   * which is the layer where Chinese typography actually fails: a paragraph can
+   * be inside its box, unclipped, unoverlapped, set at 13px with 1.7 leading,
+   * and still be unreadable because each line is 60 characters long or because
+   * a full stop is sitting at the left margin.
+   *
+   * Two rules, both from the same measurement:
+   *
+   *   - **Line length.** A Han character is about one em wide, so a line box's
+   *     width divided by the font size is the line length in characters. The
+   *     ceiling is MAX_PROSE_LINE_CJK. Only wrapped blocks are measured: a
+   *     single-line label has no line length to judge, and the last line of a
+   *     paragraph is short by definition, so the *longest* line is what counts.
+   *   - **Break position.** Walk the characters of a wrapped block, group them
+   *     into lines by their own rects, and check the first and last character
+   *     of every line that is not the block's first or last. A line may not
+   *     begin with closing punctuation and may not end with an opening bracket.
+   *
+   * Why measure instead of trusting the engine: Chromium's default line
+   * breaking already implements most of UAX #14, so the break rule is expected
+   * to be clean — and that is exactly why it needs a gate. A rule that is only
+   * true by default is a rule that disappears the day someone adds a property
+   * to a prose class.
+   *
+   * Which property actually breaks it was measured, not assumed (a synthetic
+   * page, 400px wide, 30 Han characters then '。'): 'line-break: anywhere'
+   * puts the full stop at the start of the next line and this rule reports it.
+   * 'word-break: break-all' and 'overflow-wrap: anywhere' do *not* — Chromium
+   * keeps the CJK punctuation rules under both, so a page that sets them still
+   * breaks cleanly. The first version of this comment claimed all three did;
+   * the measurement said otherwise, and the comment now says what was seen.
+   */
+  const MAX_LINE = ${MAX_PROSE_LINE_CJK};
+  const PROSE_MIN_CHARS = ${PROSE_MIN_CHARS};
+  const START_FORBIDDEN = ${JSON.stringify(LINE_START_FORBIDDEN)};
+  const END_FORBIDDEN = ${JSON.stringify(LINE_END_FORBIDDEN)};
+  const longLines = [];
+  const badBreaks = [];
+  let proseBlocks = 0;
+  let proseLines = 0;
+  for (const el of all) {
+    if (!visible(el)) continue;
+    if (el.closest('.sr-only') !== null) continue;
+    const own = ownText(el);
+    /*
+     * Prose, not labels. A two-character tab label or a status segment is not
+     * a paragraph: it has no line length to judge and no break to check, and
+     * walking its characters would be the expensive half of this measurement
+     * for nothing. The threshold is PROSE_MIN_CHARS, exported above so the
+     * contract test can pin it.
+     */
+    if (own.length < PROSE_MIN_CHARS || !CJK.test(own)) continue;
+    const style = getComputedStyle(el);
+    const size = parseFloat(style.fontSize);
+    if (!Number.isFinite(size) || size <= 0) continue;
+    /*
+     * Per-character rects, grouped into lines.
+     *
+     * The element's own client rects are not a line count: a button with an
+     * icon and a label returns one rect per inline box, and a span with a
+     * nested <strong> returns two for one line. The characters are the only
+     * thing that knows where the lines actually are. They are sorted by top and
+     * then by left, and a character joins the current line while its top is
+     * within 2px of that line's first character — the tolerance is for inline
+     * elements that set a different font size on the same line.
+     */
+    const chars = [];
+    const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+    let node = walker.nextNode();
+    while (node !== null) {
+      const value = node.textContent || '';
+      for (let i = 0; i < value.length; i += 1) {
+        const ch = value[i];
+        if (/\\s/.test(ch)) continue;
+        const charRange = document.createRange();
+        charRange.setStart(node, i);
+        charRange.setEnd(node, i + 1);
+        const box = charRange.getBoundingClientRect();
+        if (box.width === 0 && box.height === 0) continue;
+        chars.push({ ch: ch, top: box.top, left: box.left, right: box.right });
+      }
+      node = walker.nextNode();
+    }
+    if (chars.length === 0) continue;
+    chars.sort((a, b) => (Math.abs(a.top - b.top) > 2 ? a.top - b.top : a.left - b.left));
+    const lines = [];
+    for (const c of chars) {
+      const current = lines[lines.length - 1];
+      if (current === undefined || Math.abs(c.top - current.top) > 2) {
+        lines.push({ top: c.top, first: c.ch, last: c.ch, left: c.left, right: c.right });
+      } else {
+        current.last = c.ch;
+        current.left = Math.min(current.left, c.left);
+        current.right = Math.max(current.right, c.right);
+      }
+    }
+    if (lines.length < 2) continue;
+    proseBlocks += 1;
+    proseLines += lines.length;
+    /*
+     * Line length in CJK-equivalent characters: a Han character is about one em
+     * wide, so the line box's width divided by the font size is the count. The
+     * last line of a paragraph is short by definition, so the longest line is
+     * what the ceiling is about.
+     */
+    let longest = 0;
+    for (const line of lines) longest = Math.max(longest, (line.right - line.left) / size);
+    if (longest > MAX_LINE + 0.5) {
+      longLines.push({
+        element: describe(el),
+        fontSize: round(size),
+        lines: lines.length,
+        longestCjk: round(longest),
+        text: own.slice(0, 30),
+      });
+    }
+    for (let i = 0; i < lines.length; i += 1) {
+      const line = lines[i];
+      if (i > 0 && START_FORBIDDEN.indexOf(line.first) !== -1) {
+        badBreaks.push({
+          element: describe(el),
+          kind: 'line-start',
+          char: line.first,
+          line: i + 1,
+          text: own.slice(0, 30),
+        });
+      }
+      if (i < lines.length - 1 && END_FORBIDDEN.indexOf(line.last) !== -1) {
+        badBreaks.push({
+          element: describe(el),
+          kind: 'line-end',
+          char: line.last,
+          line: i + 1,
+          text: own.slice(0, 30),
+        });
+      }
+    }
+  }
+
   return JSON.stringify({
     /*
      * Which state this frame actually is.
@@ -479,6 +668,19 @@ export const MEASURE = `(() => {
       tooSmall: Array.from(small.values()).slice(0, 12),
       negativeTracking: Array.from(tracked.values()).slice(0, 12),
       tightLeading: tightLeading.slice(0, 12),
+    },
+    /*
+     * Typeset, as measured rather than declared: line length in CJK-equivalent
+     * characters, and where the lines were allowed to break. The ceiling and
+     * the two character sets travel with the result so a reader of the JSON can
+     * tell which rule produced the numbers without opening this file.
+     */
+    typeset: {
+      maxLineCjk: MAX_LINE,
+      proseBlocks: proseBlocks,
+      proseLines: proseLines,
+      longLines: longLines.slice(0, 12),
+      badBreaks: badBreaks.slice(0, 12),
     },
   });
 })()`;

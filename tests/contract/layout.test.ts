@@ -53,6 +53,7 @@ const BOOTSTRAP = path.join(REPO_ROOT, 'apps', 'desktop', 'src', 'main', 'bootst
 const STYLES = path.join(REPO_ROOT, 'apps', 'desktop', 'src', 'renderer', 'src', 'styles.css');
 const APP = path.join(REPO_ROOT, 'apps', 'desktop', 'src', 'renderer', 'src', 'App.tsx');
 const I18N = path.join(REPO_ROOT, 'apps', 'desktop', 'src', 'shared', 'i18n.ts');
+const PAGE_SCRIPTS = path.join(REPO_ROOT, 'scripts', 'layout-page-scripts.mjs');
 
 /**
  * The heights are not interesting: the shell is a full-height flex column and
@@ -192,6 +193,36 @@ interface Measurement {
       text: string;
     }>;
   };
+  /**
+   * Prose, as measured rather than declared: how long a line is, and where the
+   * lines were allowed to break.
+   *
+   * Geometry cannot see either. A paragraph can be inside its box, unclipped,
+   * unoverlapped, set at 13px with 1.7 leading — every rule above green — and
+   * still be unreadable because each line is 70 characters long or because a
+   * full stop is sitting at the left margin.
+   */
+  typeset: {
+    /** The ceiling the measurement itself used; read from the page script. */
+    maxLineCjk: number;
+    /** How many wrapped Chinese blocks this frame had, so the rule is not vacuous. */
+    proseBlocks: number;
+    proseLines: number;
+    longLines: Array<{
+      element: string;
+      fontSize: number;
+      lines: number;
+      longestCjk: number;
+      text: string;
+    }>;
+    badBreaks: Array<{
+      element: string;
+      kind: string;
+      char: string;
+      line: number;
+      text: string;
+    }>;
+  };
   /** axe-core violations, present only on surfaces-bearing targets (round 34). */
   violations?: Array<{
     id: string;
@@ -234,6 +265,27 @@ function copyFor(key: string): string[] {
   const escaped = key.replace(/[.]/g, '\\.');
   const pattern = new RegExp(`'${escaped}':\\s*'([^']+)'`, 'g');
   return [...source.matchAll(pattern)].map((m) => m[1]!);
+}
+
+/**
+ * The prose ceiling the measurement is supposed to be using.
+ *
+ * Read out of the page script rather than imported, for the same reason
+ * `typography.test.ts` reads `CJK_FLOOR_PX` instead of importing it: the page
+ * script is ESM JavaScript outside the TypeScript project, and the thing being
+ * checked is that the number in the source is the number the measurement used.
+ * `tests/contract/typography.test.ts` pins the declaration itself (the band,
+ * the interpolation, the character sets); this file pins the result.
+ */
+function declaredProseCeiling(): number {
+  const source = fs.readFileSync(PAGE_SCRIPTS, 'utf8');
+  const match = /export const MAX_PROSE_LINE_CJK = (\d+);/.exec(source);
+  expect(
+    match,
+    'layout-page-scripts.mjs no longer exports MAX_PROSE_LINE_CJK, so the prose ' +
+      'ceiling this gate enforces is not the one the measurement used',
+  ).not.toBeNull();
+  return Number(match![1]);
 }
 
 let server: ViteDevServer | undefined;
@@ -925,6 +977,88 @@ describe('layout in a real browser engine', () => {
           lines(m.typography.tightLeading),
       ).toEqual([]);
     }
+  });
+
+  it('sets no line of Chinese prose longer than the ceiling', () => {
+    /*
+     * The defect this exists for was measured, not imagined: the help page's
+     * two paragraphs came out at 70.1 and 69.0 Han characters per line at
+     * 13px, because they were set to the page column (960px) rather than to a
+     * prose measure. Every rule above was green on that screen — the text was
+     * inside its card, unclipped, unoverlapped, at 13px with 1.7 leading — and
+     * it still read as a wall.
+     *
+     * The ceiling travels in the measurement (`maxLineCjk`), and the first
+     * assertion is that it is the declared one: a measurement that quietly
+     * stopped using MAX_PROSE_LINE_CJK would otherwise enforce whatever number
+     * it happened to carry.
+     */
+    const ceiling = declaredProseCeiling();
+    for (const m of GEOMETRY) {
+      expect(
+        m.typeset.maxLineCjk,
+        `${m.label}: the measurement used a ${m.typeset.maxLineCjk}-character ceiling, ` +
+          `but layout-page-scripts.mjs declares ${ceiling}`,
+      ).toBe(ceiling);
+      expect(
+        m.typeset.longLines,
+        `${m.label}: Chinese prose set wider than ${ceiling} characters per line\n` +
+          lines(m.typeset.longLines),
+      ).toEqual([]);
+    }
+  });
+
+  it('breaks no line before closing punctuation or after an opening bracket', () => {
+    /*
+     * 行首禁则 / 行尾禁则. Chromium implements most of UAX #14 by default, so
+     * this is expected to be clean — and that is exactly why it is gated: the
+     * rules that break it are the ones this stylesheet uses on purpose.
+     * `overflow-wrap: anywhere` and `word-break: break-word` let a line break
+     * between any two characters, including immediately before a full stop,
+     * which leaves '。' alone at the left margin and reads as a typo.
+     *
+     * The character sets are declared in the page script and travel with the
+     * result, so a reader of a failure knows which rule produced it.
+     */
+    for (const m of GEOMETRY) {
+      expect(
+        m.typeset.badBreaks,
+        `${m.label}: a line broke where Chinese does not allow it\n` +
+          lines(m.typeset.badBreaks),
+      ).toEqual([]);
+    }
+  });
+
+  it('measured prose, not just boxes', () => {
+    /*
+     * A rule that measured nothing is indistinguishable from one that found
+     * nothing — the failure this repository has hit often enough to name. Two
+     * assertions keep it honest:
+     *
+     *  - the help surface, which is the prose-heavy one, must have measured at
+     *    least two wrapped paragraphs. If the character walk silently stopped
+     *    finding lines, this goes red instead of the ceiling passing over an
+     *    empty list.
+     *  - across the whole sweep, the number of wrapped paragraphs must be more
+     *    than a handful. The threshold is deliberately far below the measured
+     *    count (see the round's note in docs/dod-status.md) so it fails on a
+     *    broken measurement, not on a paragraph being deleted.
+     */
+    const help = measurements.filter((m) => m.surface === 'help' && m.mounted);
+    expect(help.length, 'the sweep never visited the help surface').toBeGreaterThan(0);
+    for (const m of help) {
+      expect(
+        m.typeset.proseBlocks,
+        `${m.label}: the help surface's paragraphs were not measured as prose`,
+      ).toBeGreaterThanOrEqual(2);
+      expect(m.typeset.proseLines, `${m.label}: no wrapped lines were walked`).toBeGreaterThan(2);
+    }
+    const total = GEOMETRY.reduce((sum, m) => sum + m.typeset.proseBlocks, 0);
+    expect(
+      total,
+      'the prose measurement found almost no wrapped Chinese paragraphs across the ' +
+        'whole sweep, so the ceiling above was enforced over nothing',
+    ).toBeGreaterThan(10);
   });
 
   it('logs nothing to the console at any width', () => {

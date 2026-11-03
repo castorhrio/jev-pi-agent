@@ -122,11 +122,31 @@
    * 1100px-wide line and the panels read as stretched rather than laid out.
    * One declared measure, applied by `.pane > *` and `.pane-head`, is what
    * makes every surface share a single column instead of each inventing one.
-   * 960px is ~110 characters at 13px, the top of the comfortable range for
-   * mixed CJK/Latin prose, and still fits the widest gated table.
+   * 960px is the width the widest gated table needs, and that is what it is
+   * for: a table is not prose. (It used to say "~110 characters at 13px, the
+   * top of the comfortable range for mixed CJK/Latin prose". The layout gate
+   * measured that claim and it was false for Chinese: a paragraph set to this
+   * column is 71 Han characters, and the help page's two paragraphs came out
+   * at 70.1 and 69.0. Prose therefore gets its own measure, below.)
    */
   --page-w: 960px;
   --gutter: 28px;
+
+  /*
+   * The prose measure.
+   *
+   * A Han character is about one em wide, so a measure in em *is* a line length
+   * in characters — which is why this is the one place in the stylesheet where
+   * em is the right unit. 36em is 36 characters at any body size: inside the
+   * 28–40 band that Chinese reading research and the Latin one agree on, with
+   * headroom under the ceiling the layout gate enforces
+   * (scripts/layout-page-scripts.mjs → MAX_PROSE_LINE_CJK = 40).
+   *
+   * The column stays 960px; only the text inside it is capped. A card whose
+   * paragraph stops two thirds of the way across reads as a paragraph, while
+   * the table below it still gets the width it needs.
+   */
+  --measure-prose: 36em;
 }
 
 * {
@@ -832,10 +852,15 @@ code,
   letter-spacing: 0;
 }
 
+/* The surface's one-line description is prose, so it takes the prose measure
+   rather than the page column. At 768×700 the handoff subtitle came out at 40.9
+   Han characters per line — over the ceiling the layout gate enforces — because
+   it was set to the column and happened to break late. */
 .pane-head p {
   margin: 0;
   color: var(--text-2);
   font-size: 13px;
+  max-width: var(--measure-prose);
 }
 
 /* ===========================================================================
@@ -852,8 +877,13 @@ code,
   gap: var(--sp-4);
 }
 
+/* The transcript is prose, so it is set to the prose measure rather than to a
+   width of its own. It was 780px — 60 Han characters at 13px — and the layout
+   gate measured a real message at 48.4 characters per line at 1280px. The
+   composer below shares the measure so the input lines up with the messages
+   above it. */
 .convo-inner {
-  max-width: 780px;
+  max-width: var(--measure-prose);
   width: 100%;
   margin: 0 auto;
   display: flex;
@@ -975,7 +1005,7 @@ code,
 }
 
 .composer-inner {
-  max-width: 780px;
+  max-width: var(--measure-prose);
   margin: 0 auto;
   display: flex;
   flex-direction: column;
@@ -1364,14 +1394,24 @@ code,
  * The same sentence — a hint under a heading, a caveat under a table — was
  * written at 11.5px, 11px and 10.5px depending on which round added it. A role
  * has one size; markup picks the role, not the number.
+ *
+ * Both roles are prose, so both take the prose measure. They are the sentences
+ * that most often sit in a wide card — a caveat under a table, a note under a
+ * heading — and they were the ones the layout gate caught at 768×700: the
+ * context drawer's two notes came out at 41 and 43.6 Han characters per line
+ * because they were set to the panel's width. A note is still a paragraph; it
+ * reads at the same line length as every other paragraph. On an inline span or
+ * a table cell `max-width` does nothing, so the role can be used there too.
  */
 .fs-note {
   font-size: var(--fs-note);
   line-height: 1.65;
+  max-width: var(--measure-prose);
 }
 .fs-fine {
   font-size: var(--fs-fine);
   line-height: 1.6;
+  max-width: var(--measure-prose);
 }
 
 .badge {
@@ -1474,9 +1514,11 @@ code,
 
 /* A card's own prose starts under its title; the user agent's 1em margin
    would put a paragraph's first line further from its heading than the
-   heading is from the card edge. */
+   heading is from the card edge. The measure is the prose one, not the
+   column: see --measure-prose. */
 .card > p {
   margin: 0;
+  max-width: var(--measure-prose);
 }
 
 table.grid {
@@ -1948,9 +1990,11 @@ table.grid .num {
    that would appear directly beneath it.
 
    It also no longer carries its own narrower measure. At 620px inside the
-   780px conversation column, the empty state and the composer directly under
-   it ended at two different right edges on one screen; the column is the
+   conversation column, the empty state and the composer directly under it
+   ended at two different right edges on one screen; the column is the
    conversation's, and the block that stands in for the conversation takes it.
+   That column is now the prose measure (--measure-prose), so the empty state
+   is set to the same line length as the transcript it replaces.
 */
 .first-run {
   margin: 40px 0;
@@ -2055,10 +2099,12 @@ table.grid .num {
 }
 
 /* The sentence that used to be the card's title. Prose under a heading, not a
-   heading — 11px muted, capped to a readable measure so it cannot stretch into
-   one long line on a wide window. */
+   heading — 11px muted, capped to the same prose measure as every other
+   paragraph so it cannot stretch into one long line on a wide window. (It was
+   `72ch`, which is the same width by accident: `ch` is the width of a zero, not
+   of a Han character, so the two units only agree at this font size.) */
 .terminal-note {
-  max-width: 72ch;
+  max-width: var(--measure-prose);
   margin-bottom: 10px;
   font-size: var(--fs-min-cjk);
   line-height: 1.6;

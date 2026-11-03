@@ -88,6 +88,96 @@ describe('the Chinese type floor', () => {
   });
 });
 
+/**
+ * The prose measure: how long a line may be, and where it may break.
+ *
+ * The layout gate measures both in a real engine (`tests/contract/layout.test.ts`,
+ * every target, five states, eight widths). This is the fast half: the numbers
+ * and the character sets are declared once, in the page script, and the
+ * stylesheet has to set prose to a measure inside the band. Without it the
+ * ceiling would be a number copied into two files — which is how a ceiling
+ * becomes a suggestion.
+ */
+describe('the prose measure', () => {
+  /** The declared ceiling, read out of the page script. */
+  function ceiling(): number {
+    const match = /export const MAX_PROSE_LINE_CJK = (\d+);/.exec(pageScripts);
+    expect(match, 'layout-page-scripts.mjs no longer exports MAX_PROSE_LINE_CJK').not.toBeNull();
+    return Number(match![1]);
+  }
+
+  it('declares a ceiling inside the band, and the measurement uses that number', () => {
+    /*
+     * 28–40 characters is the band Chinese and Latin reading research agree on.
+     * The floor is a design choice (a narrow panel legitimately sets shorter
+     * lines) and is not gated; the ceiling is a reading problem and is. A
+     * ceiling above 40 stops being the rule the comment above it describes.
+     */
+    const declared = ceiling();
+    expect(declared, 'a ceiling under 28 characters is not the band this rule is about')
+      .toBeGreaterThanOrEqual(28);
+    expect(declared, 'a ceiling over 40 characters is past the point the eye re-reads')
+      .toBeLessThanOrEqual(40);
+    // The interpolation is the link: `const MAX_LINE = 40;` inside the page
+    // script would compile, measure and pass, and silently stop tracking this
+    // constant.
+    expect(pageScripts).toContain('const MAX_LINE = ${MAX_PROSE_LINE_CJK};');
+  });
+
+  it('names the characters that may not start or end a line, and the measurement uses them', () => {
+    /*
+     * 行首禁则 / 行尾禁则. The sets are asserted by content, not by length: a
+     * set that lost '。' would still be non-empty and would still be
+     * interpolated, and the gate would pass over the one character that
+     * matters most.
+     */
+    const start = /export const LINE_START_FORBIDDEN = '([^']+)';/.exec(pageScripts);
+    const end = /export const LINE_END_FORBIDDEN = '([^']+)';/.exec(pageScripts);
+    expect(start, 'layout-page-scripts.mjs no longer exports LINE_START_FORBIDDEN').not.toBeNull();
+    expect(end, 'layout-page-scripts.mjs no longer exports LINE_END_FORBIDDEN').not.toBeNull();
+
+    for (const mark of ['。', '，', '、', '；', '：', '？', '！', '）', '」', '』', '】']) {
+      expect(start![1], `a line may start with '${mark}'`).toContain(mark);
+    }
+    for (const mark of ['（', '「', '『', '【', '“']) {
+      expect(end![1], `a line may end with '${mark}'`).toContain(mark);
+    }
+    // No character may be in both sets: a mark that may neither start nor end a
+    // line could not be set at all.
+    const both = [...start![1]].filter((ch) => end![1]!.includes(ch));
+    expect(both, 'these characters are forbidden at both ends of a line').toEqual([]);
+
+    expect(pageScripts).toContain(
+      'const START_FORBIDDEN = ${JSON.stringify(LINE_START_FORBIDDEN)};',
+    );
+    expect(pageScripts).toContain('const END_FORBIDDEN = ${JSON.stringify(LINE_END_FORBIDDEN)};');
+  });
+
+  it('sets prose to a measure inside the band, not to the page column', () => {
+    /*
+     * The measured defect: the help page's paragraphs were set to the page
+     * column (960px) and came out at 70.1 and 69.0 Han characters per line.
+     * The fix is a measure in em — one Han character is about one em, so the
+     * number in the stylesheet *is* a line length in characters — and this
+     * asserts the two halves agree: the stylesheet's measure is inside the
+     * band, and it is not wider than the ceiling the gate enforces.
+     */
+    const measure = token('measure-prose');
+    const em = Number(/^(\d+(?:\.\d+)?)em$/.exec(measure)?.[1]);
+    expect(em, `--measure-prose is ${measure}, which is not a length in em`).toBeGreaterThan(0);
+    expect(em, 'a prose measure under 28 characters is a design choice, not this rule')
+      .toBeGreaterThanOrEqual(28);
+    expect(em, 'prose set wider than the ceiling the layout gate enforces').toBeLessThanOrEqual(
+      ceiling(),
+    );
+
+    // And the prose rule actually uses it: a token nothing consumes is a
+    // comment with a colon in it.
+    expect(codeOnly(styles)).toMatch(/\.card > p \{[^}]*max-width: var\(--measure-prose\)/);
+    expect(codeOnly(styles)).toMatch(/\.terminal-note \{[^}]*max-width: var\(--measure-prose\)/);
+  });
+});
+
 describe('the font stacks', () => {
   it('resolves Latin first, then Chinese, then a generic family', () => {
     /*
