@@ -477,11 +477,33 @@ export function usePermissionQueue(
   // button that did nothing and had no way to learn the request had expired.
   const [busy, setBusy] = useState(false);
 
+  /*
+   * The guard is a ref, and the state is only what the buttons draw.
+   *
+   * `busy` alone was the guard, and it does not hold: `setBusy(true)` is a
+   * state update, so a second click that lands in the *same* frame — a real
+   * double click, a trackpad tap that fires twice, a key repeat — reads the
+   * `busy` captured by the render that is still on screen, sees `false`, and
+   * sends a second `permissions.respond` for one request. The host answers the
+   * first and rejects the second as a protocol error, and the user sees a
+   * failure notice for a decision that actually went through.
+   *
+   * `tests/e2e/permission-double-click.e2e.test.tsx` drives exactly that: two
+   * clicks dispatched in one tick, one `respond` call, one
+   * `permission.resolved` in the log. With the state-only guard it reported
+   * two of each.
+   *
+   * The ref is written before the first `await`, so it is set by the time the
+   * second click's handler runs, whatever React has or has not committed.
+   */
+  const inFlight = useRef(false);
+
   // A new request must clear the previous failure, or an error about request A
   // is displayed above request B.
   const head = pending[0]?.requestId ?? null;
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
+    inFlight.current = false;
     setBusy(false);
     setError(null);
   }, [head]);
@@ -489,7 +511,8 @@ export function usePermissionQueue(
   const respond = useCallback(async (requestId: string, decision: string) => {
     // Guarded, not merely styled: two rapid clicks would otherwise send two
     // responses for one request, and the second is a protocol error.
-    if (busy) return;
+    if (inFlight.current) return;
+    inFlight.current = true;
     setBusy(true);
     setError(null);
     try {
@@ -497,9 +520,10 @@ export function usePermissionQueue(
     } catch (err) {
       setError(describeError(err));
     } finally {
+      inFlight.current = false;
       setBusy(false);
     }
-  }, [busy]);
+  }, []);
 
   return { pending, respond, busy, error };
 }
