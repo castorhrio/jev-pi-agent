@@ -88,6 +88,22 @@ node scripts\verify-main-chain.mjs --exec release\win-unpacked\UCAD.exe --report
 - **被阻塞的运行（退出码 2）不写报告。** 钥匙串不可用时应用在开窗之前就停下，那一段
   `[BLOCKED] …` 的控制台原文就是证据，请连同它一起贴回来。
 
+### 带回之后怎么判（读的人跑这条，不必读 JSON）
+
+```bash
+node scripts/verify-main-chain.mjs --judge docs/manual-verification/win-YYYYMMDD.json
+```
+
+退出码 0 只有一个意思：这份报告覆盖了 step 1–5，且它自报的平台是 `win32`、`build.version` 等于本仓库当前版本。
+四条各自会红，且各有一句话：写在别的平台上（`a run on another platform is a real result about that platform`）、
+某一步 `fail`（`row stays open`）、某一步 `skip`（`was not run`）、报告里没有这一步（`is not in the report`）。
+它会先打印每一步的 `verdict` 再给结论，所以读的人不必打开 JSON。
+
+它判的是**文件里写了什么**，不是这次运行真的发生过——报告是文档，文档可以手写，这句话在
+`judgeReport()` 的注释里、在报告自己的 `note` 字段里、也在这条命令的输出里。它也不能替 step 6 收口：
+五态是人眼走查，任何报告都关不掉那一行。判定规则由 `tests/contract/win-report.test.ts` 双向钉住，
+`buildReport()` 写出的报告必须被判绿（写与判不能各说一套）。
+
 `--report` 与 `--json` 是两件事：`--json` 是给脚本读的原始证据流（含 `boot:` 行与失败列表），
 `--report` 是给人读的、按步骤归位的判定。两者都不改变退出码。
 

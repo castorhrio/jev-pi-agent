@@ -47,7 +47,16 @@
  * a document a person can carry home — see `buildReport()`), `--timeout
  * 420000`, `--keep` (leave the app and its profile in place), `--feed-url
  * <https url>` (check the happy path against this feed instead of the shipped
- * one, for hosts that cannot reach `github.com`).
+ * one, for hosts that cannot reach `github.com`), `--judge <report.json>`
+ * (judge a report someone carried home, without launching anything — see
+ * `judgeReport()`).
+ *
+ * ## Two halves, and why both are commands
+ *
+ * `--report` writes the document; `--judge` reads it back and answers whether
+ * it closes the Windows row. Only the pair is useful: a report with no reader
+ * reads as a completion whatever it contains, and the row is then closed by
+ * whoever wanted it closed.
  *
  * Two things this script cannot do, and does not claim: it writes the
  * workspace row instead of answering the native folder picker, so no trust
@@ -197,6 +206,13 @@ const JSON_OUT = flag('json', null);
  * What it cannot do is prove the run happened: see `buildReport()`.
  */
 const REPORT_OUT = flag('report', null);
+/**
+ * A report carried home from another machine, to be judged instead of run.
+ *
+ * Judging is the reader's half, and it usually happens where no build exists —
+ * so `--judge` answers before anything is launched, and never needs `release/`.
+ */
+const JUDGE_IN = flag('judge', null);
 const HOME = path.resolve(flag('home', path.join(tmpdir(), 'ucad-main-chain')));
 const PROJECT = path.resolve(flag('project', path.join(HOME, 'project')));
 const EXEC = path.resolve(flag('exec', defaultExecutable()));
@@ -385,6 +401,124 @@ export function buildReport({ platform, build, requested, driven, passed, failed
 }
 
 /**
+ * Whether a carried-home report answers the one row it was made for.
+ *
+ * ## The gap this closes
+ *
+ * `--report` turned a run into a document, and the documents then said what a
+ * reader should do with it: "copy `win-report.json` back and add a row to the
+ * table". What none of them said was what *inside that file* makes the row
+ * closed. A report nobody judges reads as a completion whatever it contains,
+ * and the row is then closed by whoever wanted it closed — which is exactly the
+ * shape this repository keeps finding in its own gates (a check that cannot say
+ * "no").
+ *
+ * So the judgement is a function of the report, and the reader does not have to
+ * agree with it:
+ *
+ *  - `platform` must be the platform the row is about. A Linux report is a real
+ *    result about Linux; it cannot close a row that says Windows, and that
+ *    substitution is the one this row has been waiting on for several rounds.
+ *  - every step the verifier drives must be present **and** `pass`. `fail` is a
+ *    result, `skip` is a run that did not cover the step, and a missing row is
+ *    neither — the three are named separately instead of collapsing into one
+ *    "not green", because the next action differs for each.
+ *  - `build.version` must be the version in this repository. A report about
+ *    another build proves something about another build; after a version bump
+ *    the honest answer is "run it again", not "we already did".
+ *
+ * Step 6 is not in this list and cannot be: it is the five fixture states a
+ * person walks by eye under `npm run dev:web`, so no report closes it. A green
+ * verdict here therefore says "steps 1–5 were covered on Windows", never "the
+ * Windows row is done".
+ *
+ * ## What it cannot do, and does not claim to
+ *
+ * It judges what the file *says*. A document can be written by hand, so this
+ * cannot tell a real run from a plausible retelling — the same sentence
+ * `buildReport()` writes into the file's own `note`. What it can do is stop the
+ * failure on the other side: a real run whose file was misread, a partial run
+ * carried home as if it were complete, or a report about last week's build
+ * quietly closing this week's row.
+ */
+export function judgeReport(
+  report,
+  { expectedVersion = null, expectedPlatform = 'win32', steps = DRIVEN_STEPS } = {},
+) {
+  const problems = [];
+  const rows = [];
+
+  if (report === null || typeof report !== 'object' || Array.isArray(report)) {
+    return {
+      ok: false,
+      rows,
+      problems: ['the file is not a report object — nothing in it says what was run'],
+    };
+  }
+
+  if (typeof report.platform !== 'string' || report.platform.trim().length === 0) {
+    problems.push(
+      'the report does not say which platform the run happened on, so it cannot close a row about one',
+    );
+  } else if (report.platform !== expectedPlatform) {
+    problems.push(
+      `the report was written on ${report.platform}, and this row is about ${expectedPlatform} — ` +
+        'a run on another platform is a real result about that platform, not about this one',
+    );
+  }
+
+  const version = typeof report.build?.version === 'string' ? report.build.version : null;
+  if (expectedVersion !== null) {
+    if (version === null) {
+      problems.push(
+        'the report does not say which build it measured, so a later version bump could not invalidate it',
+      );
+    } else if (version !== expectedVersion) {
+      problems.push(
+        `the report measured build ${version}, and this repository is at ${expectedVersion} — ` +
+          'run it again on the build being shipped',
+      );
+    }
+  }
+
+  const reported = Array.isArray(report.steps) ? report.steps : null;
+  if (reported === null) {
+    problems.push('the report has no `steps` array, so there is nothing per step to read');
+    return { ok: false, rows, problems };
+  }
+  if (reported.length === 0) {
+    problems.push(
+      'the report has an empty `steps` array — a run that recorded no step does not cover the row',
+    );
+  }
+
+  for (const step of steps) {
+    const row = reported.find((entry) => entry?.n === step);
+    if (row === undefined) {
+      rows.push({ n: step, verdict: 'missing' });
+      problems.push(`step ${step} is not in the report`);
+      continue;
+    }
+    const verdict = typeof row.verdict === 'string' ? row.verdict : '(none)';
+    rows.push({ n: step, verdict });
+    if (verdict === 'pass') continue;
+    if (verdict === 'fail') {
+      problems.push(
+        `step ${step} failed in that run — a red report is a result, and the row stays open`,
+      );
+    } else if (verdict === 'skip') {
+      problems.push(`step ${step} was not run in that run (\`skip\`), so it is not covered`);
+    } else {
+      problems.push(
+        `step ${step} carries the verdict \`${verdict}\`, which is not one of pass / fail / skip`,
+      );
+    }
+  }
+
+  return { ok: problems.length === 0, rows, problems };
+}
+
+/**
  * Which build was measured, as far as this host can say.
  *
  * The executable path alone is not enough to tell two runs apart: a rebuild
@@ -394,13 +528,25 @@ export function buildReport({ platform, build, requested, driven, passed, failed
  * Every field is allowed to be null — this is a description, not a check, and
  * the executable's existence is already asserted before the run starts.
  */
+/**
+ * The version this repository is at.
+ *
+ * Read from `package.json` for two callers that must agree: `buildIdentity()`
+ * stamps a report and `judgeReport()` compares a carried-home report against
+ * the tree it is about. One reader, so a report cannot be written against one
+ * version and judged against another.
+ */
+export function repoVersion() {
+  try {
+    return JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version ?? null;
+  } catch {
+    return null;
+  }
+}
+
 function buildIdentity() {
   const identity = { executable: EXEC, version: null, sizeBytes: null, modifiedAt: null };
-  try {
-    identity.version = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version ?? null;
-  } catch {
-    /* the version is a convenience; the path and the bytes are the identity */
-  }
+  identity.version = repoVersion();
   try {
     const stat = statSync(EXEC);
     identity.sizeBytes = stat.size;
@@ -409,6 +555,56 @@ function buildIdentity() {
     /* reported as null rather than guessed */
   }
   return identity;
+}
+
+/**
+ * `--judge <file>`: the command half of `judgeReport()`.
+ *
+ * Kept separate from the run for one reason that matters: the person who judges
+ * a report from another machine usually has no `release/` on theirs, so this
+ * path must not require a built app, a display or a key store. It reads one
+ * file, prints one line per step and one verdict, and returns the exit code.
+ *
+ * The lines are returned rather than printed so a test can read the decision
+ * without spawning a process; the `[FAIL]`/`FAIL —` lines are what the caller
+ * writes to stderr.
+ */
+export function judgeReportCommand(
+  file,
+  { expectedVersion = repoVersion(), expectedPlatform = 'win32' } = {},
+) {
+  let report;
+  try {
+    report = JSON.parse(readFileSync(file, 'utf8'));
+  } catch (error) {
+    return {
+      code: 1,
+      lines: [
+        `[FAIL] report-unreadable: ${file}: ${error instanceof Error ? error.message : String(error)}`,
+      ],
+    };
+  }
+
+  const result = judgeReport(report, { expectedVersion, expectedPlatform });
+  const lines = [
+    `report: ${file}`,
+    `platform: ${report?.platform ?? '(none)'} · build: ${report?.build?.version ?? '(none)'} · ranAt: ${report?.ranAt ?? '(none)'}`,
+    ...result.rows.map((row) => `  step ${row.n}: ${row.verdict}`),
+    ...result.problems.map((problem) => `[FAIL] ${problem}`),
+  ];
+  if (result.ok) {
+    lines.push(
+      `PASS — the report covers steps ${DRIVEN_STEPS.join(', ')} on ${expectedPlatform} against build ${expectedVersion ?? '(unspecified)'}`,
+      '[note] this judges what the file says, not that the run happened — see the `note` inside the report',
+      '[note] step 6 is the five states a person walks in `npm run dev:web`; no report closes it',
+    );
+  } else {
+    lines.push(
+      `FAIL — ${result.problems.length} thing(s) in this report keep the row open`,
+      '[note] a red report is still evidence: carry it home as it is rather than editing it',
+    );
+  }
+  return { code: result.ok ? 0 : 1, result, lines };
 }
 
 // ---------------------------------------------------------------------------
@@ -1229,6 +1425,18 @@ async function step5() {
 // ---------------------------------------------------------------------------
 
 async function main() {
+  // The reader's half of `--report`, asked before anything is launched: judging
+  // a report must not need a built app (the machine reading it usually has
+  // none), must not need a display, and must not start a run as a side effect.
+  if (JUDGE_IN) {
+    const judged = judgeReportCommand(path.resolve(JUDGE_IN));
+    for (const line of judged.lines) {
+      if (line.startsWith('[FAIL]') || line.startsWith('FAIL —')) console.error(line);
+      else console.log(line);
+    }
+    return judged.code;
+  }
+
   // Asked before anything is launched: a request this script cannot honour has
   // to end the run with a failure, not with a partial run and a `PASS` about
   // the steps that happened to be drivable. See `parseSteps()`.
