@@ -467,7 +467,7 @@ export function IntelligencePanel({ data }: { data: AppData }): JSX.Element {
           </div>
         )}
 
-        {cancelNote && <div className="faint mt-2">{cancelNote}</div>}
+        {cancelNote && <div className="faint mt-2 reason">{cancelNote}</div>}
       </div>
 
       <div className="card">
@@ -519,7 +519,7 @@ export function IntelligencePanel({ data }: { data: AppData }): JSX.Element {
           )}
         </div>
 
-        {queryCancelNote && <div className="faint mt-2">{queryCancelNote}</div>}
+        {queryCancelNote && <div className="faint mt-2 reason">{queryCancelNote}</div>}
 
         {report && <QueryReportView report={report} />}
       </div>

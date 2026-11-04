@@ -253,7 +253,7 @@ export function SettingsPanel({
           </div>
         )}
         <div className="faint mt-2 fs-note">{t('settings.closeBehaviourNote')}</div>
-        {closeError && <div className="faint mt-2">{closeError}</div>}
+        {closeError && <div className="faint mt-2 reason">{closeError}</div>}
       </div>
 
       <div className="card">
@@ -320,7 +320,7 @@ export function SettingsPanel({
           </div>
         )}
 
-        <div className="faint mt-2 fs-note">
+        <div className="faint mt-2 fs-note reason">
           {update?.state === 'up-to-date' && t('settings.upToDate')}
           {update?.state === 'unsupported' && t('settings.updateNone')}
           {update?.state === 'error' && !updates.failure &&
@@ -500,7 +500,7 @@ export function SettingsPanel({
             </span>
           )}
         </div>
-        {message && <div className="faint mt-2">{message}</div>}
+        {message && <div className="faint mt-2 reason">{message}</div>}
       </div>
 
       <div className="card">
@@ -827,7 +827,7 @@ function ProviderSection({
                             labelled, and it is never the headline.
                           */}
                           <div
-                            className="faint fs-note" style={{ fontFamily: 'var(--mono)' }}
+                            className="faint fs-note reason" style={{ fontFamily: 'var(--mono)' }}
                           >
                             {state.reason}
                           </div>

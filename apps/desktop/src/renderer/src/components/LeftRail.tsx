@@ -289,7 +289,7 @@ function FileTree({
   if (error) {
     return (
       <div className="rail-body">
-        <div className="faint rail-note">{error}</div>
+        <div className="faint rail-note reason">{error}</div>
       </div>
     );
   }

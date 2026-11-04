@@ -1694,6 +1694,23 @@ table.grid .num {
 }
 
 /*
+ * A note whose text is a failure reason.
+ *
+ * The reason is not written here: it is an IPC error, a store that could not be
+ * opened, a path that does not exist. Chinese wraps anywhere, so the fixture's
+ * own reasons never showed the problem — a Windows path does not, and at
+ * 768×700 a 200-character one took `.notice.error` to a 1562px scrollWidth
+ * inside a 429px box. `.notice` and `.pane-head p` were fixed first; these are
+ * the small notes that carry the same string, found by
+ * `tests/contract/long-string-overflow.test.ts` rather than by measuring each
+ * one. `anywhere` rather than `break-word` because a flex parent does not
+ * shrink its min-content size for `break-word`.
+ */
+.reason {
+  overflow-wrap: anywhere;
+}
+
+/*
  * "Nothing here yet", drawn as a place rather than as an apology.
  *
  * Centred mid-panel this floated in the middle of a full-width column with no
