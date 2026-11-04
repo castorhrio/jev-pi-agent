@@ -1,7 +1,7 @@
 {
   "note": "Written by scripts/screenshot-sources.mjs. The screenshots in this directory were taken while the renderer sources below were at these hashes. Retake the images, then run `node scripts/screenshot-sources.mjs --write`.",
   "renderer": {
-    "apps/desktop/src/renderer/src/App.tsx": "sha256:61d92648fabc3b3e57bd11049e2c2aeb6229ba7f5e00c149a2f864c1b8ccd4ae",
+    "apps/desktop/src/renderer/src/App.tsx": "sha256:c02b1c37e8ff8017bc0a49e0337c4d4f419a1bca5c48f04a48902e3036948105",
     "apps/desktop/src/renderer/src/api.ts": "sha256:bbfd1f919033390000ff68a9612eeda6b39ca39048f141a55f31dd78e14ba3da",
     "apps/desktop/src/renderer/src/components/ChatLog.tsx": "sha256:0270c296f63c3e1b7eae19c55d78fbcbe2835d9eb688c11fa6a8fe3f09dffe2e",
     "apps/desktop/src/renderer/src/components/Composer.tsx": "sha256:66a644844adc4930d24634f842c3b94f96584e193bfb9538e2fefbb9000bdca3",
@@ -42,8 +42,13 @@
     "docs/screenshots/empty.png": "sha256:de8cfc081c3ceabf19c41411c744d3fac0c80652509136403374ec38b9f07e0e",
     "docs/screenshots/error.png": "sha256:d9cc8eca376e704968cf02bf17e9e71f9f1b9b7438c55ed7261feeb757c20e76",
     "docs/screenshots/handoff.png": "sha256:de181c826cfc3f78b991d10bc368a8c3ea73ff6cc7ab0b4944eb857b0cd6c71c",
+    "docs/screenshots/states/empty-768x700.png": "sha256:a57c8422b8af8c345380c02f43ae949109a220ae1f516b3c79450225b89c08ca",
+    "docs/screenshots/states/error-768x700.png": "sha256:97d772baa78eceec6aa5cd0f944810c007f377a58048bb9b30f77b38d3cc967f",
+    "docs/screenshots/states/loading-768x700.png": "sha256:2aa286f397b7ae93086189dd6eb17497ac9e9822d847cfe0e9736e790dbf724c",
     "docs/screenshots/states/loading.png": "sha256:d9490b3da03231833ce39d0ffec6e6c8a9085065f9315c1082360c3dc1122624",
-    "docs/screenshots/states/partial.png": "sha256:7be6342442ceca3ceb221c2ae0a8ea358e76718485b7ffca36fb68686d3ad972",
+    "docs/screenshots/states/partial-768x700.png": "sha256:5d64b9533d5164cc81db6da35f15b5333e1afbbff2e4fc8aa0a3eba58144e13b",
+    "docs/screenshots/states/partial.png": "sha256:6389cc0a8f029bb044aa7db2a5b6f06019d76895ba35bd3f5fd284a310fa6e19",
+    "docs/screenshots/states/permission-768x700.png": "sha256:c08618ff3bcbf4ce37e9a26415be13f591f73f31113c604573be7846d22f147b",
     "docs/screenshots/states/permission.png": "sha256:e133b5715e39ab3929ce22b69d17f86c76addda247ee86d2c66992be62d9404a"
   }
 }

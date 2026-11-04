@@ -61,11 +61,15 @@ npm run dev:web          # 默认 http://localhost:5173
 | 部分失败 `?scenario=partial` | 打开 `?scenario=partial` | 项目名在屏上（工作区读成功），会话列说「会话列表读取失败（不是空的）」并带原因 `[fixture:partial] sessions.list failed` | 把读失败渲染成「没有会话」——用户会以为数据没了；或整页都变成错误页（一个面板坏了不该拖垮全部） |
 | 权限 `?scenario=permission` | 打开 `?scenario=permission`，读弹窗，然后点「拒绝」 | 弹窗标题「Agent 请求权限」，正文五件可读：类别 `SHELL`、风险 `high`、资源、命令、原因；四个回答都在（允许一次 / 本次会话允许 / 本项目允许 / 拒绝）；点「拒绝」后弹窗**消失** | 弹窗不动（点了没反应）；或只有「允许」没有「拒绝」；或弹窗消失但事件流里没有 `permission.resolved`——决定没被记下来，等于没发生 |
 
-**这五张图在仓库里**（1440×900，真实 Chromium 拍的，与产品开窗尺寸一致）：
+**这十张图在仓库里**（真实 Chromium 拍的，五态 × 两个尺寸）：
 
-- 首启 `docs/screenshots/empty.png` · 失败 `docs/screenshots/error.png`
-- 加载 `docs/screenshots/states/loading.png` · 部分失败 `docs/screenshots/states/partial.png`
+- 1440×900（产品开窗尺寸）：首启 `docs/screenshots/empty.png` · 失败 `docs/screenshots/error.png`
+  · 加载 `docs/screenshots/states/loading.png` · 部分失败 `docs/screenshots/states/partial.png`
   · 权限 `docs/screenshots/states/permission.png`
+- 768×700（产品允许的最小窗口）：`docs/screenshots/states/{empty,loading,error,partial,permission}-768x700.png`
+
+窄窗口那一批是同一批 target 在最小窗口下拍的，用来回答「挤到最小时还读不读得下去」——
+现场演示时把窗口拖到 768×700 再看一遍，比只看宽图有说服力。
 
 **依据**：DoD「权限门不可绕」；`tests/e2e/scenarios.e2e.test.tsx` 把上表每一行变成断言，
 `tests/contract/layout.test.ts` 在真实布局引擎里量这五态（1440×900 与 768×700 两个尺寸），
@@ -74,8 +78,9 @@ npm run dev:web          # 默认 http://localhost:5173
 
 **现场怎么判「这一屏对不对」**：不要凭感觉。`docs/state-walkthrough.md` 给每一态写了三条
 能用「是 / 否」回答的判据（例如首启态「第一眼落在引导语上而不是空列头上」「三步一眼能数出」），
-每条都锚在屏幕上真的会出现的字上。现场照着念、照着答；答「否」就停在那一条，别往下讲——
-那正是这个状态坏了的样子。走查完在文件末尾的记录表里签一行（日期 / 看了哪几张 / 结论），
+每条都锚在屏幕上真的会出现的字上。文件顶部还有一份**5 分钟走查脚本**：十张图按顺序排好，
+每张图写明要回答哪三条判据，末尾给一行签字模板——照着念、照着答，答「否」就停在那一条，别往下讲，
+那正是这个状态坏了的样子。走查完在记录表里签一行（日期 / 看了哪几张 / 结论），
 签了字之后 README 里「还没被人眼走查过」那句才该改。
 
 **被问到「这五个状态是真机跑的吗」**：图是 `npm test` 的布局门禁在真实 Chromium 里拍的，

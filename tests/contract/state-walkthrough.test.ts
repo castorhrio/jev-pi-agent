@@ -1,6 +1,7 @@
 /**
- * The five interface states have criteria a person can answer, and a record
- * table that has to be signed before the README stops saying nobody looked.
+ * The five interface states have criteria a person can answer, two pictures
+ * each, and a record table that has to be signed before the README stops
+ * saying nobody looked.
  *
  * ## Why this file exists
  *
@@ -13,14 +14,23 @@
  * answering or not.
  *
  * `docs/state-walkthrough.md` is that handover: three yes/no criteria per state,
- * and a record table where a dated row *is* the signature. This file keeps the
- * two halves of that promise from drifting apart:
+ * a five-minute script that walks ten images in order, and a record table where
+ * a dated row *is* the signature. This file keeps the halves of that promise
+ * from drifting apart:
  *
  *  - every walkable state has a section, and every section has criteria that
  *    name something a person can actually find on screen (a backticked literal
  *    from `i18n.ts`, or the screenshot the section points at);
  *  - every screenshot a section names exists, so the remote path — "send the
  *    images to someone who has not installed the app" — cannot rot into a 404;
+ *  - every state is photographed at **two** sizes, and the narrow one really is
+ *    the narrow one: its filename and its pixels both have to equal the
+ *    `minWidth`/`minHeight` the product declares. A walkthrough that only ever
+ *    saw 1440x900 cannot answer "长中文在窄窗口是否撑破", which is the question
+ *    step 6 has been asking since it was written;
+ *  - the five-minute script lists exactly those ten images, in the order a
+ *    walker should open them. A state added to the sections and forgotten in
+ *    the script is a state nobody walks;
  *  - and the README and the record table agree about whether anyone has looked.
  *    While the table has no dated row, both language halves of the README must
  *    still say the states have not been walked by eye; once a row is dated, the
@@ -42,7 +52,9 @@
  * How many criteria a state has beyond the floor of three, what they say, or
  * whether a signed row's conclusion is true. A record is a person's statement;
  * this file only makes sure the statement has somewhere to live and that the
- * README cannot quietly disagree with it.
+ * README cannot quietly disagree with it. Nor is the *content* of the narrow
+ * screenshots judged — only that they are the size they claim to be. Whether
+ * the guidance still reads at 768px is the question the walker answers.
  */
 
 import { existsSync, readFileSync } from 'node:fs';
@@ -53,6 +65,7 @@ import { STATE_SCENARIOS } from '../../apps/desktop/src/renderer/src/dev/scenari
 const REPO_ROOT = join(import.meta.dirname, '..', '..');
 const WALKTHROUGH_PATH = join(REPO_ROOT, 'docs', 'state-walkthrough.md');
 const README_PATH = join(REPO_ROOT, 'README.md');
+const BOOTSTRAP_PATH = join(REPO_ROOT, 'apps', 'desktop', 'src', 'main', 'bootstrap.ts');
 
 /** The fewest criteria a state may carry and still be a walkthrough. */
 const MIN_CRITERIA = 3;
@@ -66,9 +79,70 @@ const LITERAL = /`[^`\n]+`/;
 /** A dated record row, i.e. a signature. */
 const SIGNED_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
+/** The narrow-window screenshot's name, which carries the size it was taken at. */
+const TIGHT_NAME = /-(\d+)x(\d+)\.png$/;
+
+/** The heading the five-minute script lives under. */
+const SCRIPT_HEADING = '## 5 分钟走查脚本';
+
+interface Size {
+  readonly width: number;
+  readonly height: number;
+}
+
 /** What the checks compare the document against. */
 interface Repository {
   readonly fileExists: (relativePath: string) => boolean;
+  /** A PNG's pixel size, or `null` when the file is missing or not a PNG. */
+  readonly pngSize: (relativePath: string) => Size | null;
+}
+
+/**
+ * The two windows the walkthrough is taken at, read from the product itself.
+ *
+ * `bootstrap.ts` is the one place that decides how big the app opens and how
+ * small it may get; a number copied into this file would be a second fact that
+ * drifts from the first. Both are matched inside the `new BrowserWindow({…})`
+ * call so that an unrelated `width:` elsewhere in the file cannot be picked up.
+ */
+function windows(): { opening: Size; min: Size } {
+  const source = readFileSync(BOOTSTRAP_PATH, 'utf8');
+  const start = source.indexOf('new BrowserWindow({');
+  expect(start, 'bootstrap.ts no longer creates a BrowserWindow').toBeGreaterThan(-1);
+  // Comments stripped first: `bootstrap.ts` explains the old `minWidth: 1080`
+  // in prose right above the real declaration, and a regex over raw source
+  // reads that sentence as the declaration. The layout gate learned this the
+  // hard way; a comment is not a declaration.
+  const options = source
+    .slice(start, source.indexOf('});', start))
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/(^|[^:])\/\/.*$/gm, '$1');
+  const read = (name: string): number => {
+    const match = new RegExp(`\\b${name}:\\s*(\\d+)`).exec(options);
+    expect(match, `bootstrap.ts no longer declares ${name}`).not.toBeNull();
+    return Number(match![1]);
+  };
+  return {
+    opening: { width: read('width'), height: read('height') },
+    min: { width: read('minWidth'), height: read('minHeight') },
+  };
+}
+
+const WINDOWS = windows();
+
+/**
+ * A PNG's pixel size, read from its IHDR chunk.
+ *
+ * The first eight bytes are the signature, then a four-byte length, the chunk
+ * type `IHDR`, and the width and height as big-endian 32-bit integers. Reading
+ * them costs no dependency, and a dependency for this would be the tail wagging
+ * the dog.
+ */
+function pngSize(bytes: Buffer): Size | null {
+  const signature = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+  if (bytes.length < 24 || !bytes.subarray(0, 8).equals(signature)) return null;
+  if (bytes.subarray(12, 16).toString('ascii') !== 'IHDR') return null;
+  return { width: bytes.readUInt32BE(16), height: bytes.readUInt32BE(20) };
 }
 
 /**
@@ -104,6 +178,19 @@ function sections(markdown: string): Map<string, string> {
   return out;
 }
 
+/** The body of the `## 5 分钟走查脚本` section, or `undefined` when it is gone. */
+function scriptSection(markdown: string): string | undefined {
+  const lines = markdown.split('\n');
+  const start = lines.findIndex((line) => line.trim() === SCRIPT_HEADING);
+  if (start === -1) return undefined;
+  const body: string[] = [];
+  for (const line of lines.slice(start + 1)) {
+    if (/^#{1,2} /.test(line)) break;
+    body.push(line);
+  }
+  return body.join('\n');
+}
+
 /**
  * The `- [ ]` items of a section, with their wrapped continuation lines joined.
  *
@@ -132,7 +219,7 @@ function checklistItems(section: string): string[] {
   return items;
 }
 
-/** Every screenshot path a section names. */
+/** Every screenshot path a section names, in document order. */
 function screenshotsIn(section: string): string[] {
   return [...section.matchAll(SCREENSHOT)].map((match) => match[0]);
 }
@@ -142,7 +229,8 @@ function screenshotsIn(section: string): string[] {
  *
  * A row is signed when its first cell is a date. The placeholder row the
  * document ships with has `—` there, which is the point: an unsigned table and
- * a signed one must not look the same to this gate.
+ * a signed one must not look the same to this gate. The sign template in the
+ * five-minute script uses `YYYY-MM-DD`, which is deliberately not a date.
  */
 function signedDates(markdown: string): string[] {
   const dates: string[] = [];
@@ -176,13 +264,87 @@ function languageHalves(markdown: string): { en: string; zh: string } | undefine
   return { en: markdown.slice(en, zh), zh: markdown.slice(zh) };
 }
 
+/** `1440x900`, the way a person writes a window size. */
+function sizeLabel(size: Size): string {
+  return `${size.width}x${size.height}`;
+}
+
+/**
+ * The two pictures a state has to carry, and every way they can be wrong.
+ *
+ * Split out because the same three questions are asked of every state and the
+ * sentences have to name the state and the file: "the screenshot is the wrong
+ * size" sends a reader looking through ten images.
+ */
+function pictureProblems(state: string, shots: string[], repository: Repository): string[] {
+  const problems: string[] = [];
+  const tight = shots.filter((shot) => TIGHT_NAME.test(shot));
+  const wide = shots.filter((shot) => !TIGHT_NAME.test(shot));
+
+  if (wide.length === 0) {
+    problems.push(
+      `docs/state-walkthrough.md: \`${state}\` names no full-window screenshot, so the ` +
+        `walkthrough has no ${sizeLabel(WINDOWS.opening)} picture to judge`,
+    );
+  }
+  for (const shot of wide) {
+    const size = repository.pngSize(shot);
+    if (size === null) {
+      problems.push(`docs/state-walkthrough.md: \`${state}\` shows \`${shot}\`, which is not a PNG`);
+      continue;
+    }
+    if (size.width === WINDOWS.opening.width && size.height === WINDOWS.opening.height) continue;
+    problems.push(
+      `docs/state-walkthrough.md: \`${shot}\` is ${sizeLabel(size)} and the app opens at ` +
+        `${sizeLabel(WINDOWS.opening)} — retake it, or the walkthrough is judging a window ` +
+        'the product does not open',
+    );
+  }
+
+  if (tight.length === 0) {
+    problems.push(
+      `docs/state-walkthrough.md: \`${state}\` names no narrow-window screenshot, so nobody ` +
+        `can answer "长中文在窄窗口是否撑破" at ${sizeLabel(WINDOWS.min)}`,
+    );
+    return problems;
+  }
+  if (tight.length > 1) {
+    problems.push(
+      `docs/state-walkthrough.md: \`${state}\` names ${tight.length} narrow-window screenshots ` +
+        `(${tight.join(', ')}); a walkthrough needs exactly one`,
+    );
+  }
+  for (const shot of tight) {
+    const named = TIGHT_NAME.exec(shot)!;
+    const namedSize = { width: Number(named[1]), height: Number(named[2]) };
+    if (namedSize.width !== WINDOWS.min.width || namedSize.height !== WINDOWS.min.height) {
+      problems.push(
+        `docs/state-walkthrough.md: \`${shot}\` is named for ${sizeLabel(namedSize)} and the ` +
+          `smallest window the product allows is ${sizeLabel(WINDOWS.min)}`,
+      );
+    }
+    const size = repository.pngSize(shot);
+    if (size === null) {
+      problems.push(`docs/state-walkthrough.md: \`${state}\` shows \`${shot}\`, which is not a PNG`);
+      continue;
+    }
+    if (size.width === WINDOWS.min.width && size.height === WINDOWS.min.height) continue;
+    problems.push(
+      `docs/state-walkthrough.md: \`${shot}\` is ${sizeLabel(size)} and the smallest window the ` +
+        `product allows is ${sizeLabel(WINDOWS.min)} — the narrow picture is not narrow`,
+    );
+  }
+  return problems;
+}
+
 /**
  * Every way the walkthrough document, the repository and the README disagree.
  *
  * Empty means the handover is intact. Pure in `(walkthrough, readme, repository)`
  * so the interesting cases — a state with no section, a criterion anchored to
- * nothing, a signed table next to a README that still says nobody looked — can
- * be shown producing a failure instead of being argued about.
+ * nothing, a narrow picture that is not narrow, a script that skips an image, a
+ * signed table next to a README that still says nobody looked — can be shown
+ * producing a failure instead of being argued about.
  */
 function walkthroughProblems(
   walkthrough: string,
@@ -191,6 +353,9 @@ function walkthroughProblems(
 ): string[] {
   const problems: string[] = [];
   const found = sections(walkthrough);
+
+  /** The order a walker should open the images in: state by state, wide then narrow. */
+  const expectedOrder: string[] = [];
 
   for (const state of STATE_SCENARIOS) {
     const section = found.get(state);
@@ -214,16 +379,40 @@ function walkthroughProblems(
       );
     }
 
-    const shots = screenshotsIn(section);
+    const shots = [...new Set(screenshotsIn(section))];
     if (shots.length === 0) {
       problems.push(
         `docs/state-walkthrough.md: \`${state}\` names no screenshot, so the remote ` +
           'walkthrough has nothing to look at',
       );
+      continue;
     }
-    for (const shot of new Set(shots)) {
+    for (const shot of shots) {
       if (repository.fileExists(shot)) continue;
       problems.push(`docs/state-walkthrough.md: \`${state}\` shows \`${shot}\`, which is not in the repository`);
+    }
+    problems.push(...pictureProblems(state, shots, repository));
+
+    const wide = shots.find((shot) => !TIGHT_NAME.test(shot));
+    const tight = shots.find((shot) => TIGHT_NAME.test(shot));
+    if (wide !== undefined) expectedOrder.push(wide);
+    if (tight !== undefined) expectedOrder.push(tight);
+  }
+
+  const script = scriptSection(walkthrough);
+  if (script === undefined) {
+    problems.push(
+      `docs/state-walkthrough.md: no \`${SCRIPT_HEADING}\` section, so the walkthrough is a ` +
+        'pile of criteria rather than something a person can finish in five minutes',
+    );
+  } else {
+    const listed = screenshotsIn(script);
+    if (listed.join('\n') !== expectedOrder.join('\n')) {
+      problems.push(
+        `docs/state-walkthrough.md: the five-minute script lists ${listed.length} image(s) and ` +
+          `the state sections call for ${expectedOrder.length}, in this order:\n    ` +
+          expectedOrder.join('\n    '),
+      );
     }
   }
 
@@ -278,7 +467,40 @@ const walkthrough = existsSync(WALKTHROUGH_PATH) ? readFileSync(WALKTHROUGH_PATH
 const readme = existsSync(README_PATH) ? readFileSync(README_PATH, 'utf8') : '';
 const REPOSITORY: Repository = {
   fileExists: (relativePath) => existsSync(join(REPO_ROOT, relativePath)),
+  pngSize: (relativePath) => {
+    const full = join(REPO_ROOT, relativePath);
+    return existsSync(full) ? pngSize(readFileSync(full)) : null;
+  },
 };
+
+/**
+ * A repository that answers without touching the disk.
+ *
+ * The size it reports is derived from the filename, so a case can drive the
+ * "the narrow picture is not narrow" branch by renaming a file in the document
+ * rather than by writing a PNG. `overrides` is how a case makes one answer
+ * wrong on purpose.
+ */
+function fakeRepo(overrides: Partial<Repository> = {}): Repository {
+  return {
+    fileExists: () => true,
+    pngSize: (relativePath) => {
+      const match = TIGHT_NAME.exec(relativePath);
+      return match
+        ? { width: Number(match[1]), height: Number(match[2]) }
+        : { ...WINDOWS.opening };
+    },
+    ...overrides,
+  };
+}
+
+/** The document with one state's narrow-window line removed. */
+function withoutTight(state: string): string {
+  return walkthrough.replace(
+    new RegExp(`(### ${state}\\n\\n- 图：[^\\n]*?)· 窄窗口：\`[^\`]+\`（[^）]*）`, 'u'),
+    '$1',
+  );
+}
 
 describe('the five states have criteria a person can answer', () => {
   it('the walkthrough document is present, so the checks below have a subject', () => {
@@ -288,7 +510,7 @@ describe('the five states have criteria a person can answer', () => {
     expect(walkthrough.length, 'docs/state-walkthrough.md is empty').toBeGreaterThan(0);
   });
 
-  it('every walkable state has a section, criteria and a screenshot', () => {
+  it('every walkable state has a section, criteria and two pictures', () => {
     const problems = walkthroughProblems(walkthrough, readme, REPOSITORY);
     expect(
       problems,
@@ -307,6 +529,30 @@ describe('the five states have criteria a person can answer', () => {
     expect(STATE_SCENARIOS.length, 'the walkable list is empty').toBeGreaterThan(0);
   });
 
+  it('the five-minute script walks ten images, two per state', () => {
+    // The count is the point: five states at two sizes is the whole walk, and a
+    // script that lists nine of them is a walk that ends early without saying
+    // so. The order is checked by `walkthroughProblems`; this case states the
+    // arithmetic a reader can verify at a glance.
+    const script = scriptSection(walkthrough);
+    expect(script, `no \`${SCRIPT_HEADING}\` section`).toBeDefined();
+    expect(screenshotsIn(script!)).toHaveLength(STATE_SCENARIOS.length * 2);
+  });
+
+  it('the narrow pictures are the smallest window the product allows', () => {
+    // Read from `bootstrap.ts`, not written down here: the walkthrough's claim
+    // is "this is the tightest window a user can produce", and that number
+    // lives in the product. A capture at some other size would be a picture of
+    // a window nobody can open.
+    const tight = [...walkthrough.matchAll(/docs\/screenshots\/[\w./-]+-\d+x\d+\.png/g)].map(
+      (match) => match[0],
+    );
+    expect(tight.length, 'the walkthrough names no narrow-window screenshot').toBeGreaterThan(0);
+    for (const shot of tight) {
+      expect(REPOSITORY.pngSize(shot), `${shot} is not a PNG`).toEqual(WINDOWS.min);
+    }
+  });
+
   it('the record table is unsigned, and the README says so in both languages', () => {
     // The state of the repository today: criteria written, nobody has looked.
     // If this case fails because a row was signed, the fix is the README — see
@@ -321,7 +567,7 @@ describe('the five states have criteria a person can answer', () => {
     const problems = walkthroughProblems(
       '# 走查\n\n## 判据\n\n### empty\n\n- 图：`docs/screenshots/empty.png`\n',
       readme,
-      { fileExists: () => true },
+      fakeRepo(),
     );
     expect(problems).toContain(
       'docs/state-walkthrough.md: no `### loading` section, so nobody can walk it',
@@ -337,7 +583,7 @@ describe('the five states have criteria a person can answer', () => {
       '- [ ] 没有加载中。',
       '',
     ].join('\n');
-    const problems = walkthroughProblems(doc, readme, { fileExists: () => true });
+    const problems = walkthroughProblems(doc, readme, fakeRepo());
     expect(problems.filter((problem) => problem.includes('names nothing on screen'))).toHaveLength(3);
   });
 
@@ -350,18 +596,95 @@ describe('the five states have criteria a person can answer', () => {
       '- [ ] 没有 `加载中…`。',
       '',
     ].join('\n');
-    const problems = walkthroughProblems(doc, readme, { fileExists: () => false });
+    const problems = walkthroughProblems(doc, readme, fakeRepo({ fileExists: () => false }));
     expect(problems).toContain(
       'docs/state-walkthrough.md: `empty` shows `docs/screenshots/gone.png`, which is not in the repository',
     );
   });
 
+  it('reports a state that only has the wide picture', () => {
+    // The defect this round exists for: five states photographed at 1440x900
+    // and nowhere else, so "长中文在窄窗口是否撑破" could not be answered by
+    // looking — only by trusting the geometry gate.
+    const problems = walkthroughProblems(withoutTight('empty'), readme, fakeRepo());
+    expect(
+      problems.some(
+        (problem) =>
+          problem.includes('`empty` names no narrow-window screenshot') &&
+          problem.includes(sizeLabel(WINDOWS.min)),
+      ),
+      problems.join('\n'),
+    ).toBe(true);
+  });
+
+  it('reports a narrow picture that is not the smallest window', () => {
+    // Both halves of the claim: the name says 768x700 and the pixels have to
+    // agree. A file renamed to look narrow is the cheapest way to fake this.
+    // The section's own line, not the script's row: the script is checked for
+    // order separately, and renaming there would only move the image.
+    const renamed = walkthrough.replace(
+      '· 窄窗口：`docs/screenshots/states/empty-768x700.png`',
+      '· 窄窗口：`docs/screenshots/states/empty-1024x768.png`',
+    );
+    const problems = walkthroughProblems(renamed, readme, fakeRepo());
+    expect(
+      problems.some((problem) => problem.includes('is named for 1024x768')),
+      problems.join('\n'),
+    ).toBe(true);
+
+    const wrongPixels = walkthroughProblems(
+      walkthrough,
+      readme,
+      fakeRepo({ pngSize: () => ({ width: 1024, height: 768 }) }),
+    );
+    expect(
+      wrongPixels.some((problem) => problem.includes('the narrow picture is not narrow')),
+      wrongPixels.join('\n'),
+    ).toBe(true);
+  });
+
+  it('reports a five-minute script that skips an image', () => {
+    const skipped = walkthrough.replace(
+      '| 4 | `docs/screenshots/states/loading-768x700.png` | 768×700 | 同上，另加：两处「加载中…」都还在屏上 |\n',
+      '',
+    );
+    expect(skipped, 'the script row this case removes is gone from the document').not.toBe(
+      walkthrough,
+    );
+    const problems = walkthroughProblems(skipped, readme, fakeRepo());
+    expect(
+      problems.some((problem) => problem.includes('the five-minute script lists 9 image(s)')),
+      problems.join('\n'),
+    ).toBe(true);
+  });
+
+  it('reports a five-minute script that walks the images out of order', () => {
+    // Order is not decoration: the script is read top to bottom by someone who
+    // has five minutes, and a narrow picture listed before its wide one means
+    // the walker judges the squeezed layout first and never sees the normal one.
+    const swapped = walkthrough
+      .replace(
+        '| 1 | `docs/screenshots/empty.png` | 1440×900 | `empty` 的三条判据 |',
+        '| 1 | `docs/screenshots/states/empty-768x700.png` | 768×700 | `empty` 的三条判据 |',
+      )
+      .replace(
+        '| 2 | `docs/screenshots/states/empty-768x700.png` | 768×700 | 同上，另加：引导语与三步没有被挤到折叠线以下 |',
+        '| 2 | `docs/screenshots/empty.png` | 1440×900 | 同上，另加：引导语与三步没有被挤到折叠线以下 |',
+      );
+    expect(swapped, 'the script rows this case swaps are gone from the document').not.toBe(
+      walkthrough,
+    );
+    const problems = walkthroughProblems(swapped, readme, fakeRepo());
+    expect(
+      problems.some((problem) => problem.includes('the five-minute script lists')),
+      problems.join('\n'),
+    ).toBe(true);
+  });
+
   it('reports a README that stopped admitting nobody has looked', () => {
     // The overclaim this file exists for: the table is empty, the README has
     // been reworded into "the states are covered".
-    const problems = walkthroughProblems(walkthrough, readme.replace(/by eye/g, 'in the gate'), {
-      fileExists: () => true,
-    });
+    const problems = walkthroughProblems(walkthrough, readme.replace(/by eye/g, 'in the gate'), fakeRepo());
     expect(problems.some((problem) => problem.includes('English half'))).toBe(true);
   });
 
@@ -371,9 +694,9 @@ describe('the five states have criteria a person can answer', () => {
     // one that gets forgotten.
     const signed = walkthrough.replace(
       '| — | — | — | — | — | **未走查**：判据已就位，等一个人按上面五节逐条回答 |',
-      '| 2026-11-05 | 张三 | 五张 | 全满足 | 无 | 五条判据全满足 |',
+      '| 2026-11-05 | 张三 | 十张 | 全满足 | 无 | 五态判据全满足 |',
     );
-    const problems = walkthroughProblems(signed, readme, { fileExists: () => true });
+    const problems = walkthroughProblems(signed, readme, fakeRepo());
     expect(problems.some((problem) => problem.includes('signed on 2026-11-05'))).toBe(true);
     expect(problems.filter((problem) => problem.includes('signed on 2026-11-05'))).toHaveLength(2);
   });
@@ -383,9 +706,9 @@ describe('the five states have criteria a person can answer', () => {
     // by a check that always fails.
     const signed = walkthrough.replace(
       '| — | — | — | — | — | **未走查**：判据已就位，等一个人按上面五节逐条回答 |',
-      '| 2026-11-05 | 张三 | 五张 | 全满足 | 无 | 五条判据全满足 |',
+      '| 2026-11-05 | 张三 | 十张 | 全满足 | 无 | 五态判据全满足 |',
     );
     const dated = readme.replace(/by eye/g, 'by eye on 2026-11-05').replace(/人眼/g, '人眼（2026-11-05）');
-    expect(walkthroughProblems(signed, dated, { fileExists: () => true })).toEqual([]);
+    expect(walkthroughProblems(signed, dated, fakeRepo())).toEqual([]);
   });
 });

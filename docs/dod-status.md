@@ -639,3 +639,30 @@ AssertionError: ?scenario=partial painted the first-run block: expected { leadSi
 
 **这一轮没有做的事**：上传修正版 feed（无令牌）、Windows 桌面六步（无 Windows 机器）、
 步骤 6 的人眼观感签字（需要一个人）。三条的解除命令与结果落点现在都在 `docs/blockers.md` 一页里。
+
+## 本轮（2026-11-04 深夜）五态走查的签字成本降到 5 分钟，窄窗口第一次有图
+
+上表「权限门不可绕」还差的那一句是「真机上的**视觉**走查（排版、长中文、窄窗口）」。这一条挂了五轮，
+每轮都只写「需要一个人」——而**签字成本**从没被降过：判据散在五节里，图只有 1440×900 一种，
+「长中文在窄窗口是否撑破」这句判据根本没有对应的图可看。本轮不假装有人签了字，改的是**接手的人拿到的东西**。
+
+1. **窄窗口五张图**：`docs/screenshots/states/{empty,loading,error,partial,permission}-768x700.png`。
+   它们不是把宽图缩出来的，是布局门禁在 768×700（`minWidth`/`minHeight`）下拍的同一批 target。
+   `tests/contract/state-walkthrough.test.ts` 读 `bootstrap.ts` 的 `minWidth`/`minHeight`，
+   断言每张窄图的**文件名与像素尺寸**都等于它——一张改名冒充窄图的宽图会打红。
+2. **`docs/state-walkthrough.md` 顶部加「5 分钟走查脚本」**：十张图按顺序排成一张表
+   （每态宽 → 窄），每张图写明要回答哪三条判据，末尾给一行签字模板（`YYYY-MM-DD` 占位，
+   故意不是真日期，所以它不会被当成一次签字）。判据本身一字未改。
+3. **门禁钉住「脚本与判据是同一件事」**：脚本列出的图必须**恰好等于**各态小节点到的图，
+   且顺序是「每态先宽后窄」。少一张、顺序颠倒、某态只有宽图、窄图尺寸不对，四种各有句子。
+4. **HEAD 上那条红**：`6705691` 改了 `App.tsx`（`partial` 不再画首启块）却没重拍图，
+   `node scripts/screenshot-sources.mjs --check` 在 HEAD 上是红的。本轮重拍并 `--write`，
+   `docs/screenshots/states/partial.png` 因此变了（105296 → 80589 字节），其余宽图逐字节未变。
+
+**证明它会红**（三条各演示一次，恢复后 16/16 绿）：
+删掉 `### error` 的窄窗口行 → `error names no narrow-window screenshot … at 768x700`；
+删掉脚本第 6 行 → `the five-minute script lists 9 image(s) and the state sections call for 10`；
+把 `loading-768x700.png` 换成 1440×900 的图 → `is 1440x900 … the narrow picture is not narrow`。
+
+**这一轮没有做的事**：签字本身（需要一个人看那十张图）、上传修正版 feed（无令牌）、
+Windows 桌面六步（无 Windows 机器）。README 中英两半仍写着「没人看过」，`state-walkthrough.test.ts` 会拦住提前改口。

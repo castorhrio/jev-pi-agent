@@ -317,13 +317,17 @@ fixture 不发），第五个状态因此根本没法人工走查完；`revokeRu
 `xvfb-run -a npx vitest run tests/contract/layout.test.ts` 33 项全绿，五态在真实 Chromium 里各拍一张
 1440×900（与 `bootstrap.ts` 的开窗尺寸一致），其中三张此前**从未在仓库里出现过**，已提交：
 
-| 状态 | 图 | 这一张证明什么 |
-|---|---|---|
-| 首启 | `docs/screenshots/empty.png` | 引导语 + 三步在屏上，会话列说的是「还没有会话」，没有「加载中…」 |
-| 加载 | `docs/screenshots/states/loading.png` | 读取未返回的那一帧：会话列与对话区都在说「加载中…」，**不**说「还没有对话」 |
-| 失败 | `docs/screenshots/error.png` | 标题「出错了」+ 原始失败文本 + 「重试」按钮，不是空面板 |
-| 部分失败 | `docs/screenshots/states/partial.png` | 项目名在屏上，会话列说「会话列表读取失败（不是空的）」并带原因 |
-| 权限 | `docs/screenshots/states/permission.png` | 弹窗五件可读（类别 `SHELL` / 风险 `high` / 资源 / 命令 / 原因），四个回答都在 |
+| 状态 | 图（1440×900，开窗尺寸） | 图（768×700，最小窗口） | 这一张证明什么 |
+|---|---|---|---|
+| 首启 | `docs/screenshots/empty.png` | `docs/screenshots/states/empty-768x700.png` | 引导语 + 三步在屏上，会话列说的是「还没有会话」，没有「加载中…」 |
+| 加载 | `docs/screenshots/states/loading.png` | `docs/screenshots/states/loading-768x700.png` | 读取未返回的那一帧：会话列与对话区都在说「加载中…」，**不**说「还没有对话」 |
+| 失败 | `docs/screenshots/error.png` | `docs/screenshots/states/error-768x700.png` | 标题「出错了」+ 原始失败文本 + 「重试」按钮，不是空面板 |
+| 部分失败 | `docs/screenshots/states/partial.png` | `docs/screenshots/states/partial-768x700.png` | 项目名在屏上，会话列说「会话列表读取失败（不是空的）」并带原因 |
+| 权限 | `docs/screenshots/states/permission.png` | `docs/screenshots/states/permission-768x700.png` | 弹窗五件可读（类别 `SHELL` / 风险 `high` / 资源 / 命令 / 原因），四个回答都在 |
+
+窄窗口那一列是**同一批 target 在 768×700 下拍的**（`minWidth`/`minHeight`，产品允许的最小窗口），
+不是把宽图缩出来的：`tests/contract/state-walkthrough.test.ts` 读 `bootstrap.ts` 的
+`minWidth`/`minHeight`，断言每张窄图的**文件名与像素尺寸**都等于它——一张改名冒充窄图的宽图会打红。
 
 图是门禁拍的，不是手绘也不是 mock：`npm test` 的布局门禁把每个 target 的截图写进 `.run-logs/layout/`
 （该目录被忽略），上面五张是从那里挑出来提交的，所以**任何人重跑一次都能得到同一批图**。
@@ -334,13 +338,14 @@ fixture 不发），第五个状态因此根本没法人工走查完；`revokeRu
 `--check --write` 同时给会被拒绝，而不是按先后顺序挑一个。
 
 **仍未做**：人眼对**视觉**的判断（空态的引导语是否够醒目、失败信息的排版是否压过内容、长中文在窄窗口是否撑破）。
-上面五张图让这件事**可以远程做**——把图发给任何一个人看，他就能回答这三问，不必先装应用；
+上面十张图（五态 × 两个尺寸）让这件事**可以远程做**——把图发给任何一个人看，他就能回答这三问，不必先装应用；
 但「有人真的看过并签了字」这件事，本轮仍然没有发生，所以这一条不算通过。
 DOM 断言证明「该有的字在屏上、不该有的不在」，证明不了「看上去像不像首启」。这一条留给 Windows 桌面的
 一次完整走查，和上表那一行一起记。
 
 **这一条现在可以交接了**：要回答的问题写在 `docs/state-walkthrough.md`——每态三条能用「是 / 否」回答的判据，
-每条锚在屏幕上真的会出现的字上（取自 `apps/desktop/src/shared/i18n.ts`），外加一张记录表。
+每条锚在屏幕上真的会出现的字上（取自 `apps/desktop/src/shared/i18n.ts`），外加一份**5 分钟走查脚本**
+（十张图按顺序、每张图要回答什么、一行签字模板）和一张记录表。
 表里出现一行带日期的记录，就是一次签字；`tests/contract/state-walkthrough.test.ts` 把两件事绑在一起：
 表里没有带日期的一行时，README 中英两半都必须仍然写着「没人看过」；一旦签了字，README 必须带上那个日期。
 所以「走查过了」和「README 还道着歉」不会同时存在，反过来也一样。

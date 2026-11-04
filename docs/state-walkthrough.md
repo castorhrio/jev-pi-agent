@@ -5,7 +5,7 @@
 `docs/manual-verification.md` 步骤 6 一直写着同一句话：五个界面状态被断言过、被测量过、被拍过照，
 但**没有人看过并说它们读起来像首启 / 像失败 / 像权限请求**。这句话之所以能挂好几轮，是因为它没有
 下一步——「去看一眼」不是一件可以交接的事。这里把它变成一件可以交接的事：每个状态三条**能用「是 / 否」
-回答**的判据，加一张**签了字才算数**的记录表。
+回答**的判据，每个状态**两个尺寸**的图，加一张**签了字才算数**的记录表。
 
 ## 为什么机器判不了这一半
 
@@ -20,15 +20,49 @@
 三条全绿而屏幕仍然难读，是完全可能的：一个段落可以每条几何规则都过，读起来还是一堵墙。
 所以这一半只能由人回答——但「由人回答」不等于「随便看看」，判据写死在这里，答案只有是 / 否。
 
+## 5 分钟走查脚本
+
+十张图，按顺序看，每张图回答它那一态的三条判据（判据在下面 `## 判据` 里，每条都锚在屏幕上真的会
+出现的字上）。**答「否」就停在那一条**，把屏幕上看到的东西记进记录表，不要顺手修——一边改行为一边
+下结论，等于把证据和结论混在一起，下一个人无法复现你看到的那一屏。
+
+两个尺寸都要看，因为它们是两个不同的问题：1440×900 是产品开窗的尺寸（「正常窗口下读起来对不对」），
+768×700 是产品允许的最小窗口（「挤到最小时还读不读得下去」）。窄窗口那一列多问一句：
+**有没有横向滚动条、有没有字被截成半行**——这是几何门禁量得到的那一半，人眼只需确认它没有骗人。
+
+| # | 图 | 尺寸 | 这一张要回答的 |
+|---|---|---|---|
+| 1 | `docs/screenshots/empty.png` | 1440×900 | `empty` 的三条判据 |
+| 2 | `docs/screenshots/states/empty-768x700.png` | 768×700 | 同上，另加：引导语与三步没有被挤到折叠线以下 |
+| 3 | `docs/screenshots/states/loading.png` | 1440×900 | `loading` 的三条判据 |
+| 4 | `docs/screenshots/states/loading-768x700.png` | 768×700 | 同上，另加：两处「加载中…」都还在屏上 |
+| 5 | `docs/screenshots/error.png` | 1440×900 | `error` 的三条判据 |
+| 6 | `docs/screenshots/states/error-768x700.png` | 768×700 | 同上，另加：`重试` 按钮仍在折叠线以上 |
+| 7 | `docs/screenshots/states/partial.png` | 1440×900 | `partial` 的三条判据 |
+| 8 | `docs/screenshots/states/partial-768x700.png` | 768×700 | 同上，另加：失败原因没有被截断到看不见 |
+| 9 | `docs/screenshots/states/permission.png` | 1440×900 | `permission` 的三条判据 |
+| 10 | `docs/screenshots/states/permission-768x700.png` | 768×700 | 同上，另加：弹窗五件与四个回答在窄窗口下仍分得清 |
+
+看完把这一行填进文末的记录表（`YYYY-MM-DD` 换成当天日期；**第一列是日期的那一行就是签字**）：
+
+```
+| YYYY-MM-DD | 你的名字 | 10 张（五态 × 两个尺寸） | 15 条全满足 / 第 N 条不满足 | 无 / <屏幕上看到什么> | 五态判据全满足 / 第 N 条不满足：<屏幕上看到什么> |
+```
+
+这十张图是布局门禁在真实 Chromium 里拍的，不是手绘也不是 mock：`npm test` 的
+`tests/contract/layout.test.ts` 把每个 target 的截图写进 `.run-logs/layout/`（该目录被忽略），
+上面十张是从那里挑出来提交的，所以**任何人重跑一次都能得到同一批图**。
+`tests/contract/state-walkthrough.test.ts` 钉住三件事：每一态的两张图都在仓库里、窄窗口那张的像素尺寸
+等于 `bootstrap.ts` 声明的 `minWidth`/`minHeight`、以及上面这张表按顺序列全了十张图。
+
 ## 怎么走（两条路，选一条）
 
-1. **有应用**：`npm run dev:web`，按下面五节给的 URL 依次打开。这是唯一能看到交互（点「拒绝」之后
-   弹窗消失）的路。
-2. **只有图**：直接看仓库里那五张图，不必装应用、不必联网。这就是「远程可做」的意思——
+1. **有应用**：`npm run dev:web`，按下面五节给的 URL 依次打开，并把窗口拖到 768×700 再看一遍。
+   这是唯一能看到交互（点「拒绝」之后弹窗消失）的路。
+2. **只有图**：直接看上面那十张图，不必装应用、不必联网。这就是「远程可做」的意思——
    把图发给任何一个人，他就能回答下面这些问题。
 
-两条路都**不改代码**。走查途中发现缺陷就记进记录表，不要顺手修：一边改行为一边下结论，
-等于把证据和结论混在一起，下一个人无法复现你看到的那一屏。
+两条路都**不改代码**。走查途中发现缺陷就记进记录表，不要顺手修。
 
 ## 判据
 
@@ -38,7 +72,7 @@
 
 ### empty
 
-- 图：`docs/screenshots/empty.png` · URL：`?scenario=empty`
+- 图：`docs/screenshots/empty.png`（1440×900）· 窄窗口：`docs/screenshots/states/empty-768x700.png`（768×700）· URL：`?scenario=empty`
 - 判据：
   - [ ] 第一眼落在 `还没有对话。在下方描述你的任务，Agent 会先构建上下文再开始工作。` 上，
         而不是落在空列表或列头上——引导语在折叠线以上，且比周围文字更醒目。
@@ -50,7 +84,7 @@
 
 ### loading
 
-- 图：`docs/screenshots/states/loading.png` · URL：`?scenario=loading`
+- 图：`docs/screenshots/states/loading.png`（1440×900）· 窄窗口：`docs/screenshots/states/loading-768x700.png`（768×700）· URL：`?scenario=loading`
 - 判据：
   - [ ] 会话列与对话区**都在说** `加载中…`，两处一致——一处说加载、另一处说「没有」是最糟的组合。
   - [ ] 屏幕上**没有** `还没有对话`：把还没读到的历史渲染成「空」，是对未到达的数据下确定结论。
@@ -60,7 +94,7 @@
 
 ### error
 
-- 图：`docs/screenshots/error.png` · URL：`?scenario=error`
+- 图：`docs/screenshots/error.png`（1440×900）· 窄窗口：`docs/screenshots/states/error-768x700.png`（768×700）· URL：`?scenario=error`
 - 判据：
   - [ ] 标题 `出错了` 之后**紧接着**是原始失败文本 `[fixture:error] workspace.listRecent failed`，
         不是一句「出错了」就结束——用户要能把这行字贴给别人。
@@ -71,7 +105,7 @@
 
 ### partial
 
-- 图：`docs/screenshots/states/partial.png` · URL：`?scenario=partial`
+- 图：`docs/screenshots/states/partial.png`（1440×900）· 窄窗口：`docs/screenshots/states/partial-768x700.png`（768×700）· URL：`?scenario=partial`
 - 判据：
   - [ ] 项目名 `jev-pi-agent` **还在屏上**：一个面板读失败，不该把读成功的部分一起抹掉。
   - [ ] 会话列说的是 `会话列表读取失败（不是空的）` 并带原因 `[fixture:partial] sessions.list failed`，
@@ -82,7 +116,7 @@
 
 ### permission
 
-- 图：`docs/screenshots/states/permission.png` · URL：`?scenario=permission`
+- 图：`docs/screenshots/states/permission.png`（1440×900）· 窄窗口：`docs/screenshots/states/permission-768x700.png`（768×700）· URL：`?scenario=permission`
 - 判据：
   - [ ] 弹窗标题 `Agent 请求权限` 之后，五件东西**都能读**：类别 `SHELL`、风险 `high`、资源、命令、原因——
         缺一件，用户就只能盲点。
