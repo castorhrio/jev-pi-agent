@@ -34,7 +34,7 @@
  */
 
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -57,6 +57,9 @@ const SCRIPT = join(REPO_ROOT, 'scripts', 'publish-feed.mjs');
 
 /** The committed corrected document, exactly as it would be uploaded. */
 const FEED_FILE = defaultFeedPath();
+
+/** How the default document is named in the plan, i.e. relative to the root. */
+const SCRIPT_FEED_FILE = 'docs/release/update-feed-v1.0.0.json';
 const FEED_BYTES = readFileSync(FEED_FILE, 'utf8');
 const FEED_DOCUMENT = JSON.parse(FEED_BYTES) as {
   version: string;
@@ -256,6 +259,75 @@ describe('a run that changes nothing', () => {
     expect(out).toContain('update-feed.json');
   });
 
+  it('is also a flag, so the safe mode does not have to be inferred from a doc comment', async () => {
+    // No arguments and `--dry-run` must be the same run: the point of the flag
+    // is that a release script (or a person reading a checklist) can *say*
+    // "plan only" instead of remembering that the silent mode is the safe one.
+    const implicit = await run([]);
+    const explicit = await run(['--dry-run']);
+
+    expect(explicit.code).toBe(0);
+    expect(explicit.calls).toEqual([]);
+    expect(explicit.err).toBe('');
+    expect(explicit.out).toContain('dry run');
+    // Same plan, minus the one line about whether the flag was typed.
+    const plan = (text: string) => text.split('\n').filter((line) => line.startsWith('[plan]'));
+    expect(plan(explicit.out)).toEqual(plan(implicit.out));
+  });
+
+  it('says which judgements will decide whether the upload counted', async () => {
+    // "Will delete the asset and post these bytes" is a plan; a plan that does
+    // not name the judgement sends the reader to another document to find out
+    // what would still be wrong afterwards.
+    const { out } = await run(['--dry-run', '--verify']);
+    expect(out).toContain('[plan] check 1');
+    expect(out).toContain('the app’s own feed rules');
+    expect(out).toContain('[plan] check 2');
+    expect(out).toContain('sha256/size');
+    expect(out).toContain('[plan] check 3');
+    expect(out).toContain('verify-release-feed.mjs');
+    // And the byte count, so "what would be uploaded" is a number and not a name.
+    expect(out).toContain(`feed: ${SCRIPT_FEED_FILE} (${Buffer.byteLength(FEED_BYTES, 'utf8')} bytes)`);
+  });
+
+  it('says out loud that the published-bytes check waits for a real upload', async () => {
+    // `--verify` on a dry run must not read as "the check ran": the third
+    // judgement happens after the upload, and this run stops before it.
+    const { out } = await run(['--dry-run', '--verify']);
+    expect(out).toContain('waits for a real upload');
+
+    const without = await run(['--dry-run']);
+    expect(without.out).toContain('check 3 is not requested');
+  });
+
+  it('writes nothing at all — not the feed, not a copy, not a log', async () => {
+    // The command has a sibling flag that deletes a release asset, so "does not
+    // write" is asserted against the file and its timestamp rather than trusted.
+    const before = statSync(FEED_FILE);
+    const { code, calls } = await run(['--dry-run', '--verify']);
+    const after = statSync(FEED_FILE);
+
+    expect(code).toBe(0);
+    expect(calls).toEqual([]);
+    expect(readFileSync(FEED_FILE, 'utf8')).toBe(FEED_BYTES);
+    expect(after.mtimeMs).toBe(before.mtimeMs);
+  });
+
+  it('refuses --dry-run together with --apply instead of picking one', async () => {
+    // Two opposite intents on one line: whoever typed it does not know what it
+    // does, and choosing for them is how a release step runs for real while the
+    // person who ran it believes it only planned.
+    const { code, err, out, calls } = await run(['--dry-run', '--apply'], {
+      env: { GITHUB_TOKEN: TOKEN_VALUE },
+    });
+
+    expect(code).toBe(1);
+    expect(calls).toEqual([]);
+    expect(out).toBe('');
+    expect(err).toContain('opposite things');
+    expect(err).toContain('--apply --verify');
+  });
+
   it('refuses --apply without a token, naming the variable it wants', async () => {
     const { code, err, calls } = await run(['--apply']);
     expect(code).toBe(1);
@@ -342,6 +414,13 @@ describe('the command line', () => {
     const result = spawnSync(process.execPath, [SCRIPT], { encoding: 'utf8' });
     expect(result.status).toBe(0);
     expect(result.stdout).toContain('dry run');
+  });
+
+  it('runs a dry run when asked for one by name, and never reaches the network', () => {
+    const result = spawnSync(process.execPath, [SCRIPT, '--dry-run'], { encoding: 'utf8' });
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain('dry run');
+    expect(result.stdout).toContain('[plan] check 1');
   });
 
   it('exits 1 on a bad flag, so a typo is not a silent dry run', () => {

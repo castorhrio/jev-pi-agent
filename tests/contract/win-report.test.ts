@@ -175,6 +175,61 @@ describe('what a carried-home report has to be, to close the row', () => {
     expect(result.problems.join(' ')).toContain('not one of pass / fail / skip');
   });
 
+  it('refuses a `pass` with no evidence behind it, because a verdict is not a result', () => {
+    // The cheapest forgery is five rows that say `pass` and nothing else. The
+    // report is a document, so a run cannot be verified — but a verdict with
+    // nothing behind it can still be refused, and this is that bar.
+    const steps = DRIVEN_STEPS.map((n) => ({
+      n,
+      verdict: 'pass',
+      evidence: n === 3 ? [] : [`${n}:recorded`],
+    }));
+
+    const result = judgeReport(greenReport({ steps }), { expectedVersion: repoVersion() });
+
+    expect(result.ok).toBe(false);
+    expect(result.problems).toEqual([
+      expect.stringContaining('step 3 says it passed but carries no evidence line'),
+    ]);
+    expect(result.problems[0]).toContain('a claim, not a result');
+  });
+
+  it('does not read the writer’s "no evidence" placeholder as evidence', () => {
+    // `buildReport()` fills an empty row with a sentence rather than an empty
+    // array, on purpose (an empty list reads as "nothing to say"). That
+    // sentence is honest text in the file and it is still not a result.
+    const steps = DRIVEN_STEPS.map((n) => ({
+      n,
+      verdict: 'pass',
+      evidence: n === 2 ? ['(the step recorded no evidence line)'] : [`${n}:recorded`],
+    }));
+
+    const result = judgeReport(greenReport({ steps }), { expectedVersion: repoVersion() });
+
+    expect(result.ok).toBe(false);
+    expect(result.problems.join(' ')).toContain('step 2 says it passed');
+  });
+
+  it('refuses a step the report does not even give an evidence array', () => {
+    const steps = DRIVEN_STEPS.map((n) =>
+      n === 4 ? { n, verdict: 'pass' } : { n, verdict: 'pass', evidence: [`${n}:recorded`] },
+    );
+
+    const result = judgeReport(greenReport({ steps }), { expectedVersion: repoVersion() });
+
+    expect(result.ok).toBe(false);
+    expect(result.problems.join(' ')).toContain('step 4 says it passed');
+  });
+
+  it('accepts a pass that carries the line the step recorded', () => {
+    // The green direction of the rule above: a real report is unaffected,
+    // because a step only reaches `pass` after it recorded what it saw.
+    const result = judgeReport(greenReport(), { expectedVersion: repoVersion() });
+
+    expect(result.problems).toEqual([]);
+    expect(result.ok).toBe(true);
+  });
+
   it('refuses a file that is not a report instead of judging an empty set as green', () => {
     for (const value of [null, [], 'a string', {}, { steps: [] }]) {
       const result = judgeReport(value, { expectedVersion: repoVersion() });
@@ -216,6 +271,28 @@ describe('the writer and the judge agree on what a report is', () => {
     });
 
     expect(judgeReport(report, { expectedVersion: repoVersion() }).problems).toEqual([]);
+  });
+
+  it('refuses a report whose step passed without recording a line, which is what the writer writes', () => {
+    // The shape a real run would produce if a step reached `pass()` without a
+    // `record()`: the writer keeps the row and fills it with a sentence, and
+    // the judge then refuses it — instead of a step with "nothing to say"
+    // closing the row it has nothing behind it.
+    const report = buildReport({
+      platform: 'win32',
+      build: { executable: 'C:\\repo\\UCAD.exe', version: repoVersion() },
+      requested: [...DRIVEN_STEPS],
+      driven: DRIVEN_STEPS,
+      passed: [...DRIVEN_STEPS],
+      failed: [],
+      evidence: DRIVEN_STEPS.filter((n) => n !== 5).map((n) => `${n}:recorded`),
+      ranAt: '2026-11-04T00:00:00.000Z',
+    });
+
+    const result = judgeReport(report, { expectedVersion: repoVersion() });
+
+    expect(result.ok).toBe(false);
+    expect(result.problems.join(' ')).toContain('step 5 says it passed but carries no evidence line');
   });
 
   it('judges a partially requested run as not covering the row', () => {

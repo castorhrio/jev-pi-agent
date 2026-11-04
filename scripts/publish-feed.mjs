@@ -49,9 +49,18 @@
  * ## Usage
  *
  * ```bash
- * node scripts/publish-feed.mjs                      # print the plan, touch nothing
+ * node scripts/publish-feed.mjs --dry-run            # print the plan, touch nothing
  * GITHUB_TOKEN=… node scripts/publish-feed.mjs --apply --verify
  * ```
+ *
+ * `--dry-run` names the default out loud: a reader who has never run this
+ * command should not have to infer "does no arguments mean upload?" from a
+ * doc comment, and a CI or release script should not have to remember that the
+ * safe mode is the silent one. It is also the only flag that says what the run
+ * will *check* — the app's own feed rules (which have already run by the time
+ * the plan is printed), the host's digest for the installer, and, after a real
+ * upload, the published bytes. `--dry-run` with `--apply` asks for two opposite
+ * things and is refused rather than resolved by argument order.
  *
  * `--feed-file <path>` chooses another document. Exit codes: 0 when the run did
  * what it said (a dry run always exits 0), 1 when the document was refused, the
@@ -91,7 +100,7 @@ export const UPLOAD_BASE = 'https://uploads.github.com';
 export const TOKEN_VARS = ['GITHUB_TOKEN', 'GH_TOKEN'];
 
 /** The options this command understands. Anything else is a typo, not a default. */
-export const KNOWN_FLAGS = ['feed-file', 'apply', 'verify'];
+export const KNOWN_FLAGS = ['feed-file', 'dry-run', 'apply', 'verify'];
 
 /** Reads `--flag value` pairs out of argv, the way its two sibling scripts do. */
 export function parseArgs(argv) {
@@ -225,14 +234,28 @@ export function findAsset(release, name) {
   return assets.find((asset) => asset?.name === name) ?? null;
 }
 
-/** The plan, as the lines a dry run prints. Pure, so it can be asserted. */
-export function planLines({ feedFile, document, tag, repo, token }) {
+/**
+ * The plan, as the lines a dry run prints. Pure, so it can be asserted.
+ *
+ * The three `check` lines are the reason a dry run exists: "will upload these
+ * bytes to this URL" is a plan, and a plan that does not say which judgement
+ * decides whether the upload counted sends the reader to another document to
+ * find out. They are named in the order they run, and the last one says it
+ * waits for a real upload — a check that will not run must not look like one
+ * that will.
+ */
+export function planLines({ feedFile, document, tag, repo, token, bytes = null, verify = false, apply = false }) {
   const installer = installerNameFromFeedUrl(document?.url) ?? '(none)';
   return [
-    `feed: ${feedFile}`,
+    `feed: ${feedFile}${bytes === null ? '' : ` (${bytes} bytes)`}`,
     `version: ${document?.version ?? '(none)'}`,
     `installer: ${installer} (${document?.sha256 ?? 'no sha256'}, ${document?.size ?? 'no size'} bytes)`,
     `target: ${ASSET_NAME} on ${repo} ${tag}`,
+    `[plan] check 1 (already ran, before any token was read): the app’s own feed rules — ${feedFile} produced no failure`,
+    `[plan] check 2: the host’s digest for ${installer} equals the feed’s sha256/size, before anything is deleted`,
+    verify
+      ? `[plan] check 3: node scripts/verify-release-feed.mjs on the published bytes${apply ? ' (--verify, after the upload)' : ' — waits for a real upload, so this run only plans it'}`
+      : '[plan] check 3 is not requested: add --verify to judge the published bytes after uploading',
     `[plan] GET ${API_BASE}/repos/${repo}/releases/tags/${tag}`,
     `[plan] compare the feed’s sha256/size with the host’s digest for ${installer}`,
     `[plan] DELETE ${API_BASE}/repos/${repo}/releases/assets/<existing ${ASSET_NAME} id> (if present)`,
@@ -271,6 +294,17 @@ export async function publishFeed({
     return 1;
   }
   const args = parseArgs(argv);
+  const dryRun = args['dry-run'] === true;
+  if (dryRun && args.apply === true) {
+    // Two opposite intents on one command line: the caller does not know what
+    // it wants, and picking one for it is how a release step runs while the
+    // person who typed it believes it only planned.
+    err(
+      'refused: --dry-run and --apply ask for opposite things — run `--dry-run` first, read the ' +
+        'plan, then run `--apply --verify` with no --dry-run.',
+    );
+    return 1;
+  }
   const feedFile = typeof args['feed-file'] === 'string' ? args['feed-file'] : DEFAULT_FEED_FILE;
   const absolute = resolve(root, feedFile);
 
@@ -310,7 +344,17 @@ export async function publishFeed({
   }
 
   const token = tokenFromEnv(env);
-  for (const line of planLines({ feedFile, document, tag, repo, token })) out(line);
+  const plan = planLines({
+    feedFile,
+    document,
+    tag,
+    repo,
+    token,
+    bytes: Buffer.byteLength(bytes, 'utf8'),
+    verify: args.verify === true,
+    apply: args.apply === true,
+  });
+  for (const line of plan) out(line);
 
   if (args.apply !== true) {
     out('');

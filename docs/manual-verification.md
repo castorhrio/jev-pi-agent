@@ -54,11 +54,23 @@ xvfb-run -a node scripts/verify-main-chain.mjs        # 或 --exec release\win-u
 证据行写成一份结构化 JSON。于是「在 Windows 上跑过」不必靠转述——跑的人复制一个文件回来，
 读的人拿到的是判定和产生判定的那几行原文。
 
-在 Windows 桌面（PowerShell 或 cmd，仓库根目录，先 `npm run package`）：
+### 把仓库交到 Windows 机器上的最短路径（逐条可复制）
 
-```bat
+下面这一节假定你面前只有一台 Windows 机器和一个浏览器：没有克隆、没有依赖、没有构建产物。
+在 PowerShell 里逐条复制（`cmd` 下把前两行拆成 `git clone …` 与 `cd jev-pi-agent`）：
+
+```powershell
+git clone https://github.com/castorhrio/jev-pi-agent.git
+cd jev-pi-agent
+npm install
+npm run package
 node scripts\verify-main-chain.mjs --exec release\win-unpacked\UCAD.exe --report win-report.json
 ```
+
+每行的作用只有一件：`npm install` 装依赖（需要 Node.js 22.12 或更新）；`npm run package` 产出
+`release\win-unpacked\UCAD.exe`（`--exec` 指的就是它，Windows 上的默认值也是这个路径）；
+最后一行跑步骤 1–5，把每一步的判定与它自己记的证据行写成 `win-report.json`——它**不上传任何东西**，
+报告就是仓库根目录里的一个文件。跑之前不需要令牌、不需要联网（步骤 4 有网时才有「真实网络」那半句）。
 
 把 `win-report.json` 原样带回，放到 `docs/manual-verification/win-YYYYMMDD.json`，
 并在下面的表里追加一行指向它（`结果 / 证据` 写 `见 docs/manual-verification/win-YYYYMMDD.json`，
@@ -94,10 +106,16 @@ node scripts\verify-main-chain.mjs --exec release\win-unpacked\UCAD.exe --report
 node scripts/verify-main-chain.mjs --judge docs/manual-verification/win-YYYYMMDD.json
 ```
 
-退出码 0 只有一个意思：这份报告覆盖了 step 1–5，且它自报的平台是 `win32`、`build.version` 等于本仓库当前版本。
-四条各自会红，且各有一句话：写在别的平台上（`a run on another platform is a real result about that platform`）、
-某一步 `fail`（`row stays open`）、某一步 `skip`（`was not run`）、报告里没有这一步（`is not in the report`）。
+退出码 0 有五个意思同时成立：这份报告覆盖了 step 1–5、自报平台是 `win32`、`build.version` 等于本仓库当前版本，
+且**每一步 `pass` 都带着它自己记的证据行**——不是只有五个「pass」。五条各自会红，且各有一句话：
+写在别的平台上（`a run on another platform is a real result about that platform`）、
+某一步 `fail`（`row stays open`）、某一步 `skip`（`was not run`）、报告里没有这一步（`is not in the report`）、
+某一步说 `pass` 却没有证据行（`a claim, not a result`）。
 它会先打印每一步的 `verdict` 再给结论，所以读的人不必打开 JSON。
+
+第五条是**这份报告唯一能被查的**那件事：报告是文档，文档可以手写，所以「这些步骤真的跑过」证明不了；
+但「说 pass 却什么都没记」可以拒。真正的运行里，一步只有先 `record()` 过才会 `pass()`，所以这条规则
+不会冤枉真跑的报告；而手写五行 `pass` 会被拒，不再和一份真报告长得一样。
 
 它判的是**文件里写了什么**，不是这次运行真的发生过——报告是文档，文档可以手写，这句话在
 `judgeReport()` 的注释里、在报告自己的 `note` 字段里、也在这条命令的输出里。它也不能替 step 6 收口：
@@ -509,17 +527,25 @@ Windows 桌面六步（无 Windows 机器）、步骤 6 的人眼视觉走查（
 **谁持有**：仓库 `castorhrio/jev-pi-agent` 的 release 写权限（`contents: write` 的 PAT 或
 GitHub App token）。持有者只需要跑一条命令，不需要克隆之外的任何准备。
 
-**命令**（在仓库根目录，`npm install` 之后）：
+### 谁有 token 谁跑这两条（先看后按）
+
+**命令**（在仓库根目录，`npm install` 之后；两条都是复制就能跑的形状）：
 
 ```bash
-node scripts/publish-feed.mjs                       # 先看计划，不联网、不上传
+node scripts/publish-feed.mjs --dry-run                                    # 先看：上传什么字节、落到哪个 URL、跑哪几条判定
 GITHUB_TOKEN=<有 contents:write 的令牌> node scripts/publish-feed.mjs --apply --verify
 ```
+
+第一条**不联网、不写文件、不上传**——它把第二条要做的事按顺序打印出来，包括判定在哪一步跑。
+有了它，「先看后按」是一条命令，不是一句叮嘱；`--dry-run` 与 `--apply` 同时给会被**拒绝**
+（同时要两件相反的事的调用方并不知道自己要什么，替它挑一个就是让发布步骤真的跑起来）。
+第二条的 `--verify` 会在上传后**再跑一次** `verify-release-feed.mjs`，所以「修好了」是这条命令的输出，
+不是一句声明。
 
 **期望输出**（最后一行是判据）：
 
 ```
-feed: docs/release/update-feed-v1.0.0.json
+feed: docs/release/update-feed-v1.0.0.json (431 bytes)
 version: 1.0.0
 installer: UCAD-Setup-1.0.0.exe (76bbe0c6…, 122806279 bytes)
 target: update-feed.json on castorhrio/jev-pi-agent v1.0.0
@@ -527,16 +553,27 @@ target: update-feed.json on castorhrio/jev-pi-agent v1.0.0
 PASS — update-feed.json on castorhrio/jev-pi-agent v1.0.0 now carries sha256=76bbe0c6…
 ```
 
-`--verify` 会在上传后**再跑一次** `verify-release-feed.mjs`，所以「修好了」是这条命令的输出，
-不是一句声明。2026-11-04 本机跑 dry run 的计划行（无令牌，未上传）：
+2026-11-04 本机跑 `--dry-run` 的完整输出（无令牌，未上传；`installer:` 一行的哈希在此缩写）：
 
 ```
+feed: docs/release/update-feed-v1.0.0.json (431 bytes)
+version: 1.0.0
+installer: UCAD-Setup-1.0.0.exe (76bbe0c6…, 122806279 bytes)
+target: update-feed.json on castorhrio/jev-pi-agent v1.0.0
+[plan] check 1 (already ran, before any token was read): the app’s own feed rules — docs/release/update-feed-v1.0.0.json produced no failure
+[plan] check 2: the host’s digest for UCAD-Setup-1.0.0.exe equals the feed’s sha256/size, before anything is deleted
+[plan] check 3: node scripts/verify-release-feed.mjs on the published bytes — waits for a real upload, so this run only plans it
 [plan] GET https://api.github.com/repos/castorhrio/jev-pi-agent/releases/tags/v1.0.0
 [plan] compare the feed’s sha256/size with the host’s digest for UCAD-Setup-1.0.0.exe
 [plan] DELETE https://api.github.com/repos/castorhrio/jev-pi-agent/releases/assets/<existing update-feed.json id> (if present)
 [plan] POST https://uploads.github.com/repos/castorhrio/jev-pi-agent/releases/<release id>/assets?name=update-feed.json
 [plan] token: none — --apply needs GITHUB_TOKEN or GH_TOKEN
+
+dry run — nothing was fetched and nothing was uploaded. Add --apply to replace the asset.
 ```
+
+退出码 0。这三条 `check` 行是计划的另一半：只写「要删哪一行、要 POST 到哪」的计划，读到的人还得去
+另一份文档里找「怎么才算修好了」。
 
 **失败时贴什么**（原样贴进本文件，不要转述）：
 

@@ -401,6 +401,14 @@ export function buildReport({ platform, build, requested, driven, passed, failed
 }
 
 /**
+ * The lines `buildReport()` writes into a row that recorded nothing.
+ *
+ * They are honest text in the file — "this step said nothing" is a fact — but
+ * they are not evidence, so `judgeReport()` must not count them as such.
+ */
+const PLACEHOLDER_EVIDENCE = /^\((?:the step recorded no evidence line|not requested in this run)\)$/;
+
+/**
  * Whether a carried-home report answers the one row it was made for.
  *
  * ## The gap this closes
@@ -423,6 +431,14 @@ export function buildReport({ platform, build, requested, driven, passed, failed
  *    result, `skip` is a run that did not cover the step, and a missing row is
  *    neither — the three are named separately instead of collapsing into one
  *    "not green", because the next action differs for each.
+ *  - a `pass` must carry at least one evidence line that the step itself
+ *    recorded. The report can be written by hand, and the cheapest forgery is
+ *    five rows that say `pass` and nothing else; a verdict with nothing behind
+ *    it is a claim, not a result. This is the one bar that can be raised
+ *    without pretending to verify the run: `buildReport()` only calls a step
+ *    `pass` when the step recorded something, so a real run is unaffected —
+ *    and a report whose `pass` rows are placeholders is refused rather than
+ *    read as "nothing to say".
  *  - `build.version` must be the version in this repository. A report about
  *    another build proves something about another build; after a version bump
  *    the honest answer is "run it again", not "we already did".
@@ -501,7 +517,24 @@ export function judgeReport(
     }
     const verdict = typeof row.verdict === 'string' ? row.verdict : '(none)';
     rows.push({ n: step, verdict });
-    if (verdict === 'pass') continue;
+    if (verdict === 'pass') {
+      // A pass with no recorded line is the shape the report cannot be checked
+      // for (it is a document) and the one thing it can still be asked: the
+      // step that passed wrote down what it saw. `buildReport()` puts a
+      // placeholder in an empty row, so both an absent array, an empty array
+      // and the placeholder are "no evidence" here.
+      const lines = Array.isArray(row.evidence) ? row.evidence : [];
+      const recorded = lines.filter(
+        (line) => typeof line === 'string' && !PLACEHOLDER_EVIDENCE.test(line.trim()),
+      );
+      if (recorded.length === 0) {
+        problems.push(
+          `step ${step} says it passed but carries no evidence line — a pass with nothing ` +
+            'behind it is a claim, not a result; run it again so the step records what it saw',
+        );
+      }
+      continue;
+    }
     if (verdict === 'fail') {
       problems.push(
         `step ${step} failed in that run — a red report is a result, and the row stays open`,
@@ -595,6 +628,7 @@ export function judgeReportCommand(
   if (result.ok) {
     lines.push(
       `PASS — the report covers steps ${DRIVEN_STEPS.join(', ')} on ${expectedPlatform} against build ${expectedVersion ?? '(unspecified)'}`,
+      '[note] every `pass` row carries the evidence lines the step recorded, not just a verdict',
       '[note] this judges what the file says, not that the run happened — see the `note` inside the report',
       '[note] step 6 is the five states a person walks in `npm run dev:web`; no report closes it',
     );

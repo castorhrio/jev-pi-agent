@@ -514,9 +514,39 @@ describe('the flags the release documents put after a script', () => {
     const pairs = commands.map((command) => `${command.script} ${command.flags.join(' ')}`);
 
     expect(pairs).toContain('scripts/publish-feed.mjs apply verify');
+    // The safe half of the same command: "look before you press" is only a
+    // plan if the command that prints the plan accepts being asked for it.
+    expect(pairs).toContain('scripts/publish-feed.mjs dry-run');
     expect(pairs).toContain('scripts/verify-main-chain.mjs judge');
     expect(pairs).toContain('scripts/verify-main-chain.mjs exec report');
     expect(commands.length).toBeGreaterThan(5);
+  });
+
+  it('reads the Windows handoff as commands, not as a paragraph about commands', () => {
+    // The section that hands the repository to a Windows machine is the last
+    // document anyone re-reads, and its whole value is that the lines can be
+    // copied. A paragraph saying "clone it, install, package and run the check"
+    // would leave every flag in it uncompared with the script that has to
+    // accept them — this case is what keeps that section typed out.
+    const doc = DOCUMENTS.find((document) => document.name === 'docs/manual-verification.md')!;
+    const start = doc.text.indexOf('### 把仓库交到 Windows 机器上的最短路径');
+    expect(start, 'the Windows handoff heading moved; this gate must move with it').toBeGreaterThan(-1);
+    const section = doc.text.slice(start, doc.text.indexOf('把 `win-report.json` 原样带回', start));
+
+    const commands = documentedCommands(section);
+    expect(commands.map((command) => `${command.script} ${command.flags.join(' ')}`)).toEqual([
+      'scripts/verify-main-chain.mjs exec report',
+    ]);
+    // And the steps before it are the shortest path, in order, not a summary of
+    // one: clone, install, package, run.
+    const lines = section.split('\n').map((line) => line.trim());
+    const order = ['git clone', 'npm install', 'npm run package', 'verify-main-chain.mjs'];
+    let at = -1;
+    for (const step of order) {
+      const next = lines.findIndex((line, index) => index > at && line.includes(step));
+      expect(next, `the Windows handoff no longer states \`${step}\` after the previous step`).toBeGreaterThan(at);
+      at = next;
+    }
   });
 
   it('reports a flag the script does not accept', () => {

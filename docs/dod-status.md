@@ -8,7 +8,7 @@
 | 可证明注入 | **有证据** | Context Pack 纯函数 + 内容哈希；真机步骤 1 通过：`renderedHash=80e256b63523731c…`，同一轮重读同哈希，任务描述多一个字符变 `673b97ec35b5…`，注入原文与 `estimate="heuristic_chars_div_4"` 同屏（`docs/manual-verification.md` 2026-11-03 行） | Windows 桌面复跑一次 |
 | 可解释路由 | **有证据** | 真机步骤 2 通过：7 行决策各带 rationale / confidence / 引擎，回落如实记录；`tests/contract/decision-chain.test.ts` 钉住链与实跑一致 | Windows 桌面复跑一次 |
 | 权限门不可绕 | **有证据（自动化 + 五态断言）** | 执行前允许/拒绝进事件流，审计可查；`tests/contract/permission-*.test.ts`、`tests/e2e/critical-path.e2e.test.tsx`；步骤 6 的权限弹窗已进 `tests/e2e/scenarios.e2e.test.tsx`（类别/风险/资源/命令/理由五件可读，四个回答都在，点拒绝后弹窗消失且事件流里出现 `permission.resolved`） | 真机上的**视觉**走查（排版、长中文、窄窗口）仍未做 |
-| Windows 安装包航运 · NSIS 产出与安装 | **等待带回报告** | `npm run dist` 走 electron-builder 的 `nsis` 目标（`package.json` 的 `build.win`），产物 `UCAD-Setup-<版本>.exe`；未签名。**回传通道已就绪**：`node scripts\verify-main-chain.mjs --exec release\win-unpacked\UCAD.exe --report win-report.json` 把每一步的判定与证据写成结构化 JSON（`docs/manual-verification.md`「如何从 Windows 机器带回证据」） | **Windows 桌面**：装一次、过 SmartScreen、跑一次带 `--report` 的六步，把 `win-report.json` 放进 `docs/manual-verification/` 并在表里加一行。**解除条件（可执行）**：`node scripts/verify-main-chain.mjs --judge docs/manual-verification/win-YYYYMMDD.json` 退出 0 —— 它要求报告自报 `platform=win32`、step 1–5 全部 `pass`（`fail` / `skip` / 缺行三种情形各有一句话），且 `build.version` 等于仓库当前版本；判定由 `judgeReport()` 给出，`tests/contract/win-report.test.ts` 两个方向都钉住。**责任人占位**：任何一台 Windows 桌面（或 CI 之外的 Windows 机器）持有者；本轮无机器，**没有跑**，不假装跑过 |
+| Windows 安装包航运 · NSIS 产出与安装 | **等待带回报告** | `npm run dist` 走 electron-builder 的 `nsis` 目标（`package.json` 的 `build.win`），产物 `UCAD-Setup-<版本>.exe`；未签名。**回传通道已就绪**：`node scripts\verify-main-chain.mjs --exec release\win-unpacked\UCAD.exe --report win-report.json` 把每一步的判定与证据写成结构化 JSON（`docs/manual-verification.md`「如何从 Windows 机器带回证据」） | **Windows 桌面**：装一次、过 SmartScreen、跑一次带 `--report` 的六步，把 `win-report.json` 放进 `docs/manual-verification/` 并在表里加一行。**解除条件（可执行）**：`node scripts/verify-main-chain.mjs --judge docs/manual-verification/win-YYYYMMDD.json` 退出 0 —— 它要求报告自报 `platform=win32`、step 1–5 全部 `pass`（`fail` / `skip` / 缺行三种情形各有一句话）、`build.version` 等于仓库当前版本，且每一步的 `pass` 都带着它自己记的证据行（说 pass 却什么都没记算 `a claim, not a result`）；判定由 `judgeReport()` 给出，`tests/contract/win-report.test.ts` 两个方向都钉住。**责任人占位**：任何一台 Windows 桌面（或 CI 之外的 Windows 机器）持有者；本轮无机器，**没有跑**，不假装跑过 |
 | Windows 安装包航运 · 随包 feed 真实网络 | **红（已量到；修正版已验证干净，差一次上传；缺陷已写进 README「当前局限」中英两条）** | 能连 `github.com` 的机器上跑 `node scripts/verify-release-feed.mjs`：退出码 1，`no-sha256` + `installer-latest-url`；发布出去的 `update-feed.json` 只有 `version`/`notes`/`url`。修正版文档（URL 钉 `download/v1.0.0/`、`sha256=76bbe0c6…`、`size=122806279`，取自 GitHub 自己给该资产的 digest，不是人抄的）用同一套判定跑出**零 finding**，宿主 HEAD 回的 `content-length` 也正是 122806279（见 `docs/manual-verification.md`） | 覆盖上传 `update-feed.json` 这个 release asset——本机没有任何 GitHub 写权限令牌，`gh` 也未安装；上传后重跑一次脚本应为 0 |
 | Windows 安装包航运 · 拒绝路径（明文 / 非 URL） | **有证据** | 真机步骤 4：明文覆盖 → `检查更新失败: 更新源必须使用 https…`，日志 `update feed ignored: …`；`tests/contract/update-feed.test.ts` | — |
 | 门禁即 DoD | **有证据** | `npm run typecheck && lint && knip && test && test:e2e` 全绿；注入/交接/凭据/更新合约测试能打红；发布物由 `tests/contract/release-feed.test.ts`（判定）与 `tests/contract/feed-writer.test.ts`（写之前跑判定）钉住 | CI 等价跑一次留档 |
@@ -478,7 +478,7 @@ Windows 桌面六步（无 Windows 机器）。三条仍是上表里的缺口，
 
 | 阻塞 | 解除条件 | 一行命令 | 本轮状态 |
 |---|---|---|---|
-| 已发布 v1.0.0 的 feed 缺 `sha256` | 拿到 `castorhrio/jev-pi-agent` 的 `contents: write` 令牌的人跑一次 | `node scripts/publish-feed.mjs --apply --verify` | **仍阻塞**：本机无令牌、`gh` 未安装。修正版文档已判零 finding，只差上传 |
+| 已发布 v1.0.0 的 feed 缺 `sha256` | 拿到 `castorhrio/jev-pi-agent` 的 `contents: write` 令牌的人跑两条：先看，后按 | `node scripts/publish-feed.mjs --dry-run` 然后 `GITHUB_TOKEN=… node scripts/publish-feed.mjs --apply --verify` | **仍阻塞**：本机无令牌、`gh` 未安装。修正版文档已判零 finding，`--dry-run` 已把「上传什么字节 / 落到哪 / 判哪三条」打成可复制的计划，只差上传 |
 | Windows 桌面六步 | 一台 Windows 机器 + 一次 `npm run package`，跑完把报告带回并**被判成过** | `node scripts\verify-main-chain.mjs --exec release\win-unpacked\UCAD.exe --report win-report.json`，带回后 `node scripts/verify-main-chain.mjs --judge docs/manual-verification/win-YYYYMMDD.json` 退出 0 | **仍阻塞**：无 Windows 机器。回传通道（`--report`）与读回通道（`--judge`）都已就绪：报告不再是一份没人判的文档，`win32` / 全 `pass` / 版本一致三条任一不满足就不算过 |
 | 五态人眼走查 | 一个人按判据看五张图（或走五个 URL）并签一行 | 打开 `docs/state-walkthrough.md`，逐条回答 | **仍阻塞**：判据与签字表本轮就位，签字还没有发生 |
 
@@ -543,3 +543,32 @@ AssertionError: ?scenario=partial painted the first-run block: expected { leadSi
 
 **这一轮没有做的事**：五态人眼走查签字（本轮只把渲染结果逐态取了出来，签字与 README 中英两半
 的同步留给下一轮）、P1 的字体栈/嵌套圆角门禁、上传修正版 feed（无令牌）、Windows 六步（无 Windows 机器）。
+
+## 本轮（2026-11-04）两条外部阻塞的交接面：一条先看后按的命令，一份照做就行的清单
+
+上一轮之后剩下的三条卡点都是「外部条件 + 人」，本轮仍不假装能在这台机器上做完任何一条。
+改的是**接手的人拿到的东西**：两条阻塞各自从「知道怎么修」变成「拿到东西的人照着敲」。
+
+1. **`scripts/publish-feed.mjs --dry-run` 成为一条写出来的路径**（默认行为本来就是不写，
+   但默认不是一句话）。它打印将上传的**字节数**、落点 URL，以及**判定在哪一步跑**：
+   `check 1` 是应用自己的 feed 规则（在找令牌之前就已经跑过）、`check 2` 是宿主对安装包的
+   digest 与 feed 的 `sha256`/`size` 比、`check 3` 是上传后对发布出去的字节再判一次。
+   只写「删哪行、POST 到哪」的计划，读到的人还得去另一份文档里找「怎么才算修好了」。
+   `--dry-run` 与 `--apply` 同时给会**被拒绝**（`docs/manual-verification.md`「谁有 token 谁跑这两条」）。
+2. **Windows 机器的最短路径写进 `docs/manual-verification.md`**：从 `git clone` 到 `--report` 的五条
+   命令逐条可复制，再给出「把文件带回来跑 `--judge`」那一条。以前文档写的是「在仓库根目录先
+   `npm run package`」——它假定读者已经有一份装好依赖的仓库，而那正是把仓库交到别人手上的那一步。
+3. **`judgeReport()` 多了一条：`pass` 必须带证据行。** 报告是文档、文档可以手写，这是它证明不了的事；
+   但「五行 `pass`、什么都没有」可以被拒。`buildReport()` 只在一步 `record()` 过之后才让它 `pass`，
+   所以真跑的报告不受影响；`buildReport()` 给空行填的那句占位（`(the step recorded no evidence line)`）
+   在这条规则下**不算证据**，于是「一步 pass 却什么都没记」在报告里也不再和一位真结果长得一样。
+
+**证明它会红**：`tests/contract/win-report.test.ts` 新增 4 项——`evidence: []`、只有占位句、
+根本没有 `evidence` 数组三种都指名那一步（`a claim, not a result`），带证据行的报告照旧绿；
+再加 1 项直接喂 `buildReport()` 写的「pass 但没有证据行」形状，同样红。
+`tests/contract/feed-publish.test.ts` 新增 6 项——`--dry-run` 与无参数是同一份计划、计划里点名三条判定、
+`--verify` 的 dry run 说「waits for a real upload」、dry run 前后**文件字节与 mtime 都没变**、
+`--dry-run --apply` 被拒、命令行 `--dry-run` 退出 0。
+
+**这一轮没有做的事**：上传修正版 feed（无令牌）、Windows 桌面六步（无 Windows 机器）、
+步骤 6 的人眼观感签字（需要一个真的看那五张图的人）。三条仍是上表里的缺口，不假装完成。

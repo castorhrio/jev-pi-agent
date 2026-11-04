@@ -108,7 +108,11 @@ node scripts/verify-release-feed.mjs                                      # the 
 
 It judges them with the rules the app itself enforces, and it names every
 check it did not run — `[skipped]`, with the count in the summary — so a green
-run never reads as more than it proved. A host that never answers is reported
+run never reads as more than it proved. When the published document is already
+wrong, replacing it is two commands: `node scripts/publish-feed.mjs --dry-run`
+prints the bytes, the URL and the judgements that decide whether the upload
+counted, without fetching or writing anything; `--apply --verify` then does it
+and re-judges the published bytes. A host that never answers is reported
 as `INCOMPLETE` with a `feed-timeout` finding, not as a broken feed: the run
 still exits 1, but the next move is to retry the fetch, not to re-upload a feed
 that was fine.
@@ -303,7 +307,9 @@ node scripts/verify-release-feed.mjs                                      # 已�
 ```
 
 它会把自己没跑过的检查逐条标成 `[skipped]`，并在总结行里报数量——所以一次
-绿色的运行不会被读成「全部都查过了」。主机一直不应答时，总结行写的是
+绿色的运行不会被读成「全部都查过了」。如果发布出去的那份已经坏了，覆盖它是两条命令：
+`node scripts/publish-feed.mjs --dry-run` 打印将上传的字节、落点 URL 与判定在哪一步跑，
+且不联网、不写文件；`--apply --verify` 再做，并对发布出去的字节重新判一次。主机一直不应答时，总结行写的是
 `INCOMPLETE` 并给出 `feed-timeout`，而不是把 feed 判成坏的：退出码仍是 1，
 但下一步是重试这次抓取，不是去重传一份本来没问题的 feed。
 
