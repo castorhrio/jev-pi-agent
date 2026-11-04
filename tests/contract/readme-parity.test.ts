@@ -146,6 +146,20 @@ const LIMITATIONS: readonly Limitation[] = [
     en: ['asar', 'ci does not cover', 'npm run package', 'adapters resolved', 'from a terminal'],
     zh: ['asar', 'ci 不覆盖', 'npm run package', 'adapters resolved', '从命令行'],
   },
+  // The Windows row of the DoD table, stated where a reader deciding whether the
+  // release was ever run on Windows will see it. `docs/dod-status.md` tells the
+  // person who runs it to carry a report home and judge it, but the README named
+  // neither half, so a reader could learn "Windows is unverified" and stop there
+  // with no way to close it. The keywords are the two halves of that route: a
+  // file being carried (`win-report.json`), and the command that judges it
+  // (`--judge`); `evidence` is the sentence that stops five bare `pass` lines
+  // from reading like a run. Both languages carry the same four facts, because a
+  // Windows reader gets whichever half they opened.
+  {
+    id: 'the Windows run of steps 1-5 has not happened, and a report can close it',
+    en: ['windows', 'win-report.json', '--judge', 'evidence'],
+    zh: ['windows', 'win-report.json', '--judge', '证据'],
+  },
   // The one limitation that is about a *person*, not a gate. The five states
   // are asserted, measured and photographed, and every one of those is a
   // machine answering a machine's question; whether they read as a first run,

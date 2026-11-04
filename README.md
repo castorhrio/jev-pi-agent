@@ -203,6 +203,18 @@ that does not.
   no console attached, so the line has nowhere to appear. The check has been run
   on Linux x64 (Ubuntu 26.04, unpacked build, 2026-11-02): it passed and left no
   child process behind.
+- **The Windows run of the manual checklist has not happened.** Steps 1–5 are
+  driven by `node scripts/verify-main-chain.mjs`, and they have run on a Linux
+  desktop session; Windows is a different platform (DPAPI, tray, NSIS), so the
+  same run still has to happen there before a release can claim it. One run can
+  be carried home as a file: add `--report win-report.json`, then anyone can
+  judge it with
+  `node scripts/verify-main-chain.mjs --judge docs/manual-verification/win-YYYYMMDD.json`.
+  Exit code 0 means the report covers steps 1–5, says `"platform": "win32"`,
+  matches this repository's version, and gives evidence for every `pass` — five
+  `pass` lines with nothing recorded are a claim, not a result.
+  `docs/manual-verification.md` has the copyable commands and the table a run
+  signs.
 - **The five interface states have not been walked through by eye.** They are
   asserted, measured and photographed: `npm run test:e2e` checks what each one
   paints, the layout gate measures all five in a real Chromium at 1440×900 and
@@ -382,6 +394,15 @@ npm run package  # 免安装目录，不出安装包
   Windows 上请从命令行运行 `UCAD.exe`：双击启动的进程没有控制台，这一行没有地方可打印。
   该脚本已在 Linux x64（Ubuntu 26.04、未打包目录构建、2026-11-02）实测通过：
   退出后无残留子进程；Windows 上仍需从命令行跑一次。
+- **Windows 上的手工清单还没有真机跑过。** 步骤 1–5 由
+  `node scripts/verify-main-chain.mjs` 驱动，目前只在 Linux 桌面会话里跑通过；
+  Windows 是另一个平台（DPAPI、托盘、NSIS），发布前仍要在那里跑一次。
+  一次跑分可以带回成文件：加上 `--report win-report.json`，任何拿到它的人都能用
+  `node scripts/verify-main-chain.mjs --judge docs/manual-verification/win-YYYYMMDD.json`
+  判定。退出码 0 意味着报告覆盖步骤 1–5、自报 `"platform": "win32"`、
+  版本与本仓库一致，且每一步 `pass` 都带着它自己记的证据行——五行 `pass`
+  什么都没有，是「声称」而不是「结果」。可复制的命令与签字的表在
+  `docs/manual-verification.md`。
 - **五个界面状态还没有被人眼走查过。** 它们被断言、被测量、被拍照：
   `npm run test:e2e` 检查每一态画了什么，布局门禁在真实 Chromium 里把五态在 1440×900
   与最小窗口各量一次，`docs/screenshots/` 里的图就是那道门禁拍的。没发生的是**有人看过它们**
