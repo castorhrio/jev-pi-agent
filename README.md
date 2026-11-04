@@ -158,6 +158,13 @@ on, or the command must run elevated. The unpacked build is unaffected.
 Stated plainly, because a tool that hides its edges is harder to trust than one
 that does not.
 
+Three of these need something this machine does not have — a token with write
+access, a Windows machine, a person — and each of them is one command away from
+closing: `docs/blockers.md` says what to run, what it should print, and where to
+put the result. What the product is scored against is `docs/PRODUCT-DOD.md`;
+a review of a round must load it first, or it cannot tell a gap from a finished
+item.
+
 - **One provider protocol ships.** The bundled adapter speaks the
   OpenAI-compatible protocol. Native vendor adapters are not implemented. Two
   adapters are registered — `universal` is the one that sends real requests,
@@ -365,6 +372,10 @@ npm run package  # 免安装目录，不出安装包
 ### 当前局限
 
 直说，因为**藏边界的工具比不藏的更不值得信任**。
+
+其中有三条需要这台机器没有的东西——一个写权限令牌、一台 Windows 机器、一个人——每一条都只差
+一条命令：`docs/blockers.md` 写着跑什么、应该打印什么、结果贴回哪里。产品按什么标准打分写在
+`docs/PRODUCT-DOD.md`；**审查一轮之前必须先读它**，否则分不清「缺口」和「已完成」。
 
 - **只随包发布一种厂商协议。** 内置适配器走 OpenAI 兼容协议，厂商原生适配器未实现。
   随包同时注册 `universal` 与 `mock` 两个适配器：前者是真正发出请求的那一个，后者是

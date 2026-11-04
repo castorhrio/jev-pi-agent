@@ -1,6 +1,8 @@
 # DoD 现状对照（2026-11-03）
 
-`docs/PRODUCT-DOD.md` 是锁定稿，不改它；这里逐条写**现在到哪一步、证据在哪、还差什么**。
+**审查与下一轮必须先读 `docs/PRODUCT-DOD.md`**（锁定稿，不改它）；这一页只回答「现在到哪一步、
+证据在哪、还差什么」，不替代它——不先读 DoD，就会把「没人记的一条」当成「没有这一条」，
+未勾选项就是这么漏掉的。
 勾选只代表「有可复现的证据」，不代表「已过线」——过线由审查侧判定。
 
 **发布闸门**：`npm run dist` 会在 `electron-builder` 之前跑 `node scripts/release-gate.mjs`。
@@ -17,7 +19,7 @@
 | 可解释路由 | **有证据** | 真机步骤 2 通过：7 行决策各带 rationale / confidence / 引擎，回落如实记录；`tests/contract/decision-chain.test.ts` 钉住链与实跑一致 | Windows 桌面复跑一次 |
 | 权限门不可绕 | **有证据（自动化 + 五态断言）** | 执行前允许/拒绝进事件流，审计可查；`tests/contract/permission-*.test.ts`、`tests/e2e/critical-path.e2e.test.tsx`；步骤 6 的权限弹窗已进 `tests/e2e/scenarios.e2e.test.tsx`（类别/风险/资源/命令/理由五件可读，四个回答都在，点拒绝后弹窗消失且事件流里出现 `permission.resolved`） | 真机上的**视觉**走查（排版、长中文、窄窗口）仍未做 |
 | Windows 安装包航运 · NSIS 产出与安装 | **外部阻塞（无 Windows 机器）** | `npm run dist` 走 electron-builder 的 `nsis` 目标（`package.json` 的 `build.win`），产物 `UCAD-Setup-<版本>.exe`；未签名。**回传通道已就绪**：`node scripts\verify-main-chain.mjs --exec release\win-unpacked\UCAD.exe --report win-report.json` 把每一步的判定与证据写成结构化 JSON（`docs/manual-verification.md`「如何从 Windows 机器带回证据」） | **外部阻塞（Windows 机器）**：本机没有 Windows 机器；命令与判定都已就绪，等待一台 Windows 桌面持有者执行——装一次、过 SmartScreen、跑一次带 `--report` 的六步，把 `win-report.json` 放进 `docs/manual-verification/` 并在表里加一行。**解除条件（可执行）**：`node scripts/verify-main-chain.mjs --judge docs/manual-verification/win-YYYYMMDD.json` 退出 0 —— 它要求报告自报 `platform=win32`、step 1–5 全部 `pass`（`fail` / `skip` / 缺行三种情形各有一句话）、`build.version` 等于仓库当前版本，且每一步的 `pass` 都带着它自己记的证据行（说 pass 却什么都没记算 `a claim, not a result`）；判定由 `judgeReport()` 给出，`tests/contract/win-report.test.ts` 两个方向都钉住。**责任人**：发布负责人（本机无 Windows 机器，本轮**没有跑**，不假装跑过） |
-| Windows 安装包航运 · 随包 feed 真实网络 | **红（已量到；外部阻塞：写权限令牌；修正版已验证干净；缺陷已写进 README「当前局限」中英两条）** | 能连 `github.com` 的机器上跑 `node scripts/verify-release-feed.mjs`：退出码 1，`no-sha256` + `installer-latest-url`；发布出去的 `update-feed.json` 只有 `version`/`notes`/`url`。修正版文档（URL 钉 `download/v1.0.0/`、`sha256=76bbe0c6…`、`size=122806279`，取自 GitHub 自己给该资产的 digest，不是人抄的）用同一套判定跑出**零 finding**，宿主 HEAD 回的 `content-length` 也正是 122806279（见 `docs/manual-verification.md`） | **外部阻塞（写权限令牌）**：需要一位持有 `castorhrio/jev-pi-agent` `contents: write` 的人跑 `GITHUB_TOKEN=… node scripts/publish-feed.mjs --apply --verify`（先 `--dry-run` 看计划，再 `--apply`；输出请追加到 `docs/manual-verification.md`）。本机没有任何 GitHub 写权限令牌，`gh` 也未安装。**解除条件**：上传后 `node scripts/verify-release-feed.mjs` 退出 0 |
+| Windows 安装包航运 · 随包 feed 真实网络 | **红（已量到；外部阻塞：写权限令牌；修正版已验证干净；**绿分支已在本地托管副本上跑通**；缺陷已写进 README「当前局限」中英两条）** | 能连 `github.com` 的机器上跑 `node scripts/verify-release-feed.mjs`：退出码 1，`no-sha256` + `installer-latest-url`；发布出去的 `update-feed.json` 只有 `version`/`notes`/`url`。修正版文档（URL 钉 `download/v1.0.0/`、`sha256=76bbe0c6…`、`size=122806279`，取自 GitHub 自己给该资产的 digest，不是人抄的）用同一套判定跑出**零 finding**，宿主 HEAD 回的 `content-length` 也正是 122806279（见 `docs/manual-verification.md`） | **外部阻塞（写权限令牌）**：需要一位持有 `castorhrio/jev-pi-agent` `contents: write` 的人跑 `GITHUB_TOKEN=… node scripts/publish-feed.mjs --apply --verify`（先 `--dry-run` 看计划，再 `--apply`；输出请追加到 `docs/manual-verification.md`）。本机没有任何 GitHub 写权限令牌，`gh` 也未安装。**解除条件**：上传后 `node scripts/verify-release-feed.mjs` 退出 0 |
 | Windows 安装包航运 · 拒绝路径（明文 / 非 URL） | **有证据** | 真机步骤 4：明文覆盖 → `检查更新失败: 更新源必须使用 https…`，日志 `update feed ignored: …`；`tests/contract/update-feed.test.ts` | — |
 | 门禁即 DoD | **有证据** | `npm run typecheck && lint && knip && test && test:e2e` 全绿；注入/交接/凭据/更新合约测试能打红；发布物由 `tests/contract/release-feed.test.ts`（判定）与 `tests/contract/feed-writer.test.ts`（写之前跑判定）钉住 | CI 等价跑一次留档 |
 | 诚实估计与凭据 | **有证据** | 估算来源上屏（`heuristic_chars_div_4`）；凭据只进 OS 钥匙串，钥匙串不可用时启动即停并给平台补救话（`apps/desktop/src/main/keyring-gate.ts`，`tests/contract/keyring-gate.test.ts`） | Windows DPAPI 路径真机确认 |
@@ -218,6 +220,15 @@ GitHub 对该 release 的 `UCAD-Setup-1.0.0.exe` 自报 `sha256:76bbe0c612ac6757
 它钉住的是「发布流程用的数字取自宿主自报，不是人算的」。所以**重传资产或换 tag 之后**要重取一次，
 并同步更新三处——`docs/release/update-feed-v1.0.0.json`、`tests/contract/feed-publish.test.ts` 的那两条断言、
 以及本节这段文字。重取是发布动作的一部分，不是把测试放宽。
+
+**绿分支（2026-11-04 补）**：这条红说的是「发布出去的那份字节」，不是「判定能不能通过」。
+修正版文档已经在一个本地 TLS 地址上原封不动地跑过一次完整链路：
+`node scripts/replay-feed-local.mjs` 退出码 0，`verify-release-feed.mjs` 打出
+`PASS — 0 warning(s), nothing the app would refuse`，`release-gate.mjs` 也打出 `PASS`。
+所以这张表里剩下的只是**上传**（写权限令牌），不是判定逻辑；输出在
+`docs/manual-verification.md`「绿分支是一次跑」一节，命令、端口与哈希都可复现。
+完整绿跑另需一条到 `github.com` 的路（安装包 URL 要 HEAD 一次）：路由不通时命令以 `[INCOMPLETE]` 收场、
+**不**把主机问题写成文档判决，退出码同样是 1——这是本机路由时通时不通时唯一诚实的结局。
 
 ## 本轮（2026-11-04 深夜）五态在最小窗口也被测量，弹窗不再被当成排版错误
 
@@ -498,6 +509,8 @@ Windows 桌面六步（无 Windows 机器）。三条仍是上表里的缺口，
 | 五态人眼走查 | 一个人按判据看五张图（或走五个 URL）并签一行 | 打开 `docs/state-walkthrough.md`，逐条回答 | **仍阻塞**：判据与签字表本轮就位，签字还没有发生 |
 
 这三条都是**外部阻塞**（写权限令牌 / Windows 机器 / 人），不是留在本仓的待办：命令、判定与签字表都已就绪，接手的人照最后一列跑即可，本机不再把它们记成「还没做完」。
+三条的「解除命令 / 期望输出 / 结果放到哪个路径」收敛在一页：`docs/blockers.md`——
+读那一页就够，不必从这三份文档里拼。
 
 ## 本轮（2026-11-04 深夜）截图漂移的「只检查不写」路径，第一次被证明会红
 
@@ -589,3 +602,40 @@ AssertionError: ?scenario=partial painted the first-run block: expected { leadSi
 
 **这一轮没有做的事**：上传修正版 feed（无令牌）、Windows 桌面六步（无 Windows 机器）、
 步骤 6 的人眼观感签字（需要一个真的看那五张图的人）。三条仍是上表里的缺口，不假装完成。
+
+## 本轮（2026-11-04 深夜）绿分支是一次跑，不是一段论证；三条阻塞收敛成一页
+
+这一轮仍然没有写权限令牌，所以**上传还是没有发生**。改的是另外两件事：那条红**之前的**判定链
+有没有真的跑过一次绿的，以及接手的人拿到的是不是一页能读完的东西。**产品行为没有变化。**
+
+1. **`scripts/replay-feed-local.mjs`**：把修正版文档原封不动托到本地 TLS 上（自签证书只给两个子进程
+   通过 `NODE_EXTRA_CA_CERTS` 信任），跑 `verify-release-feed.mjs --feed <地址>`，再用同一条命令的
+   `--json` 产出 run 交给 `release-gate.mjs --from-json`。两条命令都 `PASS`，退出码 0；完整输出在
+   `docs/manual-verification.md`「绿分支是一次跑」一节，含被托出字节的 sha256 与字节数，
+   `sha256sum docs/release/update-feed-v1.0.0.json` 可对照。
+   - **证明**：feed 正确时发布闸门会放行，这条路上没有 `[skipped]`。
+   - **不证明**（命令最后一行自己说）：Releases 上那份 asset 还是旧的；闸门判的是保存 run，
+     而 `npm run dist` 是让闸门自己去抓。
+   - **没有 openssl 的机器**上不退回明文，打印 `openssl could not be run …` 并指向 `--feed-file`。
+2. **`tests/contract/replay-feed-local.test.ts`（16 项）钉控制流**：验证器红了就不许跑闸门、保存 run
+   失败就不许跑闸门；两次 verifier 都带 `--feed <地址>`（不是 `--feed-file`）、第二次才带 `--json`、
+   闸门拿到第二次写的那个文件；`NODE_EXTRA_CA_CERTS` 只发给两个子进程；replica 只在一个路径回那份字节，
+   别的路径 404；未知选项（`--feed-file` 这种别的命令的旗标）是错误而不是默认值。最后一条端到端真跑。
+   **证明它会红**：删掉「验证器红了就提前 return」→ 控制流那条打红（其余 15 条仍绿）；
+   去掉保存 run 的 `--json` → 接线那条打红。恢复后 16/16 绿。
+3. **`docs/blockers.md`**：三条外部阻塞收敛成一页，每条三行——解除命令 / 期望输出 / 结果放到哪个路径，
+   外加「做不到时不要做什么」。旗标由已有的 `manual-check-docs.test.ts` 钉住（`docs/blockers.md`
+   已加进它的 DOCUMENTS：路径必须存在、`npm run …` 必须是真脚本、`--flag` 必须是该脚本认识的）。
+4. **`npm run knip` 回到绿**：它此前红在五条与产品无关的清单重复上——根 `package.json` 声明了三个
+   只有 `apps/desktop` 才 import 的工作区包（`@ucad/files` / `@ucad/providers` / `@ucad/usage`，
+   应用自己已经声明）、`zod` 同时出现在 `dependencies` 与 `devDependencies`、以及
+   `scripts/verify-main-chain.mjs` 直接 import 的 `node-sqlite3-wasm` 在根上没有声明。
+   后者的版本写成与 `packages/storage` 一致的 `0.8.60`（精确，不带区间）。`package-lock.json` 只改根条目，
+   不动 npm 10/11 的 peer 标记。
+5. **「审查与下一轮必须先读 DoD」成为显式一步**：本页顶部与 `README.md` 中英两半（「当前局限」开头）
+   都指向 `docs/PRODUCT-DOD.md` 与 `docs/blockers.md`。`tests/contract/doc-routing.test.ts`（6 项）钉住：
+   中英两半各说这两句、本页的「先读」必须在前 12 行、`docs/blockers.md` 恰好三个小节且每节三件都在
+   并带一条可运行命令。反方向四条用改坏的副本驱动（少一句 / 埋到折叠线下 / 少一件 / 少一节）。
+
+**这一轮没有做的事**：上传修正版 feed（无令牌）、Windows 桌面六步（无 Windows 机器）、
+步骤 6 的人眼观感签字（需要一个人）。三条的解除命令与结果落点现在都在 `docs/blockers.md` 一页里。

@@ -1,0 +1,128 @@
+# 三条外部阻塞：解除命令、期望输出、结果放到哪个路径
+
+这三条不是本仓库里没做完的活，而是**需要这台机器没有的东西**：一个 `contents: write` 令牌、
+一台 Windows 机器、一个人。三条的解除条件都已经收敛成可执行的命令，但它们原先散在
+`README.md` 的「当前局限」、`docs/dod-status.md` 的表和 `docs/manual-verification.md` 里，
+想知道「我该做什么、做完把什么放回哪里」得跨三份文档拼。
+
+这一页只回答这三件事：**敲什么**、**应该看到什么**、**结果贴回哪个路径**。
+判据的来源没有变：`docs/PRODUCT-DOD.md` 是锁定稿，`docs/dod-status.md` 逐条对照现状。
+**审查与下一轮必须先读 `docs/PRODUCT-DOD.md`**，否则分不清「缺口」和「已完成」。
+
+三条都**不改产品行为**：跑通了它们，改的是证据与文档；产品代码在它们之外没有任何变化。
+
+## 1. 已发布的 v1.0.0 feed 缺 `sha256`（需要写权限令牌）
+
+**解除命令**
+
+先看——不联网、不写文件、不上传，把第二步要做的事按顺序打印出来：
+
+```bash
+node scripts/publish-feed.mjs --dry-run
+```
+
+再按——需要 `castorhrio/jev-pi-agent` 的 `contents: write`：
+
+```bash
+GITHUB_TOKEN=… node scripts/publish-feed.mjs --apply --verify
+```
+
+**期望输出**（最后一行是判据）：
+
+```
+PASS — update-feed.json on castorhrio/jev-pi-agent v1.0.0 now carries sha256=76bbe0c6…
+```
+
+上传之后用读的一方复核，退出码 0 才算数：
+
+```bash
+node scripts/verify-release-feed.mjs
+```
+
+```
+PASS — 0 warning(s), nothing the app would refuse
+```
+
+**结果放到哪个路径**
+
+1. 完整 stdout/stderr 追加进 `docs/manual-verification.md`（含 `PASS —` 那一行，不要转述）；
+2. `docs/dod-status.md`「Windows 安装包航运 · 随包 feed 真实网络」一行从**红**改成**有证据**；
+3. `README.md` 中英两半删掉那条 v1.0.0 局限，并同步 `tests/contract/readme-parity.test.ts` 的
+   `LIMITATIONS` 表（少改一处会打红）。
+
+**没有令牌时能做什么**：`node scripts/replay-feed-local.mjs` 把仓库里这份修正版文档原封不动地
+用一个本地 TLS 地址托起来，让 `scripts/verify-release-feed.mjs` 与 `scripts/release-gate.mjs`
+对着它跑一次**绿分支**（退出码 0，两行 `PASS`）。它证明的是**链路**，不是**发布**：
+GitHub Releases 上那份 asset 在这之前和之后都还是旧的。这一次的输出已经写在
+`docs/manual-verification.md` 里，任何人可以在自己的机器上重跑复现。
+
+## 2. Windows 桌面六步（需要一台 Windows 机器）
+
+**解除命令**
+
+在 Windows 机器上，先 `git clone` 本仓库、`npm ci`、`npm run package`，然后：
+
+```bash
+node scripts\verify-main-chain.mjs --exec release\win-unpacked\UCAD.exe --report win-report.json
+```
+
+把 `win-report.json` 带回任何一台机器，由读的一方判定（不需要 Windows，也不启动任何进程）：
+
+```bash
+node scripts/verify-main-chain.mjs --judge docs/manual-verification/win-YYYYMMDD.json
+```
+
+**期望输出**（退出码 0）：
+
+```
+PASS — the report covers steps 1, 2, 3, 4, 5 on win32 against build 1.0.0
+[note] this judges what the file says, not that the run happened …
+```
+
+判定要求四件事：报告自报 `platform=win32`、步骤 1–5 全部 `pass`、`build.version` 等于仓库当前版本、
+每一步的 `pass` 都带着它自己记的证据行（五行 `pass` 什么都没有，是「声称」而不是「结果」）。
+
+**结果放到哪个路径**
+
+1. 报告文件放在 `docs/manual-verification/win-YYYYMMDD.json`；
+2. `docs/manual-verification.md` 加一节记录这次判定的完整输出；
+3. `docs/dod-status.md`「Windows 安装包航运 · NSIS 产出与安装」一行改成**有证据**，
+   证据引用那份报告与 `--judge` 的退出码 0。
+
+**做不到时不要做什么**：不许手写一份报告，也不许把「跑过 Linux」写成「Windows 通过」——
+`--judge` 只判文件说了什么，而文件可以手写，这句话写在报告自己的 `note` 字段里。
+
+## 3. 五个界面状态的人眼走查（需要一个人）
+
+**解除命令**
+
+有应用：`npm run dev:web`，按 `?scenario=empty` / `loading` / `error` / `partial` / `permission`
+依次打开；只有图也行——五张图都在 `docs/screenshots/`，不必装应用、不必联网。
+每一态三条「是 / 否」判据写在 `docs/state-walkthrough.md`，照着屏幕上真的会出现的字找。
+
+**期望输出**
+
+`docs/state-walkthrough.md` 的记录表里出现一行带日期、结论写「五态判据全满足」的记录，
+并且 `README.md` 中英两半那句「五个界面状态还没有被人眼走查过」同时改口、带上同一个日期。
+判据不是命令的输出，是**一个人签的字**；签字之后
+`npx vitest run tests/contract/state-walkthrough.test.ts` 才会绿（它在两个方向上都打红提醒：
+签了字而 README 没改、或 README 改了而表里没有签字）。
+
+**结果放到哪个路径**
+
+1. `docs/state-walkthrough.md` 记录表追加一行（日期 / 走查人 / 看了哪几张 / 结论）；
+2. `README.md` 中英两半对应句子带上这个日期；
+3. `docs/dod-status.md`「权限门不可绕」一行的「还差什么」改为已走查（带日期）。
+
+**做不到时不要做什么**：不要代签。五态被断言、被测量、被拍照过，但没有人看过并说
+「这读起来像首启 / 像失败 / 像权限请求」——这一条没有机器版本。
+
+## 交接记录（做了就加一行，只追加）
+
+| 阻塞 | 日期 | 做的人 | 结果落在哪 | 判定 |
+|---|---|---|---|---|
+| — | — | — | — | **三条均未解除**：等一个写权限令牌、一台 Windows 机器、一个人 |
+
+三条都**不阻塞**本仓库的门禁：`npm run typecheck`、`npm run lint`、`npm run knip`、
+`npm test`、`npm run test:e2e` 都不需要令牌、Windows 机器或人眼。它们阻塞的是
+「已发布产物与真机」这两件事，而那正是 `docs/dod-status.md` 表里还红着的行。

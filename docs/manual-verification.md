@@ -593,3 +593,80 @@ dry run — nothing was fetched and nothing was uploaded. Add --apply to replace
 
 **不要**为了让它变绿而降低门槛：不许允许无 digest 上传，不许把 URL 放回 `releases/latest`。
 `scripts/publish-feed.mjs` 在找令牌**之前**先跑判定，就是为了让「有凭据的人」也发不出一份应用会拒绝的文档。
+
+## 绿分支是一次跑，不是一段论证（2026-11-04，`scripts/replay-feed-local.mjs`）
+
+上面「交接：上传修正版 feed」那一节说的是**发布**：把修正版字节送到 GitHub Releases。它需要写权限令牌，
+本机没有，所以那一行仍是红。这一节说的是**判定**：`verify-release-feed.mjs` 与 `release-gate.mjs`
+的**绿分支**——一份正确的 feed、每条检查都真的跑了、两条命令都说 PASS——以前只由
+`tests/contract/release-gate.test.ts` 里手写的 envelope 驱动过。那是「判定」的测试，不是「链路」的一次跑。
+
+`scripts/replay-feed-local.mjs` 把仓库里这份修正版文档**原封不动**放到一个本地 TLS 地址上
+（自签证书，只给两个子进程通过 `NODE_EXTRA_CA_CERTS` 信任，进程一退就作废），然后跑两条真命令：
+`scripts/verify-release-feed.mjs --feed <地址>`，再用同一条命令的 `--json` 产出一份 run，
+把它交给 `scripts/release-gate.mjs --from-json`。不安装依赖、不上传、不碰任何 release。
+
+**命令**（`openssl` 在 `PATH` 上；端口随便挑一个空闲的，省略则用临时端口）：
+
+```bash
+node scripts/replay-feed-local.mjs --port 18787
+```
+
+**2026-11-04 本机的完整输出**（退出码 0）：
+
+```
+feed: docs/release/update-feed-v1.0.0.json (431 bytes, sha256 5c9616ea8282f61d17afc21945e496fa4ff3ecf24b1f20c1e0692dcdbc8eb78c)
+serving: https://localhost:18787/update-feed.json — the committed document, byte for byte (431 bytes, sha256 5c9616ea8282f61d17afc21945e496fa4ff3ecf24b1f20c1e0692dcdbc8eb78c)
+feed: https://localhost:18787/update-feed.json
+version: this build is 1.0.0
+PASS — 0 warning(s), nothing the app would refuse
+saved run: /tmp/ucad-feed-replay-ht396Y/verify-run.json (the same command, in the envelope the gate reads)
+source: /tmp/ucad-feed-replay-ht396Y/verify-run.json (a saved run, not fetched now)
+version: this build is 1.0.0
+verify-release-feed: PASS — 0 warning(s), nothing the app would refuse
+PASS — the published feed carries what the app needs, so a release built now can be installed through the update path
+
+[ok] the green branch is a run, not an argument: the feed was fetched over TLS through the app’s own rules, nothing was skipped, and the release gate accepted it.
+[note] two things this does not claim: the asset published on GitHub Releases is still the old document without sha256 (replacing it needs a token with contents: write — docs/blockers.md), and the gate judged a saved run, which is what --from-json does and not what `npm run dist` does.
+```
+
+**怎么核对「字节一致」**：上面打印的 `sha256` 与 `bytes` 就是被托出去的那份文件本身。跑
+
+```bash
+sha256sum docs/release/update-feed-v1.0.0.json
+```
+
+应得到同一个 `5c9616ea…`，而 `wc -c` 应得到 431。两个数变了就是文档变了，重跑这一节并更新这里的输出
+（与 `docs/release` 那份文档、`tests/contract/feed-publish.test.ts` 的断言同一次改）。
+
+**这一次跑证明了什么**：应用自己的地址规则（https-only）在真实 TLS 上被满足；feed 文档经
+`verify-release-feed.mjs` 判为零 finding；同一份 run 被 `release-gate.mjs` 接受，
+也就是说「发布闸门在 feed 正确时会放行」不再只是读代码得出的结论。
+
+**这一次跑不能证明什么**（命令最后一行自己说了）：
+
+1. GitHub Releases 上那份 asset **还是旧的**（缺 `sha256`、URL 钉在 `latest`）——替换它才是
+   「交接：上传修正版 feed」那一节，仍需要写权限令牌；
+2. 闸门判的是 `--from-json` 交给它的**保存下来的 run**，而 `npm run dist` 是让 `release-gate.mjs`
+   自己去抓——两条路径共用同一个判定函数，但不是同一次抓取。
+
+**这条路也需要一条到 release 主机的路由**：`verify-release-feed.mjs` 除了抓那份本地 feed，还会对安装包 URL
+发一次 HEAD（「feed 描述的文件真的在那里」）。本机到 `github.com` 的路由时通时不通，所以同一条命令复跑可能
+落在两种结局之一：路由通 → 上面那份完整绿跑；路由不通 → 退出码 1，并以
+
+```
+[INCOMPLETE] the release host did not answer, so the replayed document was not judged and the release gate was not run — this is not a verdict on the feed. …
+```
+
+收场——它说的是「这次检查没跑完」，不是「这份文档被拒了」。两种结局都不会把 `[ok]` 打出来；剩下的选项是
+等路由回来重跑，或用 `--feed-file` 离线判文档本身。这不是放宽判定，`INCOMPLETE` 的退出码同样是 1。
+
+**这台机器上没有 openssl 时**：命令会打印 `openssl could not be run …` 并指向
+`node scripts/verify-release-feed.mjs --feed-file docs/release/update-feed-v1.0.0.json`。
+那条路能判文档（离线、可复跑），但地址规则只能标成 `[skipped]`——一条不假装跑过的跳过，
+比一条把 https 关掉的「证明」诚实。
+
+门禁：`tests/contract/replay-feed-local.test.ts`（16 项）钉住控制流（验证器红了就不跑闸门）、
+接线（两条命令用的是地址而不是磁盘文件、闸门拿到的是第二次 run 写出的文件）、信任边界
+（只有两个子进程拿到 `NODE_EXTRA_CA_CERTS`）、字节一致（打印的哈希就是被托出去的字节的哈希；
+别的路径一律 404），以及这次端到端跑的真实 transcript。

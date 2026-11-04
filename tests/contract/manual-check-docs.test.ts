@@ -322,6 +322,12 @@ const DOCUMENTS: readonly Document[] = [
   // of sentence that rots: the row keeps saying "run this" after the flag it
   // names was renamed, and the row is the last thing anyone re-reads.
   'docs/dod-status.md',
+  // The single page the other three documents point at for those blockers. It
+  // is read by whoever picks one up, which is the worst moment to discover that
+  // the command it gives no longer runs: the document is the only instruction
+  // left, and `docs/blockers.md` is written to be followed without reading the
+  // other three first. Its flags are pinned by exactly this check.
+  'docs/blockers.md',
 ].map(readDocument);
 const README = DOCUMENTS[0]!;
 

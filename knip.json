@@ -6,12 +6,26 @@
   ],
   "workspaces": {
     ".": {
-      "entry": ["scripts/**/*.{mjs,cjs}", "tests/**/*.{ts,tsx}"],
-      "project": ["scripts/**/*.{mjs,cjs}", "tests/**/*.{ts,tsx}"]
+      "entry": [
+        "scripts/**/*.{mjs,cjs}",
+        "tests/**/*.{ts,tsx}"
+      ],
+      "project": [
+        "scripts/**/*.{mjs,cjs}",
+        "tests/**/*.{ts,tsx}"
+      ]
     },
     "apps/desktop": {
-      "entry": ["src/main/bootstrap.ts", "src/preload/preload.ts"],
-      "project": ["src/**/*.{ts,tsx}"]
+      "entry": [
+        "src/main/bootstrap.ts",
+        "src/preload/preload.ts"
+      ],
+      "project": [
+        "src/**/*.{ts,tsx}"
+      ]
     }
-  }
+  },
+  "ignoreBinaries": [
+    "openssl"
+  ]
 }
