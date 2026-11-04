@@ -30,6 +30,14 @@
  *  - while `docs/blockers.md` still lists external blockers, the table may not
  *    be all 通过 — the two documents are not allowed to disagree.
  *
+ * The same document carries a second table this file reads: 已知残留（不修，登记）,
+ * one row per non-fix somebody argued for and decided against. It is compared
+ * with the tree in **both** directions — a row must name a file that exists and
+ * still carries the `KNOWN RESIDUAL` marker, and a marker-bearing file must have
+ * a row. A register nobody checks against the code is how a decided non-fix
+ * becomes next round's "newly found defect", and code with no row is a branch
+ * whose argument only the person who left it there remembers.
+ *
  * ## What it deliberately does not assert
  *
  * Which state a row *should* have. That is a judgement about evidence, and a
@@ -42,7 +50,7 @@
  * driven with mutated copies of the real text rather than argued about.
  */
 
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
@@ -279,6 +287,231 @@ function dodProblems(documents: { dod: string; status: string; blockers: string 
   return problems;
 }
 
+/**
+ * The residual register: a decided non-fix, checked in both directions.
+ *
+ * ## Why this half exists
+ *
+ * `43dcde2` removed four silent `if (!RULES_BUILT) return;` branches and left a
+ * fifth one in `replay-feed-local.test.ts`, on purpose, with a reason. A reason
+ * that lives in a commit message is not a record: the next review reads the
+ * branch as a newly found defect and either removes it without the argument or
+ * leaves it and never says again why. This repository has already decided what
+ * to do about that shape — 「同法两轮不过应停并记入文档」 — and a document nobody
+ * compares against the tree is the same defect one level up.
+ *
+ * So the register is a table, and the table is read both ways:
+ *
+ *  - a row has to name a file that exists, and that file has to carry the
+ *    `KNOWN RESIDUAL` marker where the argument lives;
+ *  - a file that carries the marker has to have a row.
+ *
+ * Either half alone is defeatable. Rows without code become a list of things
+ * somebody once intended; code without rows becomes an undocumented branch that
+ * the next round "discovers" and half-removes. Together they mean the only way
+ * to lose the record is to delete both, in the same edit, on purpose.
+ */
+
+/** The heading the register lives under. */
+const RESIDUAL_HEADING = '## 已知残留（不修，登记）';
+
+/** The sentence the registered file has to carry, in the file itself. */
+const RESIDUAL_MARKER = 'KNOWN RESIDUAL';
+
+/** The columns every residual row declares, in order. */
+const RESIDUAL_COLUMNS = ['残留', '为什么不修', '什么时候该修', '位置'];
+
+/**
+ * Where a residual may be registered, and where this scan therefore looks.
+ *
+ * The boundary is asserted rather than assumed: a row pointing outside these
+ * roots is reported, because a residual filed at `apps/…` would otherwise pass
+ * the reverse check while nothing read that directory.
+ */
+const RESIDUAL_SCAN_ROOTS = ['tests', 'scripts'];
+
+/**
+ * The one file the reverse scan skips: this gate, whose own source declares the
+ * marker constant and would otherwise register itself.
+ */
+const RESIDUAL_GATE_FILE = 'tests/contract/dod-status.test.ts';
+
+/** The section of the register, heading included; empty when it is gone. */
+function residualSection(markdown: string): string {
+  const lines = markdown.split('\n');
+  const start = lines.findIndex((line) => line.trim() === RESIDUAL_HEADING);
+  if (start === -1) return '';
+  const body: string[] = [lines[start]!];
+  for (let index = start + 1; index < lines.length; index += 1) {
+    if (/^## /.test(lines[index]!)) break;
+    body.push(lines[index]!);
+  }
+  return body.join('\n');
+}
+
+/** The rows of that table, header and rule rows dropped. */
+function residualRows(section: string): string[][] {
+  const rows: string[][] = [];
+  for (const line of section.split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed.startsWith('|')) continue;
+    const cells = trimmed
+      .replace(/^\|/, '')
+      .replace(/\|$/, '')
+      .split('|')
+      .map((cell) => cell.trim());
+    if (cells.every((cell) => /^:?-{3,}:?$/.test(cell))) continue;
+    if (cells[0] === RESIDUAL_COLUMNS[0]) continue;
+    rows.push(cells);
+  }
+  return rows;
+}
+
+/** What the register is compared against: the tree, as two questions. */
+interface ResidualTree {
+  /** The repository text at this path, or null when the file is not there. */
+  read: (relativePath: string) => string | null;
+  /** Files under {@link RESIDUAL_SCAN_ROOTS} that carry the marker. */
+  markerBearing: () => string[];
+}
+
+/** A file walk over the scan roots, keeping source files that carry the marker. */
+function markerBearingFiles(): string[] {
+  const found: string[] = [];
+  const walk = (relative: string): void => {
+    for (const entry of readdirSync(join(REPO_ROOT, relative), { withFileTypes: true })) {
+      const child = relative.length === 0 ? entry.name : `${relative}/${entry.name}`;
+      if (entry.isDirectory()) {
+        walk(child);
+        continue;
+      }
+      if (!/\.(?:ts|tsx|mjs|cjs|js)$/u.test(entry.name)) continue;
+      const text = readFileSync(join(REPO_ROOT, child), 'utf8');
+      if (text.includes(RESIDUAL_MARKER)) found.push(child);
+    }
+  };
+  for (const root of RESIDUAL_SCAN_ROOTS) walk(root);
+  return found.sort();
+}
+
+const RESIDUAL_TREE: ResidualTree = {
+  read: (relativePath) => {
+    const absolute = join(REPO_ROOT, relativePath);
+    return existsSync(absolute) ? readFileSync(absolute, 'utf8') : null;
+  },
+  markerBearing: markerBearingFiles,
+};
+
+/** Every line of the section that {@link residualRows} reads as a data row. */
+function residualDataLines(section: string): string[] {
+  return section
+    .split('\n')
+    .filter((line) => line.trim().startsWith('|'))
+    .filter((line) => residualRows(line).length > 0);
+}
+
+/** The same line with one column rewritten. */
+function residualRowWith(line: string, column: number, cell: string): string {
+  const cells = residualRows(line)[0]!;
+  cells[column] = cell;
+  return `| ${cells.join(' | ')} |`;
+}
+
+/** Every backticked path in a row's 位置 cell. */
+function residualPointers(cell: string): string[] {
+  return [...cell.matchAll(/`([^`]+)`/gu)].map((match) => match[1]!.trim());
+}
+
+/**
+ * Every way the residual register can have stopped describing the tree.
+ *
+ * Empty means the section exists, has at least one row, and each row's four
+ * cells say something while its named files both exist and carry the marker —
+ * and no marker-bearing file under the scan roots is missing a row.
+ */
+function residualProblems(status: string, tree: ResidualTree): string[] {
+  const section = residualSection(status);
+  if (section.length === 0) {
+    return [
+      'docs/dod-status.md: no `## 已知残留（不修，登记）` section, so a non-fix that was argued ' +
+        'for has nowhere to be written and gets rediscovered as a defect next round',
+    ];
+  }
+  const rows = residualRows(section);
+  if (rows.length === 0) {
+    return ['docs/dod-status.md: the residual register has no rows, so nothing is registered'];
+  }
+
+  const problems: string[] = [];
+  const registered = new Set<string>();
+
+  for (const row of rows) {
+    const label = row[0] ?? '<empty row>';
+    if (row.length !== RESIDUAL_COLUMNS.length) {
+      problems.push(
+        `docs/dod-status.md: the residual "${label}" has ${row.length} cell(s), not the ` +
+          `${RESIDUAL_COLUMNS.length} the register declares (${RESIDUAL_COLUMNS.join(' / ')})`,
+      );
+      continue;
+    }
+    const [, why, when, where] = row as [string, string, string, string];
+    for (const [column, cell] of [
+      ['为什么不修', why],
+      ['什么时候该修', when],
+    ] as const) {
+      if (/^(—|-|)$/u.test(cell.trim())) {
+        problems.push(
+          `docs/dod-status.md: the residual "${label}" leaves ${column} empty — a residue ` +
+            'without a reason is a TODO, and a TODO is what this section is not',
+        );
+      }
+    }
+
+    const pointers = residualPointers(where);
+    if (pointers.length === 0) {
+      problems.push(
+        `docs/dod-status.md: the residual "${label}" names no file, so nothing can be checked ` +
+          'against it and the row is a sentence about a defect rather than a pointer to one',
+      );
+    }
+    for (const pointer of pointers) {
+      registered.add(pointer);
+      if (!RESIDUAL_SCAN_ROOTS.some((root) => pointer.startsWith(`${root}/`))) {
+        problems.push(
+          `docs/dod-status.md: the residual "${label}" points at \`${pointer}\`, outside the ` +
+            `roots this scan reads (${RESIDUAL_SCAN_ROOTS.join(' / ')}), so the reverse check cannot see it`,
+        );
+        continue;
+      }
+      const text = tree.read(pointer);
+      if (text === null) {
+        problems.push(
+          `docs/dod-status.md: the residual "${label}" points at \`${pointer}\`, which is not in ` +
+            'the tree — the row describes a file that is not there',
+        );
+        continue;
+      }
+      if (!text.includes(RESIDUAL_MARKER)) {
+        problems.push(
+          `docs/dod-status.md: the residual "${label}" registers \`${pointer}\`, but that file ` +
+          `does not carry "${RESIDUAL_MARKER}", so the argument lives only in this table`,
+        );
+      }
+    }
+  }
+
+  for (const file of tree.markerBearing()) {
+    if (file === RESIDUAL_GATE_FILE) continue;
+    if (registered.has(file)) continue;
+    problems.push(
+      `docs/dod-status.md: \`${file}\` carries "${RESIDUAL_MARKER}" but the register has no row ` +
+        'for it — an undocumented residue is what the next round rediscovers and half-removes',
+    );
+  }
+
+  return problems;
+}
+
 describe('every DoD sentence has a state and a pointer that resolves', () => {
   it('finds the standard, the section and the rows, so the checks are not vacuous', () => {
     expect(dodItems(DOD).length, 'the DoD bullets could not be read').toBeGreaterThanOrEqual(6);
@@ -376,5 +609,113 @@ describe('every DoD sentence has a state and a pointer that resolves', () => {
     const broken = STATUS.replace(section, allPass);
     const problems = dodProblems({ dod: DOD, status: broken, blockers: BLOCKERS });
     expect(problems.join('\n')).toContain('every DoD sentence is 通过');
+  });
+});
+
+/** The one residual this round registers, as the file the marker must be in. */
+const RESIDUAL_FILE = 'tests/contract/replay-feed-local.test.ts';
+
+describe('a decided non-fix stays registered', () => {
+  it('reads the register against the tree, both ways, and finds nothing missing', () => {
+    expect(residualProblems(STATUS, RESIDUAL_TREE)).toEqual([]);
+  });
+
+  it('finds a section, a row, and the marker in the file it registers', () => {
+    // Without these the green above could mean the register is empty and no
+    // file carries the marker — two sets with nothing in them agree perfectly.
+    const section = residualSection(STATUS);
+    expect(section.length, 'the residual section is gone').toBeGreaterThan(0);
+    expect(residualRows(section).length, 'the residual register has no rows').toBeGreaterThan(0);
+    expect(RESIDUAL_TREE.read(RESIDUAL_FILE)).toContain(RESIDUAL_MARKER);
+    expect(RESIDUAL_TREE.markerBearing()).toEqual(
+      expect.arrayContaining([RESIDUAL_FILE, RESIDUAL_GATE_FILE]),
+    );
+  });
+
+  it('reports a register whose section was deleted', () => {
+    const broken = STATUS.replace(residualSection(STATUS), '');
+    expect(broken).not.toBe(STATUS);
+    expect(residualProblems(broken, RESIDUAL_TREE)).toEqual([
+      expect.stringContaining('no `## 已知残留（不修，登记）` section'),
+    ]);
+  });
+
+  it('reports a register whose only row was deleted', () => {
+    const line = residualDataLines(residualSection(STATUS))[0]!;
+    const broken = STATUS.replace(`${line}\n`, '');
+    expect(broken).not.toBe(STATUS);
+    expect(residualProblems(broken, RESIDUAL_TREE)).toEqual([
+      expect.stringContaining('the residual register has no rows'),
+    ]);
+  });
+
+  it('reports a row whose reason became a shrug', () => {
+    // The row is still there and still names a real file; only the argument
+    // disappeared. A register of things nobody justified is a TODO list wearing
+    // the shape of a decision.
+    const line = residualDataLines(residualSection(STATUS))[0]!;
+    const broken = STATUS.replace(line, residualRowWith(line, 1, '—'));
+    expect(broken).not.toBe(STATUS);
+    expect(residualProblems(broken, RESIDUAL_TREE)).toEqual([
+      expect.stringContaining('leaves 为什么不修 empty — a residue without a reason is a TODO'),
+    ]);
+  });
+
+  it('reports a row that points at a file the tree does not have', () => {
+    const broken = STATUS.replaceAll(RESIDUAL_FILE, 'tests/contract/no-such-residual.test.ts');
+    const problems = residualProblems(broken, RESIDUAL_TREE).join('\n');
+    expect(problems).toContain('which is not in the tree');
+  });
+
+  it('reports a registered file whose marker was stripped out of the code', () => {
+    // The row survives and reads perfectly; only the argument in the source is
+    // gone. That is the half the table alone cannot see.
+    const stripped: ResidualTree = {
+      read: (relativePath) =>
+        (RESIDUAL_TREE.read(relativePath) ?? '').replaceAll(RESIDUAL_MARKER, 'heading'),
+      markerBearing: () => [],
+    };
+    expect(stripped.read(RESIDUAL_FILE)).not.toContain(RESIDUAL_MARKER);
+    expect(residualProblems(STATUS, stripped)).toEqual([
+      expect.stringContaining(`registers \`${RESIDUAL_FILE}\`, but that file does not carry`),
+    ]);
+  });
+
+  it('reports a marker in the code that the table never registered', () => {
+    // The other direction: somebody wrote the argument into a source file and
+    // did not file it. Undocumented residue is what the next round "discovers".
+    const stray: ResidualTree = {
+      read: (relativePath) => RESIDUAL_TREE.read(relativePath),
+      markerBearing: () => [...RESIDUAL_TREE.markerBearing(), 'tests/contract/unregistered.ts'],
+    };
+    expect(residualProblems(STATUS, stray)).toEqual([
+      expect.stringContaining(
+        '`tests/contract/unregistered.ts` carries "KNOWN RESIDUAL" but the register has no row',
+      ),
+    ]);
+  });
+
+  it('skips exactly one file in the reverse scan, and says which', () => {
+    // The gate's own source declares the marker constant, so it would register
+    // itself. That exemption is one file named here, and this case is what keeps
+    // it one file: a second marker-bearing file that is not in the table is red
+    // above, and a scan root that stops being read is named there too.
+    const exempted = RESIDUAL_TREE.markerBearing().filter((file) => file !== RESIDUAL_GATE_FILE);
+    const row = residualRows(residualSection(STATUS))[0]!;
+    expect(residualPointers(row[3]!)).toEqual(expect.arrayContaining(exempted));
+  });
+
+  it('names a row that points outside the roots the reverse scan reads', () => {
+    // The boundary of `RESIDUAL_SCAN_ROOTS`, stated as a case rather than as a
+    // comment: a residual filed at `apps/…` would pass the reverse check only
+    // because nothing walked that directory.
+    const broken = STATUS.replace(`\`${RESIDUAL_FILE}\` |`, '`apps/desktop/src/main/tray-icon.ts` |');
+    expect(broken).not.toBe(STATUS);
+    // More than one problem is expected here: moving the pointer also leaves the
+    // file that really carries the marker unregistered. The complaint this case
+    // is about is the one that names the unscanned root.
+    expect(residualProblems(broken, RESIDUAL_TREE).join('\n')).toContain(
+      'outside the roots this scan reads',
+    );
   });
 });

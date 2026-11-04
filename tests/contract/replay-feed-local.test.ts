@@ -50,6 +50,33 @@
  * asserted as *their own red outcomes* (a diagnosable refusal), not skipped: a
  * case that quietly does nothing off a fresh clone is the shape this suite keeps
  * removing.
+ *
+ * ## KNOWN RESIDUAL: this file still carries its own missing-build branch
+ *
+ * `43dcde2` removed the four `if (!RULES_BUILT) return;` branches from the feed
+ * contract tests and replaced them with one suite-wide precondition —
+ * `tests/global-setup.ts` builds the app's feed rules before any file loads.
+ * This file's branch was left in, on purpose, and it is registered here so the
+ * next review reads it as a decided residue rather than rediscovering it as a
+ * new defect.
+ *
+ * The difference is what a precondition *is* here. The other four files judge a
+ * document in-process, so "the rules module exists" is the whole list, and one
+ * global setup can guarantee it. The end-to-end case in this file spawns a child
+ * process, and that child needs three things the parent's setup does not
+ * provide: the built rules *as seen from the child's own module graph*, an
+ * `openssl` binary to make a certificate with, and — for the green branch only —
+ * a release host that answers the verifier's HEAD on the installer URL. The
+ * suite can guarantee the first and nothing about the other two. So the branch
+ * is kept as one of the file's diagnosable refusals rather than folded into the
+ * global setup, which would promise a precondition the run still cannot meet.
+ *
+ * What would remove it: splitting the `openssl` probe and the host probe out of
+ * this file into declared, individually-testable preconditions, so the child's
+ * requirement set becomes a single declarable one like the other four. That is
+ * filed as a deliberate non-goal in `docs/dod-status.md` (「已知残留（不修，登记）」),
+ * gated there by `tests/contract/dod-status.test.ts`: the row and this heading
+ * have to agree, so deleting one without the other is red.
  */
 
 import { spawnSync } from 'node:child_process';

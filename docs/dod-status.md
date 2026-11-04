@@ -70,11 +70,29 @@
 `[warn]` 句子由闸门自己的 `findingLine()` 生成，本机装了应用那一侧的规则时整块比对），
 所以闸门改了措辞而这一页没跟着改，红的是这一页。
 
+## 已知残留（不修，登记）
+
+门禁这一轮清掉的静默失败，下一轮会被重新当成**新缺陷**提出来——除非它被登记成「决定过、不做」。
+这一节就是那个登记处。每一条都还在树里，每一条都**仍然会红**（登记不等于放宽），只是本轮不修，
+并写清为什么不修、什么时候该修。
+
+`tests/contract/dod-status.test.ts` 逐行核对这张表，四个方向都会打红：整节没了、一行没了、
+「为什么不修」或「什么时候该修」写成空话、指针指向不存在的文件；再加一个**反方向**——
+被点名的文件里必须真的有 `KNOWN RESIDUAL` 标记，标记所在的文件也必须在表里有一行。
+**表与被登记的代码不许互相消失**，否则「登记」就退化成一句没人核对的话。
+
+| 残留 | 为什么不修 | 什么时候该修 | 位置（文件里带 `KNOWN RESIDUAL` 标记） |
+|---|---|---|---|
+| `tests/contract/replay-feed-local.test.ts` 仍自带「缺构建」分支，而 `43dcde2` 已把另外四个消费方改成 `tests/global-setup.ts` 一次构建 | 它的端到端用例起的是**子进程**，子进程要的不止「产物存在」：还要 `openssl` 造证书，绿分支还要 release 主机应答安装包 URL。把这条分支并进全局 setup，等于声明一个本轮运行仍然满足不了的前置条件——那条分支是它自己的**可诊断拒绝**之一，不是漏 cleanup 的残留形状 | 把 openssl 探测与主机探测从这个文件拆成可单独测试的声明式前置条件之后；那一步做完，这条分支与表里这一行一起删（删一侧不删另一侧，门禁当场红） | `tests/contract/replay-feed-local.test.ts` |
+
+一条残留一行。写三件事就够了：它现在**仍然会红**、这一轮为什么不修、删掉它的条件是什么。
+「以后再说」不是条件，「等 X 被拆成 Y」才是。
+
 ## 按轮次的历史对照（旧表，保留原文）
 
-下面这张表是**上一版**的对照表，按 DoD 的六条**大项**记，每格一段历史。它不再被门禁读取
-（`tests/contract/dod-status.test.ts` 只读上面那一节），保留是因为它记着每条大项背后的真机行号与
-缺陷故事；**下一轮的范围来源是上面那张四态表**，不是这张。
+下面这张表是**上一版**的对照表，按 DoD 的六条**大项**记，每格一段历史。它**一个字都不被门禁读取**
+（`tests/contract/dod-status.test.ts` 读的是上面那节四态表与「已知残留」那张表），保留是因为它记着
+每条大项背后的真机行号与缺陷故事；**下一轮的范围来源是上面那张四态表**，不是这张。
 
 | DoD 条目 | 现状 | 证据 | 还差什么 |
 |---|---|---|---|
@@ -1070,3 +1088,82 @@ Icon/Favicon 的 16–32px 核验、DOD-4.1（Windows 真机）、DOD-4.2（feed
 文件仍是 `tests/contract/layout.test.ts`——本机没有能连上的 X server，stderr 就是 `CONTRIBUTING.md` 引的
 那一句 `Missing X server or $DISPLAY`；`npm run test:e2e` 19 个文件 **149 项全绿**；`npm run lint`、
 `npm run knip`、`npm run typecheck` 均退出码 0。
+
+## 本轮（2026-11-05）两处「文档复述测量」被收回成门禁，三条外部阻塞开始计时
+
+产品代码一行未改（`styles.css` 一字未动，所以漂移门禁照旧 `PASS`，不需要重拍任何图）。本轮仍只做
+两条外部阻塞的**看守**，加上上一轮 commit message 点过、却没进任何文档的那个遗留形状。
+
+1. **同心圆差额：从一段话变成七列登记表**（`docs/DESIGN.md` + `tests/contract/design-tokens.test.ts`）。
+   上一轮把「内层不许大于外层」变成了断言，却把「内层比同心值多多少」留在一段散文里。
+   **那段散文是错的**：它记 `.row-item .m button` 为 `4px`，而 `styles.css` 里从来是 `3px`。
+   这正是本仓反复量到的那一件事——文档复述测量，就会腐烂，而且腐烂时没有任何东西会响。
+   现在这张表有七列（内层 / 外层 / 内层圆角 / 外层圆角 / 外层内边距 / 同心应为 / 实际差额）：
+   前五列逐格与样式表的**解析后**值比，后两列由门禁自己的 `concentricIdeal()` 重算
+   （`同心应为 = max(0, 外层 − 内边距)`，`实际差额 = 内层 − 同心应为`），所以那两列不许被顺手改成一个好看的数。
+   登记的差额是 `1px`（`.more-menu button`）与 `3px`（`.row-item .m button`）。
+   **断言的是「差额被登记」，不是「差额等于 0」**——方向仍然是样式表说话、文档跟着改，
+   而不是为了让测试变绿去改两条按钮规则。`paddingLengths()` 只接受外层规则**真的声明过**的那些数
+   （`.row-item` 认 `6` 与 `9`，登记贴着右边缘的那个 `9px`）。
+
+2. **已知残留成为一张双向核对的表**。上一轮说了「`replay-feed-local.test.ts` 那条分支本轮没动」，
+   但没说在哪——于是下一轮会把它当成新缺陷重新提一遍。现在 `docs/dod-status.md` 多了
+   `## 已知残留（不修，登记）`，而 `tests/contract/dod-status.test.ts` 两头都查：
+   表里每一行点名的文件必须**真的存在**且**真的带着 `KNOWN RESIDUAL` 一节**；反过来，扫描目录
+   （`tests` 与 `scripts` 两棵树）里任何带这个标记的文件必须在表里有一行。唯一被豁免的是本门禁自己
+   （它的源码声明了这个常量），那条豁免写在一个具名用例里而不是注释里；越过扫描根的指针
+   （比如登记一个 `apps/` 下的文件）也会被指名——那是一条边界，不是一条沉默。
+   登记的**理由**也与上一轮那句 commit 不同：全局 setup 已经保证产物存在，这条分支之所以还留着，
+   是因为那条端到端用例起的是**子进程**，子进程另外需要 `openssl`，绿分支还需要 release 主机应答；
+   它的前置条件不是一个，把它并进 `globalSetup` 等于声明一个本轮运行满足不了的条件。
+   `CONTRIBUTING.md` 同步写了这一节——接手的人读的是那一页，不是某次 commit 的正文。
+
+3. **三条外部阻塞开始计时**（`docs/blockers.md` + 新门禁 `tests/contract/blocker-freshness.test.ts`）。
+   每一节的第一行现在写着「最近核对」的 ISO 日期与「重跑这一条」的命令。日期超过 **14 天**、
+   写的是占位符、写的是日历上没有的那天、比这台机器的日历晚一天以上、或者把命令丢了——都打红，
+   并指名该重跑哪一条、输出贴回哪里。**它证明不了「有人真的跑过」**：它只看日期新不新。
+   这条盲点被写成一个用例（同一份文档，只改日期那一格，从红变绿，中间什么都没运行），不是写在注释里。
+   三条**本轮各重跑了一次**，那两个日期就是这么来的：
+   `node scripts/release-gate.mjs --simulate-missing-sha` 退出 1，八行与 `docs/blockers.md` 贴的那份逐字相同；
+   `node scripts/verify-main-chain.mjs --judge docs/manual-verification/win-YYYYMMDD.json` 退出 1，
+   说的是 `report-unreadable`（那个目录里只有 `README.md` 与 `report-schema.json`）；
+   `node scripts/screenshot-sources.mjs --check` 退出 0，`PASS — 33 renderer source(s) and 16 screenshot(s) match`，
+   而 `docs/state-walkthrough.md` 记录表第一列仍是 `—`——没有人生成过一次签字。
+   顺带把「什么算一节」收成一份（`tests/contract/blockers-doc.ts`），由本门禁与 `doc-routing.test.ts` 共用：
+   两处各写一份的话，任何一份的区块正则失配就变成「一个门禁读不到东西却照旧绿，另一个还在报它那一份」。
+
+   **驱动这条门禁时抓到两个我自己的错**，都留在这里而不是修完不提：
+   `px?` 只让 `x` 可选、`p` 仍然必需，所以表里那个 `0` 格子读不出来（应为 `(?:px)?`）；
+   以及 `today` 若按「 epoch 除以一天的秒数」取，就是按 **UTC** 取日子，而这一页的日期是人按
+   **本地**历日写的——本机在 UTC+8，今天写的 `2026-11-05` 会被判成「来自未来」，
+   一条与任何人的缺陷无关的红。现在 `todayInUtcDays()` 读本地历日再换算成 UTC 日索引，
+   并另外给**一天**松弛：UTC−12 与 UTC+14 本来就相差一天，零容差会把两个都诚实的机器判成造假。
+
+**证明它会红**（每一条都驱动过，恢复后全绿）：
+
+| 改坏的写法 | 打红的断言与原文 |
+|---|---|
+| `.more-menu button` 的 `var(--r-sm)` 换成 `5px` | 两格同时指名：`registers 内层圆角 「4px」 but styles.css resolves it to 5px` 与 `states 实际差额 「1px」, but the stylesheet puts it at 2px`——差额就是从内层算的，改一处必露两处 |
+| `.more-menu` 的 `padding: 4px` 换成 `5px` | `registers 外层内边距 「4px」, which .more-menu does not declare (padding lengths: 5px)` |
+| 新增一条 `.more-menu .item { border-radius: 6px; }` | `is a nested pair the register does not carry — a new pair is a decision, so write its delta down first` |
+| 把「同心应为」那一格从 `3px` 改成 `2px` | `states 同心应为 「2px」, but the rule is 外层 − 内边距 = 7px − 4px = 3px` |
+| 删掉表里那一行 / 删掉样式表里那条 `border-radius` | 两个方向各一句：`the register does not carry` 与 `nothing in styles.css nests like that any more` |
+| 把「已知残留」整节删掉 | `no` 已知残留 section，句子后半是「so a non-fix that was argued for has nowhere to be written」 |
+| 抹掉 `replay-feed-local.test.ts` 里的 `KNOWN RESIDUAL`（表格一字未动） | `registers` 那个文件 `but that file does not carry "KNOWN RESIDUAL"` |
+| 反过来：在另一个文件写上标记而表格不加一行 | `carries "KNOWN RESIDUAL" but the register has no row for it` |
+| 把某条阻塞的日期改成 30 天前 | `was last re-checked 30 days ago, over the 14 this gate allows.` 后面跟着该重跑的那条命令与结果该贴去的文档 |
+| 改成晚 7 天 | `7 day(s) from now, past the 1-day slack…`；而**晚 1 天不红**——那是两个时区都诚实 |
+| 写成 `YYYY-MM-DD` 或 `2026-02-30` | 都报 `is not a real YYYY-MM-DD day on the calendar`；后者靠把 `Date.UTC` 的结果**读回来比对**，而不是信它 |
+| 删掉那一行 / 把命令换成一句人话 | `carries no` 最近核对 line；以及那条命令「既不是本仓能跑的脚本，也不是 `npm run` 脚本」 |
+
+**这一轮没有做的事**：上传修正版 feed（无令牌）、Windows 桌面六步（无 Windows 机器）、
+步骤 6 的人眼观感签字（需要一个人）。三条仍是 `docs/blockers.md` 上的缺口，不假装完成——本轮只是给
+它们各装了一只走得动的表。`CONTRIBUTING.md` 里那一行 `xvfb-run` **仍然没有在本机验成**：本轮又跑了一次，
+症状与上一轮记录的一字不差（`Missing X server or $DISPLAY` 加 `The platform failed to initialize`，45 项 skipped），
+所以那一页仍然写「与 CI 的命令一致」，不写「本机验过」。
+
+门禁：全量 `npm test` **1631 项通过 / 46 项 skipped**（较上一轮 +28：`design-tokens` +8、`dod-status` +10、
+新增的 `blocker-freshness` 10），唯一失败的文件仍是 `tests/contract/layout.test.ts`——本机没有能连上的
+X server，同上一轮；`npm run test:e2e` 19 个文件 **149 项全绿**；`npm run lint`、`npm run knip`、
+`npm run typecheck` 均退出码 0；`node scripts/screenshot-sources.mjs --check` 仍 `PASS — 33 renderer
+source(s) and 16 screenshot(s) match`。

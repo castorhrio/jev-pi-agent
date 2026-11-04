@@ -79,6 +79,23 @@ npm run typecheck && npm run lint && npm run knip && npm test && npm run test:e2
 `@ucad/*` to `packages/*/dist`, not `src`. Running vitest directly bypasses that,
 which is the same trap that once let a red-proof run come back green.
 
+**The feed gates judge a built module, so the build is a precondition, not a
+branch.** `scripts/verify-release-feed.mjs` decides with the app's *own* rules
+(`checkChannelUrl` / `normalizeSha256`), imported from `apps/desktop/dist/main/` —
+re-implementing them in a test would make the test a second opinion instead of a
+check. That output is not built by `pretest`, so `vitest.config.ts` runs
+`tests/global-setup.ts`, which builds it once in the parent process before any
+file loads. The alternative — a `if (!built) return;` in each consumer — was tried,
+and it produced a suite that reported **passed** while asserting nothing on a
+fresh clone. `tests/contract/app-rules-build.test.ts` keeps that wiring from
+rotting, and `tests/contract/replay-feed-local.test.ts` is the one file that still
+carries its own missing-build branch: its end-to-end case spawns a child process
+that additionally needs `openssl` and (for the green branch) the release host, so
+its precondition set is not the one a global setup can promise. That is a
+**registered** residue, not an oversight — see 已知残留（不修，登记）in
+`docs/dod-status.md`, which `tests/contract/dod-status.test.ts` compares with that
+file's `KNOWN RESIDUAL` section in both directions.
+
 CI runs exactly this sequence, plus a clean rebuild at the end: an incremental
 build cannot catch a wrong build order, because a stale `dist` satisfies any
 import.

@@ -45,6 +45,10 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+// One reader of the blockers page for both gates that walk it: if this file kept
+// its own copy of "what a section is", a drift in either copy would show up as
+// one gate quietly reading nothing while the other stayed green.
+import { blockerSections } from './blockers-doc.ts';
 
 const REPO_ROOT = join(import.meta.dirname, '..', '..');
 const README_PATH = join(REPO_ROOT, 'README.md');
@@ -154,24 +158,6 @@ function routingProblems(documents: {
   }
 
   return problems;
-}
-
-/** The `## 1. …` sections of the blockers page, heading and body. */
-function blockerSections(markdown: string): { heading: string; body: string }[] {
-  const sections: { heading: string; body: string }[] = [];
-  const lines = markdown.split('\n');
-  for (let index = 0; index < lines.length; index += 1) {
-    const heading = lines[index]!;
-    if (!/^## \d+\. /.test(heading)) continue;
-    const body: string[] = [];
-    for (let next = index + 1; next < lines.length; next += 1) {
-      const line = lines[next]!;
-      if (/^## /.test(line)) break;
-      body.push(line);
-    }
-    sections.push({ heading: heading.slice(3), body: body.join('\n') });
-  }
-  return sections;
 }
 
 describe('a review can find the standard before it judges a round', () => {

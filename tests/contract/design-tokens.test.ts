@@ -43,6 +43,11 @@
  *  - a nested box's radius never exceeds its outer box's: an inner corner that
  *    is larger than its ancestor's sits on top of the ancestor's arc and reads
  *    as a second, unargued layer;
+ *  - every nested pair the stylesheet forms is in the concentric register, with
+ *    both radii, the padding it is measured against, the concentric value the
+ *    rule computes and the gap that is actually there — the three measured cells
+ *    compared with what `styles.css` resolves to, and the two derived cells
+ *    recomputed here from them rather than trusted;
  *  - `CONTRIBUTING.md` links the register, because a document nobody is sent to
  *    is a document nobody reads.
  *
@@ -59,16 +64,26 @@
  * corners. So the register is a list of *boxes*, not a scale, and the check is
  * set equality rather than a count.
  *
- * It does not assert the concentric-corner ideal either — "inner radius =
- * outer radius − inner padding" — even though that is the rule a designer would
- * state. The stylesheet does not obey it: `.more-menu` is 7px with 4px of
- * padding and its buttons are 4px, where concentric would be 3px; `.row-item`
- * is 4px with 6px of vertical padding and its buttons are 4px, where concentric
- * would be 0. Asserting the ideal would mean restyling two button rules to make
- * a test pass, which is the wrong direction for a gate to push. What is
- * asserted is the defect the ideal exists to prevent: an inner corner *larger*
- * than its outer one, which is the only case that reads as a second, unargued
- * layer. The gap between the two is written down here rather than papered over.
+ * It does not assert the concentric-corner ideal — "inner radius = outer radius
+ * − inner padding" — even though that is the rule a designer would state. The
+ * stylesheet does not obey it: `.more-menu` is 7px with 4px of padding and its
+ * buttons are 4px, where concentric would be 3px; `.row-item` is 4px with
+ * `6px 9px` of padding and its buttons are 3px, where concentric would be 0.
+ * Asserting the ideal would mean restyling two button rules to make a test
+ * pass, which is the wrong direction for a gate to push.
+ *
+ * What it does instead is make the deviation **registered and measurable**. The
+ * register carries each pair with its padding, the concentric value the rule
+ * computes, and the gap the stylesheet actually has; every cell is compared with
+ * what `styles.css` resolves to, and the two derived columns are recomputed here
+ * rather than trusted. Until this round that gap lived in a paragraph — and the
+ * paragraph was wrong: it recorded `.row-item .m button` at 4px while the
+ * stylesheet had declared 3px. A document that restates a measurement rots; a
+ * document checked against one cannot.
+ *
+ * The defect the ideal exists to prevent is still asserted on its own: an inner
+ * corner *larger* than its outer one, the only case that reads as a second,
+ * unargued layer, which registering does not exempt.
  *
  * ## Why the red direction is driven with mutated copies
  *
@@ -103,6 +118,17 @@ function bare(cell: string): string {
 }
 
 /**
+ * The first cell of each register table's header row.
+ *
+ * The header is read as a header because of what it is: `designTable` returns
+ * cells, and a `| 内层 | 外层 | … |` row handed to a comparison would be
+ * reported as a nested pair nobody registered. A word list rather than a
+ * positional skip, because the register's tables do not all start on the first
+ * line under their heading.
+ */
+const HEADER_CELLS = ['token', '值', '宽度', '内层'];
+
+/**
  * The rows of the first table under a `## ` heading, header and rule rows dropped.
  *
  * The register is read as data, not as prose: a heading that lost its table, or
@@ -129,7 +155,7 @@ function designTable(markdown: string, heading: string): string[][] {
       .split('|')
       .map((cell) => cell.trim());
     if (cells.every((cell) => /^:?-{3,}:?$/.test(cell))) continue;
-    if (cells[0] === 'token' || cells[0] === '值' || cells[0] === '宽度') continue;
+    if (HEADER_CELLS.includes(cells[0] ?? '')) continue;
     rows.push(cells);
   }
   return rows;
@@ -535,6 +561,168 @@ function nestedRadiusProblems(styles: string): string[] {
     );
 }
 
+/**
+ * The concentric-corner ideal, as arithmetic the gate owns rather than as a
+ * sentence a document may or may not honour.
+ *
+ * It is a floor at 0 on purpose: a `4px` box with `9px` of inset has no corner
+ * left to round, and `−5px` would be a number nobody can draw. This is the only
+ * place the rule is written; the two computed columns in the register are
+ * checked *against it*, so a register row cannot quietly restate a prettier sum.
+ */
+function concentricIdeal(outer: number, inset: number): number {
+  return Math.max(0, outer - inset);
+}
+
+/** A register length: `4px`, `0`, or `10.5px` — `null` for anything else. */
+function barePx(cell: string): number | null {
+  const match = /^(\d+(?:\.\d+)?)(?:px)?$/.exec(bare(cell));
+  return match === null ? null : Number(match[1]);
+}
+
+/**
+ * The padding lengths the outer rule of a pair declares, in px.
+ *
+ * The register picks one of them — the inset on the side the inner box sits
+ * against — so this returns the whole set instead of guessing which axis a
+ * `padding: 6px 9px` shorthand means. A registered number outside the set is a
+ * number the stylesheet does not contain.
+ */
+function paddingLengths(outerSelector: string, styles: string): number[] {
+  const tokens = rootTokens(styles);
+  for (const rule of rules(styles)) {
+    if (rule.selector !== outerSelector) continue;
+    const match = /(?:^|;)\s*padding\s*:\s*([^;]+);/.exec(rule.body);
+    if (match === null) continue;
+    return match[1]!
+      .trim()
+      .split(/\s+/)
+      .map((part) => parsePx(resolveValue(part, tokens)))
+      .filter((length): length is number => length !== null);
+  }
+  return [];
+}
+
+/** The columns the nested radius register declares, in order. */
+const CONCENTRIC_COLUMNS = [
+  '内层',
+  '外层',
+  '内层圆角',
+  '外层圆角',
+  '外层内边距',
+  '同心应为',
+  '实际差额',
+] as const;
+
+/**
+ * Everything wrong with the concentric delta register against the stylesheet.
+ *
+ * The register used to be prose: `docs/DESIGN.md` stated the two pairs' radii,
+ * and the gap between them and the concentric ideal lived in a paragraph nobody
+ * compared to anything. The paragraph was also **wrong** — it recorded
+ * `.row-item .m button` at `4px` while `styles.css` has declared `3px` since the
+ * row was written. That is the shape this repository keeps finding: a document
+ * restating a measurement instead of being checked against one.
+ *
+ * So every cell is now compared, and the last two columns are compared against
+ * arithmetic done here from the first four. Moving any radius, any padding, or
+ * either selector names the pair that went stale.
+ */
+function concentricProblems(design: string, styles: string): string[] {
+  const rows = designTable(design, '嵌套圆角（nested radius）');
+  if (rows.length === 0) return ['docs/DESIGN.md: the nested radius register is gone or empty'];
+  const pairs = nestedPairs(styles);
+  if (pairs.length === 0) {
+    return ['styles.css: no nested radius pair is left to compare, so the register describes nothing'];
+  }
+
+  const problems: string[] = [];
+  const byInner = new Map<string, string[]>();
+  const malformed = new Set<string>();
+  for (const row of rows) {
+    const inner = bare(row[0]!);
+    if (row.length !== CONCENTRIC_COLUMNS.length) {
+      malformed.add(inner);
+      problems.push(
+        `docs/DESIGN.md: the \`${inner}\` row has ${row.length} cell(s), not the ` +
+          `${CONCENTRIC_COLUMNS.length} the register declares (${CONCENTRIC_COLUMNS.join(' / ')})`,
+      );
+      continue;
+    }
+    byInner.set(inner, row);
+  }
+
+  for (const pair of pairs) {
+    if (malformed.has(pair.selector)) continue;
+    const row = byInner.get(pair.selector);
+    if (row === undefined) {
+      problems.push(
+        `docs/DESIGN.md: ${pair.selector} (${pair.inner}px) inside ${pair.outerSelector} ` +
+          `(${pair.outer}px) is a nested pair the register does not carry — a new pair is a ` +
+          'decision, so write its delta down first',
+      );
+      continue;
+    }
+    const where = `${pair.selector} inside ${pair.outerSelector}`;
+    const cell = (column: number): string => row[column]!;
+
+    if (bare(cell(1)) !== pair.outerSelector) {
+      problems.push(
+        `docs/DESIGN.md: ${where} is registered inside \`${bare(cell(1))}\`, so the row is ` +
+          `about a different nesting now than the ${pair.outerSelector} the stylesheet has`,
+      );
+    }
+    if (barePx(cell(2)) !== pair.inner) {
+      problems.push(
+        `docs/DESIGN.md: ${where} registers 内层圆角 \`${bare(cell(2))}\` but styles.css ` +
+          `resolves it to ${pair.inner}px`,
+      );
+    }
+    if (barePx(cell(3)) !== pair.outer) {
+      problems.push(
+        `docs/DESIGN.md: ${where} registers 外层圆角 \`${bare(cell(3))}\` but styles.css ` +
+          `resolves it to ${pair.outer}px`,
+      );
+    }
+    const inset = barePx(cell(4));
+    const declared = paddingLengths(pair.outerSelector, styles);
+    if (inset === null || !declared.includes(inset)) {
+      problems.push(
+        `docs/DESIGN.md: ${where} registers 外层内边距 \`${bare(cell(4))}\`, which ` +
+          `${pair.outerSelector} does not declare (padding lengths: ` +
+          `${declared.map((length) => `${length}px`).join(' ') || 'none'})`,
+      );
+      // The two computed columns are derived from this number, so comparing
+      // them now would report an arithmetic failure on top of the real one.
+      continue;
+    }
+    const ideal = concentricIdeal(pair.outer, inset);
+    if (barePx(cell(5)) !== ideal) {
+      problems.push(
+        `docs/DESIGN.md: ${where} states 同心应为 \`${bare(cell(5))}\`, but the rule is ` +
+          `外层 − 内边距 = ${pair.outer}px − ${inset}px = ${ideal}px`,
+      );
+    }
+    const delta = pair.inner - ideal;
+    if (barePx(cell(6)) !== delta) {
+      problems.push(
+        `docs/DESIGN.md: ${where} states 实际差额 \`${bare(cell(6))}\`, but the stylesheet ` +
+          `puts it at ${delta}px (内层 ${pair.inner}px − 同心 ${ideal}px)`,
+      );
+    }
+  }
+
+  for (const inner of byInner.keys()) {
+    if (!pairs.some((pair) => pair.selector === inner)) {
+      problems.push(
+        `docs/DESIGN.md: the register carries \`${inner}\` as a nested pair, but nothing in ` +
+          'styles.css nests like that any more',
+      );
+    }
+  }
+  return problems;
+}
+
 /** Whether a contributor is sent to the register at all. */
 function routingProblems(contributing: string): string[] {
   return contributing.includes('docs/DESIGN.md')
@@ -565,6 +753,10 @@ describe('the register and the stylesheet are the same facts', () => {
 
   it('keeps nested radii from exceeding their outer radius', () => {
     expect(nestedRadiusProblems(STYLES)).toEqual([]);
+  });
+
+  it('registers the concentric delta of every nested pair in the numbers the stylesheet resolves to', () => {
+    expect(concentricProblems(DESIGN, STYLES)).toEqual([]);
   });
 
   it('sends a contributor to the register', () => {
@@ -612,6 +804,24 @@ describe('the register is read as data, not as prose', () => {
       expect.arrayContaining(['.more-menu button', '.row-item .m button']),
     );
     expect(pairs.every((pair) => pair.outerSelector.length > 0)).toBe(true);
+  });
+
+  it('registers exactly the nested pairs the stylesheet has, and computes two of the columns', () => {
+    // Row count against pair count, in both directions at once: a register that
+    // grew a row nothing nests into, and a pair nobody registered, are the two
+    // ways this table stops being a map of the stylesheet.
+    const pairs = nestedPairs(STYLES);
+    const rows = designTable(DESIGN, '嵌套圆角（nested radius）');
+    expect(rows.length).toBe(pairs.length);
+    expect(pairs.length).toBeGreaterThanOrEqual(2);
+
+    // The last two columns are arithmetic on the first four, and the arithmetic
+    // lives here. Pinning two sums means a register row cannot be edited into a
+    // prettier number without the gate noticing the sum is no longer the rule.
+    expect(concentricIdeal(7, 4)).toBe(3);
+    expect(concentricIdeal(4, 9)).toBe(0);
+    expect(paddingLengths('.row-item', STYLES)).toEqual([6, 9]);
+    expect(paddingLengths('.more-menu', STYLES)).toEqual([4]);
   });
 
   it('reads the edge widths out of the rules, including the ones inside @media', () => {
@@ -730,6 +940,101 @@ describe('the gate goes red when the two copies disagree', () => {
     );
     expect(nestedRadiusProblems(mutated)).toEqual([
       expect.stringContaining('.more-menu button (4px) inside .more-menu (2px)'),
+    ]);
+  });
+
+  it('names the pair when a button radius moves under its registered delta', () => {
+    // Two cells are wrong at once when a radius moves: the measured one, and
+    // the difference computed from it. Naming both is the point — the register
+    // is not a note about the stylesheet, it is a second copy that has to agree.
+    const mutated = STYLES.replace(
+      '.more-menu button {\n  text-align: left;\n  padding: 6px 10px;\n  border-radius: var(--r-sm);',
+      '.more-menu button {\n  text-align: left;\n  padding: 6px 10px;\n  border-radius: 5px;',
+    );
+    const problems = concentricProblems(DESIGN, mutated);
+    expect(problems).toHaveLength(2);
+    expect(problems.join('\n')).toContain(
+      '.more-menu button inside .more-menu registers 内层圆角 `4px` but styles.css resolves it to 5px',
+    );
+    expect(problems.join('\n')).toContain(
+      '.more-menu button inside .more-menu states 实际差额 `1px`, but the stylesheet puts it at 2px',
+    );
+  });
+
+  it('names the pair when the outer padding moves out from under the register', () => {
+    // The inset is what the concentric value is computed from, so changing it
+    // without touching the register is the same defect as changing a radius —
+    // and the row is reported once, not twice: the two derived columns are
+    // skipped rather than failed on top of the number that is actually wrong.
+    const mutated = STYLES.replace(
+      '.more-menu {\n  position: fixed;\n  z-index: 41;\n  min-width: 168px;\n  padding: 4px;',
+      '.more-menu {\n  position: fixed;\n  z-index: 41;\n  min-width: 168px;\n  padding: 5px;',
+    );
+    expect(concentricProblems(DESIGN, mutated)).toEqual([
+      expect.stringContaining(
+        'registers 外层内边距 `4px`, which .more-menu does not declare (padding lengths: 5px)',
+      ),
+    ]);
+  });
+
+  it('names a nested pair that appeared without being registered', () => {
+    // A third box nested inside a rounded one is how the second unargued layer
+    // arrives. It is red until its delta is written down, whatever that delta is.
+    const mutated = STYLES.replace(
+      '.more-menu button {',
+      '.more-menu .item {\n  border-radius: 6px;\n}\n\n.more-menu button {',
+    );
+    expect(concentricProblems(DESIGN, mutated)).toEqual([
+      expect.stringContaining(
+        '.more-menu .item (6px) inside .more-menu (7px) is a nested pair the register does not carry',
+      ),
+    ]);
+  });
+
+  it('refuses a 同心应为 that is not 外层 minus 内边距', () => {
+    // The column is derived, so editing it to a nicer number is not a decision
+    // about the interface — it is the register disagreeing with its own rule.
+    const mutated = DESIGN.replace(
+      '| `4px` | `7px` | `4px` | `3px` | `1px` |',
+      '| `4px` | `7px` | `4px` | `2px` | `1px` |',
+    );
+    expect(mutated).not.toBe(DESIGN);
+    expect(concentricProblems(mutated, STYLES)).toEqual([
+      expect.stringContaining(
+        '.more-menu button inside .more-menu states 同心应为 `2px`, but the rule is 外层 − 内边距 = 7px − 4px = 3px',
+      ),
+    ]);
+  });
+
+  it('names a register row whose pair the stylesheet no longer nests', () => {
+    // The direction a rename goes: the row survives, the pair does not. Left
+    // unchecked, the register would keep documenting a relationship that ended.
+    const row = DESIGN
+      .split('\n')
+      .find((line) => line.startsWith('| `.more-menu button` |'))!;
+    const withoutRow = DESIGN.replace(`${row}\n`, '');
+    expect(concentricProblems(withoutRow, STYLES)).toEqual([
+      expect.stringContaining(
+        '.more-menu button (4px) inside .more-menu (7px) is a nested pair the register does not carry',
+      ),
+    ]);
+
+    // And the same pair disappearing from the stylesheet, with the row still there.
+    const unrounded = STYLES.replace(
+      '.more-menu button {\n  text-align: left;\n  padding: 6px 10px;\n  border-radius: var(--r-sm);',
+      '.more-menu button {\n  text-align: left;\n  padding: 6px 10px;',
+    );
+    expect(concentricProblems(DESIGN, unrounded)).toEqual([
+      expect.stringContaining(
+        'the register carries `.more-menu button` as a nested pair, but nothing in styles.css nests like that any more',
+      ),
+    ]);
+  });
+
+  it('is red when the nested register loses its table', () => {
+    const mutated = DESIGN.replace('## 嵌套圆角（nested radius）', '## 嵌套圆角');
+    expect(concentricProblems(mutated, STYLES)).toEqual([
+      'docs/DESIGN.md: the nested radius register is gone or empty',
     ]);
   });
 
