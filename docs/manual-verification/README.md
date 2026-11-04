@@ -32,7 +32,21 @@ DPAPI、托盘、NSIS 三条链路在 Windows 与 Linux 上行为不同，而报
 | `win-YYYYMMDD-tray.png` | 通知区里的 UCAD 图标与展开的菜单 | 托盘是原生对象，DevTools 碰不到；报告断言的是应用自己写的 `tray menu built` 日志，图是它的旁证 |
 | `win-YYYYMMDD-nsis.png` | 安装向导（选目录那一屏）或装完后的开始菜单项 | `npm run package` 出的是免安装目录，**不是** NSIS 安装包；这一张证明的是 `npm run dist` 那条路 |
 
-三张都放这个目录，和报告同名不同后缀。图不必精修，能看清是哪一屏即可。
+三张都放这个目录，和报告同名不同后缀。
+
+**这三张图是旁证，不参与判定。** `--judge` 只读 `win-YYYYMMDD.json`，不打开这三张图，
+也不检查它们是否存在、是否清晰——它没有像素，也不该假装有。所以：
+
+- 报告判绿而图缺失，判定仍然是绿；缺的是旁证，不是结论。读报告的人自己看一眼图，
+  就知道「这台机器上确实开过窗」有没有被证实。
+- 反过来，图拍得再清楚也关不掉 DOD-4.1：那一行只认 `--judge` 的退出码 0。
+- 「能看清是哪一屏」是给读图的人的标准，不是给命令的标准：一张图只要能让没跑过这次的人
+  认出「这是应用主窗口 / 这是通知区菜单 / 这是安装向导」，它就够用了。不必精修、不必裁切、
+  不必打码（图里没有令牌，令牌只出现在 `Authorization` 头里，从不落盘）。
+
+这条边界由命令自己说出来：`--judge` 判绿时会打印
+`[note] the three screenshots a run carries home are evidence for a reader, not for this command`，
+`tests/contract/handoff-packs.test.ts` 钉住这一行——把这一页改成「图会被检查」会打红。
 
 ## 三、在 Windows 机器上跑什么
 
@@ -68,6 +82,7 @@ PASS — the report covers steps 1, 2, 3, 4, 5 on win32 against build 1.0.0
 [note] every `pass` row carries the evidence lines the step recorded, not just a verdict
 [note] this judges what the file says, not that the run happened — see the `note` inside the report
 [note] step 6 is the five states a person walks in `npm run dev:web`; no report closes it
+[note] the three screenshots a run carries home are evidence for a reader, not for this command — it reads the report and nothing else
 ```
 
 判定要求四件事同时成立，每一条各自会红、各有一句话：
@@ -132,4 +147,6 @@ PASS — the report covers steps 1, 2, 3, 4, 5 on win32 against build 1.0.0
 `scripts/verify-main-chain.mjs` 的源码里（改了脚本的措辞而没改这一页，会打红），
 `docs/manual-verification/` 这个目录真的存在，并且 `win-YYYYMMDD.json` 这个命名约定在
 `docs/blockers.md`、`docs/manual-verification.md` 与这一页里是**同一个字面量**。
+第二节那条「三张图是旁证、不参与判定」的边界也在其中：它引用的 `[note]` 行由
+`judgeReportCommand()` 打印，这一页说「图会被检查」会打红。
 命令的旗标由 `tests/contract/manual-check-docs.test.ts` 钉住。

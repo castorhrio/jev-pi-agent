@@ -108,6 +108,15 @@ const PACKS: readonly Pack[] = [
       { script: 'scripts/verify-main-chain.mjs', text: 'the row stays open' },
       { script: 'scripts/verify-main-chain.mjs', text: 'is not in the report' },
       { script: 'scripts/verify-main-chain.mjs', text: 'a claim, not a result' },
+      // The boundary the pack used to leave to the reader's imagination: the
+      // three screenshots sit next to the report and are the one part of the
+      // pack `--judge` cannot read. The sentence is printed by the command, so
+      // a pack that starts promising the images are checked goes red here
+      // rather than being discovered by whoever trusted it.
+      {
+        script: 'scripts/verify-main-chain.mjs',
+        text: 'the three screenshots a run carries home are evidence for a reader',
+      },
     ],
   },
 ];

@@ -631,6 +631,13 @@ export function judgeReportCommand(
       '[note] every `pass` row carries the evidence lines the step recorded, not just a verdict',
       '[note] this judges what the file says, not that the run happened — see the `note` inside the report',
       '[note] step 6 is the five states a person walks in `npm run dev:web`; no report closes it',
+      // The three screenshots a Windows run carries home sit next to the report
+      // and are the one part of the pack this command cannot read. Saying so
+      // here rather than only in the document is the difference between "the
+      // screenshots are not judged" being a fact about the command and being a
+      // sentence someone wrote down: `handoff-packs.test.ts` pins this line, so
+      // a document that claims the images are checked goes red.
+      '[note] the three screenshots a run carries home are evidence for a reader, not for this command — it reads the report and nothing else',
     );
   } else {
     lines.push(

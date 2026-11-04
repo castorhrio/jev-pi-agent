@@ -18,9 +18,25 @@
 他们的三个痛点正是 UCAD 要解决的：上下文到底塞了什么没法证明、路由为什么这样没法解释、
 跨 Agent 交接靠复制粘贴。
 
-## 四个演示动作
+## 五个演示动作
 
 现场按顺序做，每一步都**在屏幕上留下可读的证据**，不靠讲解。
+
+这五步不是为答辩编的：它们就是 `scripts/verify-main-chain.mjs` 在真机上驱动的步骤 1–5，
+一步不多、一步不少。演示时屏幕上出现的东西，和那条命令在 Windows 机器上跑出来的 `[ok]` 行
+是同一件事——所以「演示的」和「跑过的」不会变成两套说法。
+
+| 演示动作 | `verify-main-chain.mjs` | 该步判绿时打印的那一行 |
+|---|---|---|
+| 1. 注入原文与哈希 | 步骤 1 | `[ok] step 1: the same turn reads the same hash in both surfaces` |
+| 2. 决策平面 | 步骤 2 | `[ok] step 2: … decisions carry rationale + confidence + engine` |
+| 3. 交接 | 步骤 3 | `[ok] step 3: the handoff lands in the new session input` |
+| 4. 更新检查 | 步骤 4 | `[ok] step 4: the real feed answered over the network: …` |
+| 5. 托盘与退出 | 步骤 5 | `[ok] step 5: the tray menu carries …` |
+
+`tests/contract/demo-script.test.ts` 钉住这张表：上面每一行引用的 `[ok]` 片段都必须还在
+`scripts/verify-main-chain.mjs` 的源码里，五个步骤一个都不能少，而且**不许出现步骤 6 的 `[ok]` 行**
+——步骤 6 是人眼走查，没有命令能替它收口（见文末「演示之外」）。
 
 ### 1. 一轮对话，读回注入原文与哈希（约 60 秒）
 
@@ -28,12 +44,16 @@
 - 看点：`注入的原文`是整段真正渲染出的字节；旁边是 `renderedHash`；token 数与**估算来源**同处显示
   （`heuristic_chars_div_4` 或厂商 tokenizer，绝不只给数字）。
 - 收尾一句：往项目里加一个字节再发一轮，哈希就变——这就是「可证明注入」。
+- 真机那一行：`[ok] step 1: the same turn reads the same hash in both surfaces`；往项目里加一个字节
+  再发一轮，那一行变成 `[ok] step 1: one injected byte moved the hash`。
 - 依据：DoD「可证明注入」「诚实估计与凭据」；真机记录见 `docs/manual-verification.md` 步骤 1。
 
 ### 2. 决策平面：为什么走这条路由（约 45 秒）
 
 - 打开「决策」→ 引擎表里写清每个引擎**声明能决定什么**、超时多少 → 先「运行决策预览」→ 再真实发一轮。
 - 看点：每条决策带 `rationale`、`confidence`、产出它的引擎；没答上的引擎被记为**回落**，不伪装成正常结果。
+- 真机那一行：`[ok] step 2: … decisions carry rationale + confidence + engine`——省略号处是这一轮
+  真的产出决策的引擎数，不是引擎表的总数。
 - 依据：DoD「可解释路由」；`docs/manual-verification.md` 步骤 2。
 
 ### 3. 交接：下一个 Agent 读得懂的记录（约 45 秒）
@@ -41,13 +61,41 @@
 - 打开「交接」→「生成交接摘要」→「带着它开新会话」→ 回「交接历史」看 #1 被 #2 取代、点「我来接手」。
 - 看点：交接是**只追加的记录**（目标 / 当前状态 / 已做的决定 / 未完成的工作），不是一段空泛总结；
   新会话的输入框里直接带着这些段落。
+- 真机那两行：`[ok] step 3: the handoff lands in the new session input` 与
+  `[ok] step 3: history appends: the superseded record is still listed and readable`——
+  第二行是「只追加」这三个字的证据：被取代的那条还在，且还读得出来。
 - 依据：DoD「权限门不可绕」之外的交接链；`docs/manual-verification.md` 步骤 3。
 
-### 4. 五个界面状态：一次走完（约 90 秒）
+### 4. 更新检查：它说的是「已是最新」还是「检查失败」（约 30 秒）
 
-前三个动作走的是「有数据、一切正常」的那条路。真实用户第一次打开时看到的不是它，
+- 打开「设置」→ 点「检查更新」→ 等那一行状态出现。
+- 看点：屏幕上出现的是 `已是最新版本` 或 `发现新版本`，**不是**一句没有原因的
+  `检查更新失败`。失败也要带原因——「连不上」和「更新源被拒」是两件事，用户要能分清。
+- 收尾一句：更新源只认 `https`，明文地址会被**拒绝并说明理由**，不会静默回落到内置源。
+- 真机那一行：`[ok] step 4: the real feed answered over the network: …`，省略号处是屏幕上那一行状态。
+  真机上网络不通时这一步会记 `检查更新失败…` 并**不判绿**——失败路径也是结果，不是跳过。
+- 依据：DoD「更新通道可信」；`docs/manual-verification.md` 步骤 4。
+
+### 5. 托盘与退出：关窗之后应用还在不在（约 30 秒）
+
+- 打开「设置」→ 把「关闭窗口时」切到 `隐藏到托盘` → 关窗 → 看通知区；再切到 `退出应用` → 关窗 → 看进程。
+- 看点：`隐藏到托盘` 下窗口消失而进程还在（通知区有图标，菜单三项可读）；`退出应用` 下进程真的退出。
+  这两个答案**必须相反**——同一个开关给出同一个答案，就是那个开关没接上。
+- 真机那三行：`[ok] step 5: the tray menu carries …`（菜单三项由应用自己写的 `tray menu built`
+  日志断言，不是靠人读屏幕）、`[ok] step 5: the window is hidden and the process is alive`、
+  `[ok] step 5: the process exited on close, as the setting says`。
+- 依据：DoD「关闭窗口的行为与设置一致」；`docs/manual-verification.md` 步骤 5。
+
+## 演示之外：五个界面状态的人眼走查
+
+前五个动作走的是「有数据、一切正常」的那条路。真实用户第一次打开时看到的不是它，
 读失败时看到的也不是它。这一节把五个状态逐个走一遍，**每个状态都有一句「失败长什么样」**——
 演示时如果屏幕上出现的是那一句，说明这个状态坏了，不要往下讲。
+
+**这一节不是 `verify-main-chain.mjs` 的步骤。** 它是那份清单的第 6 步，而第 6 步没有命令能驱动：
+五态被断言、被测量、被拍照，但「读起来像不像首启 / 像失败 / 像权限请求」只有人眼能答。
+所以这里没有任何步骤 6 的 `[ok]` 行可引——`tests/contract/demo-script.test.ts` 会拒绝出现那一行，
+免得演示脚本把一件人做的事说成一条跑过的命令。
 
 ```bash
 npm run dev:web          # 默认 http://localhost:5173

@@ -10,6 +10,11 @@
 判据的来源没有变：`docs/PRODUCT-DOD.md` 的 DOD-4.2 是标准，`docs/dod-status.md` 里那一行
 是现状，`docs/blockers.md` 第 1 节是同一件事的摘要。这一页是它的**执行面**。
 
+> **这一页引用的每一行「期望输出」都由 `tests/contract/handoff-packs.test.ts` 钉住。**
+> 下面每一段 `期望输出` 里的句子，都是脚本源码里真的会打印的那一句；脚本改了措辞而这一页没改，
+> 门禁会打红并指名是哪一句。所以照着这一页敲、看到对不上的输出时，先怀疑自己敲错了命令，
+> 不要怀疑这一页——它和脚本是同一份事实。
+
 ## 前置条件（四条，缺一条就别开始）
 
 1. **一个令牌**：对 `castorhrio/jev-pi-agent` 有 `contents: write`，放进 `GITHUB_TOKEN`

@@ -243,6 +243,18 @@ function signedDates(markdown: string): string[] {
   return dates;
 }
 
+/**
+ * The columns a record row has to carry, in the order a signer fills them.
+ *
+ * Four, not three. `看了哪几张` is the one that was missing from the check and
+ * is the one that carries the walk: a row that says "signed, all satisfied"
+ * without saying how many images were opened is a signature over an unknown
+ * amount of looking, and the whole point of the ten-image script is that a
+ * walker who opened five of them has not walked the states they did not open.
+ * The column is in the document already; this makes dropping it a red run.
+ */
+const RECORD_COLUMNS = ['日期', '走查人', '看了哪几张', '结论'] as const;
+
 /** Whether the record table has the columns a signer needs. */
 function hasRecordColumns(markdown: string): boolean {
   return markdown
@@ -250,9 +262,7 @@ function hasRecordColumns(markdown: string): boolean {
     .some(
       (line) =>
         line.trim().startsWith('|') &&
-        line.includes('日期') &&
-        line.includes('走查人') &&
-        line.includes('结论'),
+        RECORD_COLUMNS.every((column) => line.includes(column)),
     );
 }
 
@@ -418,8 +428,8 @@ function walkthroughProblems(
 
   if (!hasRecordColumns(walkthrough)) {
     problems.push(
-      'docs/state-walkthrough.md: the record table has no 日期 / 走查人 / 结论 columns, ' +
-        'so a walkthrough has nowhere to be signed',
+      `docs/state-walkthrough.md: the record table has no ${RECORD_COLUMNS.join(' / ')} ` +
+        'columns, so a walkthrough has nowhere to be signed',
     );
   }
 
@@ -699,6 +709,42 @@ describe('the five states have criteria a person can answer', () => {
     const problems = walkthroughProblems(signed, readme, fakeRepo());
     expect(problems.some((problem) => problem.includes('signed on 2026-11-05'))).toBe(true);
     expect(problems.filter((problem) => problem.includes('signed on 2026-11-05'))).toHaveLength(2);
+  });
+
+  it('reports a README whose two halves carry different dates', () => {
+    // The case the old check could not see. It asked "does each half carry the
+    // latest date", which is the right question, but a version that asked "does
+    // each half carry *a* date" would pass here — and two halves naming two
+    // different days is two walkthroughs signed once, which is exactly the
+    // state a reader cannot resolve. The literal has to be the same one.
+    const signed = walkthrough.replace(
+      '| — | — | — | — | — | **未走查**：判据已就位，等一个人按上面五节逐条回答 |',
+      '| 2026-11-05 | 张三 | 十张 | 全满足 | 无 | 五态判据全满足 |',
+    );
+    const split = readme
+      .replace(/by eye/g, 'by eye on 2026-11-05')
+      .replace(/人眼/g, '人眼（2026-11-06）');
+    expect(split, 'the README no longer carries both halves of the sentence').not.toBe(readme);
+    const problems = walkthroughProblems(signed, split, fakeRepo());
+    expect(problems, problems.join('\n')).toHaveLength(1);
+    expect(problems[0]).toContain('signed on 2026-11-05');
+    expect(problems[0]).toContain('zh half');
+  });
+
+  it('reports a record table that dropped the column saying how much was looked at', () => {
+    // A signature over an unknown amount of looking. The ten-image script is
+    // the walk; a table that does not record how many of them were opened lets
+    // "signed, all satisfied" stand for five images as easily as ten.
+    const narrowed = walkthrough.replace(
+      '| 日期 | 走查人 | 看了哪几张 | 五态判据 | 不合格项 | 结论 |',
+      '| 日期 | 走查人 | 五态判据 | 不合格项 | 结论 |',
+    );
+    expect(narrowed, 'the record table header this case edits is gone').not.toBe(walkthrough);
+    const problems = walkthroughProblems(narrowed, readme, fakeRepo());
+    expect(
+      problems.some((problem) => problem.includes('日期 / 走查人 / 看了哪几张 / 结论')),
+      problems.join('\n'),
+    ).toBe(true);
   });
 
   it('accepts a signed table once the README carries the date', () => {
