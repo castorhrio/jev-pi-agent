@@ -96,6 +96,12 @@ const PACKS: readonly Pack[] = [
       { script: 'scripts/publish-feed.mjs', text: 'dry run — nothing was fetched and nothing was uploaded' },
       { script: 'scripts/publish-feed.mjs', text: 'now carries sha256=' },
       { script: 'scripts/publish-feed.mjs', text: 'blocked: no GitHub write token' },
+      // The preflight step: the two lines a reader uses to tell "the published
+      // feed is still broken" from "the host never answered", and the one that
+      // says the run wrote nothing. A reworded verdict would leave the page
+      // quoting a sentence the command no longer prints.
+      { script: 'scripts/publish-feed.mjs', text: 'the published feed is still the broken one' },
+      { script: 'scripts/publish-feed.mjs', text: 'writes: none — this run only read the published document' },
       { script: 'scripts/verify-release-feed.mjs', text: 'warning(s), nothing the app would refuse' },
     ],
   },

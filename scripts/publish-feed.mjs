@@ -46,9 +46,37 @@
  * to have credentials. It also never prints the token; the token appears only
  * in an `Authorization` header.
  *
+ * ## `--preflight`: the one question a token-holder asks first
+ *
+ * `--dry-run` answers "what would this upload, and where". It cannot answer the
+ * question the person holding the token actually has: *is the published feed
+ * still the broken one?* — because it never reads the published feed. So the
+ * step before `--apply` used to be a human comparing two documents by eye, and
+ * "the asset is still missing its sha256" was a claim in a document rather than
+ * something the command had looked at.
+ *
+ * `--preflight` reads the published document once (one anonymous `GET`, no
+ * token needed on a public repository), judges it with **the same
+ * `judgeFeedDocument()` call and the same expected version** that `--apply`
+ * uses on the document it is about to upload, and prints the two judgements
+ * side by side: what is wrong now, what would be wrong after the upload, which
+ * findings the upload fixes, which fields change, and which URL is overwritten.
+ * It writes nothing — no asset, no file, no log — and that is asserted rather
+ * than promised.
+ *
+ * Its exit code is the answer to that one question, and the verdict line says
+ * so out loud so nobody has to remember which way round it is:
+ *
+ *  - `0` — the published feed is still the broken one, so the plan below is
+ *    current and `--apply --verify` is the next command;
+ *  - `1` — it is not (already corrected, or the host did not answer), so there
+ *    is nothing to replace and running `--apply` would be a change nobody
+ *    needed.
+ *
  * ## Usage
  *
  * ```bash
+ * node scripts/publish-feed.mjs --preflight          # read the published feed, judge both, write nothing
  * node scripts/publish-feed.mjs --dry-run            # print the plan, touch nothing
  * GITHUB_TOKEN=… node scripts/publish-feed.mjs --apply --verify
  * ```
@@ -65,6 +93,9 @@
  * `--feed-file <path>` chooses another document. Exit codes: 0 when the run did
  * what it said (a dry run always exits 0), 1 when the document was refused, the
  * token is missing, the host disagreed about the installer, or the API refused.
+ * `--preflight` is the one exception, and it is deliberate: its exit code is the
+ * answer to "is the published feed still broken?", so 0 means *yes* — see the
+ * section above.
  */
 
 import { readFileSync } from 'node:fs';
@@ -100,7 +131,7 @@ export const UPLOAD_BASE = 'https://uploads.github.com';
 export const TOKEN_VARS = ['GITHUB_TOKEN', 'GH_TOKEN'];
 
 /** The options this command understands. Anything else is a typo, not a default. */
-export const KNOWN_FLAGS = ['feed-file', 'dry-run', 'apply', 'verify'];
+export const KNOWN_FLAGS = ['feed-file', 'preflight', 'dry-run', 'apply', 'verify'];
 
 /** Reads `--flag value` pairs out of argv, the way its two sibling scripts do. */
 export function parseArgs(argv) {
@@ -266,6 +297,205 @@ export function planLines({ feedFile, document, tag, repo, token, bytes = null, 
   ];
 }
 
+/**
+ * The URL the published feed asset is served from — the one `--apply` replaces.
+ *
+ * Derived from the same two facts the upload addresses (`repo`, `tag`), so the
+ * address `--preflight` reads and the asset `--apply` overwrites cannot drift
+ * apart: they are one expression.
+ */
+export function publishedFeedUrl(repo, tag) {
+  return `https://github.com/${repo}/releases/download/${tag}/${ASSET_NAME}`;
+}
+
+/**
+ * What the upload changes about the judgement, as three lists of finding codes.
+ *
+ * `fixed` is the point of the whole command — the findings that are on the
+ * published document and not on the one about to replace it. `remaining` is the
+ * honest half: a finding both documents share is not fixed by uploading, and a
+ * preflight that only printed `fixed` would let a reader believe the upload
+ * closes everything. `introduced` is the direction nobody expects and the one
+ * worth printing anyway: a document that brings a finding the published one did
+ * not have is a change that makes the feed worse, and it should be visible
+ * before the upload rather than after it.
+ */
+export function diffFindings(before, after) {
+  const beforeCodes = new Set(before.map((entry) => entry.code));
+  const afterCodes = new Set(after.map((entry) => entry.code));
+  return {
+    fixed: [...beforeCodes].filter((code) => !afterCodes.has(code)),
+    remaining: [...afterCodes].filter((code) => beforeCodes.has(code)),
+    introduced: [...afterCodes].filter((code) => !beforeCodes.has(code)),
+  };
+}
+
+/** The fields a feed document carries, in the order a reader reads them. */
+const FIELD_ORDER = ['version', 'url', 'sha256', 'size', 'notes'];
+
+/**
+ * One field's value, as it prints.
+ *
+ * Only `notes` is shortened. Every other field is a value the reader has to be
+ * able to compare byte for byte — the whole point of the `url` line is that
+ * `releases/latest` becomes `releases/download/v1.0.0`, and a truncated URL
+ * would hide exactly the part that changed. `notes` is free text, so it is the
+ * one field where a long value would push the rest of the report off the screen.
+ */
+function fieldValue(key, value) {
+  if (value === undefined) return '(absent)';
+  if (typeof value !== 'string') return JSON.stringify(value);
+  if (key === 'notes' && value.length > 72) return `${value.slice(0, 69)}…`;
+  return value;
+}
+
+/**
+ * The fields that change, as `before → after` lines.
+ *
+ * The judgement diff says *which rules* the upload satisfies; this says *which
+ * bytes* change, which is what a reader checking the plan against the release
+ * page needs. A field that is the same on both sides is printed as `(unchanged)`
+ * rather than omitted: "the upload does not touch `version`" is a fact worth
+ * reading, and an omitted line reads as "not checked".
+ */
+export function fieldDiffLines(before, after) {
+  const keys = [...new Set([...Object.keys(before ?? {}), ...Object.keys(after ?? {})])];
+  const ordered = [
+    ...FIELD_ORDER.filter((key) => keys.includes(key)),
+    ...keys.filter((key) => !FIELD_ORDER.includes(key)),
+  ];
+  return ordered.map((key) => {
+    const from = before?.[key];
+    const to = after?.[key];
+    if (JSON.stringify(from) === JSON.stringify(to)) {
+      return `[preflight] field ${key}: ${fieldValue(key, to)} (unchanged)`;
+    }
+    return `[preflight] field ${key}: ${fieldValue(key, from)} → ${fieldValue(key, to)}`;
+  });
+}
+
+/**
+ * The two verdicts, as the sentences that print them.
+ *
+ * The exit code is the answer to one question — *is the published feed still
+ * the broken one?* — and a code with no sentence next to it is a code the
+ * reader has to look up. Both lines say which way round it is, so the answer
+ * survives being copied into a terminal transcript.
+ */
+export const PREFLIGHT_VERDICT = {
+  broken:
+    '[preflight] verdict: the published feed is still the broken one — exit 0 means "still broken, run --apply --verify"',
+  fixed:
+    '[preflight] verdict: the published feed is already the corrected one — exit 1 means "nothing to replace"',
+};
+
+/**
+ * The preflight report, as the lines it prints. Pure, so it can be asserted.
+ *
+ * Both judgements are printed in full, with the same `findingLine()` the
+ * `--apply` path uses: a preflight that summarised them ("2 problems") would be
+ * a second, lossier printer of the same facts, and the reader comparing this
+ * output with `verify-release-feed.mjs` would have to trust that the summary
+ * meant the same thing.
+ */
+export function preflightLines({ feedFile, publishedUrl, before, after, diff, fields }) {
+  const list = (codes) => (codes.length === 0 ? '(none)' : codes.join(', '));
+  return [
+    `[preflight] before: ${before.length} finding(s) on the published document`,
+    ...before.map((entry) => findingLine(entry)),
+    `[preflight] after: ${after.length} finding(s) on ${feedFile}`,
+    ...after.map((entry) => findingLine(entry)),
+    `[preflight] fixed by this upload: ${list(diff.fixed)}`,
+    `[preflight] still there after the upload: ${list(diff.remaining)}`,
+    `[preflight] introduced by this upload: ${list(diff.introduced)}`,
+    ...fields,
+    `[preflight] overwrites: ${publishedUrl}`,
+    '[preflight] writes: none — this run only read the published document',
+  ];
+}
+
+/**
+ * Reads the published feed, judges it, and compares it with the document that
+ * would replace it. One `GET`, no writes, no token required.
+ *
+ * The token is used when it is there (a private repository's asset is not
+ * anonymous) and never printed; without one the request is anonymous, which is
+ * enough for the repository this command ships with. A host that does not
+ * answer is not a verdict: the run says nothing was compared and exits 1,
+ * because "the feed is fine" and "the feed was never read" must not look alike.
+ */
+export async function runPreflight({
+  feedFile,
+  document,
+  after,
+  expectedVersion,
+  tag,
+  repo,
+  token,
+  rules,
+  fetchImpl,
+  out,
+  err,
+}) {
+  const publishedUrl = publishedFeedUrl(repo, tag);
+  out(`[preflight] target: ${ASSET_NAME} on ${repo} ${tag}`);
+  out(
+    `[preflight] GET ${publishedUrl} (read-only${token === null ? ', anonymous' : `, with ${token.name}`})`,
+  );
+
+  let response;
+  try {
+    response = await fetchImpl(publishedUrl, {
+      redirect: 'follow',
+      headers: token === null ? {} : { authorization: `Bearer ${token.value}` },
+    });
+  } catch (error) {
+    err(
+      `[preflight] unreachable: GET ${publishedUrl} failed (${error instanceof Error ? error.message : String(error)}) ` +
+        '— nothing was compared and nothing was written',
+    );
+    return 1;
+  }
+  if (!response.ok) {
+    err(
+      `[preflight] unreachable: GET ${publishedUrl} answered ${response.status} — nothing was compared ` +
+        'and nothing was written',
+    );
+    return 1;
+  }
+
+  const raw = await response.text();
+  let published = null;
+  let before;
+  try {
+    published = JSON.parse(raw);
+    before = judgeFeedDocument(published, { expectedVersion, rules });
+  } catch {
+    // A published feed that is not JSON is a finding, not a crash: it is one of
+    // the ways the feed is wrong, and the diff below is still worth printing.
+    before = [{ code: 'feed-not-json', detail: `${raw.length} bytes that do not parse` }];
+  }
+
+  const diff = diffFindings(before, after);
+  for (const line of preflightLines({
+    feedFile,
+    publishedUrl,
+    before,
+    after,
+    diff,
+    fields: fieldDiffLines(published, document),
+  })) {
+    out(line);
+  }
+
+  if (hasFailure(before)) {
+    out(PREFLIGHT_VERDICT.broken);
+    return 0;
+  }
+  out(PREFLIGHT_VERDICT.fixed);
+  return 1;
+}
+
 /** Writes to stdout, in the shape the tests capture. */
 const write = (line) => process.stdout.write(`${line}\n`);
 const writeErr = (line) => process.stderr.write(`${line}\n`);
@@ -295,6 +525,17 @@ export async function publishFeed({
   }
   const args = parseArgs(argv);
   const dryRun = args['dry-run'] === true;
+  if (args.preflight === true && (args.apply === true || dryRun)) {
+    // `--preflight` reads the published feed; `--dry-run` promises that nothing
+    // is fetched at all, and `--apply` writes. Asking for two of the three on
+    // one line means the caller is not sure which one they want, and the
+    // difference between them is "reads the host" and "deletes an asset".
+    err(
+      'refused: --preflight is its own run — it reads the published feed and writes nothing. ' +
+        'Run it alone, then `--dry-run` for the plan, then `--apply --verify`.',
+    );
+    return 1;
+  }
   if (dryRun && args.apply === true) {
     // Two opposite intents on one command line: the caller does not know what
     // it wants, and picking one for it is how a release step runs while the
@@ -321,10 +562,12 @@ export async function publishFeed({
   // The judgement first, and before the token: a bad document must not be
   // publishable by whoever happens to hold credentials.
   const appRules = rules ?? (await loadAppRules());
-  const findings = judgeFeedDocument(document, {
-    expectedVersion: typeof document?.version === 'string' ? document.version : '',
-    rules: appRules,
-  });
+  // One expected version, used by both judgements: the document about to be
+  // uploaded and the document already published are judged against the same
+  // release, so the diff `--preflight` prints compares two documents and not
+  // two questions.
+  const expectedVersion = typeof document?.version === 'string' ? document.version : '';
+  const findings = judgeFeedDocument(document, { expectedVersion, rules: appRules });
   for (const entry of findings) err(findingLine(entry));
   if (hasFailure(findings)) {
     err('');
@@ -344,6 +587,23 @@ export async function publishFeed({
   }
 
   const token = tokenFromEnv(env);
+
+  if (args.preflight === true) {
+    return runPreflight({
+      feedFile,
+      document,
+      after: findings,
+      expectedVersion,
+      tag,
+      repo,
+      token,
+      rules: appRules,
+      fetchImpl,
+      out,
+      err,
+    });
+  }
+
   const plan = planLines({
     feedFile,
     document,
