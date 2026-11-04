@@ -401,6 +401,178 @@ export function buildReport({ platform, build, requested, driven, passed, failed
 }
 
 /**
+ * Where the report's declared shape lives.
+ *
+ * The shape used to be asserted only by the code that read it: `judgeReport()`
+ * asked `typeof report.platform === 'string'` and so on, one field at a time.
+ * That is a shape nobody can read without opening the script — and the person
+ * who judges a report from a Windows machine is usually not the person who wrote
+ * it. So the shape is a document (`docs/manual-verification/report-schema.json`),
+ * the judgement validates against it, and the two are held together by
+ * `tests/contract/main-chain-report-schema.test.ts`: a report `buildReport()`
+ * writes validates, and a field removed from the schema stops being required.
+ *
+ * The schema is the *shape*, not the verdict. Whether a report closes the
+ * Windows row is still `judgeReport()`'s answer, because the questions that
+ * matter there are not about types: is `platform` the platform the row is
+ * about, is `build.version` this repository's version, is every driven step
+ * present and `pass`, and does every `pass` carry a line the step recorded.
+ */
+export const REPORT_SCHEMA_PATH = '../docs/manual-verification/report-schema.json';
+
+let cachedSchema = null;
+
+/** The declared shape, read once. Throws with the path when the file is gone. */
+export function loadReportSchema() {
+  if (cachedSchema !== null) return cachedSchema;
+  try {
+    cachedSchema = JSON.parse(readFileSync(new URL(REPORT_SCHEMA_PATH, import.meta.url), 'utf8'));
+  } catch (error) {
+    throw new Error(
+      `the report schema is missing or unreadable (${REPORT_SCHEMA_PATH}): ` +
+        `${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+  return cachedSchema;
+}
+
+/** The JSON type of a value, in the schema's vocabulary. */
+function jsonTypeOf(value) {
+  if (value === null) return 'null';
+  if (Array.isArray(value)) return 'array';
+  if (typeof value === 'number') return Number.isInteger(value) ? 'integer' : 'number';
+  return typeof value;
+}
+
+/**
+ * Every way a value does not match a schema node, as `{ path, keyword, detail }`.
+ *
+ * A deliberately small subset of JSON Schema — `type`, `required`, `properties`,
+ * `items`, `enum`, `minItems`, `minLength`, `minimum` — because that is the whole
+ * of what a report needs and a dependency for the rest would be a dependency
+ * this repository does not have. The subset is not a claim of conformance: a
+ * keyword this walker does not know is ignored, so the schema file must stay
+ * inside the subset. `main-chain-report-schema.test.ts` walks the schema and
+ * fails on a keyword the walker would skip, which is the only way "ignored" can
+ * be safe.
+ *
+ * `path` is a dotted/bracketed location (`build.version`, `steps[2].verdict`)
+ * so a reader can be told *where* the file is wrong, not only that it is.
+ */
+export function validateReportShape(value, schema = loadReportSchema()) {
+  const violations = [];
+
+  const walk = (current, node, path) => {
+    if (node === null || typeof node !== 'object') return;
+
+    if (node.type !== undefined) {
+      const allowed = Array.isArray(node.type) ? node.type : [node.type];
+      const actual = jsonTypeOf(current);
+      // `integer` is a `number` that happens to be whole, so a schema that
+      // allows `number` must not reject `3`.
+      const matches =
+        allowed.includes(actual) || (actual === 'integer' && allowed.includes('number'));
+      if (!matches) {
+        violations.push({
+          path,
+          keyword: 'type',
+          detail: `expected ${allowed.join(' | ')}, found ${actual}`,
+        });
+        // Nothing below a wrong type can be judged: `steps` that is a string has
+        // no rows to walk, and reporting one violation per missing field would
+        // bury the one that matters.
+        return;
+      }
+    }
+
+    if (Array.isArray(node.enum) && !node.enum.includes(current)) {
+      violations.push({ path, keyword: 'enum', detail: JSON.stringify(current) });
+    }
+    if (
+      typeof node.minLength === 'number' &&
+      typeof current === 'string' &&
+      current.length < node.minLength
+    ) {
+      violations.push({ path, keyword: 'minLength', detail: `${current.length} < ${node.minLength}` });
+    }
+    if (typeof node.minimum === 'number' && typeof current === 'number' && current < node.minimum) {
+      violations.push({ path, keyword: 'minimum', detail: `${current} < ${node.minimum}` });
+    }
+    if (typeof node.minItems === 'number' && Array.isArray(current) && current.length < node.minItems) {
+      violations.push({ path, keyword: 'minItems', detail: `${current.length} < ${node.minItems}` });
+    }
+
+    if (current !== null && typeof current === 'object' && !Array.isArray(current)) {
+      for (const key of Array.isArray(node.required) ? node.required : []) {
+        if (!Object.hasOwn(current, key)) {
+          violations.push({
+            path: path === '' ? key : `${path}.${key}`,
+            keyword: 'required',
+            detail: key,
+          });
+        }
+      }
+      for (const [key, child] of Object.entries(node.properties ?? {})) {
+        if (!Object.hasOwn(current, key)) continue;
+        walk(current[key], child, path === '' ? key : `${path}.${key}`);
+      }
+    }
+
+    if (Array.isArray(current) && node.items !== undefined) {
+      current.forEach((entry, index) => walk(entry, node.items, `${path}[${index}]`));
+    }
+  };
+
+  walk(value, schema, '');
+  return violations;
+}
+
+/**
+ * The sentence a shape violation gets, in the words the judgement already used.
+ *
+ * The messages are not new: they are the ones `judgeReport()` printed when it
+ * checked each field by hand, kept because they say what the reader should do
+ * next (run it again on Windows, run it again on this build, cover the step).
+ * What changed is where the *shape* comes from — the schema file — so a field
+ * added to a report is added in one place and the judgement follows.
+ */
+export function reportShapeProblem(violation, report) {
+  const { path, keyword } = violation;
+  if (path === '' && keyword === 'type') {
+    return 'the file is not a report object — nothing in it says what was run';
+  }
+  if (path === 'platform') {
+    return 'the report does not say which platform the run happened on, so it cannot close a row about one';
+  }
+  if (path === 'build.version') {
+    return 'the report does not say which build it measured, so a later version bump could not invalidate it';
+  }
+  if (path === 'steps' && keyword === 'required') {
+    return 'the report has no `steps` array, so there is nothing per step to read';
+  }
+  if (path === 'steps' && keyword === 'minItems') {
+    return 'the report has an empty `steps` array — a run that recorded no step does not cover the row';
+  }
+  const step = /^steps\[(\d+)\]\.(.+)$/.exec(path);
+  if (step !== null) {
+    const row = Array.isArray(report?.steps) ? report.steps[Number(step[1])] : undefined;
+    const n = typeof row?.n === 'number' ? row.n : `#${Number(step[1]) + 1}`;
+    if (step[2] === 'verdict') {
+      return `step ${n} carries the verdict \`${row?.verdict}\`, which is not one of pass / fail / skip`;
+    }
+    if (step[2] === 'evidence') {
+      return row?.verdict === 'pass'
+        ? `step ${n} says it passed but carries no evidence line — a pass with nothing behind it is a claim, not a result; run it again so the step records what it saw`
+        : `step ${n} carries no evidence array, so the row says nothing about what it saw`;
+    }
+  }
+  return (
+    `the report does not match ${REPORT_SCHEMA_PATH.replace('../', '')} at ` +
+    `${path === '' ? '(root)' : path}: ${violation.detail}`
+  );
+}
+
+/**
  * The lines `buildReport()` writes into a row that recorded nothing.
  *
  * They are honest text in the file — "this step said nothing" is a fact — but
@@ -464,19 +636,18 @@ export function judgeReport(
   const problems = [];
   const rows = [];
 
-  if (report === null || typeof report !== 'object' || Array.isArray(report)) {
-    return {
-      ok: false,
-      rows,
-      problems: ['the file is not a report object — nothing in it says what was run'],
-    };
+  // The shape first, from the schema file rather than from a list of `typeof`
+  // checks here: a report that does not match the declared shape is not judged
+  // further, because the shape is the precondition for every question below.
+  // `docs/manual-verification/report-schema.json` is what a reader can read
+  // without opening this script, and `main-chain-report-schema.test.ts` holds
+  // the two together.
+  const shape = validateReportShape(report);
+  if (shape.length > 0) {
+    return { ok: false, rows, problems: shape.map((violation) => reportShapeProblem(violation, report)) };
   }
 
-  if (typeof report.platform !== 'string' || report.platform.trim().length === 0) {
-    problems.push(
-      'the report does not say which platform the run happened on, so it cannot close a row about one',
-    );
-  } else if (report.platform !== expectedPlatform) {
+  if (report.platform !== expectedPlatform) {
     problems.push(
       `the report was written on ${report.platform}, and this row is about ${expectedPlatform} — ` +
         'a run on another platform is a real result about that platform, not about this one',
@@ -497,16 +668,10 @@ export function judgeReport(
     }
   }
 
-  const reported = Array.isArray(report.steps) ? report.steps : null;
-  if (reported === null) {
-    problems.push('the report has no `steps` array, so there is nothing per step to read');
-    return { ok: false, rows, problems };
-  }
-  if (reported.length === 0) {
-    problems.push(
-      'the report has an empty `steps` array — a run that recorded no step does not cover the row',
-    );
-  }
+  // The schema has already established that `steps` is a non-empty array of
+  // rows with an `n`, a `verdict` and an `evidence` array, so nothing here has
+  // to ask about types again — only about what the rows say.
+  const reported = report.steps;
 
   for (const step of steps) {
     const row = reported.find((entry) => entry?.n === step);

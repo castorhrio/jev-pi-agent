@@ -216,7 +216,9 @@ or it cannot tell a gap from a finished item.
   runs it, 1.1.0 must not ship — and that is enforced, not remembered:
   `npm run dist` runs `node scripts/release-gate.mjs` before `electron-builder`
   and refuses to produce an installer while the published feed is one the app
-  will not install from.
+  will not install from. That refusal can be watched on a machine
+  that cannot publish anything: `node scripts/release-gate.mjs --simulate-missing-sha`
+  prints the same `REFUSED` lines offline and exits 1.
 - **The Windows run of the manual checklist has not happened.** Steps 1–5 are
   driven by `node scripts/verify-main-chain.mjs`, and they have run on a Linux
   desktop session; Windows is a different platform (DPAPI, tray, NSIS), so the
@@ -419,7 +421,8 @@ npm run package  # 免安装目录，不出安装包
   拒绝执行——本机没有这个令牌，所以这一步是**卡住**的，不是没做完的。在拿到令牌的人
   跑完它之前，1.1.0 不许发布——而且这句是**被执行的**，不是靠人记得：
   `npm run dist` 会在 `electron-builder` 之前跑 `node scripts/release-gate.mjs`，
-  只要已发布的 feed 仍是应用拒绝安装的那一份，它就不出安装包。
+  只要已发布的 feed 仍是应用拒绝安装的那一份，它就不出安装包。这次拒绝在没有发布权限的机器上也能**看见**：
+  `node scripts/release-gate.mjs --simulate-missing-sha` 离线打印同一份 `REFUSED` 文案并退出 1。
 - **Windows 上的手工清单还没有真机跑过。** 步骤 1–5 由
   `node scripts/verify-main-chain.mjs` 驱动，目前只在 Linux 桌面会话里跑通过；
   Windows 是另一个平台（DPAPI、托盘、NSIS），发布前仍要在那里跑一次。

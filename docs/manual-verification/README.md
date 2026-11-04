@@ -122,6 +122,23 @@ PASS — the report covers steps 1, 2, 3, 4, 5 on win32 against build 1.0.0
 `build.version` 必须等于本仓库 `package.json` 的版本。版本一升，旧报告就判红——
 「关于另一个构建的报告只证明另一个构建」，那时的正确答案是重跑，不是「我们跑过了」。
 
+### 形状的出处：`docs/manual-verification/report-schema.json`
+
+上面那段 JSON 不是举例，它有一个**可读的出处**：`docs/manual-verification/report-schema.json`
+（JSON Schema 2020-12）。`--judge` 先按这份 schema 校验形状，再问 schema 问不了的那几件事
+（`platform` 是不是这一行要的平台、`build.version` 是不是本仓库的版本、每一步在不在且是不是
+`pass`、每个 `pass` 有没有带证据行）。所以拿到一份报告的人**不必读脚本**就能知道它该长什么样：
+
+- 根上五个字段 `platform` / `build` / `ranAt` / `steps` / `note` 都必填；
+- `build` 必填 `executable` 与 `version`（`sizeBytes` / `modifiedAt` 可空，它们只用来区分两次跑分）；
+- `steps` 至少一行，每行必填 `n` / `verdict` / `evidence`，`verdict` 只能是 `pass` / `fail` / `skip`，
+  `evidence` 至少一条字符串。
+
+形状不对的报告**不再往下判**——形状是后面每一个问题的前提。这条边界由
+`tests/contract/main-chain-report-schema.test.ts` 钉住：`buildReport()` 写出来的报告必须过 schema，
+把某个字段从 schema 的 `required` 里删掉之后同一份报告就不再被拒（证明 schema 是事实来源，
+不是脚本旁边的装饰），schema 里出现的每个关键字都必须是校验器真的实现了的那几个。
+
 ## 六、不许做什么
 
 - **不许手写一份报告。** 报告是文档，文档可以手写，所以手写出来的东西和真报告长得一样；

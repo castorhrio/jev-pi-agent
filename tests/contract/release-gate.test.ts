@@ -444,7 +444,14 @@ describe('the gate does not restate the feed’s rules', () => {
   it('takes no option that would let a document on disk stand in for the published feed', () => {
     // `--feed-file` names a document; this gate's question is about the bytes
     // the release publishes. Keeping the flag list short is the assertion.
-    expect(KNOWN_FLAGS).toEqual(['from-json', 'help']);
+    //
+    // `--simulate-missing-sha` is on the list and is not an exception to it: it
+    // fetches nothing and judges nothing on disk — it prints the refusal for the
+    // feed that is already published, and exits 1 doing it
+    // (`tests/contract/release-gate-simulation.test.ts` pins both halves). The
+    // list is written out rather than counted so that adding a fourth flag is a
+    // decision someone makes here, in front of this comment.
+    expect(KNOWN_FLAGS).toEqual(['from-json', 'help', 'simulate-missing-sha']);
     expect(code, 'the gate must not grow a feed-file mode').not.toContain('feed-file');
   });
 });

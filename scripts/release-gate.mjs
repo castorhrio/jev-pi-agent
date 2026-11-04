@@ -68,6 +68,11 @@
  * node scripts/release-gate.mjs --from-json saved-run.json
  * ```
  *
+ * `--simulate-missing-sha` prints the refusal this gate produces for the feed
+ * that is on the release today, without fetching anything — see
+ * `simulateMissingShaRun()`. It is a demonstration of the refusal path, not a
+ * way to pass it: the run it prints is `refused` and the exit code is 1.
+ *
  * `--from-json <path>` judges a saved `verify-release-feed.mjs --json` run
  * instead of fetching. Its stated use is a pipeline that runs the check once and
  * gates on the artefact — and a machine that has the JSON but no route to the
@@ -84,7 +89,14 @@ import { readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
-import { FEED_FINDING_SEVERITY, findingLine, packageVersion, summaryLine } from './verify-release-feed.mjs';
+import {
+  FEED_FINDING_SEVERITY,
+  findingLine,
+  judgeFeedDocument,
+  loadAppRules,
+  packageVersion,
+  summaryLine,
+} from './verify-release-feed.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, '..');
@@ -204,8 +216,71 @@ export function readSavedRun(path) {
   return run;
 }
 
+/**
+ * The feed document the v1.0.0 release publishes, as `verify-release-feed.mjs`
+ * measured it on 2026-11-04: a version, notes, and a `releases/latest` URL —
+ * no `sha256`, no `size`.
+ *
+ * It is data, not a rule: the judgement below is `judgeFeedDocument()`, the
+ * same function the writer and the verifier use, so this constant cannot drift
+ * into a second opinion about what is wrong with the feed. It exists so the
+ * refusal can be *seen* on a machine with no token, no route to the release
+ * host, and no way to publish anything — which is every machine this repository
+ * is developed on.
+ */
+export const PUBLISHED_V1_FEED = Object.freeze({
+  version: '1.0.0',
+  notes:
+    'First release published on GitHub Releases. Layout order restored; transcript no longer ' +
+    'amputates history; handoff chain visible on open; failed reads reported instead of ' +
+    'rendered as empty.',
+  url: 'https://github.com/castorhrio/jev-pi-agent/releases/latest/download/UCAD-Setup-1.0.0.exe',
+});
+
+/**
+ * The envelope a real run over the published feed produces, built offline.
+ *
+ * ## Why this is not a new feature
+ *
+ * The refusal already exists: `npm run dist` runs this gate, the gate fetches
+ * the published feed, and the feed is refused. What did not exist was a way to
+ * *watch* that happen without a route to `github.com` — so the one thing this
+ * repository is blocked on was described in three documents and demonstrable in
+ * none of them. A reader had to take the documents' word for it.
+ *
+ * So this builds the same envelope the fetch would have produced, by handing the
+ * published document to the same `judgeFeedDocument()` the verifier uses, and
+ * returns it to the same `report()` printer. Nothing about the decision is
+ * restated: the findings, their severities, their sentences and the verdict line
+ * are the ones a real run prints. `tests/contract/release-gate-simulation.test.ts`
+ * asserts that line for line against a saved run of the published feed.
+ *
+ * ## What it deliberately leaves out
+ *
+ * The installer HEAD. A real run also asks the host whether the installer is
+ * served at the size the feed claims; this one does not, because it does not
+ * touch the network at all. That check cannot change the verdict here — the
+ * document findings already refuse — and the simulation says which half it
+ * skipped rather than printing a `PASS` that would read as a complete run.
+ */
+export function simulateMissingShaRun({ rules, expectedVersion }) {
+  const findings = judgeFeedDocument(PUBLISHED_V1_FEED, { rules, expectedVersion });
+  return {
+    findings,
+    notChecked: [
+      'the installer URL: not fetched (--simulate-missing-sha never touches the network)',
+    ],
+    expectedVersion,
+    incomplete: false,
+  };
+}
+
+/** The `source:` line a simulated run prints, so it cannot read as a measurement. */
+export const SIMULATED_SOURCE =
+  'SIMULATED — the v1.0.0 feed as published, judged by the app’s own rules; nothing was fetched';
+
 /** The options this command understands. Anything else is a typo, not a default. */
-export const KNOWN_FLAGS = ['from-json', 'help'];
+export const KNOWN_FLAGS = ['from-json', 'help', 'simulate-missing-sha'];
 
 /** `--options` in argv this command does not know, so a typo cannot be ignored. */
 export function unknownFlags(argv) {
@@ -301,11 +376,15 @@ function refuseUnreadable(why) {
 
 export function usage() {
   return [
-    'usage: node scripts/release-gate.mjs [--from-json <path>]',
+    'usage: node scripts/release-gate.mjs [--from-json <path>] [--simulate-missing-sha]',
     '',
     'Judges the *published* feed and refuses a release build while it is wrong.',
     'Runs `scripts/verify-release-feed.mjs --json` unless --from-json names a saved run.',
     'Exit 0 only when the run has no failures and nothing was skipped.',
+    '',
+    '--simulate-missing-sha prints the refusal for the feed on the release today,',
+    'offline, so the blocked step can be seen on a machine that cannot publish. It',
+    'is a demonstration: the verdict is `refused` and the exit code is 1.',
   ].join('\n');
 }
 
@@ -324,7 +403,27 @@ export async function main(argv) {
     return 0;
   }
 
+  const simulate = args['simulate-missing-sha'] === true;
   const saved = typeof args['from-json'] === 'string' ? args['from-json'] : null;
+  if (simulate && saved !== null) {
+    throw new Error(
+      '--simulate-missing-sha and --from-json ask different questions: one prints the refusal ' +
+        'for the published feed, the other judges a saved run. Pass one of them.',
+    );
+  }
+  if (simulate) {
+    let rules;
+    try {
+      rules = await loadAppRules();
+    } catch (error) {
+      return refuseUnreadable(error instanceof Error ? error.message : String(error));
+    }
+    return report({
+      run: simulateMissingShaRun({ rules, expectedVersion: packageVersion() }),
+      source: SIMULATED_SOURCE,
+    });
+  }
+
   if (saved !== null) {
     let run;
     try {

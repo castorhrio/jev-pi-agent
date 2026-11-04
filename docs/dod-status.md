@@ -46,6 +46,24 @@
 | DOD-6.1 | token 来源（厂商 tokenizer vs 启发式）上屏 | 通过 | `apps/desktop/src/renderer/src/components/ContextDrawer.tsx` `apps/desktop/src/renderer/src/components/PreviewPane.tsx` | — |
 | DOD-6.2 | 凭据进 OS 钥匙串，不经环境变量/日志泄露 | 通过 | `apps/desktop/src/main/keyring-gate.ts` `tests/contract/keyring-gate.test.ts` `tests/contract/secret-vault.test.ts` `tests/contract/host-secret-channel.test.ts` | — |
 
+## 本轮 DoD 加载来源与未勾项（2026-11-05）
+
+**加载来源**：`/opt/agent-scheduler/docs/product-dod/jev-pi-agent-dod.md`（与 `/opt/agent-control/docs/product-dod/jev-pi-agent-dod.md`、
+本仓 `docs/PRODUCT-DOD.md` 逐字相同，`diff` 为空）。控制面 `projects/jev_pi_agent.json` **没有** `dod_passed_at`，
+所以本轮不是「已过线停扩」，但按「DoD 勾满即停扩」的原则，本轮仍然只做阻塞项，不加功能。
+
+**未勾项逐条**（与上面四态表一一对应，不另立一份事实）：
+
+| 条目 | 四态 | 现在能跑的命令 | 期望 |
+|---|---|---|---|
+| DOD-4.1 Releases 上 NSIS 可装 | 外部阻塞 | `node scripts/verify-main-chain.mjs --judge docs/manual-verification/win-YYYYMMDD.json` | 退出 0；没有报告时退出 1 并指名缺哪一步。报告的形状见 `docs/manual-verification/report-schema.json` |
+| DOD-4.2 更新 feed `https` + `sha256` 校验 | 未过 | `node scripts/verify-release-feed.mjs` | 退出 0；今天退出 1，`no-sha256` + `installer-latest-url` |
+| DOD-4.2（离线演示） | 未过 | `node scripts/release-gate.mjs --simulate-missing-sha` | 退出 1，打印与真实 `npm run dist` 被挡时同一份 `REFUSED` 文案；不需要令牌、不联网 |
+
+第三条是本轮新增的：它把「已发布的 feed 缺 `sha256`」从三份文档里的描述，变成任何一台没有令牌的机器上
+都能**看见**的一次拒绝。它不改变判定——判定仍是 `judgeFeedDocument()`，模拟只是把同一份判定离线跑一遍，
+并在 `source:` 与 `[skipped]` 两行里说清「这是模拟、没有联网」。
+
 ## 按轮次的历史对照（旧表，保留原文）
 
 下面这张表是**上一版**的对照表，按 DoD 的六条**大项**记，每格一段历史。它不再被门禁读取

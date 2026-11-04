@@ -1,0 +1,76 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/castorhrio/jev-pi-agent/docs/manual-verification/report-schema.json",
+  "title": "UCAD main-chain report",
+  "description": "The document `node scripts/verify-main-chain.mjs --report <file>` writes on a machine that ran steps 1-5, and the document `--judge <file>` reads back. This file is the shape, not the verdict: it says which fields a report has and what type each one is. Whether a report closes the Windows row is decided by `judgeReport()` in `scripts/verify-main-chain.mjs`, which validates against this schema first and then asks the questions a schema cannot: is `platform` the platform the row is about, is `build.version` this repository's version, is every driven step present and `pass`, and does every `pass` carry an evidence line the step recorded. A report that does not match this shape is not judged further — the shape is the precondition for every other question.",
+  "type": "object",
+  "required": ["platform", "build", "ranAt", "steps", "note"],
+  "properties": {
+    "platform": {
+      "type": "string",
+      "minLength": 1,
+      "description": "`process.platform` of the machine that ran the steps. The Windows row needs `win32`; a report from another platform is a real result about that platform, and `judgeReport()` refuses it by name rather than reading it as a Windows run."
+    },
+    "build": {
+      "type": "object",
+      "required": ["executable", "version"],
+      "description": "Which build was measured. Only the two fields the judgement reads are required: `executable` (what was launched) and `version` (what `judgeReport()` compares against this repository). `sizeBytes` and `modifiedAt` are declared but optional — they are what a reader uses to tell two runs of the same path apart, and `buildReport()` always writes them, but no verdict depends on them. Every field but `executable` may be null: this is a description, not a check.",
+      "properties": {
+        "executable": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Absolute path of the executable that was launched."
+        },
+        "version": {
+          "type": ["string", "null"],
+          "description": "The version in `package.json` at the time of the run. `judgeReport()` compares it against this repository's version: a report about another build proves something about another build."
+        },
+        "sizeBytes": {
+          "type": ["integer", "null"],
+          "minimum": 0,
+          "description": "Size of the executable in bytes, or null when it could not be read."
+        },
+        "modifiedAt": {
+          "type": ["string", "null"],
+          "description": "ISO-8601 mtime of the executable, or null when it could not be read."
+        }
+      }
+    },
+    "ranAt": {
+      "type": "string",
+      "minLength": 1,
+      "description": "ISO-8601 timestamp of the run. Not judged — it is what a reader uses to tell two reports apart."
+    },
+    "steps": {
+      "type": "array",
+      "minItems": 1,
+      "description": "One row per step the script can drive, not only the ones this run was asked for: a partial run (`--steps 1,4`) has to read as \"2, 3 and 5 were not covered\" rather than as a report that happens to have two rows.",
+      "items": {
+        "type": "object",
+        "required": ["n", "verdict", "evidence"],
+        "properties": {
+          "n": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "The step number, 1-5. Step 6 is the five fixture states a person walks by eye under `npm run dev:web`; no report closes it."
+          },
+          "verdict": {
+            "enum": ["pass", "fail", "skip"],
+            "description": "`pass` and `fail` are the run's own. `skip` is a step the run was not asked for, kept rather than dropped so a reader comparing two reports sees what the second one did not cover. A step that was asked for and reached neither verdict is written as `fail`."
+          },
+          "evidence": {
+            "type": "array",
+            "minItems": 1,
+            "items": { "type": "string" },
+            "description": "The lines the step recorded, as `<n>:<key>=<value>`. Never empty: a step with nothing to say gets a sentence saying so, because an empty list reads as \"nothing to say\". `judgeReport()` does not count that sentence as evidence — a `pass` with nothing behind it is a claim, not a result."
+          }
+        }
+      }
+    },
+    "note": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The report's own statement of what it is: a record of what a run printed, which cannot prove the steps were performed on the machine `platform` names. Written by `buildReport()` so a reader who never opens the script still knows what they are holding."
+    }
+  }
+}
