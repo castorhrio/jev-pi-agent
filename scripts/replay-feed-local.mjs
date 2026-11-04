@@ -22,8 +22,8 @@
  * the release: replacing it needs a token with `contents: write` (see
  * `docs/blockers.md`), and that is not this file's problem. What this file can
  * do is take the corrected document — the committed bytes, unchanged — and put
- * it behind a real address, so the two real commands can judge it over the
- * wire instead of over a fixture.
+ * it behind a real address, so the two real commands can judge it over the wire
+ * instead of over a fixture.
  *
  * ## What it does
  *
@@ -172,11 +172,11 @@ export function sha256Hex(bytes) {
 }
 
 /**
- * The replica's request handler: one document, one path.
+ * Serves the document on `127.0.0.1`, over TLS when a certificate is given.
  *
- * A second path is a 404 rather than the same document, because "it served
- * something" and "it served the feed at the address the verifier fetched" are
- * different facts, and only the second one is the proof.
+ * The cleartext form exists so the handler can be exercised without generating
+ * a certificate; this command never uses it, because the address rule under
+ * test is https-only.
  */
 export function documentHandler(bytes) {
   return (req, res) => {
@@ -235,6 +235,9 @@ export async function startReplica(bytes, options = {}) {
  * `spawn` is a parameter so the missing-openssl branch can be shown rather than
  * described: the failure a reader without openssl will actually meet is the
  * message, and a message nothing exercises is a message that rots.
+ *
+ * `-sha256` is explicit so the command works on OpenSSL 3.x where the default
+ * digest for `req -x509` may be rejected by the configured digest list.
  */
 export function makeSelfSignedCertificate(dir, spawn = spawnSync) {
   const keyPath = join(dir, 'key.pem');
@@ -247,6 +250,7 @@ export function makeSelfSignedCertificate(dir, spawn = spawnSync) {
       '-newkey',
       'rsa:2048',
       '-nodes',
+      '-sha256',
       '-keyout',
       keyPath,
       '-out',

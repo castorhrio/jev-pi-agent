@@ -24,6 +24,7 @@ export default tseslint.config(
       '**/release/**',
       '.run-logs/**',
       'packages/*/dist/**',
+      '.scratch/**',
     ],
   },
 
