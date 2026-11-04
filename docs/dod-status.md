@@ -64,6 +64,12 @@
 都能**看见**的一次拒绝。它不改变判定——判定仍是 `judgeFeedDocument()`，模拟只是把同一份判定离线跑一遍，
 并在 `source:` 与 `[skipped]` 两行里说清「这是模拟、没有联网」。
 
+那八行输出的**原文**现在贴在 `docs/blockers.md` 第 1 节的「没有令牌的人」一半里，与「有令牌的人」一半
+分开放：前者回答「没令牌能证明什么」，后者回答「有令牌怎么做」。粘贴不是摘录——
+`tests/contract/release-gate-simulation.test.ts` 把那一块与命令自己打印的行逐字比对（每条 `[FAIL]` /
+`[warn]` 句子由闸门自己的 `findingLine()` 生成，本机装了应用那一侧的规则时整块比对），
+所以闸门改了措辞而这一页没跟着改，红的是这一页。
+
 ## 按轮次的历史对照（旧表，保留原文）
 
 下面这张表是**上一版**的对照表，按 DoD 的六条**大项**记，每格一段历史。它不再被门禁读取
@@ -949,3 +955,59 @@ Windows 桌面六步（无 Windows 机器）。README 中英两半仍写着「�
 
 **这一轮没有做的事**：人眼观感走查的签字（`docs/state-walkthrough.md` 记录表仍是「未走查」）、
 Icon/Favicon 的 16–32px 核验、DOD-4.1（Windows 真机）、DOD-4.2（feed 上传）。四条都不假装完成。
+
+## 本轮（2026-11-05）接手的人在自己机器上跑得起来：布局门禁一行命令，无令牌也看得见同一次拒绝
+
+审查给的 P0-2 与 P0-3 是同一件事的两面：门禁与阻塞项都写清了「敲什么」，但**敲命令的那个人所在的
+机器**没有被考虑。本轮只做这两条，产品代码一行未改。
+
+1. **`CONTRIBUTING.md` 有了一行可直接复制的布局门禁命令，而且它不是照抄建议的那一行。**
+   建议里的 `xvfb-run -a npx vitest run tests/contract/layout.test.ts` 会红，两个原因都是量出来的：
+   - `xvfb-run` 的默认屏幕比门禁要的最宽窗口窄（`GATED_WIDTHS` 里是 **1440**），窗口被夹到屏宽，
+     门禁红在它自己那条「reports the width it actually measured」上。`.github/workflows/ci.yml`
+     的注释早就写了这件事，所以正确的一行带着 `--server-args="-screen 0 1920x1080x24"`；
+   - `npx vitest` 绕过 `pretest`，而套件把 `@ucad/*` 解析到 `packages/<name>/dist`——一行命令量的是
+     **上一次构建留在盘上的东西**。所以 `npm run build:packages` 被写进同一个代码块里。
+
+   `tests/contract/layout-gate-command.test.ts`（8 项）钉住这行命令与 CI 的同一条一致：屏幕尺寸
+   **从 `ci.yml` 读出来比**，文档不许自带一个数；再拿门禁自己的 `GATED_WIDTHS` 量一次「CI 给的屏
+   装不装得下门禁要的最宽窗口」——数字由测量决定，不由注释决定。红方向三条各驱动一次：删掉
+   `xvfb-run` / 只改文档的屏尺寸 / 把文档与 CI 的尺寸一起缩到 1280（后者只剩「CI 在量一个被夹住的
+   窗口」这一条真问题）。
+   还有一条是**跑出来的**：把 `DISPLAY`、`XAUTHORITY`、`ELECTRON_RUN_AS_NODE` 从子进程环境里删掉，
+   真 Electron 起不来，stderr 就是 `Missing X server or $DISPLAY`——文档引的正是这一句，而同一段
+   必须写明它是 **Linux** 的症状（Windows/macOS 上没有 `$DISPLAY` 可缺；把 Linux 的症状写成通用的，
+   等于把读者送到一个不存在的因上）。
+2. **`docs/blockers.md` 第 1 节按读者分成两半**：「有令牌的人：先看，后按」与「没有令牌的人：
+   同一次拒绝，离线也看得见」。后者贴的是 `node scripts/release-gate.mjs --simulate-missing-sha`
+   在本机的**逐字输出**与退出码 1，并写明「这是离线演示，不是真替换」，另附「做不到时不要做什么」
+   （不许把这条旗标接进 `npm run dist`，也不许改 `PUBLISHED_V1_FEED` 让演示变绿）。
+   **粘贴不是摘录**：`tests/contract/release-gate-simulation.test.ts`（新增 5 项）把那一块与命令
+   自己打印的行比对——每条 `[FAIL]` / `[warn]` 句子由闸门自己的 `findingLine()` 生成（不需要应用
+   构建，所以 CI 上照样跑）；本机装了应用那一侧的规则时，再整块逐行比一次。三个方向各验一次：
+   改一句 `no-sha256` 的措辞 → 指名那条 code；把 ```text 围栏改名 → 指名「不再贴出那次运行」；
+   把「退出码 1」写成 0 → 指名它。
+3. **改了一条既有门禁的红方向**：`tests/contract/doc-routing.test.ts` 的「这一节少了这一件」原来靠
+   替换**全文第一处** `**期望输出**` 来制造红。第 1 节现在有两个读者、两处都写这个词，替换一处
+   就不再是「这一节少了这一件」——那条用例在本轮当场变成红的对立面（`expected [] to have a length
+   of 1`，即它**再也不会红**）。改成在该节 body 内替换全部出现，仍然是 1 条 problem，且真的触发得了。
+4. **顺带量到的两个环境问题，都写进了 `CONTRIBUTING.md`**（它们是「下一个读者以为是自己的问题」那一类）：
+   - 无 X server 时布局门禁的失败原文是 `Error: the layout probe produced no result` 加
+     `Missing X server or $DISPLAY`，约半秒结束、45 项 skipped；
+   - 本机 `/tmp` 有配额：写临时文件的契约测试会以 `Unknown system error -122: …, write` 失败，
+     看起来像门禁坏了而不是磁盘满了。跑法改成
+     `mkdir -p .run-logs/tmp && TMPDIR=$PWD/.run-logs/tmp npm test` 之后，本轮之前那两条红
+     （`savedRun()` 写不进 `/tmp`）直接消失。
+
+**这一轮没有做的事**：`xvfb-run` 那行的**绿跑没有在本机演示成**。这台机器上 `xvfb-run` 能把
+`DISPLAY=:109` 交给子进程，但 X socket 与授权 cookie 都没有出现（`/tmp/.X11-unix` 里没有 `X109`，
+`Xauthority` 是 0 字节），Electron 照旧报「没有 X server」。所以「这一行是绿的」这句话的证据仍然
+只有 CI 那一份——本轮因此把它写成「与 CI 的命令一致」而不是「本机验过」。三条外部阻塞（无令牌 /
+无 Windows 机器 / 五态没有人签字）原样不动，不假装完成。
+
+门禁：`npx vitest run` 七个文档与门禁文件 **83 项全绿**（`layout-gate-command` 8、
+`release-gate-simulation` 12、`doc-routing` 6、`manual-check-docs` 18、`handoff-packs` 11、
+`dod-status` 11、`ci-gate-local` 17）；全量 `npm test` **1596 项通过、46 项 skipped**，唯一失败的
+文件是 `tests/contract/layout.test.ts`——本机没有能连上的 X server（见上，与本次改动无关）；
+`npm run test:e2e` 19 个文件 **149 项全绿**；`npx eslint` 对改动的三个文件无输出；
+`npm run typecheck` 退出码 0；`npm run knip` 退出码 0。

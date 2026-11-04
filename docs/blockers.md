@@ -13,6 +13,13 @@
 
 ## 1. 已发布的 v1.0.0 feed 缺 `sha256`（需要写权限令牌）
 
+这一条有两个人要分开照顾。**有令牌的人**能把线上那份换掉，他要的是「敲哪两条、按哪个判据算成、
+结果贴回哪里」；**没有令牌的人**换不了，他要的是看懂「现在发布会被挡在哪一句上」，
+而不是读一段关于那句拒绝的描述。两半都在这一节里，不必再翻 `docs/dod-status.md` 与
+`docs/manual-verification.md`。
+
+### 有令牌的人：先看，后按
+
 **解除命令**
 
 先看——不联网、不写文件、不上传，把第二步要做的事按顺序打印出来：
@@ -55,11 +62,48 @@ PASS — 0 warning(s), nothing the app would refuse
 拿到令牌的人照着从上往下敲即可，不需要先读代码。这一页引用的每一行输出都由
 `tests/contract/handoff-packs.test.ts` 对着脚本源码核对，脚本改了措辞而文档没改会打红。
 
-**没有令牌时能做什么**：`node scripts/replay-feed-local.mjs` 把仓库里这份修正版文档原封不动地
-用一个本地 TLS 地址托起来，让 `scripts/verify-release-feed.mjs` 与 `scripts/release-gate.mjs`
-对着它跑一次**绿分支**（退出码 0，两行 `PASS`）。它证明的是**链路**，不是**发布**：
-GitHub Releases 上那份 asset 在这之前和之后都还是旧的。这一次的输出已经写在
+### 没有令牌的人：同一次拒绝，离线也看得见
+
+没有 `contents: write` 的人换不了线上那份 feed，但他应该能**看见**这次发布会被挡在哪一句上，
+而不是读一段关于那句拒绝的描述。这一半不需要令牌、不需要联网、不需要 Windows。
+
+**这一半的命令**：
+
+```bash
+node scripts/release-gate.mjs --simulate-missing-sha
+```
+
+**期望输出**（2026-11-05 在本机跑的一次，逐字复制；**退出码 1**）：
+
+```text
+source: SIMULATED — the v1.0.0 feed as published, judged by the app’s own rules; nothing was fetched
+version: this build is 1.0.0
+[FAIL] no-sha256: the feed publishes no sha256, so the app refuses to install what it downloads — null
+[warn] no-size: the feed publishes no size, so a truncated download is only caught after hashing — absent
+[FAIL] installer-latest-url: the installer URL uses releases/latest, which 404s once a newer release exists — https://github.com/castorhrio/jev-pi-agent/releases/latest/download/UCAD-Setup-1.0.0.exe
+[skipped] the installer URL: not fetched (--simulate-missing-sha never touches the network)
+verify-release-feed: FAIL — 2 failure(s), 1 warning(s); 1 check(s) did not run
+REFUSED — the published feed is one the app refuses to install from, so a release published now would not reach anyone through it: no version may ship until the feed is fixed (node scripts/publish-feed.mjs --dry-run, then --apply --verify)
+```
+
+上面这八行与它自己跑的那条命令**逐字对齐**由 `tests/contract/release-gate-simulation.test.ts` 核对：
+闸门改了措辞而这一页没跟着改，会打红；这一页被人改了一个字，也会打红。
+
+**这是离线演示，不是真替换。** 判定用的是同一个 `judgeFeedDocument()`——线上那份 feed 交给
+**应用自己的规则**判一遍，所以 `REFUSED` 那一行与 `npm run dist` 现在被挡住时打印的是同一句话。
+它**不**上传任何东西、**不**改变任何判定、**不**证明 Releases 上那份 asset 已经被换掉；
+`source:` 与 `[skipped]` 两行就是为了让它不被读成一次真的测量。
+
+想再看一次「feed 正确时闸门放行」的另一半：`node scripts/replay-feed-local.mjs` 把仓库里这份修正版
+文档原封不动地用一个本地 TLS 地址托起来，让 `scripts/verify-release-feed.mjs` 与
+`scripts/release-gate.mjs` 对着它跑一次**绿分支**（退出码 0，两行 `PASS`）。它证明的也是**链路**，
+不是**发布**：GitHub Releases 上那份 asset 在这之前和之后都还是旧的。这一次的输出已经写在
 `docs/manual-verification.md` 里，任何人可以在自己的机器上重跑复现。
+
+**做不到时不要做什么**：不许把 `--simulate-missing-sha` 接进 `npm run dist`——它退出 1 是给
+演示用的，不是给发布路径的（`tests/contract/release-gate.test.ts` 钉着这条旗标不许出现在
+`dist` / `verify:release` 里）；也不许改 `PUBLISHED_V1_FEED` 让演示变绿，那份记录的是 2026-11-04
+从 GitHub 抄下来的**线上字节**，改它等于把缺陷擦掉。
 
 ## 2. Windows 桌面六步（需要一台 Windows 机器）
 

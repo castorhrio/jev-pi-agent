@@ -39,6 +39,38 @@ widths plus the tightest window, and asserts that nothing overflows, collapses,
 overlaps, falls outside its scroll container, or gets cut off. It also runs axe
 at two layouts and writes screenshots to `.run-logs/layout/`.
 
+**Running only the layout gate.** It launches a real Electron, so it needs a
+display; a machine with none fails in about half a second, and the failure is not
+about your change. This is the line for that machine:
+
+```bash
+npm run build:packages
+ELECTRON_DISABLE_SANDBOX=1 xvfb-run --auto-servernum --server-args="-screen 0 1920x1080x24" npx vitest run tests/contract/layout.test.ts
+```
+
+Two parts of it are load-bearing, and `tests/contract/layout-gate-command.test.ts`
+compares both with what `.github/workflows/ci.yml` runs for the same gate, so this
+line cannot rot into advice that fails:
+
+- **`--server-args`.** `xvfb-run`'s own default screen is 1280 wide, and a window
+  larger than the display is clamped to it. The gate then measures 1280 where it
+  asked for 1440 and fails on the one assertion whose job is to prove the
+  measurement is the size it claims — a red gate about the display, not about the
+  interface. The virtual display is part of the test environment, so it is sized
+  here instead of left to a default.
+- **`npm run build:packages` first.** `npm test` runs it as `pretest`; `npx vitest`
+  does not, and the suite resolves `@ucad/*` to `packages/*/dist`. Without that
+  build the gate measures whatever the last build left on disk.
+
+With no display at all — on Linux, the platform where Chromium looks for `$DISPLAY` — what
+the run prints is `Error: the layout probe produced no result` with
+`Missing X server or $DISPLAY` under it. That sentence is pinned by driving a real Electron
+launch with `DISPLAY` removed, so the symptom written here is the symptom the machine produces
+rather than a description of one. Where the failure instead reads
+`The platform failed to initialize`, the host has no usable Chromium sandbox:
+`ELECTRON_DISABLE_SANDBOX=1` above is the same setting CI puts in that step's
+`env:`, and the gate measures geometry, not the sandbox.
+
 ```bash
 npm run typecheck && npm run lint && npm run knip && npm test && npm run test:e2e
 ```
@@ -84,6 +116,21 @@ used to report that as "the sweep did not visit every surface" — a symptom fou
 assertions away from the cause — while the geometry checks above it passed over
 an empty list. The gate now asserts that it measured something, first, and says
 so by name.
+
+**A full temp directory is reported as a broken test.** Several contract gates
+write a throwaway file under `os.tmpdir()` — a saved verifier run, a feed
+pipeline fixture, a copied script tree. On a host whose `/tmp` is a quota-limited
+tmpfs the write fails with `Unknown system error -122: …, write` inside a test
+helper, which reads like a defect in the gate rather than in the disk. Give the
+run somewhere with room:
+
+```bash
+mkdir -p .run-logs/tmp && TMPDIR=$PWD/.run-logs/tmp npm test
+```
+
+(`.run-logs/` is ignored.) This is not a workaround to encode in the tests: the
+suite writes temp files because a check that shares one path between two runs
+cannot tell whose run corrupted it.
 
 ## Upgrading zod or Electron
 

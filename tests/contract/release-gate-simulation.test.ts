@@ -61,7 +61,7 @@ import {
   SIMULATED_SOURCE,
   simulateMissingShaRun,
 } from '../../scripts/release-gate.mjs';
-import { judgeFeedDocument, loadAppRules } from '../../scripts/verify-release-feed.mjs';
+import { findingLine, judgeFeedDocument, loadAppRules } from '../../scripts/verify-release-feed.mjs';
 
 const REPO_ROOT = join(import.meta.dirname, '..', '..');
 const GATE = join(REPO_ROOT, 'scripts', 'release-gate.mjs');
@@ -283,5 +283,175 @@ describe('the simulation is not a way past the gate', () => {
     expect(result.code).toBe(0);
     expect(result.stdout).toContain('--simulate-missing-sha');
     expect(result.stdout).toContain('demonstration');
+  });
+});
+
+/**
+ * `docs/blockers.md` shows the refusal instead of describing it.
+ *
+ * The page has two halves for the one blocker: the half for someone who holds a
+ * `contents: write` token, and the half for someone who does not. The second is
+ * worth less than a paragraph unless the reader can *see* the thing being
+ * blocked, so the page now pastes the output of
+ * `node scripts/release-gate.mjs --simulate-missing-sha` and calls it a
+ * demonstration. Pasted output is exactly the kind of text that rots — the
+ * sentences belong to the gate, and a reworded refusal leaves the page quoting
+ * a run nobody will ever get. `handoff-packs.test.ts` closed that for the two
+ * packs; this closes it for the page in front of them.
+ *
+ * Two tiers, because one machine cannot cover both:
+ *
+ *  - every quoted `[FAIL]` / `[warn]` line is compared with `findingLine()`, the
+ *    gate's own printer, fed the codes and details recorded in
+ *    `publishedFeedRun()` above. This needs no build and no network, so it runs
+ *    in CI;
+ *  - on a checkout where the app's feed rules are built, the whole block is
+ *    compared with the live command's stdout, line for line — so the
+ *    `version:` line, the `[skipped]` line and the summary cannot be edited,
+ *    dropped or reordered either.
+ */
+const BLOCKERS_PATH = 'docs/blockers.md';
+
+/** The heading that introduces the no-token half of the feed blocker. */
+const OFFLINE_HEADING = '### 没有令牌的人：同一次拒绝，离线也看得见';
+
+/** The command the page tells that reader to run. */
+const OFFLINE_COMMAND = 'node scripts/release-gate.mjs --simulate-missing-sha';
+
+/** The fenced `text` block under the no-token heading, as its lines. */
+function quotedOfflineBlock(markdown: string): string[] | null {
+  const start = markdown.indexOf(OFFLINE_HEADING);
+  if (start === -1) return null;
+  const rest = markdown.slice(start + OFFLINE_HEADING.length);
+  const nextSection = rest.indexOf('\n## ');
+  const section = nextSection === -1 ? rest : rest.slice(0, nextSection);
+  const open = section.indexOf('```text\n');
+  if (open === -1) return null;
+  const body = section.slice(open + '```text\n'.length);
+  const close = body.indexOf('\n```');
+  if (close === -1) return null;
+  return body.slice(0, close).split('\n');
+}
+
+/**
+ * Every way the page can stop showing the refusal it claims to show.
+ *
+ * `live` is the command's own stdout when the app's rules are built, and `null`
+ * when they are not — the difference decides only the strictest tier, never the
+ * comparison as a whole.
+ */
+function blockersPageProblems(markdown: string, quoted: string[] | null, live: string | null): string[] {
+  const problems: string[] = [];
+
+  if (quoted === null) {
+    return [
+      `${BLOCKERS_PATH}: no longer quotes the offline run under "${OFFLINE_HEADING}", so the ` +
+        'reader without a token is back to taking the refusal on trust',
+    ];
+  }
+  if (!markdown.includes(OFFLINE_COMMAND)) {
+    problems.push(`${BLOCKERS_PATH}: the offline half no longer names \`${OFFLINE_COMMAND}\``);
+  }
+
+  // Tier one: every finding sentence is the one the gate prints, looked up from
+  // the script's own printer rather than copied into this file.
+  for (const entry of publishedFeedRun().findings) {
+    const line = findingLine(entry);
+    if (!quoted.includes(line)) {
+      problems.push(
+        `${BLOCKERS_PATH}: quotes a different sentence for \`${entry.code}\`. The gate prints:\n` +
+          `  ${line}\n  and the page shows something else — re-run the command and paste it.`,
+      );
+    }
+  }
+
+  for (const line of [`source: ${SIMULATED_SOURCE}`, GATE_VERDICT_LINE.refused]) {
+    if (!quoted.includes(line)) {
+      problems.push(`${BLOCKERS_PATH}: does not quote \`${line}\`, which the command prints`);
+    }
+  }
+
+  // The two sentences that stop the paste being read as a fix.
+  if (!markdown.includes('退出码 1')) {
+    problems.push(
+      `${BLOCKERS_PATH}: the offline half does not say the command exits 1, so the refusal ` +
+        'reads like a demo that can be ignored',
+    );
+  }
+  if (!markdown.includes('不是真替换')) {
+    problems.push(
+      `${BLOCKERS_PATH}: the offline half does not say it demonstrates rather than replaces, ` +
+        'so a reader could conclude the published feed has been fixed',
+    );
+  }
+
+  // Tier two: on a machine that can run the judgement, the block is the output.
+  if (live !== null) {
+    const printed = live.split('\n').filter((line) => line.trim().length > 0);
+    if (quoted.join('\n') !== printed.join('\n')) {
+      problems.push(
+        `${BLOCKERS_PATH}: the pasted block is not what \`${OFFLINE_COMMAND}\` prints today:\n` +
+          printed
+            .map((line, index) => (quoted[index] === line ? null : `  line ${index + 1}: ${line}`))
+            .filter((entry) => entry !== null)
+            .join('\n'),
+      );
+    }
+  }
+
+  return problems;
+}
+
+describe('the blockers page shows the refusal instead of describing it', () => {
+  it('quotes the sentences the gate prints, and says it is only a demonstration', () => {
+    const markdown = readFileSync(join(REPO_ROOT, BLOCKERS_PATH), 'utf8');
+    const live = RULES_BUILT ? runGate(['--simulate-missing-sha']).stdout : null;
+    const problems = blockersPageProblems(markdown, quotedOfflineBlock(markdown), live);
+
+    expect(problems, problems.join('\n')).toEqual([]);
+  });
+
+  it('is not vacuous: the block really carries the lines being compared', () => {
+    const markdown = readFileSync(join(REPO_ROOT, BLOCKERS_PATH), 'utf8');
+    const quoted = quotedOfflineBlock(markdown);
+
+    expect(quoted, `${OFFLINE_HEADING} has no fenced text block`).not.toBeNull();
+    expect(quoted!.length, 'a paste this short is not the refusal').toBeGreaterThanOrEqual(6);
+    expect(quoted).toContain(`source: ${SIMULATED_SOURCE}`);
+  });
+
+  it('reports a quoted sentence the gate reworded', () => {
+    // The failure this exists for: the refusal is edited in the script, and the
+    // page keeps promising a sentence nobody will see.
+    const markdown = readFileSync(join(REPO_ROOT, BLOCKERS_PATH), 'utf8');
+    const reworded = markdown.replace(
+      '[FAIL] no-sha256: the feed publishes no sha256,',
+      '[FAIL] no-sha256: the feed is missing its hash,',
+    );
+    expect(reworded).not.toBe(markdown);
+
+    const problems = blockersPageProblems(reworded, quotedOfflineBlock(reworded), null);
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toContain('no-sha256');
+  });
+
+  it('reports the paste being deleted, or the exit code being softened', () => {
+    const markdown = readFileSync(join(REPO_ROOT, BLOCKERS_PATH), 'utf8');
+
+    const fenceGone = blockersPageProblems(
+      markdown.replace('```text\n', '```json\n'),
+      quotedOfflineBlock(markdown.replace('```text\n', '```json\n')),
+      null,
+    );
+    expect(fenceGone).toHaveLength(1);
+    expect(fenceGone[0]).toContain('no longer quotes the offline run');
+
+    const softened = blockersPageProblems(
+      markdown.replace('**退出码 1**', '**退出码 0**'),
+      quotedOfflineBlock(markdown),
+      null,
+    );
+    expect(softened).toHaveLength(1);
+    expect(softened[0]).toContain('exits 1');
   });
 });

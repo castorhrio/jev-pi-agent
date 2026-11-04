@@ -223,8 +223,16 @@ describe('a review can find the standard before it judges a round', () => {
   it('reports a blocker section that lost one of its three parts', () => {
     // One section edited, the other two left alone: the failure names the
     // section, not the page.
-    const index = BLOCKERS.indexOf('**期望输出**');
-    const broken = `${BLOCKERS.slice(0, index)}**应该看到什么**${BLOCKERS.slice(index + '**期望输出**'.length)}`;
+    //
+    // Edited *inside* the section, and every occurrence of the part replaced:
+    // blocker 1 answers the same three questions for two readers (someone with
+    // a write token, someone without), so it carries `**期望输出**` twice and
+    // removing one of them leaves the section still carrying the part. A
+    // mutation that cannot fail is the shape this file exists to prevent.
+    const [first] = blockerSections(BLOCKERS) as [{ heading: string; body: string }];
+    const brokenBody = first.body.replaceAll('**期望输出**', '**应该看到什么**');
+    const broken = BLOCKERS.replace(first.body, brokenBody);
+    expect(broken).not.toBe(BLOCKERS);
     const problems = routingProblems({ readme: README, status: STATUS, blockers: broken });
 
     expect(problems).toHaveLength(1);
