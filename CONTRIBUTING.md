@@ -371,7 +371,10 @@ one fails in CI rather than in a screenshot review.
 
 - **One scale for rhythm.** Gaps between siblings are `--sp-1..5` (4/8/12/16/24px), reached
   from markup as `.mt-*` / `.mb-*` / `.ml-2` / `.gap-1`. Type roles are `--fs-body/note/fine`
-  (13/11.5/10.5px) as `.fs-note` / `.fs-fine`. Inline `marginTop`, `marginBottom`,
+  as `.fs-note` / `.fs-fine`; the numbers themselves live in `docs/DESIGN.md`, which is the
+  register for every type size, radius, edge width and colour token, and
+  `tests/contract/design-tokens.test.ts` fails if the register and `styles.css` disagree.
+  Inline `marginTop`, `marginBottom`,
   `marginLeft`, `fontSize` and `lineHeight` are rejected by
   `tests/contract/layout.test.ts` ("adds no spacing or type size from markup"): a value
   chosen at the call site is exactly how the rhythm drifted to eleven different gaps in the

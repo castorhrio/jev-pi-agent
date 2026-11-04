@@ -807,3 +807,53 @@ Windows 桌面六步（无 Windows 机器）。README 中英两半仍写着「�
 
 **这一轮没有做的事**：上传修正版 feed（无令牌）、Windows 桌面六步（无 Windows 机器）、
 步骤 6 的人眼观感签字（需要一个人）。三条仍是上表里的缺口，不假装完成。
+
+## 本轮（2026-11-04 深夜）视觉 token 有了具名出处，登记册与样式表由门禁对齐
+
+字号档已经被钉过两次（`typography.test.ts` 钉「每条 `font-size` 都是 `var(--fs-…)`、最多四档」，
+布局门禁在真 Chromium 里量解析后的尺寸）。**其余三样从来没有具名出处**：
+
+- **圆角**：规则里散着九个值（`0`、`2px`、`3px`、`4px`、`6px`、`7px`、`10px`、`999px`、`50%`），
+  只有三个有名字（`--r-sm` / `--r` / `--r-lg`）。裸值的问题不是难看，是**下一个值不需要任何决定
+  就能写进去**：`border-radius: 5px` 编译得过、门禁全绿、屏幕上多一档没人认领的圆角。
+  字号档当初就是这么烂掉的（47 条规则、九个值）。
+- **边线宽度**：`1px` 是发丝边，`2px` 只该出现在两处（`border-left` 强调条与滚动条滑块）。
+  这句话此前只活在 `styles.css` 顶部注释里，而注释不是门禁。
+- **颜色分配**：「蓝=可交互、绿=成功、琥珀=注意、红=失败，别的都不上色」是整套调色板存在的理由，
+  没有任何东西把调色板与这句话对起来。
+
+1. **`docs/DESIGN.md` 是登记册**：四张表——字号档、圆角登记（值 / token / 用在哪 / 为什么）、
+   发丝边（宽度 / 用在哪 / 为什么）、铬色与强调色（token / 值 / 角色）。每个值都写了它对应哪种盒子。
+   圆角**不是**「四档」：4px 高的计量条和 400px 宽的对话框，圆角的物理尺寸本来就该不同，
+   所以登记的是「每个值对应一种盒子」，门禁断言的是**值集合相等**，不是「个数 ≤ 4」。
+2. **`tests/contract/design-tokens.test.ts`（19 项）**：CSS 不能 `@import` 一份 markdown，
+   所以「引用」的落地方式是门禁——
+   - `:root` 里每个 `--fs-*` / `--r-*` / 颜色 token 都在表里且值相同，表里也不许留 `:root` 没有的行；
+   - 规则里**实际用到**的每个圆角值都有登记行（`var(--r-sm)` 解析成 `4px` 再比，不是比字符串），
+     登记行也不许有没人用的值；
+   - 每条边线宽度都在发丝边表里，且 `2px` 只允许出现在 `border-left` 或 `::-webkit-scrollbar-thumb`；
+   - `CONTRIBUTING.md` 链到登记册（没人被指过去的文档等于没人读）。
+   边线扫描是**字符级**的，不是 `([^{}]+)\{([^{}]*)\}` 正则：`@media` 会嵌套，正则会把
+   `@media (max-width: 860px)` 当成选择器、然后丢掉里面每条规则的选择器——而窄窗口的规则
+   正是最可能长出新边线的那批。
+3. **`CONTRIBUTING.md` 的「The layout language」不再复述数字**：它原来写着
+   `--fs-body/note/fine` 是 `13/11.5/10.5px`，而 `--fs-note` 早就是 12px 了——一段没人比的
+   副本，已经错了。现在它指向登记册，数字只有一处。
+
+**证明它会红**（全部用真实文档的变异副本驱动，不靠嘴说）：删掉 `--fs-fine` 行 → 指名
+「declared in styles.css but has no row」；把 `--fs-body` 改成 14px → 指名值不一致；
+往 `.badge` 里加 `border-radius: 5px` → 指名「a new radius is a decision, so write it down first」；
+删掉 `7px` 行 → 同时指名 token 与值两条；加一行没人用的 `8px` → 指名「no rule uses it」；
+给 `.badge` 加 `border-top: 2px` → 指名「outside the two the register allows」；
+加 `border: 3px` → 指名宽度未登记；把 `--accent` 改成 `#6d7cfe` → 指名值不一致；
+删掉整张圆角表 → 红（不是空表上变绿）；把 `CONTRIBUTING.md` 里的链接改小写 → 红。
+
+**这一轮没有做的事**：没有改 `styles.css` 一个字节。任何 CSS 改动都会让
+`scripts/screenshot-sources.mjs` 的漂移门禁变红，而「重拍图」目前没有一条提交进仓库的命令
+（`--write` 只是记录当前状态，它可以在没看一眼的情况下跑）。所以本轮把登记册建起来、
+把两边钉住，**没有**顺手把裸圆角收成 token——那是一次需要重拍图的改动，留给下一轮连同
+「重拍图成为一条命令」一起做。
+
+门禁：`npx vitest run tests/contract/design-tokens.test.ts` 19/19 绿；
+`readme` / `readme-parity` / `doc-routing` / `dod-status` / `typography` / `screenshot-sources`
+共 56 项绿；`npx eslint tests/contract/design-tokens.test.ts` 无输出。
