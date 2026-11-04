@@ -42,7 +42,7 @@
 | DOD-4.3 | 明文/非 URL 覆盖被拒并打日志 | 通过 | `apps/desktop/src/main/update-feed.ts` `apps/desktop/src/main/update-feed-log.ts` `tests/contract/update-integrity.test.ts` | — |
 | DOD-4.4 | 未签名 SmartScreen 有说明 | 通过 | `README.md` | — |
 | DOD-5.1 | `npm run typecheck && lint && knip && test && test:e2e`（及 CI 等价）绿 | 通过 | `npm run verify:gates` `.github/workflows/ci.yml` `scripts/gate-local.mjs` `tests/contract/ci-gate-local.test.ts` `tests/contract/ci-typecheck.test.ts` `docs/manual-verification.md` | — |
-| DOD-5.2 | 注入/交接/凭据/更新合约测试能打红 | 通过 | `tests/contract/injection-contract.test.ts` `tests/contract/handoff-chain.test.ts` `tests/contract/keyring-gate.test.ts` `tests/contract/release-feed.test.ts` | — |
+| DOD-5.2 | 注入/交接/凭据/更新合约测试能打红 | 通过 | `tests/contract/injection-contract.test.ts` `tests/contract/handoff-chain.test.ts` `tests/contract/keyring-gate.test.ts` `tests/contract/release-feed.test.ts` `tests/contract/app-rules-build.test.ts` | — |
 | DOD-6.1 | token 来源（厂商 tokenizer vs 启发式）上屏 | 通过 | `apps/desktop/src/renderer/src/components/ContextDrawer.tsx` `apps/desktop/src/renderer/src/components/PreviewPane.tsx` | — |
 | DOD-6.2 | 凭据进 OS 钥匙串，不经环境变量/日志泄露 | 通过 | `apps/desktop/src/main/keyring-gate.ts` `tests/contract/keyring-gate.test.ts` `tests/contract/secret-vault.test.ts` `tests/contract/host-secret-channel.test.ts` | — |
 
@@ -1011,3 +1011,62 @@ Icon/Favicon 的 16–32px 核验、DOD-4.1（Windows 真机）、DOD-4.2（feed
 文件是 `tests/contract/layout.test.ts`——本机没有能连上的 X server（见上，与本次改动无关）；
 `npm run test:e2e` 19 个文件 **149 项全绿**；`npx eslint` 对改动的三个文件无输出；
 `npm run typecheck` 退出码 0；`npm run knip` 退出码 0。
+
+## 本轮（2026-11-05）合约测试对「应用规则已构建」的要求，从四个各写一遍的分支变成一次构建
+
+审查点名的唯一真实工程缺陷在 `tests/contract/release-gate-simulation.test.ts`：三处
+`if (!RULES_BUILT) return;`。它们比 `skipIf` 更糟——`skipIf` 在报告里写着 skipped，这三处在报告里
+写着 **passed**，而本机没有 `apps/desktop/dist/main/update-feed.js` 时，那三条用例一条断言都不跑。
+
+**为什么会静默**：判断 feed 用的是应用自己的规则（`checkChannelUrl` / `normalizeSha256`，
+`scripts/verify-release-feed.mjs` 从构建产物导入，不写第二份）。被测的是构建产物，于是「这一次运行
+到底判了没有」取决于上一个动过这份 checkout 的人跑过什么：`npm run typecheck` 与 `npm run build`
+会产出它，`npm test` 不会（`pretest` 只构建 packages），新克隆从来没有过。CI 恰好因为 Typecheck
+排在 Unit tests 之前而一直绿——**这条静默在 CI 上看不见**，只有接手的人在自己的机器上才会遇到一份
+「绿但什么都没判」的套件。
+
+**改法（一次构建，而不是四处分支）**：
+
+1. `tests/contract/app-rules-build.ts`：`ensureAppRulesBuilt()` 只在产物缺失时构建，且缺什么建什么
+   （packages 的声明在，就只构建 `@ucad/desktop` 的 main；不在，先 `npm run build:packages`）。跑不动
+   就抛，把 npm 自己的输出一起带出来。两条构建都带 `--force`——这不是保险，是量出来的：删掉产物再跑
+   一次不带 `--force` 的 main 构建，它一字不出、退出码 0、文件照旧不存在（`tsc -b` 按
+   `.tsbuildinfo` 决定写什么，不看盘）。少了这个旗标，本轮那条「缺失即红」会在最常见的坏状态下变成
+   「构建成功但什么都没建」——同一件静默，下沉一层。
+2. `vitest.config.ts` 的 `globalSetup` 指向 `tests/global-setup.ts`，在**任何测试文件被加载之前**、在
+   父进程里跑一次。为什么不是各文件的 `beforeAll`：`pool: 'forks'` 并行起文件，四处会同时强构建同一份
+   产物，而另外三处正在 import 它——那样红的是构建顺序，不是发布物。
+3. 四个消费方不再分支：`release-gate-simulation.test.ts` 的三处静默 `return` 与它那条「缺构建时的
+   拒绝」一并删掉；`release-gate.test.ts` 一处；`feed-writer.test.ts` 一处；`feed-pipeline.test.ts`
+   六处（`refusedForMissingBuild()` 整个删除）。于是 `docs/blockers.md` 那份粘贴在每台机器上都逐行
+   比对，不再有「装了应用规则才比」的第二等分支。
+
+**证明它会红**（两份都被驱动过，不是嘴上说的）：注释掉 `vitest.config.ts` 里那行 `globalSetup` 并删掉
+产物之后——
+
+- `tests/contract/release-gate-simulation.test.ts` 整个文件失败（12 skipped），错误原文前半是
+  `the app's feed rules are not built (apps/desktop/dist/main/update-feed.js), so a judgement below
+  would be comparing nothing`，后半给出要跑的 workspace 构建脚本；
+- `tests/contract/app-rules-build.test.ts` 两条运行时用例红、四条接线用例照绿——「接线完好、状态坏了」
+  正是这一组要区分的东西；
+- `tests/contract/feed-writer.test.ts` 两条命令行用例红。
+
+把 `globalSetup` 那行恢复后，同一条 `npx vitest run` 自己把产物建回来（31/31 绿，文件时间戳就是那一跑
+的），不需要任何人先跑构建。
+
+**新增的门禁**：`tests/contract/app-rules-build.test.ts`（7 项）钉的是这件事本身会不会烂：配置仍然指着
+那份 setup；setup 真的调用 `ensureAppRulesBuilt()`（只 import 不调用＝注册一个绿色空转）；构建目标与
+`scripts/verify-release-feed.mjs` 自己 import 的是同一个文件（两边各写一份路径时，搬一次文件就会让 setup
+去建一个没人读的东西）；构建清单里每条脚本名都在对应 manifest 的 `scripts` 里（改名会让 setup 跑一条不
+存在的命令）；本轮运行时产物确实在；以及那条给新克隆看的句子仍然指名缺的文件与要跑的命令。
+
+**顺带量到、本轮没动**：`tests/contract/replay-feed-local.test.ts` 仍留着它自己的缺构建分支——它同时还要
+看 openssl 与 release 主机，那条分支不是本轮的形状。DOD-5.2 的证据列加了本轮那份门禁（合计四态不变）。
+
+**这一轮没有做的事**：上传修正版 feed（无令牌）、Windows 桌面六步（无 Windows 机器）、步骤 6 的人眼观感
+签字（需要一个人）。三条仍是 `docs/blockers.md` 里的缺口，不假装完成。
+
+门禁：全量 `npm test` **1603 项通过 / 46 项 skipped**（较上一轮 +7，正是本轮新增那份门禁），唯一失败的
+文件仍是 `tests/contract/layout.test.ts`——本机没有能连上的 X server，stderr 就是 `CONTRIBUTING.md` 引的
+那一句 `Missing X server or $DISPLAY`；`npm run test:e2e` 19 个文件 **149 项全绿**；`npm run lint`、
+`npm run knip`、`npm run typecheck` 均退出码 0。

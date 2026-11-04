@@ -59,10 +59,6 @@ import { blankComments } from './source-scan';
 
 const REPO_ROOT = join(import.meta.dirname, '..', '..');
 const GATE = join(REPO_ROOT, 'scripts', 'release-gate.mjs');
-const APP_RULES_BUILD = join(REPO_ROOT, 'apps', 'desktop', 'dist', 'main', 'update-feed.js');
-
-/** Whether the verifier can load the app's rules in this checkout. */
-const RULES_BUILT = existsSync(APP_RULES_BUILD);
 
 const PACKAGE = JSON.parse(readFileSync(join(REPO_ROOT, 'package.json'), 'utf8')) as {
   version: string;
@@ -348,16 +344,6 @@ describe('the gate as a command', () => {
       );
     } catch (error) {
       verifierOut = (error as { stdout?: string }).stdout ?? '';
-    }
-
-    if (!RULES_BUILT) {
-      // A missing build must be a red run with an instruction, never a silent
-      // pass: the gate has to refuse it, and say why.
-      expect(verifierOut).toBe('');
-      const result = runGate(['--from-json', document]);
-      expect(result.code).toBe(1);
-      expect(result.stdout).toContain(GATE_VERDICT_LINE.unverified);
-      return;
     }
 
     const path = savedRun(JSON.parse(verifierOut.slice(verifierOut.lastIndexOf('{'))));

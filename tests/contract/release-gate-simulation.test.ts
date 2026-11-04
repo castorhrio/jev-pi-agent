@@ -39,21 +39,29 @@
  * which needs a route to the host — the same split the rest of the release
  * tooling already has.
  *
- * ## The build dependency, stated rather than hidden
+ * ## The build dependency, built rather than branched on
  *
  * The judgement is the app's own (`checkChannelUrl` / `normalizeSha256` from
  * `apps/desktop/dist/main/update-feed.js`), so the simulation needs the main
- * process built. CI runs `npm test` before `npm run build`, so on a clean
- * checkout the command refuses with "run `npm run build:main -w @ucad/desktop`
- * first" — and that refusal is asserted below rather than skipped, because a
- * case that quietly does nothing is the shape this repository keeps finding.
+ * process built. It used to ask whether that build happened to be on disk and,
+ * when it was not, three of the cases below returned before their first
+ * assertion — a green that proved nothing, which is the shape this repository
+ * has now removed from `verify-main-chain.mjs`'s `--steps`, from the `skipIf`
+ * guards in `readme*.test.ts`, and from the screenshot manifest's failure path.
+ *
+ * `tests/global-setup.ts` builds the rules once before any test file loads
+ * (`tests/contract/app-rules-build.ts` explains why that is one owner rather
+ * than four `beforeAll` hooks), so every case below runs every time, and the
+ * strictest tier of the `docs/blockers.md` comparison is no longer conditional.
+ * What a missing build costs now is a red run that names
+ * `npm run build:main -w @ucad/desktop`.
  */
 
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeAll, describe, expect, it } from 'vitest';
 
 import {
   GATE_VERDICT_LINE,
@@ -63,12 +71,25 @@ import {
 } from '../../scripts/release-gate.mjs';
 import { findingLine, judgeFeedDocument, loadAppRules } from '../../scripts/verify-release-feed.mjs';
 
+import { appRulesMissing } from './app-rules-build';
+
 const REPO_ROOT = join(import.meta.dirname, '..', '..');
 const GATE = join(REPO_ROOT, 'scripts', 'release-gate.mjs');
-const APP_RULES_BUILD = join(REPO_ROOT, 'apps', 'desktop', 'dist', 'main', 'update-feed.js');
 
-/** Whether the app's feed rules are built in this checkout. */
-const RULES_BUILT = existsSync(APP_RULES_BUILD);
+/**
+ * The app's rules are a requirement of this file, not a question it asks.
+ *
+ * `tests/global-setup.ts` builds them before any test file loads; this is the
+ * check that the build is actually there, so a run configured some other way
+ * fails here with the command to type instead of working through the cases
+ * below one assertion at a time. Nothing in this file may proceed without it:
+ * the gate's own refusal would then satisfy `expect(code).toBe(1)` for a reason
+ * that has nothing to do with the feed.
+ */
+beforeAll(() => {
+  const missing = appRulesMissing();
+  if (missing !== null) throw new Error(missing);
+});
 
 const PACKAGE = JSON.parse(readFileSync(join(REPO_ROOT, 'package.json'), 'utf8')) as {
   version: string;
@@ -169,16 +190,6 @@ function summaryOf(stdout: string): string {
 
 describe('the simulation prints the refusal the gate really prints', () => {
   it('matches a run over the published feed line for line, apart from its own two labels', () => {
-    if (!RULES_BUILT) {
-      // A clean checkout has no built main process, and the honest outcome is a
-      // refusal that names the build command — never a silent pass.
-      const result = runGate(['--simulate-missing-sha']);
-      expect(result.code).toBe(1);
-      expect(result.stdout).toContain('build:main');
-      expect(result.stdout).toContain(GATE_VERDICT_LINE.unverified);
-      return;
-    }
-
     const simulated = runGate(['--simulate-missing-sha']);
     const real = runGate(['--from-json', savedRun(publishedFeedRun())]);
 
@@ -196,8 +207,6 @@ describe('the simulation prints the refusal the gate really prints', () => {
   });
 
   it('says it was simulated, and says which half of a real run it did not do', () => {
-    if (!RULES_BUILT) return;
-
     const result = runGate(['--simulate-missing-sha']);
 
     // The two lines a simulation is allowed to differ on, and both have to say
@@ -213,12 +222,12 @@ describe('the simulation prints the refusal the gate really prints', () => {
   });
 
   it('refuses, rather than passing, when asked to demonstrate a refusal', () => {
-    if (!RULES_BUILT) return;
-
     const result = runGate(['--simulate-missing-sha']);
 
     // A demonstration that exits 0 would be a way to pass the gate by asking it
-    // to pretend — the one thing a gate must not grow.
+    // to pretend — the one thing a gate must not grow. The `beforeAll` above is
+    // what makes this exit code mean the feed: unbuilt rules make the gate exit
+    // 1 for a reason that has nothing to do with it.
     expect(result.code).toBe(1);
     expect(result.stdout).not.toContain(GATE_VERDICT_LINE.pass);
   });
@@ -226,8 +235,6 @@ describe('the simulation prints the refusal the gate really prints', () => {
 
 describe('the simulated run is the app’s own judgement, not a second opinion', () => {
   it('produces exactly the findings the verifier produces for the same document', async () => {
-    if (!RULES_BUILT) return;
-
     const rules = await loadAppRules();
     const run = simulateMissingShaRun({ rules, expectedVersion: PACKAGE.version });
     const direct = judgeFeedDocument(PUBLISHED_V1_FEED, {
@@ -299,16 +306,17 @@ describe('the simulation is not a way past the gate', () => {
  * a run nobody will ever get. `handoff-packs.test.ts` closed that for the two
  * packs; this closes it for the page in front of them.
  *
- * Two tiers, because one machine cannot cover both:
+ * Two comparisons, both of which run on every machine:
  *
  *  - every quoted `[FAIL]` / `[warn]` line is compared with `findingLine()`, the
  *    gate's own printer, fed the codes and details recorded in
- *    `publishedFeedRun()` above. This needs no build and no network, so it runs
- *    in CI;
- *  - on a checkout where the app's feed rules are built, the whole block is
- *    compared with the live command's stdout, line for line — so the
- *    `version:` line, the `[skipped]` line and the summary cannot be edited,
- *    dropped or reordered either.
+ *    `publishedFeedRun()` above. It needs no network, and it names one code per
+ *    problem, which is the sentence a reader needs when exactly one moved;
+ *  - the whole block is compared with the live command's stdout, line for line,
+ *    so the `version:` line, the `[skipped]` line and the summary cannot be
+ *    edited, dropped or reordered either. This is the half that used to be
+ *    conditional on a build being on disk, and on the machines where it was not,
+ *    the page could have pasted any text at all.
  */
 const BLOCKERS_PATH = 'docs/blockers.md';
 
@@ -336,9 +344,10 @@ function quotedOfflineBlock(markdown: string): string[] | null {
 /**
  * Every way the page can stop showing the refusal it claims to show.
  *
- * `live` is the command's own stdout when the app's rules are built, and `null`
- * when they are not — the difference decides only the strictest tier, never the
- * comparison as a whole.
+ * `live` is the command's own stdout. The mutation cases below pass `null` to
+ * hold that comparison back and prove the first one reports exactly one problem
+ * on its own; the real call site always has the output, because the suite's
+ * global setup built the rules it takes to produce it.
  */
 function blockersPageProblems(markdown: string, quoted: string[] | null, live: string | null): string[] {
   const problems: string[] = [];
@@ -405,7 +414,7 @@ function blockersPageProblems(markdown: string, quoted: string[] | null, live: s
 describe('the blockers page shows the refusal instead of describing it', () => {
   it('quotes the sentences the gate prints, and says it is only a demonstration', () => {
     const markdown = readFileSync(join(REPO_ROOT, BLOCKERS_PATH), 'utf8');
-    const live = RULES_BUILT ? runGate(['--simulate-missing-sha']).stdout : null;
+    const live = runGate(['--simulate-missing-sha']).stdout;
     const problems = blockersPageProblems(markdown, quotedOfflineBlock(markdown), live);
 
     expect(problems, problems.join('\n')).toEqual([]);

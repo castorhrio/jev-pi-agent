@@ -27,10 +27,12 @@
  *    refuses a file that is already on disk to be uploaded.
  *
  * The judgement is driven with the TypeScript sources for the app's rules, so
- * these cases need no build; the CLI case says what it asserts when the main
- * process has not been built (it asserts the precondition is diagnosable).
- * That conditional is not a `skipIf`: a gate that quietly does nothing off a
- * fresh clone is the shape this suite keeps rejecting.
+ * the cases above need no build. The CLI case does: it runs the real script,
+ * which loads the app's rules the way the app does — from the built main
+ * process. `tests/global-setup.ts` builds them before any test file loads
+ * (see `tests/contract/app-rules-build.ts`), so the exit code and the finding
+ * named below are the writer's judgement about the document, and not a refusal
+ * for want of a build.
  */
 
 import { execFileSync } from 'node:child_process';
@@ -45,7 +47,6 @@ import { blankComments } from './source-scan';
 
 const REPO_ROOT = join(import.meta.dirname, '..', '..');
 const WRITER = join(REPO_ROOT, 'scripts', 'make-update-feed.mjs');
-const APP_RULES_BUILD = join(REPO_ROOT, 'apps', 'desktop', 'dist', 'main', 'update-feed.js');
 
 /** The app's rules, as the command loads them — from the sources, not the build. */
 const RULES = { checkChannelUrl, normalizeSha256 };
@@ -229,16 +230,6 @@ describe('the command refuses out loud, and leaves no file behind', () => {
       '--out',
       out,
     ]);
-
-    if (!existsSync(APP_RULES_BUILD)) {
-      // No built main process: the script cannot judge, and it must say so
-      // rather than write an unchecked feed. Asserting the diagnosis is the
-      // point — a fresh clone gets a readable instruction, not a stack trace.
-      expect(result.code).toBe(1);
-      expect(result.stderr).toContain('not built');
-      expect(existsSync(out)).toBe(false);
-      return;
-    }
 
     expect(result.code).toBe(1);
     expect(result.stderr).toContain('installer-latest-url');

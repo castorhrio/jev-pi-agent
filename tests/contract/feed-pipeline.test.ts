@@ -37,14 +37,16 @@
  * ## The build precondition
  *
  * The verifier loads the app's rules from the built main process, so the
- * judging cases need `npm run typecheck` (or `build:main`) to have run. That is
- * the same precondition `verify-release-feed.mjs` states for an operator, and
- * it is asserted rather than skipped: a missing build has to be a red run with
- * a readable instruction, not a suite that quietly proves nothing.
+ * judging cases need `apps/desktop`'s `tsc` output to exist. This file used to
+ * ask whether it did and, when it did not, replace six judgements with two
+ * assertions about a missing file — honest, since it named the command to run,
+ * but still six cases that proved less on the machines where nobody had built
+ * recently. `tests/global-setup.ts` now builds the rules before any test file
+ * loads, so the six run everywhere. See `tests/contract/app-rules-build.ts`.
  */
 
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { createServer, type Server, type Socket } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -53,10 +55,6 @@ import { afterEach, describe, expect, it } from 'vitest';
 const REPO_ROOT = join(import.meta.dirname, '..', '..');
 const WRITER = join(REPO_ROOT, 'scripts', 'make-update-feed.mjs');
 const VERIFIER = join(REPO_ROOT, 'scripts', 'verify-release-feed.mjs');
-const APP_RULES_BUILD = join(REPO_ROOT, 'apps', 'desktop', 'dist', 'main', 'update-feed.js');
-
-/** Whether the verifier can load the app's rules in this checkout. */
-const RULES_BUILT = existsSync(APP_RULES_BUILD);
 
 /** One command's outcome, exit code included. */
 interface RunResult {
@@ -94,21 +92,6 @@ function run(script: string, args: string[]): RunResult {
     const failure = error as { status?: number; stdout?: string; stderr?: string };
     return { code: failure.status ?? 1, stdout: failure.stdout ?? '', stderr: failure.stderr ?? '' };
   }
-}
-
-/**
- * Whether this run could not judge because the app's rules are not built.
- *
- * Returns true when that is what happened, after asserting the refusal was the
- * diagnosable one — the same branch `feed-writer.test.ts` takes for the writer's
- * CLI case, and for the same reason: the alternative is a `skipIf`, which is a
- * gate that does nothing on a fresh clone.
- */
-function refusedForMissingBuild(result: RunResult): boolean {
-  if (RULES_BUILT) return false;
-  expect(result.code, 'a missing build must be a red run, not a silent pass').toBe(1);
-  expect(result.stderr).toContain('not built');
-  return true;
 }
 
 const openServers: Server[] = [];
@@ -175,8 +158,6 @@ describe('the document the writer writes is the document the verifier accepts', 
       '9.9.9',
       '--no-installer',
     ]);
-    if (refusedForMissingBuild(judged)) return;
-
     // The whole point of the case: the same bytes, judged by the other command.
     expect(judged.stdout).not.toContain('[FAIL]');
     expect(judged.code, judged.stdout).toBe(0);
@@ -199,8 +180,6 @@ describe('the document the writer writes is the document the verifier accepts', 
       '9.9.9',
       '--no-installer',
     ]);
-    if (refusedForMissingBuild(judged)) return;
-
     // Two checks are skipped here — the address rule (a file has no address)
     // and the installer fetch (--no-installer) — and both are named. A run that
     // proves less has to read differently from one that proves everything.
@@ -224,8 +203,6 @@ describe('the document the writer writes is the document the verifier accepts', 
       '1.0.0',
       '--no-installer',
     ]);
-    if (refusedForMissingBuild(judged)) return;
-
     expect(judged.code).toBe(1);
     expect(judged.stdout).toContain('version-mismatch');
   });
@@ -258,8 +235,6 @@ describe('a document that would break the release is red through the same comman
       '1.0.0',
       '--no-installer',
     ]);
-    if (refusedForMissingBuild(judged)) return;
-
     expect(judged.code).toBe(1);
     expect(judged.stdout).toContain('no-sha256');
     expect(judged.stdout).toContain('installer-latest-url');
@@ -271,8 +246,6 @@ describe('a document that would break the release is red through the same comman
     const missing = join(dir, 'update-feed.json');
 
     const judged = run(VERIFIER, ['--feed-file', missing, '--no-installer']);
-    if (refusedForMissingBuild(judged)) return;
-
     // A typo in the path must not be a clean run over an empty set.
     expect(judged.code).toBe(1);
     expect(judged.stdout).toContain('feed-unreadable');
@@ -289,8 +262,6 @@ describe('a host that does not answer is reported as such, not as a broken feed'
     const url = await silentHost();
 
     const judged = run(VERIFIER, ['--feed', url, '--timeout', '100']);
-    if (refusedForMissingBuild(judged)) return;
-
     expect(judged.code, 'a run that could not look must not exit 0').toBe(1);
     expect(judged.stdout).toContain('feed-timeout');
     expect(judged.stdout).toContain('100ms');
