@@ -40,22 +40,52 @@
  * that accepted a bare reason would let the label be dropped in the JSX
  * instead.
  *
+ * ## The second question: is that position reachable?
+ *
+ * "Wired to a rendering position" is a syntactic claim, and it has a hole the
+ * first version of this file left open: a position can be wired and still never
+ * be reached. `{false && <ReadFailure reason={data.endpointErrors.tools} />}`
+ * satisfies every check above — the key is in a `reason=`, the `label=` is
+ * there, the panel exists — and the reader is told nothing, forever. So is the
+ * shape that is one keystroke away from the correct one:
+ * `{!data.endpointErrors.tools && <ReadFailure reason={data.endpointErrors.tools} />}`
+ * renders the reason exactly when there is no reason, and
+ * `{data.endpointErrors.tools ? null : <ReadFailure … />}` is the same mistake
+ * written the other way round.
+ *
+ * The check is a walk up the ancestor chain of each rendering position, asking
+ * whether a guard on the way makes the position impossible:
+ *
+ *  - a branch whose test is a literal falsy (`false && …`, `false ? … : …`);
+ *  - a branch guarded by the *absence* of the same key (`!x && …`,
+ *    `x === undefined ? … : …`, `x == null ? … : …`) when the reason is drawn
+ *    inside it;
+ *  - a branch guarded by the *presence* of the same key when the reason is
+ *    drawn in the other half (`x ? null : <ReadFailure reason={x} />`).
+ *
+ * This is a static approximation, and it is deliberately a small one: it reads
+ * the guard's *shape*, not its meaning. `data.loading ? … : …` around a reason
+ * is not judged, because whether `loading` can be true while a reason exists is
+ * a fact about `hooks.ts` that this file would have to re-derive — and the
+ * e2e `?scenario=partial` case is where that question is actually answered.
+ *
  * ## What is deliberately not asserted
  *
  * That the sentence is good, that the branch is not `null`, or that the panel
  * is the right one. This gate answers "is the reason wired to a rendering
- * position", not "is the rendering honest" — the honest half is driven by
- * `tests/e2e/scenarios.e2e.test.tsx` (`?scenario=partial` asserts the rail
- * shows the reason and *not* the empty-state text) and by the five-state
- * walkthrough. A gate that tried to judge the copy would be a gate nobody
- * could keep green for the right reason.
+ * position that can be reached", not "is the rendering honest" — the honest
+ * half is driven by `tests/e2e/scenarios.e2e.test.tsx` (`?scenario=partial`
+ * asserts the rail shows the reason and *not* the empty-state text) and by the
+ * five-state walkthrough. A gate that tried to judge the copy would be a gate
+ * nobody could keep green for the right reason.
  *
  * ## The red direction
  *
  * The checks are pure functions of `(keys, sources)`, so every failure path is
  * driven with mutated copies below rather than argued about: a key with no
  * reference, a key read into a variable nobody shows, a `reason=` without a
- * `label=`, and a key added to the union with no panel at all.
+ * `label=`, a key added to the union with no panel at all, and each of the
+ * three unreachable shapes above.
  */
 
 import { readFileSync, readdirSync, type Dirent } from 'node:fs';
@@ -103,6 +133,39 @@ function walk(value: unknown, visit: (node: Node) => void): void {
     // `parent` is a back-edge (infinite), `loc`/`range` are positions.
     if (field === 'parent' || field === 'loc' || field === 'range') continue;
     walk(child, visit);
+  }
+}
+
+/**
+ * A node on the path from the root to the node being visited, and the field of
+ * that node the path came through.
+ *
+ * The field is what makes a branch question answerable: `consequent` and
+ * `alternate` are the two halves of a `? :`, and `right` is the half of a
+ * `&&` / `||` that only runs when the left side allows it.
+ */
+interface Ancestor {
+  readonly node: Node;
+  readonly field: string;
+}
+
+/** `walk`, but carrying the path. Used by the reachability check below. */
+function walkWithAncestors(
+  value: unknown,
+  visit: (node: Node, ancestors: readonly Ancestor[]) => void,
+  ancestors: Ancestor[] = [],
+): void {
+  if (Array.isArray(value)) {
+    for (const item of value) walkWithAncestors(item, visit, ancestors);
+    return;
+  }
+  if (!isNode(value)) return;
+  visit(value, ancestors);
+  for (const [field, child] of Object.entries(value)) {
+    if (field === 'parent' || field === 'loc' || field === 'range') continue;
+    ancestors.push({ node: value, field });
+    walkWithAncestors(child, visit, ancestors);
+    ancestors.pop();
   }
 }
 
@@ -181,6 +244,90 @@ interface FileAnalysis {
   readonly problems: string[];
 }
 
+// ---------------------------------------------------------------------------
+// Reachability: a rendering position that can never be reached
+// ---------------------------------------------------------------------------
+
+/** `null` or `undefined`, the two spellings a guard compares against. */
+function isNullish(node: unknown): boolean {
+  if (!isNode(node)) return false;
+  if (node.type === 'Literal') return node.value === null;
+  return node.type === 'Identifier' && node.name === 'undefined';
+}
+
+/** A literal that is falsy, so a guard built on it never lets anything through. */
+function isFalsyLiteral(node: unknown): boolean {
+  if (!isNode(node)) return false;
+  if (node.type === 'Literal') return !node.value;
+  return node.type === 'Identifier' && node.name === 'undefined';
+}
+
+/** Whether `test` asserts that `endpointErrors.<key>` is present. */
+function assertsPresent(test: unknown, key: string): boolean {
+  if (endpointKeyOf(test) === key) return true;
+  if (!isNode(test) || test.type !== 'BinaryExpression') return false;
+  if (test.operator !== '!=' && test.operator !== '!==') return false;
+  return (
+    (endpointKeyOf(test.left) === key && isNullish(test.right)) ||
+    (endpointKeyOf(test.right) === key && isNullish(test.left))
+  );
+}
+
+/** Whether `test` asserts that `endpointErrors.<key>` is absent. */
+function assertsAbsent(test: unknown, key: string): boolean {
+  if (isNode(test) && test.type === 'UnaryExpression' && test.operator === '!') {
+    return endpointKeyOf(test.argument) === key;
+  }
+  if (!isNode(test) || test.type !== 'BinaryExpression') return false;
+  if (test.operator !== '==' && test.operator !== '===') return false;
+  return (
+    (endpointKeyOf(test.left) === key && isNullish(test.right)) ||
+    (endpointKeyOf(test.right) === key && isNullish(test.left))
+  );
+}
+
+/** Every endpoint key mentioned inside one expression. */
+function keysIn(expression: unknown): string[] {
+  const keys: string[] = [];
+  walk(expression, (node) => {
+    const key = endpointKeyOf(node);
+    if (key !== null) keys.push(key);
+  });
+  return keys;
+}
+
+/**
+ * Why a rendering position can never be reached, or `null` when it can.
+ *
+ * The three shapes are the ones a panel actually gets wrong; each is a guard
+ * that contradicts the reason it is guarding. The message says which, because
+ * the fix differs: a literal guard is a leftover, and a guard on the same key
+ * is a condition that was written the wrong way round.
+ */
+function unreachableReason(ancestors: readonly Ancestor[], key: string): string | null {
+  for (const { node, field } of ancestors) {
+    if (node.type === 'ConditionalExpression') {
+      // `x ? <ReadFailure reason={x} /> : …` is fine; `!x ? …` is not.
+      if (field === 'consequent' && assertsAbsent(node.test, key)) {
+        return 'it is the branch taken when the read did not fail';
+      }
+      if (field === 'alternate' && assertsPresent(node.test, key)) {
+        return 'it is the branch taken when the read did not fail';
+      }
+      continue;
+    }
+    if (node.type === 'LogicalExpression' && field === 'right') {
+      if (node.operator === '&&' && (assertsAbsent(node.left, key) || isFalsyLiteral(node.left))) {
+        return 'the guard in front of it is false whenever the reason exists';
+      }
+      if (node.operator === '||' && assertsPresent(node.left, key)) {
+        return 'the guard in front of it is true whenever the reason exists';
+      }
+    }
+  }
+  return null;
+}
+
 /** Collects the identifiers and endpoint keys inside one rendering expression. */
 function collectShown(expression: unknown, into: FileAnalysis): void {
   walk(expression, (node) => {
@@ -208,7 +355,23 @@ function analyse(file: string, source: string): FileAnalysis {
     filePath: file,
   });
 
-  walk(program, (node) => {
+  /** Keys already reported as unreachable in this file (a `reason=` is visited twice). */
+  const reported = new Set<string>();
+
+  /** Records a rendering position that no run of the app can reach. */
+  const checkReachable = (expression: unknown, ancestors: readonly Ancestor[]): void => {
+    for (const key of keysIn(expression)) {
+      if (reported.has(key)) continue;
+      const reason = unreachableReason(ancestors, key);
+      if (reason === null) continue;
+      reported.add(key);
+      analysis.problems.push(
+        `${file}: endpointErrors.${key} is drawn in a branch that cannot be taken — ${reason}`,
+      );
+    }
+  };
+
+  walkWithAncestors(program, (node, ancestors) => {
     // `reason={…}` — the ReadFailure prop. Its sibling `label=` is required:
     // the component's signature makes a bare reason unspellable, so a JSX
     // site that drops the label is the same defect one level out.
@@ -216,6 +379,7 @@ function analyse(file: string, source: string): FileAnalysis {
       const value = node.value;
       if (isNode(value) && value.type === 'JSXExpressionContainer') {
         collectShown(value.expression, analysis);
+        checkReachable(value.expression, ancestors);
       }
       return;
     }
@@ -223,6 +387,7 @@ function analyse(file: string, source: string): FileAnalysis {
     // `{…}` as a JSX child: whatever it evaluates to is on screen.
     if (node.type === 'JSXExpressionContainer') {
       collectShown(node.expression, analysis);
+      checkReachable(node.expression, ancestors);
       return;
     }
 
@@ -494,5 +659,130 @@ describe('the check above, when a panel stops showing the reason', () => {
       const b = await guarded('sessions', () => api.sessions.list(id), []);
     `);
     expect(keys).toEqual(['providers', 'sessions']);
+  });
+});
+
+describe('the check above, when the reason is drawn where nothing can reach it', () => {
+  const panel = (body: string): Map<string, string> =>
+    new Map([['apps/desktop/src/renderer/src/components/Panel.tsx', body]]);
+
+  it('reports a reason behind a literal that is never true', () => {
+    // The shape a half-finished panel leaves behind: the wiring is right, the
+    // guard in front of it is a leftover. Every other check in this file passes
+    // — the key is in a `reason=`, the `label=` is there — and the reader is
+    // told nothing, forever.
+    const problems = unshownKeys(
+      ['tools'],
+      panel(`
+        export function Tools({ data }: { data: AppData }) {
+          return <div>{false && <ReadFailure label="tools" reason={data.endpointErrors.tools} />}</div>;
+        }
+      `),
+    );
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toContain('endpointErrors.tools is drawn in a branch that cannot be taken');
+    expect(problems[0]).toContain('the guard in front of it is false whenever the reason exists');
+  });
+
+  it('reports a reason guarded by the absence of the reason itself', () => {
+    // One keystroke from the correct shape: `x && …` became `!x && …`, so the
+    // panel draws the failure exactly when there is no failure.
+    const problems = unshownKeys(
+      ['tools'],
+      panel(`
+        export function Tools({ data }: { data: AppData }) {
+          return <div>{!data.endpointErrors.tools && <ReadFailure label="tools" reason={data.endpointErrors.tools} />}</div>;
+        }
+      `),
+    );
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toContain('endpointErrors.tools is drawn in a branch that cannot be taken');
+  });
+
+  it('reports a reason drawn in the branch that means "the read worked"', () => {
+    // The same mistake written as a ternary, which is how the panels actually
+    // spell it: the reason is in the `null` half.
+    const problems = unshownKeys(
+      ['sessions'],
+      panel(`
+        export function Rail({ data }: { data: AppData }) {
+          return data.endpointErrors.sessions ? null : <ReadFailure label="sessions" reason={data.endpointErrors.sessions} />;
+        }
+      `),
+    );
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toContain('it is the branch taken when the read did not fail');
+  });
+
+  it('reports a reason behind an `=== undefined` guard', () => {
+    // The explicit spelling of the same contradiction, which a type-narrowing
+    // refactor produces: the guard says "there is no reason" and the branch
+    // draws the reason.
+    const problems = unshownKeys(
+      ['usage'],
+      panel(`
+        export function Usage({ data }: { data: AppData }) {
+          return data.endpointErrors.usage === undefined
+            ? <ReadFailure label="usage" reason={data.endpointErrors.usage} />
+            : null;
+        }
+      `),
+    );
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toContain('endpointErrors.usage is drawn in a branch that cannot be taken');
+  });
+
+  it('accepts the three reachable shapes the panels use', () => {
+    // The control for the four cases above: the same keys, guarded the right
+    // way round. A gate that reported these would be red over the real tree.
+    expect(
+      unshownKeys(
+        ['tools'],
+        panel(`
+          export function Tools({ data }: { data: AppData }) {
+            return <div>{data.endpointErrors.tools && <ReadFailure label="tools" reason={data.endpointErrors.tools} />}</div>;
+          }
+        `),
+      ),
+    ).toEqual([]);
+    expect(
+      unshownKeys(
+        ['sessions'],
+        panel(`
+          export function Rail({ data }: { data: AppData }) {
+            return data.endpointErrors.sessions ? <ReadFailure label="sessions" reason={data.endpointErrors.sessions} /> : null;
+          }
+        `),
+      ),
+    ).toEqual([]);
+    expect(
+      unshownKeys(
+        ['usage'],
+        panel(`
+          export function Usage({ data }: { data: AppData }) {
+            return data.endpointErrors.usage !== undefined
+              ? <ReadFailure label="usage" reason={data.endpointErrors.usage} />
+              : null;
+          }
+        `),
+      ),
+    ).toEqual([]);
+  });
+
+  it('does not judge a guard about something else', () => {
+    // The boundary the header states: `data.loading` around a reason is not
+    // this file's question, because whether `loading` can be true while a
+    // reason exists is a fact about `hooks.ts`. A gate that guessed would be
+    // red over a correct panel.
+    expect(
+      unshownKeys(
+        ['tools'],
+        panel(`
+          export function Tools({ data }: { data: AppData }) {
+            return data.loading ? <div>loading</div> : <ReadFailure label="tools" reason={data.endpointErrors.tools} />;
+          }
+        `),
+      ),
+    ).toEqual([]);
   });
 });

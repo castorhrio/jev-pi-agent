@@ -59,6 +59,18 @@
  * to install a version the toolchain no longer accepts, in one language only.
  * The second half of this file compares every such number with `package.json`,
  * per language and then in every other place the document mentions it.
+ *
+ * ## The third question: is the document finished?
+ *
+ * The two halves can agree with each other and with `package.json` and still be
+ * the wrong document — a file that stops mid-sentence, or one that grew a third
+ * top-level section after the Chinese half. Both happened: a review tool cut the
+ * English half at "matches this reposi…", and a note about which work the next
+ * round may pick up was appended after `### 许可`. Neither was visible to any
+ * gate here, because every other check reads *inside* a section. The last
+ * describe block in this file asks the document-level question instead: exactly
+ * two halves, nothing after them, every paragraph finished, and the same number
+ * of promises in each half.
  */
 
 import { describe, expect, it } from 'vitest';
@@ -651,5 +663,391 @@ describe('the numbers the README states, and package.json', () => {
     const problems = numberParityProblems(NUMBER_CLAIMS[0]!, zhMissing);
     expect(problems).toHaveLength(1);
     expect(problems[0]).toContain('zh: the README no longer states the Node.js floor');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The document's shape: two halves, and both of them finished
+// ---------------------------------------------------------------------------
+
+/**
+ * The README is one document written twice, and this section is about the
+ * document rather than about either half.
+ *
+ * ## The defect it was written for
+ *
+ * The file ended with a `## 产品过线标准（2026-10-31）` section: two lines of
+ * instructions about which work the *next* round is allowed to pick up. It was
+ * appended after the Chinese half's `### 许可`, so the document had three
+ * top-level sections where it promises two, and the last thing a reader saw was
+ * a note about the repository's own workflow rather than about the product.
+ * Nothing in the build noticed, because every gate here reads *inside* a
+ * section: `readme.test.ts` resolves the paths a section cites, the limitations
+ * gate compares the two `### 当前局限` bodies, and a paragraph after the last
+ * heading belongs to no section at all.
+ *
+ * The same shape is what a truncated file looks like from the other end. A
+ * review tool that cut the document at "matches this reposi…" produced a file
+ * whose last paragraph stops mid-sentence, and a reader cannot tell that from a
+ * sentence that was written that way. So the two checks below are one idea:
+ * **the document ends where it says it ends, and it ends on a finished
+ * sentence.**
+ *
+ * ## What is asserted
+ *
+ *  - the top-level sections are exactly `## English` then `## 中文`, in that
+ *    order, with nothing after them — a third section is either a workflow note
+ *    that does not belong in a product README or a half that started again;
+ *  - every paragraph ends on terminal punctuation, a lead-in colon, a heading, a
+ *    horizontal rule or a table row — anything else is a fragment, and a
+ *    fragment at the end of the file is what truncation looks like;
+ *  - the two halves have the same number of `###` subsections, and the same
+ *    number of top-level bullets in their first subsection (the "what it does"
+ *    list, which is the document's promise in one screen).
+ *
+ * ## What is deliberately not asserted
+ *
+ * That the two halves say the same thing — that is the limitations gate above,
+ * and it works because the limitations are a list with a table beside it. The
+ * rest of the prose is not comparable, and a gate that tried would be edited
+ * until it stopped trying. Nor is the *order* of the subsections compared: the
+ * two halves are translations, and a translator moving a paragraph is not a
+ * defect this file can see.
+ */
+
+const EN_HALF = '## English';
+const ZH_HALF = '## 中文';
+
+/** A line that ends a paragraph without ending a sentence: the lead-in colon. */
+const LEAD_IN = /[:：]$/u;
+
+/**
+ * Terminal punctuation in both languages, plus the delimiters a finished line
+ * can end on: a closing bracket (`[MIT](LICENSE)`), a closing backtick, a
+ * closing quote.
+ */
+const FINISHED = /[.!?。！？)\]`”’]$/u;
+
+/** One paragraph: where it starts, and the line it ends on. */
+interface Paragraph {
+  /** 1-based line number of the paragraph's first line. */
+  readonly line: number;
+  /** The paragraph's last non-empty line, trimmed. */
+  readonly last: string;
+}
+
+/**
+ * The paragraphs of a document, skipping fenced code blocks.
+ *
+ * A fenced block is not prose and its lines end however the code ends; counting
+ * them would make this gate red over a shell snippet that finishes on `fi`.
+ */
+function paragraphs(markdown: string): Paragraph[] {
+  const out: Paragraph[] = [];
+  let start = 0;
+  let last = '';
+  let fenced = false;
+  const flush = (): void => {
+    if (last !== '') out.push({ line: start, last });
+    last = '';
+  };
+  markdown.split('\n').forEach((raw, index) => {
+    const line = raw.trim();
+    if (/^```/u.test(line)) {
+      flush();
+      fenced = !fenced;
+      return;
+    }
+    if (fenced) return;
+    if (line === '') {
+      flush();
+      return;
+    }
+    if (last === '') start = index + 1;
+    last = line;
+  });
+  flush();
+  return out;
+}
+
+/** The end of a line, for a failure message: the reader needs the tail, not the head. */
+function tail(line: string): string {
+  return line.length > 60 ? `…${line.slice(-60)}` : line;
+}
+
+/**
+ * Every paragraph that stops without finishing.
+ *
+ * The last paragraph of the document is included by construction, which is the
+ * case that matters: a file cut mid-sentence has exactly one such paragraph and
+ * it is the final one.
+ */
+function danglingProblems(markdown: string): string[] {
+  const problems: string[] = [];
+  for (const paragraph of paragraphs(markdown)) {
+    const { last } = paragraph;
+    if (/^#{1,6} /u.test(last)) continue; // a heading is finished by definition
+    if (/^(?:-{3,}|\*{3,}|_{3,})$/u.test(last)) continue; // a horizontal rule
+    if (/^\|/u.test(last)) continue; // a table row
+    // A closing emphasis marker is not part of the sentence: the README's own
+    // tagline ends `…against their hash.**`, which is a finished sentence with
+    // a bold run around it. Stripping the markers first keeps the check about
+    // the sentence rather than about the markup.
+    const sentence = last.replace(/[*_]+$/u, '');
+    if (FINISHED.test(sentence) || LEAD_IN.test(sentence)) continue;
+    problems.push(
+      `line ${paragraph.line}: the paragraph ends on "${tail(last)}", which is neither a ` +
+        'finished sentence nor a lead-in — a document that stops mid-sentence reads as complete',
+    );
+  }
+  return problems;
+}
+
+/** The `## ` headings of a document, in order. */
+function topLevelSections(markdown: string): string[] {
+  return markdown
+    .split('\n')
+    .filter((line) => /^## /u.test(line))
+    .map((line) => line.trim());
+}
+
+/** The `### ` headings of a half, in order. */
+function subsectionHeadings(body: string): string[] {
+  return body
+    .split('\n')
+    .filter((line) => /^### /u.test(line))
+    .map((line) => line.trim());
+}
+
+/**
+ * The top-level bullets of a half's first `###` subsection.
+ *
+ * The first subsection is the "what it does" list in both languages, which is
+ * the document's promise in one screen. Counting it is the cheapest way to
+ * notice that one half lost a promise the other kept — the limitations gate
+ * covers the same question for the limitations, and nothing covered it here.
+ */
+function firstSubsectionBullets(body: string): number {
+  const lines = body.split('\n');
+  const start = lines.findIndex((line) => /^### /u.test(line));
+  if (start === -1) return 0;
+  const end = lines.findIndex((line, index) => index > start && /^#{1,3} /u.test(line));
+  return lines
+    .slice(start + 1, end === -1 ? undefined : end)
+    .filter((line) => /^- /.test(line)).length;
+}
+
+/**
+ * Every way the document's shape can disagree with what it promises.
+ *
+ * A pure function of its input, so the fixtures below can show it answering
+ * something other than `[]` — the one thing a gate about shape must be able to
+ * prove.
+ */
+function shapeProblems(markdown: string): string[] {
+  const problems: string[] = [];
+
+  const sections = topLevelSections(markdown);
+  if (sections.length !== 2 || sections[0] !== EN_HALF || sections[1] !== ZH_HALF) {
+    problems.push(
+      `the top-level sections are ${
+        sections.length === 0 ? 'none' : sections.map((section) => `"${section}"`).join(', ')
+      }; the document is exactly "${EN_HALF}" then "${ZH_HALF}", with nothing after them`,
+    );
+  }
+
+  const en = sectionBody(markdown, EN_HALF);
+  const zh = sectionBody(markdown, ZH_HALF);
+  if (en === undefined || zh === undefined) return problems; // already reported above
+
+  const enSubsections = subsectionHeadings(en);
+  const zhSubsections = subsectionHeadings(zh);
+  if (enSubsections.length !== zhSubsections.length) {
+    problems.push(
+      `en: ${enSubsections.length} subsection(s) (${enSubsections.join(', ')}) and zh: ` +
+        `${zhSubsections.length} (${zhSubsections.join(', ')}) — one half has a section the other does not`,
+    );
+  }
+
+  const enPromises = firstSubsectionBullets(en);
+  const zhPromises = firstSubsectionBullets(zh);
+  if (enPromises !== zhPromises) {
+    problems.push(
+      `en: the first subsection lists ${enPromises} item(s) and zh lists ${zhPromises} — ` +
+        'the two halves promise a different number of things',
+    );
+  }
+
+  return problems;
+}
+
+describe('the README is two halves, and both of them are finished', () => {
+  it('ends on a finished sentence, in both halves', () => {
+    const problems = danglingProblems(readme);
+    expect(
+      problems,
+      `the README stops mid-sentence:\n  ${problems.join('\n  ')}`,
+    ).toEqual([]);
+  });
+
+  it('is exactly the English half and the Chinese half, with nothing after them', () => {
+    const problems = shapeProblems(readme);
+    expect(
+      problems,
+      `the README's shape disagrees with what it promises:\n  ${problems.join('\n  ')}`,
+    ).toEqual([]);
+  });
+
+  it('is not vacuous: the document really has two halves and a paragraph list', () => {
+    // Without this, an emptied or renamed README would make both cases above
+    // pass over nothing at all — the same anti-vacuity rule the rest of this
+    // file follows.
+    expect(topLevelSections(readme)).toEqual([EN_HALF, ZH_HALF]);
+    expect(paragraphs(readme).length, 'the README has no paragraphs').toBeGreaterThan(20);
+    // The two halves are read as bodies, not as empty strings: a `sectionBody`
+    // that returned `''` would make the subsection counts agree at zero.
+    expect(subsectionHeadings(sectionBody(readme, EN_HALF) ?? '').length).toBeGreaterThan(4);
+    expect(firstSubsectionBullets(sectionBody(readme, EN_HALF) ?? '')).toBeGreaterThan(4);
+  });
+
+  it('reports a document that was cut mid-sentence', () => {
+    // The shape a review tool leaves behind: the last paragraph stops on an
+    // ellipsis, and every other check in this repository still passes because
+    // the truncation is after the last section it reads.
+    const truncated = [
+      '## English',
+      '',
+      '### What it does',
+      '',
+      '- **Verifiable injection.** The context pack is a pure function.',
+      '',
+      '### License',
+      '',
+      'The licence is MIT and the repository matches this reposi…',
+      '',
+      '## 中文',
+      '',
+      '### 它能做什么',
+      '',
+      '- **注入可验证。** Context Pack 是纯函数。',
+      '',
+      '### 许可',
+      '',
+      '[MIT](LICENSE)',
+    ].join('\n');
+
+    const problems = danglingProblems(truncated);
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toContain('line 9');
+    expect(problems[0]).toContain('matches this reposi…');
+    expect(problems[0]).toContain('neither a finished sentence nor a lead-in');
+  });
+
+  it('accepts a lead-in colon, a heading, a rule and a table row as finished', () => {
+    // The four shapes the real README uses to end a paragraph without ending a
+    // sentence. A gate that called these fragments would be red over the
+    // document it is supposed to protect, and the fix would be to weaken it.
+    const document = [
+      '## English',
+      '',
+      '### Installers',
+      '',
+      'The build produces one file:',
+      '',
+      '```bash',
+      'npm run dist',
+      '```',
+      '',
+      '---',
+      '',
+      '| Target | Output |',
+      '|---|---|',
+      '| Windows | `UCAD-Setup.exe` |',
+      '',
+      '## 中文',
+      '',
+      '### 安装包',
+      '',
+      '构建只产出一个文件：',
+      '',
+      '[MIT](LICENSE)',
+    ].join('\n');
+
+    expect(danglingProblems(document)).toEqual([]);
+  });
+
+  it('reports a section appended after the Chinese half', () => {
+    // The defect this round removed: a note about which work the next round may
+    // pick up, appended after `### 许可`. Every other gate in this repository
+    // reads inside a section, so nothing else could see it.
+    const withNote = [
+      readme.trimEnd(),
+      '',
+      '## 产品过线标准（2026-10-31）',
+      '必读 `docs/PRODUCT-DOD.md`。下一刀只许 DoD 未勾选。',
+    ].join('\n');
+
+    const problems = shapeProblems(withNote);
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toContain('"## 产品过线标准（2026-10-31）"');
+    expect(problems[0]).toContain('with nothing after them');
+  });
+
+  it('reports a half that lost a subsection', () => {
+    const problems = shapeProblems(
+      [
+        '## English',
+        '',
+        '### What it does',
+        '',
+        '- **Verifiable injection.** The context pack is a pure function.',
+        '',
+        '### License',
+        '',
+        '[MIT](LICENSE)',
+        '',
+        '## 中文',
+        '',
+        '### 它能做什么',
+        '',
+        '- **注入可验证。** Context Pack 是纯函数。',
+      ].join('\n'),
+    );
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toContain('en: 2 subsection(s)');
+    expect(problems[0]).toContain('zh: 1');
+  });
+
+  it('reports a half that lost a promise from the first subsection', () => {
+    // The other half of the same defect: both halves keep their subsections and
+    // one of them drops a bullet, which is how a promise disappears from one
+    // language only.
+    const problems = shapeProblems(
+      [
+        '## English',
+        '',
+        '### What it does',
+        '',
+        '- **Verifiable injection.** The context pack is a pure function.',
+        '- **Explainable routing.** Every decision records its engine.',
+        '',
+        '## 中文',
+        '',
+        '### 它能做什么',
+        '',
+        '- **注入可验证。** Context Pack 是纯函数。',
+      ].join('\n'),
+    );
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toContain('en: the first subsection lists 2 item(s) and zh lists 1');
+  });
+
+  it('reports a document with no halves at all', () => {
+    // A README that was replaced by something else entirely: the failure has to
+    // say what the document is supposed to be, not only that it is wrong.
+    const problems = shapeProblems('# UCAD\n\nA one-line README.\n');
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toContain('the top-level sections are none');
+    expect(problems[0]).toContain('"## English" then "## 中文"');
   });
 });
