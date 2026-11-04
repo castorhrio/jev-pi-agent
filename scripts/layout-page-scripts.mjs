@@ -410,6 +410,21 @@ export const MEASURE = `(() => {
   const tiers = new Map();
   const cjkSizes = new Map();
   /*
+   * The font stack each Chinese box was actually drawn with, and whether the
+   * engine had to synthesise an italic for it.
+   *
+   * 'tests/contract/typography.test.ts' asserts that the declared stack in
+   * styles.css is Latin, then Chinese, then a generic family, and that no rule
+   * writes 'font-style: italic'. Both are claims about the source. What ships
+   * is the computed style: a var() that stopped resolving, a family inherited
+   * from an unstyled control, or an inline style on one component would all
+   * leave the source assertion green and the screen wrong. This is the measured
+   * half of the same promise, reported per distinct stack so a failure names
+   * the family list and one element that carries it.
+   */
+  const families = new Map();
+  const fakeItalics = [];
+  /*
    * How many Chinese-bearing boxes this frame actually had. A typography rule
    * that measured nothing is indistinguishable from one that found nothing, so
    * the count travels in the result and the gate asserts it is not near zero.
@@ -457,6 +472,33 @@ export const MEASURE = `(() => {
       };
       group.count += 1;
       tracked.set(key, group);
+    }
+    /*
+     * The stack, as resolved. Grouped by the computed list rather than by
+     * element, because one rule is what produces one stack: a failure that
+     * names forty boxes is a failure nobody reads.
+     */
+    const family = style.fontFamily;
+    const familyGroup = families.get(family) || {
+      family: family,
+      count: 0,
+      element: describe(el),
+      text: own.slice(0, 30),
+    };
+    familyGroup.count += 1;
+    families.set(family, familyGroup);
+    /*
+     * A slanted Han glyph is not an italic: there is no italic cut of a Chinese
+     * face, so the engine shears the upright one and the strokes go muddy.
+     * Latin-only emphasis may still use a real italic cut; this loop only walks
+     * boxes that carry Han text.
+     */
+    if (style.fontStyle === 'italic' || style.fontStyle === 'oblique') {
+      fakeItalics.push({
+        element: describe(el),
+        fontStyle: style.fontStyle,
+        text: own.slice(0, 30),
+      });
     }
     /*
      * Leading, for the case where it matters: a Chinese paragraph that wrapped
@@ -757,6 +799,14 @@ export const MEASURE = `(() => {
       tooSmall: Array.from(small.values()).slice(0, 12),
       negativeTracking: Array.from(tracked.values()).slice(0, 12),
       tightLeading: tightLeading.slice(0, 12),
+      /*
+       * Every computed stack that carried Han text on this frame, with a count
+       * and one example element. The gate reads the order out of these strings:
+       * a Latin family, then a Chinese one, then a generic.
+       */
+      families: Array.from(families.values()).slice(0, 8),
+      /* Han boxes the engine had to shear, grouped by element and style. */
+      fakeItalics: fakeItalics.slice(0, 12),
     },
     /*
      * Typeset, as measured rather than declared: line length in CJK-equivalent

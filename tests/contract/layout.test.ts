@@ -217,6 +217,23 @@ interface Measurement {
       lines: number;
       text: string;
     }>;
+    /**
+     * Every font stack the engine actually resolved for a Chinese box on this
+     * frame, grouped by the computed list.
+     *
+     * `typography.test.ts` reads the declared stack out of `styles.css` and
+     * asserts its order. That is a claim about the source; this is the same
+     * claim measured. A `var()` that stopped resolving, a family inherited from
+     * an unstyled control or an inline style on one component would all leave
+     * the source assertion green and the screen wrong.
+     */
+    families: Array<{ family: string; count: number; element: string; text: string }>;
+    /**
+     * Chinese boxes the engine had to shear because something asked for an
+     * italic. There is no italic cut of a Han face, so the engine slants the
+     * upright one and the strokes go muddy — a rendering bug, not emphasis.
+     */
+    fakeItalics: Array<{ element: string; fontStyle: string; text: string }>;
   };
   /**
    * Prose, as measured rather than declared: how long a line is, and where the
@@ -312,6 +329,54 @@ function declaredProseCeiling(): number {
   ).not.toBeNull();
   return Number(match![1]);
 }
+
+/**
+ * The two font stacks the stylesheet declares, normalised for comparison.
+ *
+ * Read out of `styles.css` rather than imported, for the same reason the prose
+ * ceiling is: the question is whether the stack the engine resolved is the one
+ * the source declares, and importing a copy would answer a different question.
+ * Quotes and whitespace are normalised because Chromium echoes the declared
+ * list back with its own spacing — the families and their order are what is
+ * being compared, not the punctuation.
+ *
+ * Returned as a **named pair** rather than a flat array, because the two stacks
+ * promise different things and the gate has to check each of them against its
+ * own promise: the prose stack names Chinese faces after the Latin ones, the
+ * identifier stack ends in a monospace generic and names no Chinese face at all.
+ * A flat array invites "it is one of the declared stacks, done", which is the
+ * check that would have passed while a Chinese label drifted from prose onto
+ * the identifier stack — that is exactly what this gate found on its first run
+ * (`span.faint` carrying `本轮` on the mono stack, which is legitimate there).
+ */
+function declaredStacks(): { sans: string; mono: string } {
+  const source = fs.readFileSync(STYLES, 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+  const read = (name: string): string => {
+    const match = new RegExp(`--${name}:\\s*([^;]+);`).exec(source);
+    expect(match, `styles.css no longer declares --${name}`).not.toBeNull();
+    return normaliseStack(match![1]!);
+  };
+  return { sans: read('sans'), mono: read('mono') };
+}
+
+/** The families of a stack, in order, unquoted. */
+function stackFamilies(stack: string): string[] {
+  return stack
+    .split(',')
+    .map((family) => family.trim().replace(/^["']|["']$/g, ''))
+    .filter((family) => family.length > 0);
+}
+
+/** A font stack as a comparable string: families in order, unquoted. */
+function normaliseStack(stack: string): string {
+  return stackFamilies(stack).join(', ');
+}
+
+/** Families that draw Latin text, and families that draw Han text. */
+const LATIN_FAMILY = /-apple-system|BlinkMacSystemFont|Segoe UI|Inter|Helvetica|Arial/;
+const HAN_FAMILY = /PingFang SC|Microsoft YaHei|Noto Sans CJK SC|Source Han|Hiragino Sans GB/;
+/** The generic families a stack may end in. Everything after one is unreachable. */
+const GENERIC_FAMILY = new Set(['sans-serif', 'monospace', 'serif', 'system-ui']);
 
 let server: ViteDevServer | undefined;
 let measurements: Measurement[] = [];
@@ -1129,6 +1194,120 @@ describe('layout in a real browser engine', () => {
         m.typography.tightLeading,
         `${m.label}: wrapped Chinese paragraphs set closer than 1.45 line\n` +
           lines(m.typography.tightLeading),
+      ).toEqual([]);
+    }
+  });
+
+  it('draws Chinese on a declared stack, and prose keeps Latin before Han', () => {
+    /*
+     * The order is not cosmetic. Put a CJK family first and every Latin string
+     * in the app — paths, hashes, engine ids — is drawn from a face whose Latin
+     * is an afterthought, at a different x-height from the prose around it. Put
+     * a generic early and it swallows every family after it on a machine that
+     * lacks the named ones.
+     *
+     * `typography.test.ts` asserts that order against the source. This is the
+     * measured half: the stack Chromium actually resolved for boxes that had
+     * Han text to show. A `var()` that stopped resolving, a family inherited
+     * from an unstyled control, or an inline style on one component would all
+     * leave the source assertion green and the screen wrong — and the failure
+     * below names the family list and one element carrying it, because "wrong
+     * font" is not a sentence anyone can act on.
+     *
+     * Two roles, two promises, checked separately:
+     *
+     *  - the prose stack (`--sans`) has to resolve Latin, then Chinese, then a
+     *    generic, because most of what a Chinese reader reads here sits on it;
+     *  - the identifier stack (`--mono`) has to end in `monospace` and is
+     *    **not** required to name a Chinese face: a mono role carrying Han text
+     *    (`span.faint` with `本轮`) falls back to the engine's CJK face, which
+     *    is correct — there is no monospaced Chinese face on a stock Windows or
+     *    macOS install, and naming one would be a family that never resolves.
+     *
+     * Requiring both stacks to name a Chinese family is what the first version
+     * of this assertion did, and it failed on the mono stack for a reason that
+     * is not a defect. That failure is preserved here as the rule for the other
+     * role instead of being waved away by skipping the mono stacks.
+     */
+    const declared = declaredStacks();
+    let proseBoxes = 0;
+
+    for (const m of GEOMETRY) {
+      const measured = m.typography.families;
+      expect(
+        measured.length,
+        `${m.label}: measured no font stack at all, so the stack rule had nothing to look at`,
+      ).toBeGreaterThan(0);
+
+      for (const group of measured) {
+        const stack = stackFamilies(group.family);
+        const resolved = normaliseStack(group.family);
+        const where = `${m.label}: ${group.element} (${group.count} box(es), "${group.text}")`;
+
+        // It is one of the two stacks the stylesheet declares — not a third one
+        // that arrived by inheritance from an unstyled control, or an inline
+        // style on one component.
+        expect(
+          [declared.sans, declared.mono],
+          `${where} was drawn with a stack the stylesheet does not declare: ${group.family}`,
+        ).toContain(resolved);
+
+        if (resolved === declared.sans) {
+          proseBoxes += group.count;
+          const latin = stack.findIndex((family) => LATIN_FAMILY.test(family));
+          const han = stack.findIndex((family) => HAN_FAMILY.test(family));
+          expect(
+            latin,
+            `${where} is set on the prose stack but it names no Latin family: ${group.family}`,
+          ).toBeGreaterThanOrEqual(0);
+          expect(
+            han,
+            `${where} is set on the prose stack but it names no Chinese family, so Han text ` +
+              `falls back to whatever the engine picks: ${group.family}`,
+          ).toBeGreaterThan(latin);
+          expect(
+            GENERIC_FAMILY.has(stack.at(-1)!),
+            `${where} does not end in a generic family, so a machine without the named ones ` +
+              `falls back to whatever the engine picks: ${group.family}`,
+          ).toBe(true);
+        } else {
+          expect(
+            stack.at(-1),
+            `${where} is set on the identifier stack but it does not end in monospace, so a ` +
+              `machine without the named faces gets a proportional one: ${group.family}`,
+          ).toBe('monospace');
+        }
+      }
+    }
+
+    // The prose branch above is the one that matters most, and it is only
+    // checked if some Han box really landed on `--sans`. One product change
+    // that put every Han box on `--mono` would leave this whole test green
+    // while never evaluating the Latin/Han order again.
+    expect(
+      proseBoxes,
+      'no Chinese box anywhere in the run was drawn on the prose stack, so the Latin-before-Han ' +
+        'rule above was never evaluated',
+    ).toBeGreaterThan(0);
+  });
+
+  it('never shears a Chinese glyph into a fake italic', () => {
+    /*
+     * There is no italic cut of a Han face. `font-style: italic` on Chinese is
+     * the engine slanting the upright one, which reads as a rendering bug
+     * rather than emphasis — and it is invisible to every geometry rule above,
+     * because a sheared glyph is the same size in the same box.
+     *
+     * `typography.test.ts` asserts that no rule writes `font-style: italic`.
+     * This is the measured half: a component that sets it inline, or a browser
+     * default on a control nobody styled, would pass that and still ship the
+     * shear.
+     */
+    for (const m of GEOMETRY) {
+      expect(
+        m.typography.fakeItalics,
+        `${m.label}: Chinese drawn with a synthesised italic\n` +
+          lines(m.typography.fakeItalics),
       ).toEqual([]);
     }
   });

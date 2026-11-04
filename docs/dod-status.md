@@ -13,6 +13,45 @@
 由 `tests/contract/release-gate.test.ts` 钉住。`npm run package`（免安装目录）不受影响：
 它不出安装包，也不该需要 release 主机。
 
+## DoD 逐项核对（四态，门禁钉住）
+
+上面那张表按**轮次**记历史；这一节按 **DoD 原句**记状态，是下一轮唯一合法的范围来源。
+`docs/PRODUCT-DOD.md` 的每条 `- [ ]` 在这里逐句拆开（以 `；` 为界），条目号 `DOD-<条>.<句>`。
+四态只有四种：`通过`（有可复现证据）、`未过`（现在就能量到不满足）、`外部阻塞`（本机做不到，
+等外部条件）、`不适用`（这一条对当前产品不成立）。**四态是证据判断，不是过线通知**——
+过线仍由审查侧判定，编码侧不自报。
+
+证据列里的每个反引号指针都必须真的存在（路径存在、`npm run …` 是本仓脚本），
+`tests/contract/dod-status.test.ts` 逐行核对：少一条、改一句、写一个不存在的路径、四态合计对不上，
+都会打红。所以这张表不是一段说明，是一条会红的门禁。
+
+四态合计：通过 13 / 未过 2 / 外部阻塞 1 / 不适用 0
+
+| 条目 | 判据（取自 PRODUCT-DOD 原句） | 四态 | 证据（路径或命令） | 还差什么 |
+|---|---|---|---|---|
+| DOD-1.1 | Context Pack 纯函数 + 内容哈希 | 通过 | `packages/context/src/renderer.ts` `tests/contract/injection-contract.test.ts` | — |
+| DOD-1.2 | 界面可展示上一轮注入原文 | 通过 | `apps/desktop/src/renderer/src/components/ContextDrawer.tsx` `tests/e2e/critical-path.e2e.test.tsx` | — |
+| DOD-1.3 | 改一字节哈希失配 | 通过 | `tests/contract/injection-contract.test.ts` `docs/manual-verification.md` | — |
+| DOD-2.1 | 每次决策记录 rationale / confidence / 引擎 | 通过 | `tests/contract/decision-contract.test.ts` | — |
+| DOD-2.2 | 回落记为回落 | 通过 | `tests/contract/decision-chain.test.ts` | — |
+| DOD-2.3 | 设置里引擎链与实跑一致 | 通过 | `tests/contract/decision-chain.test.ts` | — |
+| DOD-3.1 | 执行前有记录在案的允许/拒绝 | 通过 | `tests/integration/ui-permission.test.ts` | — |
+| DOD-3.2 | 审计可查 | 通过 | `packages/permissions/src/permission-engine.ts` `tests/integration/ui-permission.test.ts` | — |
+| DOD-4.1 | Releases 上 NSIS 可装 | 外部阻塞 | `package.json` `scripts/verify-main-chain.mjs` `docs/blockers.md` | 需要一台 Windows 机器：装一次、过 SmartScreen、跑 `node scripts/verify-main-chain.mjs` 并 `--report` 带回报告，再用 `--judge` 判成过 |
+| DOD-4.2 | 更新 feed `https` + `sha256` 校验 | 未过 | `scripts/verify-release-feed.mjs` `scripts/publish-feed.mjs` `tests/contract/release-feed.test.ts` | 应用侧校验已绿、修正版文档已判零 finding；**发布出去的 v1.0.0 feed 仍缺 `sha256`**，需要持有 `contents: write` 的人跑 `node scripts/publish-feed.mjs`，之后 `node scripts/verify-release-feed.mjs` 退出 0 |
+| DOD-4.3 | 明文/非 URL 覆盖被拒并打日志 | 通过 | `apps/desktop/src/main/update-feed.ts` `apps/desktop/src/main/update-feed-log.ts` `tests/contract/update-integrity.test.ts` | — |
+| DOD-4.4 | 未签名 SmartScreen 有说明 | 通过 | `README.md` | — |
+| DOD-5.1 | `npm run typecheck && lint && knip && test && test:e2e`（及 CI 等价）绿 | 未过 | `package.json` `.github/workflows/ci.yml` `tests/contract/ci-typecheck.test.ts` | 本机逐条全绿；**CI 等价跑一次还没有留档**——把一次绿运行的链接或日志追加进 `docs/manual-verification.md` |
+| DOD-5.2 | 注入/交接/凭据/更新合约测试能打红 | 通过 | `tests/contract/injection-contract.test.ts` `tests/contract/handoff-chain.test.ts` `tests/contract/keyring-gate.test.ts` `tests/contract/release-feed.test.ts` | — |
+| DOD-6.1 | token 来源（厂商 tokenizer vs 启发式）上屏 | 通过 | `apps/desktop/src/renderer/src/components/ContextDrawer.tsx` `apps/desktop/src/renderer/src/components/PreviewPane.tsx` | — |
+| DOD-6.2 | 凭据进 OS 钥匙串，不经环境变量/日志泄露 | 通过 | `apps/desktop/src/main/keyring-gate.ts` `tests/contract/keyring-gate.test.ts` `tests/contract/secret-vault.test.ts` `tests/contract/host-secret-channel.test.ts` | — |
+
+## 按轮次的历史对照（旧表，保留原文）
+
+下面这张表是**上一版**的对照表，按 DoD 的六条**大项**记，每格一段历史。它不再被门禁读取
+（`tests/contract/dod-status.test.ts` 只读上面那一节），保留是因为它记着每条大项背后的真机行号与
+缺陷故事；**下一轮的范围来源是上面那张四态表**，不是这张。
+
 | DoD 条目 | 现状 | 证据 | 还差什么 |
 |---|---|---|---|
 | 可证明注入 | **有证据** | Context Pack 纯函数 + 内容哈希；真机步骤 1 通过：`renderedHash=80e256b63523731c…`，同一轮重读同哈希，任务描述多一个字符变 `673b97ec35b5…`，注入原文与 `estimate="heuristic_chars_div_4"` 同屏（`docs/manual-verification.md` 2026-11-03 行） | Windows 桌面复跑一次 |
@@ -498,6 +537,8 @@ Windows 桌面六步（无 Windows 机器）。三条仍是上表里的缺口，
 | 正文行长 ≤ 40 汉字（`--measure-prose: 36em`，落在 28–40 带内） | `styles.css` 的 `--measure-prose`；量测常量 `MAX_PROSE_LINE_CJK` 在 `scripts/layout-page-scripts.mjs` | `tests/contract/layout.test.ts`（五态 × 两个窗口尺寸） |
 | 行首 / 行尾禁则（句号不顶行首） | `LINE_START_FORBIDDEN` / `LINE_END_FORBIDDEN`，同上文件 | `tests/contract/layout.test.ts` |
 | 中英空隙：**量过，决定不做** | 扫 `apps/desktop/src/shared/i18n.ts` 全部字面量，「汉字紧邻拉丁字母/数字」出现 0 次 | 无门禁，理由见上一节（会拒绝「第1步」这类正常写法） |
+| 字体栈按声明解析（Latin → 中文 → 通用），且汉字的框只落在声明的两个栈上 | `scripts/layout-page-scripts.mjs` 的 `families`；断言 `layout.test.ts` | `tests/contract/layout.test.ts`（41 项 × 两个窗口尺寸） |
+| 汉字不被合成斜体（假斜体） | 同上，`fakeItalics` | `tests/contract/layout.test.ts` |
 | 五态观感：判据已就位，**等一个人签字** | `docs/state-walkthrough.md` | `tests/contract/state-walkthrough.test.ts`（判据锚点 + README 与签字表不许矛盾） |
 
 ## 三条外部阻塞（本轮仍阻塞，不假装完成）
@@ -666,3 +707,64 @@ AssertionError: ?scenario=partial painted the first-run block: expected { leadSi
 
 **这一轮没有做的事**：签字本身（需要一个人看那十张图）、上传修正版 feed（无令牌）、
 Windows 桌面六步（无 Windows 机器）。README 中英两半仍写着「没人看过」，`state-walkthrough.test.ts` 会拦住提前改口。
+
+## 本轮（2026-11-05）DoD 逐句核对成为一张会红的表，字体栈与假斜体从源码断言变成计算值断言
+
+上一轮末尾的三条「没做」一字未变：上传 feed（无令牌）、Windows 六步（无 Windows 机器）、
+五态人眼签字（需要一个人）。这一轮不碰产品行为，只补两处**门禁**——因为「下一轮唯一的范围来源」
+此前靠的是每个 agent 读一遍 DoD，而读漏一条没有任何东西会响。
+
+1. **`docs/PRODUCT-DOD.md` 的每条 `- [ ]` 在 `docs/dod-status.md` 里有了一行，而且是门禁读的那一行。**
+   `docs/dod-status.md` 顶部新增 `## DoD 逐项核对`：按 DoD 原句（以 `；` 为界）逐句拆开，
+   条目号 `DOD-<条>.<句>`，四态 `通过 / 未过 / 外部阻塞 / 不适用`，每行带**能解析**的证据指针与
+   「还差什么」。`tests/contract/dod-status.test.ts`（11 项）把它钉住：
+   - 每条 DoD 句都有行，且判据**逐字**等于 DoD 原句（改一个字的措辞、把一条拆成两条，都打红）；
+   - 四态之外没有第五个词（`差不多` 打红）；
+   - 证据列里每个反引号指针真的存在：路径在本仓，`npm run …` 是本仓声明过的脚本——
+     一个死指针和没有证据是同一件事，它读起来像证据却什么都证明不了；
+   - 不是 `通过` 的行必须写「还差什么」；
+   - 「四态合计」这一句必须等于实际行数（删一行、加一行都留不下一个舒服的总结）；
+   - `docs/blockers.md` 还列着外部阻塞时，这张表不许全绿——两份文档不许互相矛盾。
+   **它不判**某一行「应该是」什么状态：那是证据判断，每轮都会变，写进测试就变成每轮都要改的测试。
+   它判的是「判断发生了、用了词表、指向了真东西」。
+2. **字体栈与假斜体，从「源码里写着」变成「引擎解析成了」。**
+   `tests/contract/typography.test.ts` 早就断言 `--sans` 的族顺序、`--mono` 以 `monospace` 结尾、
+   以及 `styles.css` 里没有 `font-style: italic`。那三句都是关于**源码**的：
+   一个不再解析的 `var()`、一个从没样式化的控件继承来的族、一个组件上的内联样式，
+   都能让它们全绿而屏幕是错的。`scripts/layout-page-scripts.mjs` 的探针现在同时记录
+   每个载着汉字的框的**计算后** `font-family`（按栈归组，附一个例子的元素名与文本）与 `font-style`，
+   `tests/contract/layout.test.ts` 新增两条断言（41 项，1440×900 / 768×700 与窄窗口五态全覆盖）：
+   - 汉字的框只落在样式表声明的两个栈上，且**各守各的承诺**：正文栈（`--sans`）必须先拉丁后中文、
+     以通用族收尾；标识栈（`--mono`）以 `monospace` 收尾，**不**要求它写中文字族——
+     等宽角色里的汉字（`span.faint` 的 `本轮`）落回引擎的 CJK 字回退是对的，
+     一个装着不会解析的中文字族的等宽栈只是噪声。第一版断言要求每个栈都写中文字族，
+     因此栽在等宽栈上，而那不是缺陷；现在那条「失败」变成另一个角色的规则，而不是被跳过。
+   - 载着汉字的框，计算后的 `font-style` 不是 `italic`/`oblique`：汉字没有斜体字面，
+     倾斜是引擎把正体剪切出来的，笔画会糊——而它在任何几何断言里都看不出来，
+     因为被剪切的字和正体在同一个框里、一样大。
+3. **中英空隙仍是「量过，决定不做」**，理由不变：扫 `apps/desktop/src/shared/i18n.ts` 全部字面量，
+   「汉字紧邻拉丁字母/数字」出现 0 次；一条会拒绝「第1步」这类正常写法的规则，是把文案偏好伪装成排版错误。
+   中文行首禁则已经在 `LINE_START_FORBIDDEN` / `LINE_END_FORBIDDEN` 里（上一轮），本轮没有重复加。
+
+**证明它会红**（各演示一次，恢复后全绿）：
+
+| 改坏的写法 | 打红的断言与原文 |
+|---|---|
+| 在 `styles.css` 末尾加 `.faint { font-family: Georgia, "Songti SC", serif; }` | `layout-1440#chat: span.faint (3 box(es), "@ 引用文件") was drawn with a stack the stylesheet does not declare: Georgia, "Songti SC", serif` |
+| 把 `--sans` 里的三个中文字族删掉 | `layout-1440#chat: span (32 box(es), "会话") is set on the prose stack but it names no Chinese family …` |
+| 加 `.faint { font-style: italic; }` | `layout-1440#chat: Chinese drawn with a synthesised italic` + 三个框（`span.faint`「@ 引用文件」、`div.faint.fs-note.mt-2`「估算值，非精确」、`span.faint`「本轮」） |
+| 删掉 `docs/dod-status.md` 的 `DOD-2.2` 行 | `no row for DOD-2.2` |
+| 把 `DOD-2.2` 的判据改成「回落有记录」 | `DOD-2.2 answers "回落有记录"` |
+| 把 `DOD-3.2` 的四态写成「差不多」 | `DOD-3.2 has state "差不多"` |
+| 把证据换成 `packages/context/src/no-such-file.ts` | `does not exist, so the row points at nothing` |
+| 把证据里的脚本名换成 `package.json` 没有的（`npm run` 接一个不存在的名字） | `is not a script this repository declares` |
+| 把 `DOD-4.1` 的「还差什么」改成 `—` | `DOD-4.1 is "外部阻塞" but says nothing about what is missing` |
+| 把「四态合计」的通过数减一 | `四态合计 says 通过 12` |
+| 把整张表改成全 `通过`（合计也改） | `docs/blockers.md: lists 3 blocker(s) but every DoD sentence is 通过` |
+
+恢复后：`tests/contract/layout.test.ts` 41/41、`tests/contract/dod-status.test.ts` 11/11、
+`tests/contract/typography.test.ts` 12/12 绿；`node scripts/screenshot-sources.mjs --check` 仍是
+`PASS — 33 renderer source(s) and 14 screenshot(s) match`（本轮产品样式一行未改）。
+
+**这一轮没有做的事**：上传修正版 feed（无令牌）、Windows 桌面六步（无 Windows 机器）、
+步骤 6 的人眼观感签字（需要一个人）。三条仍是上表里的缺口，不假装完成。
