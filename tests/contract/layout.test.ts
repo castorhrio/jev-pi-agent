@@ -42,7 +42,11 @@ import electronPath from 'electron';
 import { createServer, type ViteDevServer } from 'vite';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
+  FAILURE_REASON_SCENARIOS,
   IN_FLIGHT_SCENARIO,
+  LONG_REASON_PARAM,
+  LONG_REASON_TAIL,
+  LONG_REASON_VALUE,
   STATE_SCENARIOS,
 } from '../../apps/desktop/src/renderer/src/dev/scenarios';
 
@@ -140,6 +144,13 @@ interface Measurement {
    * — which is *supposed* to have no sessions in the rail.
    */
   state?: string;
+  /**
+   * Which variant of a state this target measures, when it is not the plain
+   * one. `long-reason` is the same screen with a failure reason of unbounded
+   * length; it is a separate target so the plain state's assertions keep
+   * meaning what they said.
+   */
+  variant?: 'long-reason';
   error?: string;
   viewport: { width: number; height: number };
   document: { scrollWidth: number; scrollHeight: number; clientWidth: number };
@@ -152,6 +163,15 @@ interface Measurement {
     /** The permission prompt, the one overlay that announces itself as a modal. */
     dialogOpen: boolean;
     bodyChars: number;
+    /**
+     * The failure box's text, when the screen has one.
+     *
+     * `chars` is the whole string and `head` its first 120 characters, so a
+     * gate can assert both "the tail was on screen" and "the label is still
+     * the first thing in the box" without shipping the whole reason into the
+     * result file.
+     */
+    failure: { chars: number; head: string } | null;
     /**
      * The first-run block's hierarchy, as the engine computed it.
      *
@@ -605,6 +625,31 @@ beforeAll(async () => {
       },
     ]),
     /*
+     * The two screens that carry a failure message, with a reason of the
+     * length the product cannot control.
+     *
+     * `?reason=long` makes the fixture append a 200-character Windows path to
+     * every failure reason: one token, no space, no break opportunity. The
+     * fixture's own reasons are one short sentence, so nothing had ever put
+     * that shape in front of the box that renders it — and at 768x700 it did
+     * not survive it: the notice's scrollWidth was 1562px inside a 429px box
+     * and the whole window grew a horizontal scrollbar. `styles.css` now sets
+     * `overflow-wrap: anywhere` on `.notice` and `.pane-head p`; these targets
+     * are what keeps that true.
+     *
+     * Built from `FAILURE_REASON_SCENARIOS` rather than from the state names,
+     * for the same reason the state targets are: a target URL that spells a
+     * walkable state out by hand is what `scenario-states.test.ts` fails.
+     */
+    ...FAILURE_REASON_SCENARIOS.map((state) => ({
+      name: `state-${state}-tight-long-reason`,
+      state,
+      variant: 'long-reason' as const,
+      width: TIGHT.width,
+      height: TIGHT.height,
+      url: `${base}?scenario=${state}&${LONG_REASON_PARAM}=${LONG_REASON_VALUE}`,
+    })),
+    /*
      * The frame where the app is still fetching, which had been checked by
      * hand for five rounds and never managed to be seen.
      */
@@ -824,12 +869,86 @@ describe('the interface states are measured, not assumed', () => {
      */
     for (const state of STATE_SCENARIOS) {
       const tight = measurements.filter(
-        (m) => m.state === state && m.width === TIGHT.width && m.height === TIGHT.height,
+        (m) =>
+          m.state === state &&
+          m.variant === undefined &&
+          m.width === TIGHT.width &&
+          m.height === TIGHT.height,
       );
       expect(
         tight.map((m) => m.scenario ?? '(not measured)'),
         `?scenario=${state} was not measured at ${TIGHT.width}x${TIGHT.height}`,
       ).toEqual([state]);
+    }
+  });
+
+  it('survives a failure reason with no break opportunity in it', () => {
+    /*
+     * The reason half of a failure message is not written by this repository:
+     * it is an IPC error, a store that could not be opened, a path that does
+     * not exist. Chinese wraps anywhere, so the fixture's own reasons never
+     * showed the problem — a Windows path does not, and at 768x700 it pushed
+     * the whole window sideways (documentElement.scrollWidth 1691 against 768,
+     * the notice's own scrollWidth 1562 inside a 429px box).
+     *
+     * Four things are asserted, and the first one is what keeps the rest from
+     * being vacuous: the tail really was inside the failure box (not merely
+     * somewhere on the page), the box did not overflow, nothing escaped the
+     * window, and the label is still the first thing in it — a rule that
+     * wrapped the reason by pushing the label out would pass a scrollbar check
+     * and lose the only part of the message that says *what* failed.
+     */
+    const long = measurements.filter((m) => m.variant === 'long-reason');
+    expect(
+      long.map((m) => m.state).sort(),
+      'the long-reason targets did not all get measured',
+    ).toEqual([...FAILURE_REASON_SCENARIOS].sort());
+
+    const labels = copyFor('sessions.loadFailed');
+    expect(labels.length, 'could not read sessions.loadFailed out of the dictionary').toBeGreaterThan(
+      0,
+    );
+
+    for (const m of long) {
+      expect(m.mounted, `?scenario=${m.state}&reason=long did not mount: ${m.error ?? ''}`).toBe(
+        true,
+      );
+      expect(m.scenario, `?scenario=${m.state}&reason=long measured another state`).toBe(m.state);
+
+      const failure = m.content.failure;
+      expect(failure, `?scenario=${m.state}&reason=long painted no failure box`).not.toBeNull();
+      expect(
+        failure!.chars,
+        `the long reason never reached the failure box on ?scenario=${m.state} ` +
+          `(${failure!.chars} characters, the tail alone is ${LONG_REASON_TAIL.length})`,
+      ).toBeGreaterThanOrEqual(LONG_REASON_TAIL.length);
+      expect(
+        failure!.head,
+        `the failure box on ?scenario=${m.state} does not carry the tail: ` +
+          JSON.stringify(failure!.head),
+      ).toContain(LONG_REASON_TAIL.slice(0, 60));
+
+      expect(
+        m.horizontalOverflow,
+        `a long failure reason made the window scroll sideways at ` +
+          `${m.width}x${m.height} (?scenario=${m.state})`,
+      ).toBeLessThanOrEqual(0);
+      expect(
+        m.escaping.map((e) => e.element),
+        `a long failure reason pushed something out of the window (?scenario=${m.state})`,
+      ).toEqual([]);
+      expect(
+        m.clipped.map((c) => `${c.element} ${c.scrollWidth}>${c.clientWidth}`),
+        `a long failure reason was cut off instead of wrapped (?scenario=${m.state})`,
+      ).toEqual([]);
+
+      if (m.state === 'partial') {
+        expect(
+          labels.some((copy) => failure!.head.startsWith(copy)),
+          `the label is no longer the first thing in the failure box: ` +
+            JSON.stringify(failure!.head),
+        ).toBe(true);
+      }
     }
   });
 

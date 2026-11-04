@@ -886,6 +886,29 @@ export const MEASURE = `(() => {
       dialogOpen: document.querySelector('.dialog[role="dialog"][aria-modal="true"]') !== null,
       bodyChars: text(document.body).length,
       /*
+       * The failure box's own text, when the screen has one.
+       *
+       * A failure reason arrives from downstream - an IPC error, a store that
+       * could not be opened, a path that does not exist - so its length is not
+       * something this repository decides. The fixture's reasons are one short
+       * sentence, which is why the box that renders them was never measured
+       * against the shape a real one arrives in: one token, two hundred
+       * characters, no space to break at. '?reason=long' produces that shape
+       * and this reads it back, so the gate can assert the tail really was on
+       * screen instead of measuring a box that happened to be empty.
+       *
+       * null when the screen has no failure box at all, which is a fact about
+       * the frame rather than a measurement failure.
+       */
+      failure: (() => {
+        const el =
+          document.querySelector('.notice.error') ??
+          document.querySelector('.pane-head p');
+        if (!el) return null;
+        const full = text(el);
+        return { chars: full.length, head: full.slice(0, 120) };
+      })(),
+      /*
        * The first-run block's hierarchy, as computed rather than as declared.
        *
        * 'docs/state-walkthrough.md' asks a walker whether the eye lands on the

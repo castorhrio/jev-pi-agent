@@ -918,6 +918,10 @@ code,
   color: var(--text-2);
   font-size: var(--fs-body);
   max-width: var(--measure-prose);
+  /* The fatal pane's paragraph is the failure message verbatim (`App.tsx`'s
+     `if (fatal)` branch), so it has the same unbounded second half a notice
+     does. Same measurement, same rule, same reason it is `anywhere`. */
+  overflow-wrap: anywhere;
 }
 
 /* ===========================================================================
@@ -1045,6 +1049,17 @@ code,
      per line, over the ceiling. The same width, one half-pixel smaller, and
      the line grew past the point the eye re-reads. */
   max-width: var(--measure-prose);
+  /* A notice's second half is a failure reason, and its length is not ours to
+     decide: it is an IPC error, a store that could not be opened, a path that
+     does not exist. Chinese wraps anywhere, so the fixture's own reasons never
+     showed the problem — a Windows path does not. Measured at 768×700 with a
+     200-character path and no rule here: the notice's scrollWidth was 1562px
+     inside a 429px box, and the whole window grew a horizontal scrollbar
+     (documentElement.scrollWidth 1691 against 768). `anywhere` rather than
+     `break-word` because the box is a flex container: `break-word` does not
+     shrink the min-content size, so the anonymous text item would still ask
+     for the full token's width. */
+  overflow-wrap: anywhere;
 }
 
 .notice.warn {

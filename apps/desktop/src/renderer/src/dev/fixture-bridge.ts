@@ -79,7 +79,12 @@ import type {
   UpsertMcpServerRequest,
   UpdateStatus,
 } from '@ucad/contracts';
-import { scenarioFromLocation, type Scenario } from './scenarios';
+import {
+  LONG_REASON_TAIL,
+  longReasonFromLocation,
+  scenarioFromLocation,
+  type Scenario,
+} from './scenarios';
 
 /*
  * Re-exported rather than redefined: every existing importer (`tests/e2e/*`,
@@ -932,6 +937,24 @@ export interface FixtureUpdateOverrides {
 }
 
 /**
+ * How the harness should behave, as opposed to what data it holds.
+ *
+ * Separate from {@link FixtureUpdateOverrides} because the two answer different
+ * questions: that one replaces *what a call answers*, this one changes *how
+ * every failure reads*. Keeping them apart means a test that drives the update
+ * flow does not have to know that a break test exists.
+ */
+export interface FixtureOptions {
+  /**
+   * Make every failure reason carry {@link LONG_REASON_TAIL}.
+   *
+   * Set from `?reason=long` by {@link installFixtureBridge}; the layout gate is
+   * the only caller that asks for it.
+   */
+  readonly longReason?: boolean;
+}
+
+/**
  * Builds the in-memory bridge. Exported so the contract test can assert
  * completeness without needing a DOM — the surface, not the installation, is
  * what must not rot.
@@ -939,6 +962,7 @@ export interface FixtureUpdateOverrides {
 export function createFixtureApi(
   scenario: Scenario,
   updateOverrides: FixtureUpdateOverrides = {},
+  options: FixtureOptions = {},
 ): FixtureHandle {
   const empty = scenario === 'empty';
   const slow = scenario === 'loading';
@@ -1097,10 +1121,21 @@ export function createFixtureApi(
   // caller's `await` and become an *unhandled exception* instead of a
   // rejection the renderer can catch and display — the precise failure mode
   // this harness exists to rule out.
+  //
+  // `?reason=long` appends a tail with no break opportunity in it. The
+  // fixture's own reasons are one short sentence, and a short reason cannot
+  // show whether the box that renders it survives the shape a real one arrives
+  // in: a Windows path, a URL, a stack frame — one token, two hundred
+  // characters, no space to break at. The layout gate measures that shape at
+  // the tightest window the product allows (`tests/contract/layout.test.ts`);
+  // the tail is a harness knob and nothing outside `dev/` reads it.
   const boom = (what: string) => async (): Promise<never> => {
     markBusy();
     try {
-      return await Promise.reject(new Error(`[fixture:${scenario}] ${what} failed`));
+      const message = `[fixture:${scenario}] ${what} failed`;
+      return await Promise.reject(
+        new Error(options.longReason === true ? `${message} — ${LONG_REASON_TAIL}` : message),
+      );
     } finally {
       markSettled();
     }
@@ -1808,7 +1843,9 @@ export function installFixtureBridge(): Scenario | null {
   if (window.ucad) return null;
 
   const scenario = scenarioFromLocation(window.location.search);
-  const { api, emit, menu, idle, pending } = createFixtureApi(scenario);
+  const { api, emit, menu, idle, pending } = createFixtureApi(scenario, {}, {
+    longReason: longReasonFromLocation(window.location.search),
+  });
 
   window.ucad = api;
   // Makes the harness obvious on screen, so a fixture screenshot can never be

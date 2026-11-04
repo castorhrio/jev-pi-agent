@@ -81,6 +81,72 @@ export type StateScenario = (typeof STATE_SCENARIOS)[number];
  */
 export const IN_FLIGHT_SCENARIO = 'loading' satisfies StateScenario;
 
+/**
+ * The states whose screen carries a failure message the product did not write.
+ *
+ * `error` paints the fatal pane (`App.tsx`'s `if (fatal)` branch, whose `<p>`
+ * is the message verbatim) and `partial` paints a `ReadFailure` in the chat
+ * region and in the rail. Both strings come from downstream — an IPC error, a
+ * store that could not be opened, a path that does not exist — so their length
+ * is not something this repository decides.
+ *
+ * Named here for the same reason `IN_FLIGHT_SCENARIO` is: the layout gate needs
+ * to point at these two screens without spelling the state names out a second
+ * time, and `tests/contract/scenario-states.test.ts` fails a target URL that
+ * writes a walkable state inline.
+ */
+export const FAILURE_REASON_SCENARIOS = ['error', 'partial'] as const satisfies
+  readonly StateScenario[];
+
+/**
+ * The query parameter that makes every failure reason carry a tail with no
+ * break opportunity in it.
+ *
+ * `?reason=long` exists because the fixture's own reasons are short
+ * (`[fixture:partial] sessions.list failed`), and a short reason cannot show
+ * whether the box that renders it survives the shape a real one arrives in: a
+ * Windows path, a URL, a stack frame — one token, two hundred characters, no
+ * space to break at. The layout gate measures that shape at the tightest window
+ * the product allows; see `tests/contract/layout.test.ts`.
+ *
+ * It is a harness knob, not a product feature: nothing in `apps/desktop/src`
+ * outside `dev/` reads it, and the production bundle never installs the
+ * fixture at all.
+ */
+export const LONG_REASON_PARAM = 'reason';
+
+/** The value of {@link LONG_REASON_PARAM} that turns the long tail on. */
+export const LONG_REASON_VALUE = 'long';
+
+/**
+ * Whether a `location.search` string asks for the long failure reason.
+ *
+ * Read through `URLSearchParams` rather than by matching the raw string, so
+ * `?reason=long` and `?scenario=partial&reason=long` both work and a value that
+ * merely contains the word (`?reason=longer`) does not.
+ */
+export function longReasonFromLocation(search: string): boolean {
+  return new URLSearchParams(search).get(LONG_REASON_PARAM) === LONG_REASON_VALUE;
+}
+
+/**
+ * A failure reason of the shape the product cannot control.
+ *
+ * A Windows path is the honest example: it is what an IPC error, a store that
+ * could not be opened or a missing file actually says, it is long, and it
+ * contains no space, no hyphen and no slash a line breaker may use — so a box
+ * that renders it either wraps mid-token or pushes the window sideways. Two
+ * hundred characters is past the width of every panel in the app at the
+ * tightest window, which is the point: the tail must be longer than the box.
+ *
+ * Exported because the layout gate asserts that this exact string reached the
+ * failure box: a copy of it in the test would be a second fact, and the two
+ * would drift the first time the tail changed.
+ */
+export const LONG_REASON_TAIL =
+  'C:\\Users\\someone\\AppData\\Local\\Programs\\UCAD\\resources\\app.asar\\node_modules\\@ucad\\desktop\\dist\\main\\bootstrap.js' +
+  '\\C:\\Users\\someone\\AppData\\Local\\Programs\\UCAD\\resources\\app.asar\\node_modules\\@ucad\\desktop\\dist\\main\\bootstrap.js';
+
 /** Whether a string names a scenario the harness can install. */
 export function isScenario(value: string | null | undefined): value is Scenario {
   return typeof value === 'string' && (SCENARIOS as readonly string[]).includes(value);
