@@ -887,3 +887,47 @@ Windows 桌面六步（无 Windows 机器）。README 中英两半仍写着「�
 两条缺口原样保留，不假装完成。
 
 门禁：`xvfb-run -a npx vitest run tests/contract/layout.test.ts` 42 项全绿（新增 1 项）。
+
+## 本轮（2026-11-04 深夜）五态观感走查的第一条可测量缺陷：段落收在孤字上
+
+上表「步骤 6 的**视觉**走查」一直挂着同一句话。这一轮把「观感」拆成「机器能量到的」与「只能人眼判的」，
+把能量到的那一条量出来、修掉，并让它进门禁；人眼那一半仍然没有签字（`docs/state-walkthrough.md`
+的记录表照旧是「未走查」，没有日期，README 也照旧说没人看过）。
+
+**critique（逐态，量的是排版事实，不是截图好看）**：五态 × 两个尺寸（1440×900 / 768×700），逐段走
+每个换行过的中文段落，记下每个段落**最后一行的字数**。命中的是同一件事：
+
+- `?scenario=empty`（1440×900）：`.preview-body .faint` 收在 `容。`
+  ——`发送一轮指令后，这里会显示 Agent 实际收到的内容。` 断成 11 行满行 + 一行一个「容」，
+  底下垫着它自己的句号。
+- `?scenario=permission`（1440×900 与 768×700）：`[role="dialog"] .faint.mt-3.fs-note` 收在 `批。`
+  ——「…可拦截的 Agent 会同时启用厂商原生审」/「批。」。
+- 把 `text-wrap: pretty` 去掉再量一遍，命中的不止这两处：`layout-768x700#context` 的
+  `p` 收在 `验。`，`div.notice.warn.mt-2` 收在 `字。`。这不是窄窗口效应，也不是某一处文案的偶然，
+  是这个应用**所有**两行段落共有的收尾形状。
+
+这就是中文排版里的**孤字行**，而它此前对每一道门禁都不可见：盒子在框里（几何绿）、没被裁
+（clipped 绿）、没压字（overlaps 绿）、最长一行 28–40 字（行长上下限都绿）——
+两条行长规则**故意**豁免最后一行（段末一行天生就短，后面也没有断点可查）。豁免就是孤字住的地方。
+
+**typeset（一处声明）**：`apps/desktop/src/renderer/src/styles.css` 的 `body` 加 `text-wrap: pretty`。
+量过两种修法才选的：`balance` 也能把两处清掉，但它会把短段的**每一行**都压到半栏——468px/13px 的
+那条注变成 12 字一行，**低过同一道门禁的 28 字下限**，等于拿孤字换一根「树桩列」；
+`pretty` 只动最后一行。修完这两处收在 3 个字，全仓其余段落一行未动。
+
+**门禁**（`scripts/layout-page-scripts.mjs` + `tests/contract/layout.test.ts`）：
+`typeset.stubLines` 记下每个「最后一行文字字数低于下限」的段落，字数**不含句读**——
+`容。` 算 1 个字，`内容。` 算 2 个。下限是导出的 `MIN_LAST_LINE_GLYPHS = 2`，
+和行长上下限一样先断言「量测用的是声明的那个数」，再断言所有 target 的 `stubLines` 为空。
+
+**证明它会红**：把 `text-wrap: pretty` 那行注释掉重跑 `-t "runt line"`，
+`layout-768x700#context` 报两条（`p` → `验。`、`div.notice.warn.mt-2` → `字。`）并打红；
+恢复后 `tests/contract/layout.test.ts` 43 项全绿（新增 1 项）。
+
+**顺带重拍了图**：CSS 改动会让 `scripts/screenshot-sources.mjs` 的漂移门禁变红，这一轮把门禁那一跑
+产出的新截图（`.run-logs/layout/state-*-chat.png`、`panels-1440-*.png`）选进 `docs/screenshots/`，
+再跑 `node scripts/screenshot-sources.mjs --write` 记录——16 张图、33 个渲染层源文件，`--check` PASS。
+这条「重拍」仍然靠人复制文件，还不是一条命令（`docs/dod-status.md` 的已知盲区没有变化）。
+
+**这一轮没有做的事**：人眼观感走查的签字（`docs/state-walkthrough.md` 记录表仍是「未走查」）、
+Icon/Favicon 的 16–32px 核验、DOD-4.1（Windows 真机）、DOD-4.2（feed 上传）。四条都不假装完成。

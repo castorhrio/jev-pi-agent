@@ -194,6 +194,38 @@ body {
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
   overflow: hidden;
+  /*
+   * No paragraph ends on a runt line (孤字行).
+   *
+   * Measured before it was set: `?scenario=empty` ended the preview's note on
+   * '容。' — one character and its full stop, alone under eleven full lines —
+   * and `?scenario=permission` ended the dialog's note on '批。'. Both were true
+   * at 1440x900 and at 768x700, so neither was a narrow-window effect, and
+   * every gate in this repository was green on both: the block is inside its
+   * box, nothing is clipped or overlapped, and the two line-length rules
+   * deliberately exempt a paragraph's last line because that line is short by
+   * definition. The exemption is where a runt lives.
+   *
+   * `text-wrap: pretty` lets the engine look at the last line and move a
+   * character down when it would otherwise be alone; both blocks then end on
+   * three characters of text and nothing else on any screen moves. The gate
+   * measures it rather than trusting this comment: `typeset.stubLines` in
+   * scripts/layout-page-scripts.mjs, asserted empty for every target in
+   * tests/contract/layout.test.ts, with MIN_LAST_LINE_GLYPHS as the floor.
+   *
+   * `text-wrap: balance` would also remove both runts and is the wrong fix: it
+   * balances *every* line of a short block, so the 468px note becomes 12
+   * characters a line — under the 28-character prose floor this same gate
+   * enforces, i.e. trading a runt for a column of stumps. Both outcomes were
+   * measured before choosing; 'pretty' moves only the last line.
+   *
+   * Declared on 'body' rather than on a prose class because the rule is about
+   * the paragraph, not about a surface: any text that wraps in this app is
+   * Chinese prose, and a class list would be a second fact that drifts the day
+   * somebody adds a note somewhere new. It inherits, and it does nothing to a
+   * box that does not wrap.
+   */
+  text-wrap: pretty;
 }
 
 ::selection {

@@ -281,6 +281,20 @@ interface Measurement {
       line: number;
       text: string;
     }>;
+    /** The floor the measurement used for a paragraph's last line. */
+    minLastLineGlyphs: number;
+    /**
+     * Paragphs whose final line carries fewer characters than the floor — the
+     * runt line. Punctuation is not counted, so '容。' is one character.
+     */
+    stubLines: Array<{
+      element: string;
+      fontSize: number;
+      lines: number;
+      lastGlyphs: number;
+      last: string;
+      text: string;
+    }>;
   };
   /** axe-core violations, present only on surfaces-bearing targets (round 34). */
   violations?: Array<{
@@ -362,6 +376,26 @@ function declaredProseFloor(): number {
   expect(
     match,
     'layout-page-scripts.mjs no longer exports MIN_PROSE_LINE_CJK, so the prose ' +
+      'floor this gate enforces is not the one the measurement used',
+  ).not.toBeNull();
+  return Number(match![1]);
+}
+
+/**
+ * The last-line floor the measurement is supposed to be using, read the same
+ * way as the two line-length numbers above.
+ *
+ * Its own reader rather than a third number inside one function, for the same
+ * reason the ceiling and the floor are separate: they are three rules with
+ * three different conditions, and this one is about the only line of a
+ * paragraph that neither length rule looks at.
+ */
+function declaredLastLineFloor(): number {
+  const source = fs.readFileSync(PAGE_SCRIPTS, 'utf8');
+  const match = /export const MIN_LAST_LINE_GLYPHS = (\d+);/.exec(source);
+  expect(
+    match,
+    'layout-page-scripts.mjs no longer exports MIN_LAST_LINE_GLYPHS, so the last-line ' +
       'floor this gate enforces is not the one the measurement used',
   ).not.toBeNull();
   return Number(match![1]);
@@ -1461,6 +1495,44 @@ describe('layout in a real browser engine', () => {
         m.typeset.badBreaks,
         `${m.label}: a line broke where Chinese does not allow it\n` +
           lines(m.typeset.badBreaks),
+      ).toEqual([]);
+    }
+  });
+
+  it('leaves no paragraph ending on a runt line', () => {
+    /*
+     * 孤字行. The two rules above look at the longest line and at the breaks
+     * between lines; neither looks at the *last* line, which is exempt by
+     * definition — the last line of a paragraph is short, and there is no break
+     * after it. That exemption is where a paragraph can end on '容。' alone:
+     * legal under every rule here, and the one thing a reader notices when it
+     * happens, because the eye lands on a single character under eleven full
+     * lines and reads it as a mistake.
+     *
+     * This was measured before it was asserted. `?scenario=empty` ended
+     * '.preview-body .faint' ('发送一轮指令后，这里会显示 Agent 实际收到的内容。')
+     * on '容。', and `?scenario=permission` ended the dialog's own note on
+     * '批。' — at 1440x900 *and* at 768x700, so it was not a narrow-window
+     * effect. The fix is one declaration in styles.css ('text-wrap: pretty') and
+     * the note there records why 'balance' — which also removes both — is the
+     * wrong tool.
+     *
+     * The floor travels in the measurement and is checked against the
+     * declaration first, like the two line-length numbers: a measurement that
+     * quietly stopped using MIN_LAST_LINE_GLYPHS would otherwise enforce
+     * whatever number it happened to carry.
+     */
+    const floor = declaredLastLineFloor();
+    for (const m of GEOMETRY) {
+      expect(
+        m.typeset.minLastLineGlyphs,
+        `${m.label}: the measurement used a ${m.typeset.minLastLineGlyphs}-character ` +
+          `last-line floor, but layout-page-scripts.mjs declares ${floor}`,
+      ).toBe(floor);
+      expect(
+        m.typeset.stubLines,
+        `${m.label}: a Chinese paragraph ends on a runt line (under ${floor} characters ` +
+          'of text on its last line)\n' + lines(m.typeset.stubLines),
       ).toEqual([]);
     }
   });

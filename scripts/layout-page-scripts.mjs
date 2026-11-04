@@ -110,6 +110,46 @@ export const LINE_END_FORBIDDEN = '（〔［｛〈《「『【“‘';
  */
 export const PROSE_MIN_CHARS = 20;
 
+/**
+ * The fewest characters a wrapped Chinese paragraph may leave on its last line.
+ *
+ * The defect is the one Chinese typesetting calls 孤字行: the paragraph is set,
+ * and the final line carries a single character plus its full stop — '容。' at
+ * the left margin, alone under eleven full lines. It is not a geometry problem
+ * (nothing overflows, nothing is clipped, the block is inside its box), it is
+ * not a line-length problem (the lines above it are the right length), and no
+ * gate in this repository could see it.
+ *
+ * Two is the boundary, and it is stated in *characters that carry text*, not in
+ * characters: the punctuation a line ends with belongs to the character before
+ * it, so '容。' is one character of text and '内容。' is two. A last line holding
+ * one character and its full stop is the runt; a last line holding two is a
+ * short line, which is what a paragraph's last line is allowed to be.
+ *
+ * It was measured before it was written down: `?scenario=empty` ended
+ * '.preview-body .faint' on '容。' and `?scenario=permission` ended the
+ * dialog's note on '批。', at 1440x900 and at 768x700. `text-wrap: pretty` (the
+ * declaration this number exists to judge — see styles.css) moves both to three
+ * characters of text and leaves every other block on every other state alone.
+ *
+ * `text-wrap: balance` would also remove them, and it is *not* the fix: it
+ * balances both lines of a two-line paragraph to half the measure, which at
+ * 468px and 13px is 12 characters a line — under the prose floor, so it trades
+ * a runt for a paragraph that reads as a column of stumps. That trade was
+ * measured too (`.run-logs/` notes for the round); 'pretty' only moves the last
+ * line.
+ */
+export const MIN_LAST_LINE_GLYPHS = 2;
+
+/**
+ * Characters that do not count as text on a paragraph's last line.
+ *
+ * Closing punctuation and the marks that attach to the character before them,
+ * i.e. the same set 行首禁则 lists, plus the full stop forms. A last line of
+ * '内容。' has two glyphs; a last line of '容。' has one.
+ */
+export const LAST_LINE_IGNORED = LINE_START_FORBIDDEN;
+
 /** The measurement itself, evaluated in the page. */
 export const MEASURE = `(() => {
   const round = (n) => Math.round(n * 10) / 10;
@@ -618,8 +658,11 @@ export const MEASURE = `(() => {
   const PROSE_MIN_CHARS = ${PROSE_MIN_CHARS};
   const START_FORBIDDEN = ${JSON.stringify(LINE_START_FORBIDDEN)};
   const END_FORBIDDEN = ${JSON.stringify(LINE_END_FORBIDDEN)};
+  const MIN_LAST_GLYPHS = ${MIN_LAST_LINE_GLYPHS};
+  const LAST_IGNORED = ${JSON.stringify(LAST_LINE_IGNORED)};
   const longLines = [];
   const shortLines = [];
+  const stubLines = [];
   const badBreaks = [];
   /*
    * How many blocks the floor actually applied to.
@@ -682,9 +725,10 @@ export const MEASURE = `(() => {
     for (const c of chars) {
       const current = lines[lines.length - 1];
       if (current === undefined || Math.abs(c.top - current.top) > 2) {
-        lines.push({ top: c.top, first: c.ch, last: c.ch, left: c.left, right: c.right });
+        lines.push({ top: c.top, first: c.ch, last: c.ch, text: c.ch, left: c.left, right: c.right });
       } else {
         current.last = c.ch;
+        current.text += c.ch;
         current.left = Math.min(current.left, c.left);
         current.right = Math.max(current.right, c.right);
       }
@@ -765,6 +809,34 @@ export const MEASURE = `(() => {
           text: own.slice(0, 30),
         });
       }
+    }
+    /*
+     * The last line. This is the one line the two rules above deliberately
+     * exempt: it is short by definition, so it can be neither too long nor too
+     * short, and it is not followed by a break, so neither break rule looks at
+     * it. That exemption is what a runt lives in - a paragraph whose final line
+     * is a single character plus its full stop is legal under every rule in
+     * this measurement and is still a paragraph that ends badly.
+     *
+     * Characters are counted rather than measured: the punctuation a line ends
+     * with belongs to the character before it, so it is skipped rather than
+     * counted as company. The threshold is MIN_LAST_GLYPHS, exported above with
+     * the measurement that found the defect.
+     */
+    let lastGlyphs = 0;
+    const lastLine = lines[lines.length - 1].text;
+    for (let i = 0; i < lastLine.length; i += 1) {
+      if (LAST_IGNORED.indexOf(lastLine[i]) === -1) lastGlyphs += 1;
+    }
+    if (lastGlyphs < MIN_LAST_GLYPHS) {
+      stubLines.push({
+        element: describe(el),
+        fontSize: round(size),
+        lines: lines.length,
+        lastGlyphs: lastGlyphs,
+        last: lastLine,
+        text: own.slice(0, 30),
+      });
     }
   }
 
@@ -896,6 +968,8 @@ export const MEASURE = `(() => {
       longLines: longLines.slice(0, 12),
       shortLines: shortLines.slice(0, 12),
       floorChecked: floorChecked,
+      minLastLineGlyphs: MIN_LAST_GLYPHS,
+      stubLines: stubLines.slice(0, 12),
       badBreaks: badBreaks.slice(0, 12),
     },
   });
