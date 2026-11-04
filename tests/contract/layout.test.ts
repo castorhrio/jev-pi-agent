@@ -284,6 +284,14 @@ interface Measurement {
     /** The floor the measurement used for a paragraph's last line. */
     minLastLineGlyphs: number;
     /**
+     * body's computed `text-wrap`, as the engine resolved it.
+     *
+     * The *means* behind `stubLines`: a browser that dropped `pretty` would
+     * resolve `auto` and leave this sweep's result assertion green on the
+     * screen where it last measured a runt-free engine.
+     */
+    textWrap: string;
+    /**
      * Paragphs whose final line carries fewer characters than the floor — the
      * runt line. Punctuation is not counted, so '容。' is one character.
      */
@@ -1534,6 +1542,58 @@ describe('layout in a real browser engine', () => {
         `${m.label}: a Chinese paragraph ends on a runt line (under ${floor} characters ` +
           'of text on its last line)\n' + lines(m.typeset.stubLines),
       ).toEqual([]);
+    }
+  });
+
+  it('has the engine apply the last-line rule, and says which value it applied', () => {
+    /*
+     * 孤字行 has two ways to come back, and until this case only one of them was
+     * gated.
+     *
+     * `stubLines` is the *result*: no paragraph's final line carries fewer than
+     * MIN_LAST_LINE_GLYPHS characters of text. It is measured in whatever engine
+     * the run happens to boot, which is the product's engine today — so a
+     * browser that did not understand `text-wrap: pretty` would drop the
+     * declaration, resolve `auto`, and leave the result assertion green on the
+     * frames that happen to break where they always did. The runts would then
+     * only reappear when a paragraph's text or the window changed, i.e. after
+     * the gate said the rule was in place.
+     *
+     * This is the *means*: body's computed `text-wrap` has to be the value
+     * styles.css declares. Two assertions, because they fail differently and a
+     * reader needs to know which one broke — the declaration disappearing from
+     * the stylesheet, or the engine not applying a declaration that is still
+     * there.
+     *
+     * The declaration is read with comments stripped for the same reason the
+     * window geometry is: this stylesheet explains itself in prose, and the
+     * explanation of `pretty` (and of why `balance` was refused) lives in the
+     * same rule it describes. A regex over raw text would pass on the comment
+     * alone, which is the failure `codeOnly` exists to prevent.
+     */
+    const css = codeOnly(fs.readFileSync(STYLES, 'utf8'));
+    const body = /(?:^|\n)body\s*\{([^}]*)\}/.exec(css);
+    expect(
+      body,
+      'styles.css has no `body { … }` rule any more, so the last-line rule has no home',
+    ).not.toBeNull();
+    expect(
+      body![1],
+      'styles.css `body` no longer declares `text-wrap: pretty`; `stubLines` can stay green ' +
+        'for a round on the frames it measured and the runts return everywhere else',
+    ).toMatch(/text-wrap:\s*pretty\s*;/);
+
+    const floor = declaredLastLineFloor();
+    for (const m of GEOMETRY) {
+      expect(
+        m.typeset.textWrap,
+        `${m.label}: the engine resolved body's \`text-wrap\` to ` +
+          `"${m.typeset.textWrap || '(empty)'}", not \`pretty\`. ` +
+          'Either styles.css `body { text-wrap: pretty }` lost its declaration, or this ' +
+          'engine dropped it and fell back to `auto` — the value `.preview-body .faint` ' +
+          `ended on '容。' under. MIN_LAST_LINE_GLYPHS is ${floor}: ` +
+          'with `auto` the floor is a rule about luck, not about the engine.',
+      ).toContain('pretty');
     }
   });
 

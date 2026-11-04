@@ -969,6 +969,37 @@ export const MEASURE = `(() => {
       shortLines: shortLines.slice(0, 12),
       floorChecked: floorChecked,
       minLastLineGlyphs: MIN_LAST_GLYPHS,
+      /*
+       * The last-line rule as the engine resolved it — the means, next to the
+       * result.
+       *
+       * 'stubLines' below is what the rule *did*: no paragraph ends on a runt.
+       * This is what makes it do that: body's computed 'text-wrap'. A browser
+       * that did not understand 'pretty' would drop the declaration and
+       * resolve to 'auto', and the result assertion would still be green on
+       * the day an engine change re-introduced the runts in a place this
+       * sweep does not look — the gate would be measuring a screen the product
+       * no longer renders the same way. Asserting both is what lets a failure
+       * say "the engine stopped applying the rule" instead of only "a
+       * paragraph ends on one character".
+       *
+       * The longhands are read as well as the shorthand because 'text-wrap' is
+       * a shorthand in Chromium and CSSOM does not promise to serialise a
+       * shorthand's computed value: 'text-wrap-style' is the longhand that
+       * carries 'pretty', and either one answering is enough.
+       */
+      textWrap: (() => {
+        const style = getComputedStyle(document.body);
+        const values = [
+          style.getPropertyValue('text-wrap'),
+          style.getPropertyValue('text-wrap-style'),
+          style.textWrapStyle || '',
+        ];
+        return values
+          .map((value) => String(value).trim())
+          .filter((value) => value.length > 0)
+          .join(' ');
+      })(),
       stubLines: stubLines.slice(0, 12),
       badBreaks: badBreaks.slice(0, 12),
     },
