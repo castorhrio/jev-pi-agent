@@ -87,6 +87,13 @@ const LANGS: readonly Lang[] = ['en', 'zh'];
  *
  * One entry per bullet, in the order the two sections state them. `id` is for
  * failure messages only; it is never matched against the README.
+ *
+ * The README groups these into two subsections — gaps that close in this
+ * repository, then blockers that need a token, a Windows machine or a person.
+ * The order below follows the document, so the three external blockers sit at
+ * the end in both languages; the gate still compares the bullets one position
+ * at a time, which is what catches a language that kept a sentence the other
+ * one dropped.
  */
 interface Limitation {
   readonly id: string;
@@ -108,18 +115,6 @@ const LIMITATIONS: readonly Limitation[] = [
     id: 'auto-update reads an `https` feed and says so when there is none',
     en: ['feed', 'cleartext', 'failing quietly'],
     zh: ['feed', '明文', '静默'],
-  },
-  // The defect that is in a *shipped* release, not in the code: the v1.0.0
-  // asset on the Releases page predates the feed check and carries no digest.
-  // It is stated in the README rather than only in `docs/`, because a reader
-  // deciding whether to trust the update channel is the person it affects —
-  // and because "we know, here is what it means, here is when it is fixed" is
-  // the honest form of a limitation. The three keywords are the three facts
-  // that make it actionable: which release, what is missing, when it is fixed.
-  {
-    id: 'the published v1.0.0 feed has no `sha256`',
-    en: ['v1.0.0', 'sha256', '1.1.0'],
-    zh: ['v1.0.0', 'sha256', '1.1.0'],
   },
   { id: 'the terminal needs `node-pty`', en: ['node-pty'], zh: ['node-pty'] },
   // Five keywords, because "verified somehow" is not the claim that matters.
@@ -145,6 +140,18 @@ const LIMITATIONS: readonly Limitation[] = [
     id: 'adapter resolution inside a real asar is verified by hand, not by CI',
     en: ['asar', 'ci does not cover', 'npm run package', 'adapters resolved', 'from a terminal'],
     zh: ['asar', 'ci 不覆盖', 'npm run package', 'adapters resolved', '从命令行'],
+  },
+  // The defect that is in a *shipped* release, not in the code: the v1.0.0
+  // asset on the Releases page predates the feed check and carries no digest.
+  // It is stated in the README rather than only in `docs/`, because a reader
+  // deciding whether to trust the update channel is the person it affects —
+  // and because "we know, here is what it means, here is when it is fixed" is
+  // the honest form of a limitation. The three keywords are the three facts
+  // that make it actionable: which release, what is missing, when it is fixed.
+  {
+    id: 'the published v1.0.0 feed has no `sha256`',
+    en: ['v1.0.0', 'sha256', '1.1.0'],
+    zh: ['v1.0.0', 'sha256', '1.1.0'],
   },
   // The Windows row of the DoD table, stated where a reader deciding whether the
   // release was ever run on Windows will see it. `docs/dod-status.md` tells the

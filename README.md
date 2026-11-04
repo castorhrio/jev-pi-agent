@@ -1,6 +1,6 @@
 # UCAD
 
-**Run several coding agents on one workspace — and be able to prove what each of them actually received.**
+**Three coding agents, one workspace. Open the Context drawer and check the exact bytes the last turn received against their hash.**
 
 [English](#english) · [中文](#中文)
 
@@ -17,14 +17,13 @@ trimmed it, a budget ledger dropped two files, a token estimator guessed at the
 rest, and the engine that answered may not be the one you configured. Nothing
 on screen can tell you what actually went in, or why it went that way.
 
-UCAD is the control plane for that gap. It is not an editor, a terminal agent or
-a model provider — it is the place where two questions get an answer you can
-check: **what bytes did the agent receive**, and **why did it take that route**.
-The context pack is a pure function with a content hash, so you can read the
-text and compare the digest; every decision records its engine, its rationale
-and its confidence, and a fallback is recorded as a fallback.
+UCAD closes that gap and makes both answers checkable: **which bytes did the
+agent receive**, and **why did it take that route**. The context pack is a pure
+function with a content hash, so you can read the rendered text and compare the
+digest. Every decision records its engine, its rationale and its confidence, and
+a fallback is recorded as a fallback.
 
-That is the product. The rest of this page is how it is done.
+The rest of this page shows how each of those checks works.
 
 ### What it does
 
@@ -155,15 +154,11 @@ on, or the command must run elevated. The unpacked build is unaffected.
 
 ### Current limitations
 
-Stated plainly, because a tool that hides its edges is harder to trust than one
-that does not.
+Stated plainly: a tool that hides its edges is harder to trust than one that does not.
 
-Three of these need something this machine does not have — a token with write
-access, a Windows machine, a person — and each of them is one command away from
-closing: `docs/blockers.md` says what to run, what it should print, and where to
-put the result. What the product is scored against is `docs/PRODUCT-DOD.md`;
-a review of a round must load it first, or it cannot tell a gap from a finished
-item.
+#### Known gaps in this repository
+
+Five gaps sit in this repository and close here; each bullet says how.
 
 - **One provider protocol ships.** The bundled adapter speaks the
   OpenAI-compatible protocol. Native vendor adapters are not implemented. Two
@@ -183,6 +178,29 @@ item.
   refused with the reason logged, and the app does not fall back to the bundled
   feed. That is separate from having no feed at all: with no feed the app says
   so rather than failing quietly.
+- **The interactive terminal needs `node-pty`.** It is an optional dependency;
+  without it the terminal panel reports that it is unavailable instead of
+  pretending to work. The command channel still runs.
+- **Adapter resolution inside a real `.asar` archive is verified by hand, with a
+  local packaging run; CI does not cover it.** The contract gate resolves a
+  package from an asar-shaped app root — the directory semantics Node applies —
+  but reading modules from *inside* the archive needs Electron's patched `fs`,
+  and no automated gate does that step. Run `npm run package`, then
+  `node scripts/verify-packaged-adapters.mjs`: it launches the built app,
+  captures its output, and fails unless the `adapters resolved:` line names
+  `universal`. On Windows run that from a terminal: a double-clicked build has
+  no console attached, so the line has nowhere to appear. The check has been run
+  on Linux x64 (Ubuntu 26.04, unpacked build, 2026-11-02): it passed and left no
+  child process behind.
+
+#### Blocked on something this machine does not have
+
+Three of these need something this machine does not have — a token with write
+access, a Windows machine, or a person. `docs/blockers.md` gives each one's
+command, its expected output, and the path the result goes back to. What the
+product is scored against is `docs/PRODUCT-DOD.md`; a review must load it first,
+or it cannot tell a gap from a finished item.
+
 - **The published v1.0.0 feed is missing its `sha256` — a release blocker.**
   The asset on the Releases page was written before the feed check existed: it
   carries a version, notes and a `releases/latest` URL, and no digest and no
@@ -199,20 +217,6 @@ item.
   `npm run dist` runs `node scripts/release-gate.mjs` before `electron-builder`
   and refuses to produce an installer while the published feed is one the app
   will not install from.
-- **The interactive terminal needs `node-pty`.** It is an optional dependency;
-  without it the terminal panel reports that it is unavailable instead of
-  pretending to work. The command channel still runs.
-- **Adapter resolution inside a real `.asar` archive is verified by hand, with a
-  local packaging run; CI does not cover it.** The contract gate resolves a
-  package from an asar-shaped app root — the directory semantics Node applies —
-  but reading modules from *inside* the archive needs Electron's patched `fs`,
-  and no automated gate does that step. Run `npm run package`, then
-  `node scripts/verify-packaged-adapters.mjs`: it launches the built app,
-  captures its output, and fails unless the `adapters resolved:` line names
-  `universal`. On Windows run that from a terminal: a double-clicked build has
-  no console attached, so the line has nowhere to appear. The check has been run
-  on Linux x64 (Ubuntu 26.04, unpacked build, 2026-11-02): it passed and left no
-  child process behind.
 - **The Windows run of the manual checklist has not happened.** Steps 1–5 are
   driven by `node scripts/verify-main-chain.mjs`, and they have run on a Linux
   desktop session; Windows is a different platform (DPAPI, tray, NSIS), so the
@@ -255,12 +259,11 @@ repository expects of a change, and how to add a workspace package.
 丢过两个文件、token 估算器猜过剩下的部分，最后回答的那个引擎可能也不是你配的那个。
 屏幕上没有任何东西能告诉你：到底进去了什么，以及为什么走了这条路。
 
-UCAD 就是补这个缺口的控制面。它不当编辑器、不当终端 Agent、不当模型厂商——它是让两个
-问题得到**可核对**答案的地方：**Agent 到底收到了哪些字节**，以及**它为什么走了这条路由**。
-Context Pack 是带内容哈希的纯函数，你可以读原文、比对摘要；每次决策都记下引擎、
-rationale 和 confidence，回落就写成回落。
+UCAD 补的就是这个缺口，并把两个问题的答案做成**可核对**的：**Agent 到底收到了哪些
+字节**，以及**它为什么走了这条路由**。Context Pack 是带内容哈希的纯函数，你可以读
+渲染后的原文、比对摘要；每次决策都记下引擎、rationale 和 confidence，回落就写成回落。
 
-这就是这个产品。下面写的是它怎么做到的。
+下面写的是每一项核对怎么做。
 
 ### 它能做什么
 
@@ -373,9 +376,9 @@ npm run package  # 免安装目录，不出安装包
 
 直说，因为**藏边界的工具比不藏的更不值得信任**。
 
-其中有三条需要这台机器没有的东西——一个写权限令牌、一台 Windows 机器、一个人——每一条都只差
-一条命令：`docs/blockers.md` 写着跑什么、应该打印什么、结果贴回哪里。产品按什么标准打分写在
-`docs/PRODUCT-DOD.md`；**审查一轮之前必须先读它**，否则分不清「缺口」和「已完成」。
+#### 本仓已知缺口
+
+五条缺口在本仓库里，也在这里关掉；每一条都写了怎么关。
 
 - **只随包发布一种厂商协议。** 内置适配器走 OpenAI 兼容协议，厂商原生适配器未实现。
   随包同时注册 `universal` 与 `mock` 两个适配器：前者是真正发出请求的那一个，后者是
@@ -389,6 +392,23 @@ npm run package  # 免安装目录，不出安装包
   更新检查（设置 → 检查更新）即会改读它。覆盖值必须是 `https`：明文地址和根本不是
   URL 的值都会被拒绝，原因写进日志，且不会退回随包 feed。这与「完全没有 feed」是
   两件事：没有配置时应用会直说，而不是静默失败。
+- **交互式终端依赖 `node-pty`。** 它是可选依赖；缺失时终端面板会如实说不可用，
+  而不是假装能跑。命令通道仍然可用。
+- **从真实 `.asar` 归档内解析适配器只能手动验证：本地打一次包，CI 不覆盖这一步。**
+  契约门禁会从 asar 形状的应用根目录解析一个包——也就是 Node 采用的目录语义——
+  但从归档*内部*读取模块需要 Electron 打过补丁的 `fs`，没有自动门禁做这一步：
+  手动跑 `npm run package`，再跑 `node scripts/verify-packaged-adapters.mjs`：
+  它会启动产物、抓取输出，`adapters resolved:` 那一行不含 `universal` 就判失败。
+  Windows 上请从命令行运行 `UCAD.exe`：双击启动的进程没有控制台，这一行没有地方可打印。
+  该脚本已在 Linux x64（Ubuntu 26.04、未打包目录构建、2026-11-02）实测通过：
+  退出后无残留子进程；Windows 上仍需从命令行跑一次。
+
+#### 外部阻塞：这台机器没有的东西
+
+其中有三条需要这台机器没有的东西——一个写权限令牌、一台 Windows 机器、一个人。
+`docs/blockers.md` 写着每一条跑什么、应该打印什么、结果贴回哪里。产品按什么标准打分
+写在 `docs/PRODUCT-DOD.md`；**审查一轮之前必须先读它**，否则分不清「缺口」和「已完成」。
+
 - **已发布的 v1.0.0 feed 缺 `sha256`——这是发布阻塞项。** Releases 页上那份 asset
   写在 feed 判定存在之前：只有版本、说明和一个 `releases/latest` 地址，没有摘要也没有
   大小。应用因此会播报版本、但不会从中安装任何东西——这是安全的方向，但它是一个已发布
@@ -400,16 +420,6 @@ npm run package  # 免安装目录，不出安装包
   跑完它之前，1.1.0 不许发布——而且这句是**被执行的**，不是靠人记得：
   `npm run dist` 会在 `electron-builder` 之前跑 `node scripts/release-gate.mjs`，
   只要已发布的 feed 仍是应用拒绝安装的那一份，它就不出安装包。
-- **交互式终端依赖 `node-pty`。** 它是可选依赖；缺失时终端面板会如实说不可用，
-  而不是假装能跑。命令通道仍然可用。
-- **从真实 `.asar` 归档内解析适配器只能手动验证：本地打一次包，CI 不覆盖这一步。**
-  契约门禁会从 asar 形状的应用根目录解析一个包——也就是 Node 采用的目录语义——
-  但从归档*内部*读取模块需要 Electron 打过补丁的 `fs`，没有自动门禁做这一步：
-  手动跑 `npm run package`，再跑 `node scripts/verify-packaged-adapters.mjs`：
-  它会启动产物、抓取输出，`adapters resolved:` 那一行不含 `universal` 就判失败。
-  Windows 上请从命令行运行 `UCAD.exe`：双击启动的进程没有控制台，这一行没有地方可打印。
-  该脚本已在 Linux x64（Ubuntu 26.04、未打包目录构建、2026-11-02）实测通过：
-  退出后无残留子进程；Windows 上仍需从命令行跑一次。
 - **Windows 上的手工清单还没有真机跑过。** 步骤 1–5 由
   `node scripts/verify-main-chain.mjs` 驱动，目前只在 Linux 桌面会话里跑通过；
   Windows 是另一个平台（DPAPI、托盘、NSIS），发布前仍要在那里跑一次。

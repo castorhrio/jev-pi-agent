@@ -84,6 +84,7 @@ import {
   assertStartComplete,
   missingStartedFields,
 } from '../../apps/desktop/src/main/app-container';
+import { DICTIONARIES } from '../../apps/desktop/src/shared/i18n';
 import {
   FIELDS_NOT_BUILT_BY_START,
   RETENTION_DEPENDENCIES,
@@ -1253,6 +1254,36 @@ describe('the container keeps every promise start() made', () => {
     for (const field of PROMISED_FIELDS) {
       const value = (container as unknown as Record<string, unknown>)[field];
       expect(value, `${field} was already set before start()`).toBeUndefined();
+    }
+  });
+
+  it('refuses before start() with a diagnostic that never reaches the UI', () => {
+    // `requireStarted()` runs before a window exists: bootstrap calls
+    // `start()`, a missing field throws, the catch prints the sentence to
+    // stderr and exits. No renderer and no IPC channel ever carries it, so the
+    // message is deliberately not in either dictionary — putting it there would
+    // promise a Chinese/English UI string that no user can reach. This pins
+    // both halves: the refusal still names the field, and the sentence stays
+    // out of the interface's vocabulary.
+    const container = new UcadApp({ paths: freshPaths() });
+    let refused: { code?: string; component?: string; message?: string } | undefined;
+    try {
+      container.getRetention();
+    } catch (error) {
+      refused = error as { code?: string; component?: string; message?: string };
+    }
+
+    expect(refused, 'getRetention() before start() returned instead of refusing').toBeDefined();
+    expect(refused!.code).toBe('CONTAINER_NOT_STARTED');
+    expect(refused!.component).toBe('container');
+    expect(refused!.message).toContain('db');
+    expect(refused!.message).toContain('start()');
+
+    for (const [locale, dictionary] of Object.entries(DICTIONARIES)) {
+      expect(
+        Object.values(dictionary),
+        `${locale} carries the container’s startup diagnostic as interface copy`,
+      ).not.toContain(refused!.message);
     }
   });
 

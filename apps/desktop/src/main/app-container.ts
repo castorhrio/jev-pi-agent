@@ -199,6 +199,16 @@ export class UcadApp {
    * filters on `STORAGE_ERROR` or `component: 'storage'` must not collect it.
    * The message names the field, which is the part a support report needs.
    *
+   * **This sentence is a startup diagnostic, not interface copy.** It is
+   * thrown while bootstrap is still starting the app, reaches
+   * `app.whenReady().then(bootstrap).catch(...)` in `bootstrap.ts`, is
+   * printed to stderr and followed by `app.exit(1)` — no renderer exists yet,
+   * and no IPC channel carries it. It therefore stays out of `i18n.ts` on
+   * purpose: a translation there would suggest a user reads it in their own
+   * language, which is a promise this path cannot keep. The contract test in
+   * `app-container-started.test.ts` pins that it is absent from both
+   * dictionaries.
+   *
    * `field` is typed as a real field of this class, and the value has to be
    * the field it names: `requireStarted('db', this.sessionStore)` is a type
    * error, and so is a name that is not a field at all. The `Started<…>` the
