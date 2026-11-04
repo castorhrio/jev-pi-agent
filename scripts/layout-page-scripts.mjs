@@ -391,6 +391,25 @@ export const MEASURE = `(() => {
   const tracked = new Map();
   const tightLeading = [];
   /*
+   * Every size actually rendered on this screen, not every size declared in the
+   * stylesheet.
+   *
+   * 'tests/contract/typography.test.ts' already resolves the four --fs-* tokens
+   * and fails if a fifth appears *in the source*. That is a claim about the
+   * stylesheet, and the promise this app makes is about a screen: four sizes is
+   * what a reader holds without noticing the type at all. Between the two there
+   * is room for a fifth size that no token declared — an inherited size, a
+   * browser default on a control nobody styled, a rule that picked its own
+   * number. So the engine's computed sizes are collected here, grouped by size,
+   * and the gate asserts the count.
+   *
+   * Only boxes with their own visible text count: an empty wrapper inherits a
+   * size without showing a letter, and counting it would report sizes nobody
+   * can see.
+   */
+  const tiers = new Map();
+  const cjkSizes = new Map();
+  /*
    * How many Chinese-bearing boxes this frame actually had. A typography rule
    * that measured nothing is indistinguishable from one that found nothing, so
    * the count travels in the result and the gate asserts it is not near zero.
@@ -410,6 +429,7 @@ export const MEASURE = `(() => {
     cjkCount += 1;
     const style = getComputedStyle(el);
     const size = round(parseFloat(style.fontSize));
+    cjkSizes.set(size, (cjkSizes.get(size) || 0) + 1);
     if (size < cjkFloor) {
       const key = describe(el) + ' @' + size + 'px';
       const group = small.get(key) || {
@@ -465,6 +485,29 @@ export const MEASURE = `(() => {
         });
       }
     }
+  }
+
+  /*
+   * An ASCII-only size is still a size on the screen: the identifier role
+   * (10.5px) never appears on Han text by design, so a tier count built inside
+   * the Chinese loop would miss it and report a three-size screen that shows
+   * four. This walks every visible box with its own text, in either script.
+   */
+  for (const el of all) {
+    if (!visible(el)) continue;
+    if (el.closest('.sr-only') !== null) continue;
+    const own = ownText(el);
+    if (own.length === 0) continue;
+    const size = round(parseFloat(getComputedStyle(el).fontSize));
+    if (!Number.isFinite(size)) continue;
+    const tier = tiers.get(size) || {
+      element: describe(el),
+      fontSize: size,
+      count: 0,
+      text: own.slice(0, 30),
+    };
+    tier.count += 1;
+    tiers.set(size, tier);
   }
 
   /*
@@ -703,6 +746,14 @@ export const MEASURE = `(() => {
     typography: {
       cjkFloor: cjkFloor,
       cjkCount: cjkCount,
+      /*
+       * Descending, so the largest tier is first and the fifth one — the one
+       * that should not exist — is the last line of a failure message.
+       */
+      tiers: Array.from(tiers.values()).sort((a, b) => b.fontSize - a.fontSize).slice(0, 12),
+      cjkSizes: Array.from(cjkSizes.entries())
+        .map((entry) => ({ fontSize: entry[0], count: entry[1] }))
+        .sort((a, b) => a.fontSize - b.fontSize),
       tooSmall: Array.from(small.values()).slice(0, 12),
       negativeTracking: Array.from(tracked.values()).slice(0, 12),
       tightLeading: tightLeading.slice(0, 12),

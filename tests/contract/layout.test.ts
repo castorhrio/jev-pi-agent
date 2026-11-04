@@ -193,6 +193,16 @@ interface Measurement {
     cjkFloor: number;
     /** How many Chinese-bearing boxes this frame had, so the rule is not vacuous. */
     cjkCount: number;
+    /**
+     * Every type size the engine actually rendered on this frame, largest
+     * first, with a count and one example element per size.
+     *
+     * The stylesheet's own four-tier rule is pinned by `typography.test.ts`
+     * against the source; this is the same promise measured on a screen.
+     */
+    tiers: Array<{ element: string; fontSize: number; count: number; text: string }>;
+    /** How many Chinese boxes each rendered size carried, ascending by size. */
+    cjkSizes: Array<{ fontSize: number; count: number }>;
     tooSmall: Array<{ element: string; fontSize: number; count: number; text: string }>;
     negativeTracking: Array<{
       element: string;
@@ -1038,6 +1048,66 @@ describe('layout in a real browser engine', () => {
         `${m.label}: Chinese set below the ${m.typography.cjkFloor}px floor\n` +
           lines(m.typography.tooSmall),
       ).toEqual([]);
+    }
+  });
+
+  it('puts no more than four type sizes on any one screen', () => {
+    /*
+     * `typography.test.ts` resolves the four --fs-* tokens and fails when the
+     * stylesheet declares a fifth. That is a fact about the CSS, not about a
+     * screen: an inherited size, a browser default on an unstyled control or a
+     * rule that typed its own number would all pass it. This assertion is the
+     * measured half — the sizes Chromium computed for boxes that had letters to
+     * show — and it is the one that has to stay true when a new component
+     * arrives with its own idea of "slightly bigger".
+     *
+     * Four is what a screen holds without the reader noticing the type at all.
+     * A fifth size is a decision, and the failure below names the target, every
+     * tier it found, and the elements carrying the extra one, because "too many
+     * sizes" is not a sentence anyone can act on.
+     */
+    for (const m of GEOMETRY) {
+      const tiers = m.typography.tiers;
+      expect(
+        tiers.length,
+        `${m.label}: measured no type size at all, so the four-tier rule had nothing to look at`,
+      ).toBeGreaterThan(0);
+      const sizes = tiers.map((tier) => `${tier.fontSize}px`);
+      expect(
+        tiers.length,
+        `${m.label}: ${tiers.length} type sizes on one screen (${sizes.join(', ')}); ` +
+          `four is the ceiling. The fifth and beyond:\n` +
+          lines(
+            tiers.slice(4).map((tier) => ({
+              fontSize: tier.fontSize,
+              element: tier.element,
+              count: tier.count,
+              text: tier.text,
+            })),
+          ),
+      ).toBeLessThanOrEqual(4);
+    }
+  });
+
+  it('keeps the Chinese the reader actually reads at or above the floor', () => {
+    /*
+     * The floor assertion above is about *every* Han box. This one is about the
+     * size most of them are set at — the prose the screen is made of. A screen
+     * can satisfy a per-box floor by setting one paragraph at 12px and the rest
+     * at 13px, which is correct; it can also drift toward setting everything at
+     * the floor, which passes the same rule and reads as fine print. Recording
+     * the histogram makes that drift visible in the result, and the assertion
+     * keeps the dominant size at or above the floor rather than assuming it.
+     */
+    for (const m of GEOMETRY) {
+      const histogram = m.typography.cjkSizes;
+      expect(histogram.length, `${m.label}: measured no Chinese size at all`).toBeGreaterThan(0);
+      const dominant = [...histogram].sort((a, b) => b.count - a.count)[0]!;
+      expect(
+        dominant.fontSize,
+        `${m.label}: most Chinese text (${dominant.count} boxes) is set at ` +
+          `${dominant.fontSize}px, under the ${m.typography.cjkFloor}px floor`,
+      ).toBeGreaterThanOrEqual(m.typography.cjkFloor);
     }
   });
 
