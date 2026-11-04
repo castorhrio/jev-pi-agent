@@ -68,10 +68,30 @@
  * behind, so the last block below requires every screenshot in
  * `docs/screenshots/` to be named by a document, and names the orphan.
  *
+ * ## Whether two pictures are the same picture
+ *
+ * The block above asks whether a committed image has a reader. It cannot tell
+ * whether the reader is being lied to: `docs/screenshots/states/loading.png` and
+ * `docs/screenshots/states/loading-768x700.png` were byte-for-byte the *loaded*
+ * app, because the state they name finishes loading before the gate photographs
+ * it. Nothing about the file was wrong — it existed, it was a PNG, it was the
+ * size the window was, and a document pointed at it. The picture was the lie,
+ * and the only instrument that could see it was to compare the committed
+ * pictures with each other.
+ *
+ * This is not the pixel diffing the file header refuses. No render is involved:
+ * the comparison is between files that are already in the repository, so font
+ * hinting, a scrollbar and an antialiased edge cannot make it fail. It can fail
+ * in exactly one way — two documents being sent to the same picture — which is
+ * how the last round's `states/error.png` (identical to `error.png`) was found
+ * by eye and deleted by hand. Deleting it was a one-off; this makes it a rule.
+ *
  * ## What it does not judge
  *
  * Whether a screenshot looks good, or whether the pixels show what the caption
- * says. And the hash cannot tell whether the images were actually retaken:
+ * says — except in the one case the block below can see, where two captions
+ * point at the same bytes. And the hash cannot tell whether the images were
+ * actually retaken:
  * `--write` records "the sources are now these bytes", and a person can run it
  * without looking at a single pixel. That is a limit of every non-pixel gate;
  * the gate's job is to make the omission deliberate instead of silent.
@@ -85,6 +105,7 @@ import {
   buildManifest,
   drift,
   driftLines,
+  fileDigest,
   isClean,
   readManifest,
   screenshotFiles,
@@ -385,5 +406,107 @@ describe('every committed screenshot is pointed at by a document', () => {
     expect(orphanScreenshots(texts, [...shots, 'docs/screenshots/states/newcomer.png'])).toEqual([
       'docs/screenshots/states/newcomer.png',
     ]);
+  });
+});
+
+/**
+ * The pictures that are the same bytes under different names.
+ *
+ * Pure over a `path -> digest` map, so the interesting shape — two names, one
+ * picture — can be shown producing a failure without writing a file into the
+ * tree. Returns every group with both its digest and its names, because a red
+ * run has to say *which* two documents are being sent to the same image.
+ */
+function duplicateGroups(
+  digests: Map<string, string>,
+): Array<{ digest: string; files: string[] }> {
+  const byDigest = new Map<string, string[]>();
+  for (const [file, digest] of digests) {
+    const list = byDigest.get(digest) ?? [];
+    list.push(file);
+    byDigest.set(digest, list);
+  }
+  return [...byDigest.entries()]
+    .filter(([, files]) => files.length > 1)
+    .map(([digest, files]) => ({ digest, files: files.sort() }))
+    .sort((a, b) => a.files.join(' ').localeCompare(b.files.join(' ')));
+}
+
+/**
+ * One picture cannot serve two names.
+ *
+ * The manifest keeps each file's bytes honest against the renderer, and the
+ * block above keeps each file honest about having a reader. Between them they
+ * missed a file that was perfectly recorded, perfectly sized and perfectly
+ * named — and was the same picture as another one. `states/loading.png` and
+ * `states/loading-768x700.png` showed the app after its reads had come back, so
+ * the five-minute walkthrough asked a person to judge what a waiting screen
+ * looks like using a photograph of a finished load. Both files passed every
+ * claim this file used to make.
+ */
+describe('no two committed screenshots are the same picture', () => {
+  const shots = screenshotFiles(REPO_ROOT);
+  const digests = new Map(shots.map((shot) => [shot, fileDigest(join(REPO_ROOT, shot))]));
+
+  it('hashes every committed picture, so the comparison below has a subject', () => {
+    expect(shots.length, 'no screenshot is committed').toBeGreaterThan(0);
+    for (const shot of shots) {
+      expect(
+        digests.get(shot),
+        `${shot} produced no digest, so it was never compared with anything`,
+      ).toMatch(/^sha256:[0-9a-f]{64}$/);
+    }
+  });
+
+  it('finds no two pictures with the same bytes', () => {
+    const groups = duplicateGroups(digests);
+    expect(
+      groups,
+      `these committed screenshots are the same bytes under different names, so the documents ` +
+        `that point at them are showing one picture to two audiences:\n` +
+        groups.map((group) => `${group.files.join(' == ')} (${group.digest})`).join('\n'),
+    ).toEqual([]);
+  });
+
+  it('reports one group naming both pictures, and leaves the different ones alone', () => {
+    // Driven on a synthetic map, because the real tree has nothing to find and a
+    // rule that has never been seen to fire is a rule nobody can trust.
+    const driven = new Map([
+      ['docs/screenshots/a.png', 'sha256:aaaa'],
+      ['docs/screenshots/states/b.png', 'sha256:aaaa'],
+      ['docs/screenshots/c.png', 'sha256:cccc'],
+    ]);
+    expect(duplicateGroups(driven)).toEqual([
+      { digest: 'sha256:aaaa', files: ['docs/screenshots/a.png', 'docs/screenshots/states/b.png'] },
+    ]);
+  });
+
+  it('names the pair when a real picture is filed under a second name', () => {
+    // The same claim against the real digest set: copying one committed
+    // picture's bytes under a new name must surface exactly that pair, which is
+    // what a reader needs when the gate goes red on their machine.
+    //
+    // A picture that is currently *unique* is picked rather than the first file
+    // in the directory: the case is about the pair the drive creates, and the
+    // tree it runs against may already hold duplicates (it did, the round this
+    // rule was written — `chat.png` and `states/loading.png` shared their bytes).
+    // Taking an already-duplicated picture would report a three-file group and
+    // the assertion would be about the wrong thing.
+    const counts = new Map<string, number>();
+    for (const digest of digests.values()) counts.set(digest, (counts.get(digest) ?? 0) + 1);
+    const needle = shots.find((shot) => counts.get(digests.get(shot)!) === 1);
+    expect(
+      needle,
+      'every committed picture shares its bytes with another, so this drive has no clean pair to ' +
+        'make and the case above is already reporting the whole tree',
+    ).toBeDefined();
+
+    const duplicated = new Map(digests);
+    duplicated.set('docs/screenshots/states/synonym.png', digests.get(needle!));
+
+    const groups = duplicateGroups(duplicated);
+    expect(groups).toHaveLength(1);
+    expect(groups[0]!.files).toEqual([needle, 'docs/screenshots/states/synonym.png'].sort());
+    expect(groups[0]!.digest).toBe(digests.get(needle));
   });
 });

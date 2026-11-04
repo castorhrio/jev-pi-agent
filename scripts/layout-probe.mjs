@@ -305,6 +305,23 @@ async function runTargets(targets) {
           // Deliberately *not* `showSettled`: this target exists for the frame
           // before the reads come back.
           await loadOnly(target.url);
+          /*
+           * The size still has to be set, because the target declares one and a
+           * measurement is about that window or it is about nothing.
+           *
+           * This branch used to load and read without resizing, so the frame the
+           * target called 1440x900 was caught at whatever size the previous
+           * target had left the window — 768x700 for the one in-flight target
+           * that existed, and the screenshot it wrote said so. The geometry rules
+           * could not notice: they run over the rows that are *not*
+           * `geometry: false`, and this is the row that is. `layout.test.ts` now
+           * asks the written picture which window it is of.
+           */
+          step(`${target.name}: resizing to ${target.width}x${target.height ?? 900}`);
+          win.setContentSize(target.width, target.height ?? 900);
+          await win.webContents.executeJavaScript(
+            `new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))`,
+          );
           step(`${target.name}: caught the in-flight frame`);
           const flight = JSON.parse(
             await win.webContents.executeJavaScript(

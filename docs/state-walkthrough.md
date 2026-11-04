@@ -52,6 +52,13 @@
 这十张图是布局门禁在真实 Chromium 里拍的，不是手绘也不是 mock：`npm test` 的
 `tests/contract/layout.test.ts` 把每个 target 的截图写进 `.run-logs/layout/`（该目录被忽略），
 上面十张是从那里挑出来提交的，所以**任何人重跑一次都能得到同一批图**。
+
+`loading` 那两张挑的是**读取还没返回的那一帧**（`.run-logs/layout/loading-frame.png` 与
+`loading-frame-tight.png`），不是 `state-loading*` 那两张。原因写在 `dev/scenarios.ts` 里：
+`?scenario=loading` 只是把每一次读取往后推迟，所以这一态 settle 之后的画面就是普通的首屏。
+这一轮把这两句话都变成了量出来的数——settle 后的加载态与已加载的应用逐字节相同，而入库那两张
+一旦等于「已加载」那一帧就是红。挑错文件不再靠人记得，重拍的人当场会被指名。
+
 `tests/contract/state-walkthrough.test.ts` 钉住三件事：每一态的两张图都在仓库里、窄窗口那张的像素尺寸
 等于 `bootstrap.ts` 声明的 `minWidth`/`minHeight`、以及上面这张表按顺序列全了十张图。
 

@@ -1321,3 +1321,72 @@ source(s) and 16 screenshot(s) match`。
 **这一轮没有做的事**里那条 `polish` 仍然是欠的：界面文案与 `README.md` 中文半部分的去 AI 味道，
 需要一次「先 critique、再逐条改、每条重拍」的独立一刀。本轮把重拍这条路第一次跑通（哈希对得上、
 `--write` 之后 `--check` 绿），下一刀改文案时不必再先解决「拍了放哪儿」。
+
+## 本轮（2026-11-05，第四刀）加载态那两张图是「已经加载完」的照片，而拍它的那一帧从来没被 resize
+
+审查本轮建议的是 `.more-menu` 打开态的图与 `polish` 那一刀。这两条都没做——做的是另一件事，
+理由写在下面第一句：**逐张对哈希时量到，`docs/screenshots/` 里有两张图在说谎**，而说谎的那两张正是
+`docs/state-walkthrough.md` 与 `docs/manual-verification.md` 发给走查人的「加载态」证据。五态签字这件事
+卡了六轮，每一轮都在说「缺一个人」；而这一次缺的不是人——**拿着图的人也答不了那三条判据**，
+因为图上是加载完的界面，两处 `加载中…` 一张都没有。这条不改，签字这一项仍然不可能完成。
+
+1. **量到的第一件（产品证据侧）**：`docs/screenshots/states/loading.png` 与 `docs/screenshots/chat.png`
+   **逐字节相同**（`sha256:d9490b3da032…`），`states/loading-768x700.png` 与 768×700 那张已加载的界面
+   逐字节相同。上一轮那句「14 张图与这一跑新拍的逐张 sha256 相同」是真的——图没抄错，**抄来的那一帧
+   本身就不是加载态**。根因写在 `apps/desktop/src/renderer/src/dev/scenarios.ts` 里，而且写得明明白白：
+   「`loading` delays every read, so the settled screen is the ordinary populated one」——这一态只是把
+   每次读取推迟 120ms，settle 之后就是一般的 populated 界面。而 `state-loading*` 这两个 target 走的正是
+   `waitForData()`（`await seam.idle()`），所以它们拍出来的一定是加载完的画面。
+   `docs/manual-verification.md` 那一行承诺的是「读取未返回的那一帧：会话列与对话区都在说「加载中…」」
+   ——文档承诺的东西，图里一个像素都没有。
+2. **量到的第二件（门禁侧，是前一件能藏住的原因）**：`scripts/layout-probe.mjs` 的 in-flight 分支
+   **从不调用 `setContentSize`**。它 `loadURL` 之后直接跑 `inFlightScript()` 再拍照，于是窗口停留在
+   **上一个 target 留下的尺寸**上：`loading-frame` 那个 target 声明 1440×900，实际拍到的是 768×700。
+   没有任何一道门会响，原因是这套门禁自己的规则把这一行挡在外面——in-flight 的结果带
+   `geometry: false`，而所有比尺寸的断言只遍历 `GEOMETRY`（`geometry !== false`）。
+   **一行「量的是内容不是几何」的豁免，让同一行关于尺寸的谎话一起免检了。**
+3. **改法**（产品行为一字未动，动的是探针与门禁）：
+   - in-flight 分支在跑页面脚本之前先按 target 声明的尺寸 `setContentSize` 并等两帧，
+     和 settled 分支同一条路径；`step()` 里打印这一次 resize，崩了也报得出死在哪一步。
+   - `tests/contract/layout.test.ts` 新增一个 768×700 的 in-flight target（`loading-frame-tight`），
+     窄窗口那一张从此有它自己的等待帧，而不是宽图的降级替身。两个 target 都用
+     `IN_FLIGHT_SCENARIO` 拼 URL——`scenario-states.test.ts` 不许 target 手写状态名，这一条照旧绿。
+   - 三条新断言（见下面那张表），其中两条是**关于图本身的元数据**，不是像素比对：这张图画在哪个窗口上
+     （读它自己的 IHDR），以及两个不同状态不许是同一份字节。文件头原本写着「截图只作证据，绝不做断言」，
+     本轮把那句改成写清楚**哪两种关于图的断言是允许的**，否则文件与自己矛盾。
+   - `tests/contract/screenshots.test.ts` 新增一张「已提交的图不许两张逐字节相同」的门禁
+     （`duplicateGroups()` 是纯函数，四条款）。上一轮 `states/error.png` 与 `error.png` 相同是**人眼**发现
+     后手工删掉的；这一轮同一形状第二次出现，说明它需要的是一条规则而不是又一次好眼力。
+   - 两张加载态图重拍为真正的等待帧，`node scripts/screenshot-sources.mjs --write` 重新记账。
+4. **本轮量到的两处「settle 之后的加载态」与「已加载」的关系，也被写成断言**：
+   `state-loading-chat.png` 与 `layout-1440-chat.png` 必须逐字节相同。这句话听起来像缺陷，实际是把
+   `apps/desktop/src/renderer/src/dev/scenarios.ts` 里那句散文变成会红的数——**哪天 fixture 改成真的一直不返回，这一条会红**，
+   红的时候该做的是重读 `layout.test.ts` 顶上那段注释（那里写了「先别删任何一半」），而不是把断言放宽。
+
+**证明它会红**（三条都是本轮真实跑出来的原文，不是推演；恢复后全绿）。
+
+| 当时的写法 | 打红的断言与原文 |
+|---|---|
+| HEAD 上的探针（in-flight 分支不 resize） | `layout.test.ts > layout in a real browser engine > photographs each in-flight frame at the size that target declares` → `loading-frame: the picture is 768x700 and the target declares 1440x900 — the window was never resized to the size being measured: expected { width: 768, height: 700 } to deeply equal { width: 1440, height: 900 }`（同一次跑 46 passed / 1 failed，93.63s） |
+| HEAD 上那两张已提交的加载态图 | `screenshots.test.ts > no two committed screenshots are the same picture > finds no two pictures with the same bytes` → `these committed screenshots are the same bytes under different names, so the documents that point at them are showing one picture to two audiences: docs/screenshots/chat.png == docs/screenshots/states/loading.png (sha256:d9490b3da03231833ce39d0ffec6e6c8a9085065f9315c1082360c3dc1122624)`（2 failed / 15 passed） |
+| 本轮我自己犯的错：上一次跑还没写完就复制图 | 于是 `states/loading.png` 里装进了一张 768×700 的图，当场红在既有那条上：`docs/state-walkthrough.md: docs/screenshots/states/loading.png is 768x700 and the app opens at 1440x900 — retake it, or the walkthrough is judging a window the product does not open`。同时新的重复门禁也红了——两张加载态图变成同一份字节。**复制图之前必须等那一次跑打印出结果**，这句话写在这里而不是当作已经发生过的事 |
+| 把入库的加载态图换成 settled 那一帧（也就是本轮开始前的状态） | `ships loading-state pictures that are not photographs of a finished load` → `docs/screenshots/states/loading.png is the same picture as layout-1440-chat.png: the walkthrough asks a person to judge what a waiting screen looks like using a photograph of a screen that already loaded. Copy the in-flight frame instead — the probe writes it as loading-frame.png / loading-frame-tight.png` |
+| 合成输入：把一张已提交图的字节挂到第二个名字上 | 同一个 describe 里 `names the pair when a real picture is filed under a second name` 指名那一对。这一条本轮修过一次：它原本取目录里第一张图当诱饵，而真实树上**已经有**一对重复，于是报出来的是三个名字——现在先数一遍 digest，取一张当前唯一的图，并留一条「一张都不唯一就说明上面那条已经判了整棵树」的前置 |
+
+**这一轮没有做的事**：
+- **`.more-menu` 打开态那张图**（审查本轮的 P0-2）：仍然欠。探针现在有了「先按声明尺寸 resize 再取证」
+  这条路，点开浮层需要的正是这条路，所以下一轮做它时不必先解决「量的是哪一帧」；
+- **`polish` 那一刀**（P0-1）：仍然欠，理由与上一轮同——它需要独立的 critique→逐条改→每条重拍；
+- **上传修正版 feed**（无令牌）、**Windows 桌面六步**（无 Windows 机器）、**五态人眼签字**（需要一个人）。
+  三条本轮各重跑一次，退出码是这一轮跑出来的：`release-gate.mjs --simulate-missing-sha` → **1**
+  （八行与 `docs/blockers.md` 贴的逐字相同）；`verify-main-chain.mjs --judge …win-YYYYMMDD.json` → **1**
+  （`report-unreadable`，那个目录里仍然没有报告）；`screenshot-sources.mjs --check` → **0**
+  （`PASS — 33 renderer source(s) and 14 screenshot(s)`）。`docs/blockers.md` 上那三个 2026-11-05
+  的日期因此不用改新，也不需要改旧——它们背后各有一次今天的真实退出码。
+
+门禁（每一条都是本轮跑出来的）：
+`TMPDIR=$PWD/.run-logs/tmp DISPLAY=:140 ELECTRON_DISABLE_SANDBOX=1 npm test` →
+`Test Files 105 passed (105)`、`Tests 1690 passed | 1 skipped (1691)`；
+`npm run test:e2e` → `19 passed (19)` / `149 passed (149)`；`npm run typecheck`、`npm run lint`、
+`npm run knip` 均退出码 0。两个数对得上：`1683 + 3`（本轮布局那三条）`+ 4`（截图那张新表四条）`= 1690`；
+布局门禁本身从 `45` 条变成 `48` 条，跳过的仍然只有那 1 条与本轮无关的。

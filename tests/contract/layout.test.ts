@@ -20,8 +20,16 @@
  *
  * Geometry, not pixels. A screenshot diff breaks on every innocent change and
  * gets switched off; a measurement names the element and the number, which
- * points at the CSS rule that caused it. Screenshots are still written to
- * `.run-logs/` as evidence for a human, never as the assertion.
+ * points at the CSS rule that caused it. Screenshots are written to
+ * `.run-logs/` as evidence for a human, and they are never compared against a
+ * stored baseline.
+ *
+ * Two claims *about* the pictures are asserted, and neither is a baseline
+ * comparison: which window a picture was taken at (its own IHDR, against the
+ * size the target declared), and that two pictures that describe two different
+ * states are not the same bytes. The first is metadata, the second can only go
+ * red when a state stops being distinguishable — no font hinting, scrollbar or
+ * antialiased edge can make it fail.
  *
  * ## What keeps it honest
  *
@@ -34,6 +42,7 @@
  */
 
 import { spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -58,6 +67,16 @@ const STYLES = path.join(REPO_ROOT, 'apps', 'desktop', 'src', 'renderer', 'src',
 const APP = path.join(REPO_ROOT, 'apps', 'desktop', 'src', 'renderer', 'src', 'App.tsx');
 const I18N = path.join(REPO_ROOT, 'apps', 'desktop', 'src', 'shared', 'i18n.ts');
 const PAGE_SCRIPTS = path.join(REPO_ROOT, 'scripts', 'layout-page-scripts.mjs');
+
+/**
+ * Where the probe writes its pictures.
+ *
+ * One constant for the directory because two facts about it exist: the value
+ * handed to the probe, and the assertions below that read the pictures back to
+ * ask which window each one was taken at. Writing the path out twice would let
+ * the assertions look at a directory nothing writes to.
+ */
+const SHOTS_DIR = path.join(REPO_ROOT, '.run-logs', 'layout');
 
 /**
  * The heights are not interesting: the shell is a full-height flex column and
@@ -332,6 +351,15 @@ interface Measurement {
     nodes: Array<{ html: string; target: string[] }>;
   }>;
   axeError?: string;
+  /**
+   * Set on the rows that caught the app mid-fetch.
+   *
+   * Copied from the target by the probe. These rows carry `geometry: false` —
+   * the frame is measured for content, not for layout — which is exactly why the
+   * size and distinctness claims below are made about the *picture* rather than
+   * left to the geometry loops, which never see them.
+   */
+  inFlight?: boolean;
   /** Only present on the in-flight target. */
   flight?: {
     shell: boolean;
@@ -366,6 +394,46 @@ function copyFor(key: string): string[] {
   const escaped = key.replace(/[.]/g, '\\.');
   const pattern = new RegExp(`'${escaped}':\\s*'([^']+)'`, 'g');
   return [...source.matchAll(pattern)].map((m) => m[1]!);
+}
+
+/**
+ * A PNG's pixel size, read from its IHDR chunk.
+ *
+ * The same eight-byte signature, four-byte length, `IHDR` type and two
+ * big-endian 32-bit integers `screenshots.test.ts` reads. No dependency, because
+ * a dependency to read five bytes would be the tail wagging the dog.
+ */
+function pngSize(bytes: Buffer): { width: number; height: number } | null {
+  const signature = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+  if (bytes.length < 24 || !bytes.subarray(0, 8).equals(signature)) return null;
+  if (bytes.subarray(12, 16).toString('ascii') !== 'IHDR') return null;
+  return { width: bytes.readUInt32BE(16), height: bytes.readUInt32BE(20) };
+}
+
+/**
+ * One picture the probe wrote in this run: its bytes and the window it shows.
+ *
+ * `null` when the file is not there, which the caller has to answer for — a
+ * missing picture is the "nothing was measured" shape, not a smaller result.
+ *
+ * This is *not* a baseline comparison: nothing here knows what the pixels are
+ * supposed to look like. The two questions asked of a picture are which window
+ * it was taken at (metadata, exactly reproducible) and whether two pictures are
+ * the same bytes (a claim about two frames of this same run, so an innocent CSS
+ * change cannot break it — only a state that stopped being distinguishable
+ * does).
+ */
+function pictureAt(absolutePath: string): { digest: string; width: number; height: number } | null {
+  if (!fs.existsSync(absolutePath)) return null;
+  const bytes = fs.readFileSync(absolutePath);
+  const size = pngSize(bytes);
+  if (size === null) return null;
+  return { digest: createHash('sha256').update(bytes).digest('hex'), ...size };
+}
+
+/** One picture this run wrote in `SHOTS_DIR`. */
+function writtenShot(name: string): { digest: string; width: number; height: number } | null {
+  return pictureAt(path.join(SHOTS_DIR, name));
 }
 
 /**
@@ -527,7 +595,7 @@ function runProbe(
         // Screenshots are evidence, and `.run-logs/` is ignored, so writing
         // them costs the gate nothing and gives a human something to look at
         // when a measurement is hard to believe.
-        UCAD_LAYOUT_SHOTS: path.join(REPO_ROOT, '.run-logs', 'layout'),
+        UCAD_LAYOUT_SHOTS: SHOTS_DIR,
       },
     });
     let stdout = '';
@@ -657,6 +725,26 @@ beforeAll(async () => {
       name: 'loading-frame',
       width: PANEL_WIDTH,
       height: HEIGHT,
+      url: `${base}?scenario=${IN_FLIGHT_SCENARIO}`,
+      inFlight: true,
+      markers: loadingMarkers(),
+    },
+    /*
+     * The same frame at the tightest window the product allows.
+     *
+     * One in-flight size was not enough, and the gap was visible rather than
+     * theoretical: `docs/screenshots/states/loading-768x700.png` — the picture
+     * the five-minute walkthrough sends a person for the narrow loading state —
+     * was byte-for-byte the loaded app at that size, because the only frame
+     * caught mid-fetch was the wide one and the settled `?scenario=loading`
+     * screen is the ordinary populated window (`dev/scenarios.ts` says so about
+     * `IN_FLIGHT_SCENARIO`). A narrow picture of a waiting screen has to be
+     * caught while the reads are still out, at the narrow size.
+     */
+    {
+      name: 'loading-frame-tight',
+      width: TIGHT.width,
+      height: TIGHT.height,
       url: `${base}?scenario=${IN_FLIGHT_SCENARIO}`,
       inFlight: true,
       markers: loadingMarkers(),
@@ -1217,18 +1305,160 @@ describe('layout in a real browser engine', () => {
      * The claim being checked is the one the item actually makes — a slow
      * interface gives feedback rather than a blank screen — and the screenshot
      * lands in `.run-logs/layout/loading-frame.png` for a person to look at.
+     *
+     * Every in-flight target is asked, not the one the case remembers by name:
+     * the narrow frame arrived because a person is told to judge the loading
+     * state at two window sizes, and a check that names one of them would leave
+     * the other asserted by nobody.
      */
-    const flight = measurements.find((m) => m.name === 'loading-frame');
-    expect(flight, 'the in-flight frame was never measured').toBeDefined();
-    expect(
-      flight!.flight.pending,
-      'never caught a read in flight, so nothing about the loading frame was measured',
-    ).toBeGreaterThan(0);
-    expect(flight!.flight.sawLoadingCopy, 'the loading copy was not on screen while fetching')
-      .toBe(true);
-    expect(flight!.flight.bodyChars, 'the frame while fetching was effectively blank').toBeGreaterThan(
-      50,
+    const frames = measurements.filter((m) => m.inFlight === true);
+    expect(frames.length, 'no in-flight frame was measured at all').toBeGreaterThan(0);
+    for (const frame of frames) {
+      expect(
+        frame.flight?.pending,
+        `${frame.name}: never caught a read in flight, so nothing about the loading frame was measured`,
+      ).toBeGreaterThan(0);
+      expect(
+        frame.flight?.sawLoadingCopy,
+        `${frame.name}: the loading copy was not on screen while fetching`,
+      ).toBe(true);
+      expect(
+        frame.flight?.bodyChars ?? 0,
+        `${frame.name}: the frame while fetching was effectively blank`,
+      ).toBeGreaterThan(50);
+    }
+  });
+
+  it('photographs each in-flight frame at the size that target declares', () => {
+    /*
+     * The in-flight branch loads a page and reads it, and until this round it
+     * never resized the window. So the frame the target calls 1440x900 was
+     * caught at whatever size the previous target had left the window — which
+     * was 768x700, and the picture written for it says so.
+     *
+     * Nothing could notice: every geometry rule in this file runs over the rows
+     * that are *not* `geometry: false`, and the in-flight row is the one that is.
+     * The one claim a picture makes that needs no pixels is which window it was
+     * taken at, and that is what is asserted here.
+     */
+    const frames = measurements.filter((m) => m.inFlight === true);
+    expect(frames.length, 'no in-flight frame was measured, so this case had no subject').toBeGreaterThan(
+      0,
     );
+    for (const frame of frames) {
+      const shot = writtenShot(`${frame.name}.png`);
+      expect(
+        shot,
+        `${frame.name}: the probe wrote no picture at ${SHOTS_DIR}/${frame.name}.png, so the ` +
+          'frame it claims to have caught cannot be looked at',
+      ).not.toBeNull();
+      expect(
+        { width: shot!.width, height: shot!.height },
+        `${frame.name}: the picture is ${shot!.width}x${shot!.height} and the target declares ` +
+          `${frame.width}x${frame.height} — the window was never resized to the size being measured`,
+      ).toEqual({ width: frame.width, height: frame.height });
+    }
+  });
+
+  it('shows a waiting screen that is not the same picture as the loaded app', () => {
+    /*
+     * Two committed screenshots said otherwise, and the claim they made is the
+     * one step 6 asks a person to judge: `docs/screenshots/states/loading.png`
+     * and `docs/screenshots/states/loading-768x700.png` were byte-for-byte
+     * `chat.png` and the loaded app at 768x700. Not "similar" — the same bytes.
+     *
+     * The reason was in plain sight in `dev/scenarios.ts`: `loading` delays
+     * every read, so the *settled* screen of that scenario is the ordinary
+     * populated window. The state targets wait for the app to settle (that is
+     * what makes their geometry comparable), so the picture they write is of a
+     * frame that has finished loading, under a name that says it has not.
+     *
+     * This compares two frames of the same run on the same machine, so it is not
+     * the pixel-baseline diff this file refuses: nothing here says what the
+     * picture should look like. It says a state that is supposed to be waiting
+     * has to be a *different picture* from the state that is done.
+     */
+    const pairs = [
+      { waiting: 'loading-frame.png', loaded: 'layout-1440-chat.png' },
+      { waiting: 'loading-frame-tight.png', loaded: 'layout-768x700-chat.png' },
+    ];
+    for (const { waiting, loaded } of pairs) {
+      const wait = writtenShot(waiting);
+      const done = writtenShot(loaded);
+      expect(wait, `${waiting} was never written, so the waiting frame is not evidence`).not.toBeNull();
+      expect(done, `${loaded} was never written, so there is nothing to compare it with`).not.toBeNull();
+      expect(
+        wait!.digest,
+        `${waiting} and ${loaded} are the same bytes: the picture taken for the state that is ` +
+          'still fetching shows a page that has finished fetching, so nobody can judge what a ' +
+          'waiting screen looks like',
+      ).not.toBe(done!.digest);
+    }
+
+    /*
+     * And the reason the rule is needed, measured in the same run rather than
+     * argued about: the *settled* picture of this state is the loaded app, byte
+     * for byte. `dev/scenarios.ts` says this about `IN_FLIGHT_SCENARIO` in prose
+     * ("the settled screen is the ordinary populated one"); a sentence in a
+     * document is what the last four rounds read and worked around, and two
+     * digests are what decides it.
+     *
+     * If this ever goes red, the fixture changed so that `?scenario=loading`
+     * keeps waiting: the state target would then be photographing a real waiting
+     * screen, and the in-flight pair above stops being the only honest source for
+     * the loading-state pictures. Re-read this file before deleting either half.
+     */
+    const settled = writtenShot('state-loading-chat.png');
+    const loaded = writtenShot('layout-1440-chat.png');
+    expect(settled, 'the settled loading-state frame was never photographed').not.toBeNull();
+    expect(
+      settled!.digest,
+      'the settled `?scenario=loading` frame is no longer the loaded app: the fixture changed, so ' +
+        'check whether the state target can be the loading picture again (see the note above)',
+    ).toBe(loaded!.digest);
+  });
+
+  it('ships loading-state pictures that are not photographs of a finished load', () => {
+    /*
+     * The half a reader actually meets. Everything above is about frames this run
+     * caught; the files `docs/state-walkthrough.md` and `docs/manual-verification.md`
+     * send a person to live in `docs/screenshots/`, and both of them were the
+     * loaded app — `states/loading.png` was even byte-identical to `chat.png`,
+     * which is why `screenshots.test.ts` now forbids duplicate pictures.
+     *
+     * The comparison is against the loaded frame *this run* photographed, so it
+     * can only fail on the machine where somebody copied the settled frame into
+     * the loading-state file — the exact act being prevented. A machine whose
+     * render differs from the committed bytes passes: this is not the pixel
+     * baseline the header of this file refuses, because nothing here claims what
+     * the picture has to look like. It claims which frame it is not.
+     */
+    const pairs = [
+      { committed: 'docs/screenshots/states/loading.png', loaded: 'layout-1440-chat.png' },
+      {
+        committed: 'docs/screenshots/states/loading-768x700.png',
+        loaded: 'layout-768x700-chat.png',
+      },
+    ];
+    for (const { committed, loaded } of pairs) {
+      const shipped = pictureAt(path.join(REPO_ROOT, committed));
+      const done = writtenShot(loaded);
+      expect(
+        shipped,
+        `${committed} is missing or is not a PNG, so the walkthrough is pointing at nothing`,
+      ).not.toBeNull();
+      expect(
+        done,
+        `${loaded} was never photographed, so there is no finished-load frame to compare with`,
+      ).not.toBeNull();
+      expect(
+        shipped!.digest,
+        `${committed} is the same picture as ${loaded}: the walkthrough asks a person to judge ` +
+          'what a waiting screen looks like using a photograph of a screen that already loaded. ' +
+          'Copy the in-flight frame instead — the probe writes it as ' +
+          '`loading-frame.png` / `loading-frame-tight.png`',
+      ).not.toBe(done!.digest);
+    }
   });
 
   it('lays no text on top of other text, in any panel', () => {
