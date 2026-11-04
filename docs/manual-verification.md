@@ -50,6 +50,10 @@ xvfb-run -a node scripts/verify-main-chain.mjs        # 或 --exec release\win-u
 
 ## 如何从 Windows 机器带回证据
 
+**带回包**：`docs/manual-verification/README.md` 是这一节的执行面——报告与三张截图的命名约定
+（`win-YYYYMMDD.json`）、`--judge` 的五条红各是什么原文、报告长什么样、判过之后改哪三处。
+下面这一节讲的是**为什么**这样带回；那一页讲的是**照着敲什么**。
+
 步骤 1–5 的跑分可以**带回**：`--report <路径>` 把每一步的 `[ok]` / `[FAIL]` / `skip` 与它自己记下的
 证据行写成一份结构化 JSON。于是「在 Windows 上跑过」不必靠转述——跑的人复制一个文件回来，
 读的人拿到的是判定和产生判定的那几行原文。

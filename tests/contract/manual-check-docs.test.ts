@@ -328,6 +328,14 @@ const DOCUMENTS: readonly Document[] = [
   // left, and `docs/blockers.md` is written to be followed without reading the
   // other three first. Its flags are pinned by exactly this check.
   'docs/blockers.md',
+  // The two handoff packs. They exist so a reader who has not read this
+  // repository can execute one blocker top to bottom, which makes a stale flag
+  // in them worse than in the other four: the reader has no second document to
+  // cross-check against, and the command is the whole instruction. Their quoted
+  // output lines are pinned by `handoff-packs.test.ts`; the flags are pinned
+  // here, by the same check the other documents get.
+  'docs/release/REPLACE-FEED.md',
+  'docs/manual-verification/README.md',
 ].map(readDocument);
 const README = DOCUMENTS[0]!;
 

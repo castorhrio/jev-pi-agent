@@ -147,8 +147,13 @@ export const MIN_LAST_LINE_GLYPHS = 2;
  * Closing punctuation and the marks that attach to the character before them,
  * i.e. the same set 行首禁则 lists, plus the full stop forms. A last line of
  * '内容。' has two glyphs; a last line of '容。' has one.
+ *
+ * Not exported: it is the same set as {@link LINE_START_FORBIDDEN}, and two
+ * exported names for one value is what `npm run knip` reports as a duplicate
+ * export. The name stays because the page script reads better with it — the
+ * rule it feeds is about the last line, not about line starts.
  */
-export const LAST_LINE_IGNORED = LINE_START_FORBIDDEN;
+const LAST_LINE_IGNORED = LINE_START_FORBIDDEN;
 
 /** The measurement itself, evaluated in the page. */
 export const MEASURE = `(() => {

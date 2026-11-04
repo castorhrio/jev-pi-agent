@@ -37,8 +37,8 @@
 | DOD-2.3 | 设置里引擎链与实跑一致 | 通过 | `tests/contract/decision-chain.test.ts` | — |
 | DOD-3.1 | 执行前有记录在案的允许/拒绝 | 通过 | `tests/integration/ui-permission.test.ts` | — |
 | DOD-3.2 | 审计可查 | 通过 | `packages/permissions/src/permission-engine.ts` `tests/integration/ui-permission.test.ts` | — |
-| DOD-4.1 | Releases 上 NSIS 可装 | 外部阻塞 | `package.json` `scripts/verify-main-chain.mjs` `docs/blockers.md` | 需要一台 Windows 机器：装一次、过 SmartScreen、跑 `node scripts/verify-main-chain.mjs` 并 `--report` 带回报告，再用 `--judge` 判成过 |
-| DOD-4.2 | 更新 feed `https` + `sha256` 校验 | 未过 | `scripts/verify-release-feed.mjs` `scripts/publish-feed.mjs` `tests/contract/release-feed.test.ts` | 应用侧校验已绿、修正版文档已判零 finding；**发布出去的 v1.0.0 feed 仍缺 `sha256`**，需要持有 `contents: write` 的人跑 `node scripts/publish-feed.mjs`，之后 `node scripts/verify-release-feed.mjs` 退出 0 |
+| DOD-4.1 | Releases 上 NSIS 可装 | 外部阻塞 | `package.json` `scripts/verify-main-chain.mjs` `docs/blockers.md` `docs/manual-verification/README.md` | 需要一台 Windows 机器：装一次、过 SmartScreen、跑 `node scripts/verify-main-chain.mjs` 并 `--report` 带回报告，再用 `--judge` 判成过。**照着敲的一页**：`docs/manual-verification/README.md` |
+| DOD-4.2 | 更新 feed `https` + `sha256` 校验 | 未过 | `scripts/verify-release-feed.mjs` `scripts/publish-feed.mjs` `tests/contract/release-feed.test.ts` `docs/release/REPLACE-FEED.md` | 应用侧校验已绿、修正版文档已判零 finding；**发布出去的 v1.0.0 feed 仍缺 `sha256`**，需要持有 `contents: write` 的人跑 `node scripts/publish-feed.mjs`，之后 `node scripts/verify-release-feed.mjs` 退出 0。**照着敲的一页**：`docs/release/REPLACE-FEED.md` |
 | DOD-4.3 | 明文/非 URL 覆盖被拒并打日志 | 通过 | `apps/desktop/src/main/update-feed.ts` `apps/desktop/src/main/update-feed-log.ts` `tests/contract/update-integrity.test.ts` | — |
 | DOD-4.4 | 未签名 SmartScreen 有说明 | 通过 | `README.md` | — |
 | DOD-5.1 | `npm run typecheck && lint && knip && test && test:e2e`（及 CI 等价）绿 | 通过 | `npm run verify:gates` `.github/workflows/ci.yml` `scripts/gate-local.mjs` `tests/contract/ci-gate-local.test.ts` `tests/contract/ci-typecheck.test.ts` `docs/manual-verification.md` | — |

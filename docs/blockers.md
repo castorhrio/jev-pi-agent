@@ -50,6 +50,11 @@ PASS — 0 warning(s), nothing the app would refuse
 3. `README.md` 中英两半删掉那条 v1.0.0 局限，并同步 `tests/contract/readme-parity.test.ts` 的
    `LIMITATIONS` 表（少改一处会打红）。
 
+**一页操作单**：`docs/release/REPLACE-FEED.md` 把上面这些收成一页——前置条件四条、
+`--dry-run` 的逐字期望输出、`--apply --verify` 的判据行、三种失败各一句、以及做完改哪三处。
+拿到令牌的人照着从上往下敲即可，不需要先读代码。这一页引用的每一行输出都由
+`tests/contract/handoff-packs.test.ts` 对着脚本源码核对，脚本改了措辞而文档没改会打红。
+
 **没有令牌时能做什么**：`node scripts/replay-feed-local.mjs` 把仓库里这份修正版文档原封不动地
 用一个本地 TLS 地址托起来，让 `scripts/verify-release-feed.mjs` 与 `scripts/release-gate.mjs`
 对着它跑一次**绿分支**（退出码 0，两行 `PASS`）。它证明的是**链路**，不是**发布**：
@@ -88,6 +93,10 @@ PASS — the report covers steps 1, 2, 3, 4, 5 on win32 against build 1.0.0
 2. `docs/manual-verification.md` 加一节记录这次判定的完整输出；
 3. `docs/dod-status.md`「Windows 安装包航运 · NSIS 产出与安装」一行改成**有证据**，
    证据引用那份报告与 `--judge` 的退出码 0。
+
+**一页操作单**：`docs/manual-verification/README.md` 是这一条的带回包——报告与三张截图的
+命名约定（`win-YYYYMMDD.json`）、`--judge` 的五条红各是什么原文、报告长什么样、判过之后改哪三处。
+它和这一节说的是同一件事，区别是它写给「手上只有一台 Windows 机器和一个浏览器」的人。
 
 **做不到时不要做什么**：不许手写一份报告，也不许把「跑过 Linux」写成「Windows 通过」——
 `--judge` 只判文件说了什么，而文件可以手写，这句话写在报告自己的 `note` 字段里。
