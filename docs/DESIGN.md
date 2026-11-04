@@ -122,6 +122,13 @@
 - **字体栈**（`--sans` / `--mono`）由 `tests/contract/typography.test.ts` 与
   `tests/contract/layout.test.ts` 的计算值断言管着（Latin → 中文 → generic 的顺序、
   无假斜体），同样不在这里重复。
+- **正文行长**（28–40 个汉字）不是 token，是**几何断言**。`--measure-prose: 36em` 是它的
+  落地方式，但「36em 够不够」不能靠读这一行判断：汉字约一个 em 宽，所以行长要**在真实
+  Chromium 里量**——`tests/contract/layout.test.ts` 量每个换行过的中文段落的最长一行，
+  上限 40 对**所有**段落生效，下限 28 只对「容器本来给得起 28 字」的段落生效（窄面板里
+  短行是对的，宽卡片里被 `max-width` 掐窄才是缺陷）。两个数都从
+  `scripts/layout-page-scripts.mjs` 的 `MAX_PROSE_LINE_CJK` / `MIN_PROSE_LINE_CJK` 读回，
+  所以这里不重复登记，只说明它为什么不在这份表里。
 - **一次性的几何**（某个表格列的宽度、某个定位菜单的坐标）不是 token，也不该是。
 
 ## 这份文档做不到什么

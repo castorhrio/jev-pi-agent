@@ -857,3 +857,33 @@ Windows 桌面六步（无 Windows 机器）。README 中英两半仍写着「�
 门禁：`npx vitest run tests/contract/design-tokens.test.ts` 19/19 绿；
 `readme` / `readme-parity` / `doc-routing` / `dod-status` / `typography` / `screenshot-sources`
 共 56 项绿；`npx eslint tests/contract/design-tokens.test.ts` 无输出。
+
+## 本轮（2026-11-04 深夜）正文行长有了下限，但只在容器给得起的时候
+
+审查清单 A 里唯一还挂着的排版项是「正文行长约 28–40 字」。上限早就有门禁
+（`MAX_PROSE_LINE_CJK = 40`，真 Chromium 里量每个换行过的中文段落的最长一行），
+下限一直**故意**没有：`layout-page-scripts.mjs` 的注释写着「窄面板里短行是对的，
+只有上限是阅读问题」。那句话是对的，但它把两件事混成了一件——**窄面板**里短行是对的，
+**宽卡片里被 `max-width` 掐窄**的段落不是。后者才是下限该管的东西，而它此前没有任何断言。
+
+1. **下限只在容器给得起时生效**：`MIN_PROSE_LINE_CJK = 28`，判定条件是
+   「最长一行 < 28 **且** 父容器的内容宽度 ≥ 28 字」。父容器宽度减掉左右 padding 再除以字号，
+   就是「这个段落本来能有多宽」。条件不成立时（768px 下的窄面板）只受上限约束。
+   没有这个条件，这条规则就变成一条**关于窗口大小**的规则——本仓已经因为同样的形状
+   拆过一次门禁（几何判定随视口变化）。
+2. **失败信息带两个数**：`shortLines` 每条记 `longestCjk` 与 `roomCjk`，所以红的时候说的是
+   「23 字，而这一列本来有 69 字」，不是「太短」。
+3. **规则不许空转**：`floorChecked` 记「下限实际应用到了几个段落」，门禁要求 help 面每帧
+   > 0、整轮 > 10。条件型规则最容易悄悄变成空集上恒绿，这一条把它变成测量。
+   实测（1440×900 与 768×700，help/context/chat 三面）：help 2 段、context 4 段、chat 1 段
+   被下限检查，`shortLines` 为空。
+4. **登记册补一行**：`docs/DESIGN.md`「什么不是 token」写明行长是几何断言而不是 token，
+   以及为什么两个数不在这份表里重复登记。
+
+**这一轮没有做的事**：没有改 `styles.css` 一个字节（任何 CSS 改动都会让
+`scripts/screenshot-sources.mjs` 的漂移门禁变红，而重拍图还不是一条命令）；
+没有跑打包适配器解析（`npm run package` 未在本轮执行，`docs/manual-verification.md`
+里 2026-11-02 那一行仍是最近一次真机记录）；DOD-4.1（Windows 真机）与 DOD-4.2（feed 上传）
+两条缺口原样保留，不假装完成。
+
+门禁：`xvfb-run -a npx vitest run tests/contract/layout.test.ts` 42 项全绿（新增 1 项）。

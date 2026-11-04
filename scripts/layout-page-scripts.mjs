@@ -51,11 +51,33 @@ export const CJK_FLOOR_PX = 12;
  * the reader re-reads. This app's prose column was 780px wide at 13px body —
  * 60 characters — which is why a paragraph of Chinese read as a wall.
  *
- * The floor of the range (28) is a design choice, not a defect: a narrow panel
- * legitimately sets shorter lines. Only the ceiling is gated, because only the
- * ceiling is a reading problem.
+ * The floor of the range is a different kind of rule, and it is gated
+ * differently: a narrow panel legitimately sets shorter lines, so "this line is
+ * 23 characters" is not by itself a defect. What *is* a defect is a prose block
+ * that is narrower than the floor **while its container had room for more** — a
+ * paragraph capped at 20em inside a 900px card, which reads as a column of
+ * stumps. So the floor is enforced only where the available room reaches it;
+ * see `MIN_PROSE_LINE_CJK` and the measurement below.
  */
 export const MAX_PROSE_LINE_CJK = 40;
+
+/**
+ * The shortest a line of Chinese prose may be, in CJK-equivalent characters,
+ * *when the column had the room*.
+ *
+ * 28 is the bottom of the band the reading research gives for Chinese (28-40),
+ * and it is the number the review checklist asks for. It is not a rule about
+ * narrow panels: at 768px the chat pane is legitimately narrower than 28
+ * characters, and a paragraph there is not a defect. The measurement therefore
+ * compares the longest line against this floor only when the block's container
+ * is at least this wide — the case where the block itself chose to be narrow.
+ *
+ * Without that condition the rule would be a rule about window size, which is
+ * the shape of gate this repository has had to remove before (a geometry check
+ * whose verdict depended on the viewport). With it, the rule is about the
+ * stylesheet: a `max-width` on prose that is smaller than the measure.
+ */
+export const MIN_PROSE_LINE_CJK = 28;
 
 /**
  * Characters that may not begin a line (行首禁则).
@@ -561,13 +583,17 @@ export const MEASURE = `(() => {
    * and still be unreadable because each line is 60 characters long or because
    * a full stop is sitting at the left margin.
    *
-   * Two rules, both from the same measurement:
+   * Three rules, all from the same measurement:
    *
-   *   - **Line length.** A Han character is about one em wide, so a line box's
-   *     width divided by the font size is the line length in characters. The
-   *     ceiling is MAX_PROSE_LINE_CJK. Only wrapped blocks are measured: a
-   *     single-line label has no line length to judge, and the last line of a
-   *     paragraph is short by definition, so the *longest* line is what counts.
+   *   - **Line length, ceiling.** A Han character is about one em wide, so a
+   *     line box's width divided by the font size is the line length in
+   *     characters. The ceiling is MAX_PROSE_LINE_CJK. Only wrapped blocks are
+   *     measured: a single-line label has no line length to judge, and the last
+   *     line of a paragraph is short by definition, so the *longest* line is
+   *     what counts.
+   *   - **Line length, floor.** The same number against MIN_PROSE_LINE_CJK, but
+   *     only where the block's container had that much room — see the check
+   *     below for why the condition is the whole rule.
    *   - **Break position.** Walk the characters of a wrapped block, group them
    *     into lines by their own rects, and check the first and last character
    *     of every line that is not the block's first or last. A line may not
@@ -588,11 +614,23 @@ export const MEASURE = `(() => {
    * the measurement said otherwise, and the comment now says what was seen.
    */
   const MAX_LINE = ${MAX_PROSE_LINE_CJK};
+  const MIN_LINE = ${MIN_PROSE_LINE_CJK};
   const PROSE_MIN_CHARS = ${PROSE_MIN_CHARS};
   const START_FORBIDDEN = ${JSON.stringify(LINE_START_FORBIDDEN)};
   const END_FORBIDDEN = ${JSON.stringify(LINE_END_FORBIDDEN)};
   const longLines = [];
+  const shortLines = [];
   const badBreaks = [];
+  /*
+   * How many blocks the floor actually applied to.
+   *
+   * A rule that measured nothing is indistinguishable from one that found
+   * nothing, and this rule has a condition that can silently stop being met:
+   * if every prose block ended up in a container narrower than the floor, the
+   * check would pass over an empty set forever. The gate asserts this count is
+   * not zero, so "the floor was enforced" is a measurement rather than a hope.
+   */
+  let floorChecked = 0;
   let proseBlocks = 0;
   let proseLines = 0;
   for (const el of all) {
@@ -668,6 +706,42 @@ export const MEASURE = `(() => {
         fontSize: round(size),
         lines: lines.length,
         longestCjk: round(longest),
+        text: own.slice(0, 30),
+      });
+    }
+    /*
+     * The floor, and the one condition that keeps it from being a rule about
+     * window size.
+     *
+     * 'room' is how many characters the block's container could have given it:
+     * the parent's content width divided by the same font size. A block whose
+     * longest line is under MIN_LINE while its container had MIN_LINE or more
+     * is a block that chose to be narrow — a max-width smaller than the measure
+     * — and that is the defect. A block in a 300px panel is not: there the
+     * container is the constraint, and the ceiling is the only rule that
+     * applies.
+     *
+     * The parent's padding is subtracted because clientWidth includes it, and
+     * a card with 16px of padding on each side has 32px less room than its box
+     * suggests. A missing parent (a detached node) leaves room at 0, which
+     * disables the floor rather than inventing a verdict.
+     */
+    let room = 0;
+    const parent = el.parentElement;
+    if (parent !== null) {
+      const parentStyle = getComputedStyle(parent);
+      const padLeft = parseFloat(parentStyle.paddingLeft) || 0;
+      const padRight = parseFloat(parentStyle.paddingRight) || 0;
+      room = (parent.clientWidth - padLeft - padRight) / size;
+    }
+    if (room >= MIN_LINE) floorChecked += 1;
+    if (longest < MIN_LINE - 0.5 && room >= MIN_LINE) {
+      shortLines.push({
+        element: describe(el),
+        fontSize: round(size),
+        lines: lines.length,
+        longestCjk: round(longest),
+        roomCjk: round(room),
         text: own.slice(0, 30),
       });
     }
@@ -816,9 +890,12 @@ export const MEASURE = `(() => {
      */
     typeset: {
       maxLineCjk: MAX_LINE,
+      minLineCjk: MIN_LINE,
       proseBlocks: proseBlocks,
       proseLines: proseLines,
       longLines: longLines.slice(0, 12),
+      shortLines: shortLines.slice(0, 12),
+      floorChecked: floorChecked,
       badBreaks: badBreaks.slice(0, 12),
     },
   });

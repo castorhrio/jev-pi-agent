@@ -247,6 +247,8 @@ interface Measurement {
   typeset: {
     /** The ceiling the measurement itself used; read from the page script. */
     maxLineCjk: number;
+    /** The floor the measurement itself used; read from the page script. */
+    minLineCjk: number;
     /** How many wrapped Chinese blocks this frame had, so the rule is not vacuous. */
     proseBlocks: number;
     proseLines: number;
@@ -257,6 +259,21 @@ interface Measurement {
       longestCjk: number;
       text: string;
     }>;
+    /**
+     * Blocks narrower than the floor *while their container had room for it*.
+     * `roomCjk` is what the container could have given them, so a failure can
+     * say "23 characters in a column that had 69" instead of just "too short".
+     */
+    shortLines: Array<{
+      element: string;
+      fontSize: number;
+      lines: number;
+      longestCjk: number;
+      roomCjk: number;
+      text: string;
+    }>;
+    /** How many blocks the floor applied to, so the rule is not vacuous. */
+    floorChecked: number;
     badBreaks: Array<{
       element: string;
       kind: string;
@@ -326,6 +343,26 @@ function declaredProseCeiling(): number {
     match,
     'layout-page-scripts.mjs no longer exports MAX_PROSE_LINE_CJK, so the prose ' +
       'ceiling this gate enforces is not the one the measurement used',
+  ).not.toBeNull();
+  return Number(match![1]);
+}
+
+/**
+ * The prose floor the measurement is supposed to be using, read the same way.
+ *
+ * Separate from the ceiling because the two are different rules with different
+ * conditions: the ceiling applies to every wrapped block, the floor only to
+ * blocks whose container had room for it. A single `declaredProseBand()` would
+ * invite the two to be enforced by the same loop, which is the mistake the
+ * floor's condition exists to prevent.
+ */
+function declaredProseFloor(): number {
+  const source = fs.readFileSync(PAGE_SCRIPTS, 'utf8');
+  const match = /export const MIN_PROSE_LINE_CJK = (\d+);/.exec(source);
+  expect(
+    match,
+    'layout-page-scripts.mjs no longer exports MIN_PROSE_LINE_CJK, so the prose ' +
+      'floor this gate enforces is not the one the measurement used',
   ).not.toBeNull();
   return Number(match![1]);
 }
@@ -1339,6 +1376,72 @@ describe('layout in a real browser engine', () => {
           lines(m.typeset.longLines),
       ).toEqual([]);
     }
+  });
+
+  it('sets no line of Chinese prose shorter than the floor where the column had room', () => {
+    /*
+     * The other end of the band. The ceiling above is a reading problem
+     * everywhere; the floor is a reading problem only where the column could
+     * have been wider, and that condition is the whole rule.
+     *
+     * Why it is not "every line must be at least 28 characters": at 768px the
+     * chat pane is legitimately narrower than 28 characters, and a paragraph
+     * there is correct. A gate that flagged it would be a gate about window
+     * size — the shape this repository has had to remove before (a geometry
+     * check whose verdict depended on the viewport). So the measurement
+     * compares the longest line against the floor only when the block's
+     * container had at least the floor's worth of room, which is the case where
+     * the *block* chose to be narrow: a `max-width` smaller than the measure.
+     *
+     * The defect this exists for is the mirror image of the ceiling's: the help
+     * page's paragraphs were once set to the page column (70 characters); a
+     * paragraph capped at 20em inside the same card would be 20, and every
+     * other rule here would be green on it.
+     *
+     * The floor travels in the measurement (`minLineCjk`) and is asserted
+     * against the declaration first, for the same reason the ceiling is: a
+     * measurement that quietly stopped using MIN_PROSE_LINE_CJK would otherwise
+     * enforce whatever number it happened to carry.
+     */
+    const floor = declaredProseFloor();
+    for (const m of GEOMETRY) {
+      expect(
+        m.typeset.minLineCjk,
+        `${m.label}: the measurement used a ${m.typeset.minLineCjk}-character floor, ` +
+          `but layout-page-scripts.mjs declares ${floor}`,
+      ).toBe(floor);
+      expect(
+        m.typeset.shortLines,
+        `${m.label}: Chinese prose set narrower than ${floor} characters per line in a ` +
+          `column that had room for more\n` +
+          lines(m.typeset.shortLines),
+      ).toEqual([]);
+    }
+    /*
+     * And the rule has to have applied to something. The floor's condition
+     * (the container had room) is exactly the kind of condition that can stop
+     * being met without anything going red: if every prose block ended up in a
+     * narrow container, the assertion above would pass over an empty set on
+     * every frame, forever. The help surface is the prose-heavy one, so it is
+     * where the count is required to be non-zero; the sweep total is required
+     * to be more than a handful, far below the measured count so it fails on a
+     * broken measurement rather than on a paragraph being deleted.
+     */
+    const help = measurements.filter((m) => m.surface === 'help' && m.mounted);
+    expect(help.length, 'the sweep never visited the help surface').toBeGreaterThan(0);
+    for (const m of help) {
+      expect(
+        m.typeset.floorChecked,
+        `${m.label}: the prose floor was not applied to a single block on the help surface, ` +
+          'so the short-line rule above was enforced over nothing',
+      ).toBeGreaterThan(0);
+    }
+    const checked = GEOMETRY.reduce((sum, m) => sum + m.typeset.floorChecked, 0);
+    expect(
+      checked,
+      'the prose floor applied to almost no wrapped Chinese paragraph across the whole ' +
+        'sweep, so the short-line rule above was enforced over nothing',
+    ).toBeGreaterThan(10);
   });
 
   it('breaks no line before closing punctuation or after an opening bracket', () => {
