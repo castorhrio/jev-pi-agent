@@ -47,7 +47,25 @@
  * Usage
  * -----
  *   node scripts/screenshot-sources.mjs           # report drift, exit 1 if any
+ *   node scripts/screenshot-sources.mjs --check   # the same, said out loud
  *   node scripts/screenshot-sources.mjs --write   # record the current state
+ *
+ * `--check` exists because the default is a check and a default is not a
+ * sentence. A CI step or a release checklist that reads
+ * `node scripts/screenshot-sources.mjs` has to be understood before it can be
+ * trusted — "does this write?" is a fair question to ask of a command whose
+ * sibling flag writes. `--check` answers it in the command itself, and
+ * `--check --write` is refused rather than resolved by precedence: a caller
+ * that asked for both does not know what it wants, and guessing for it is how
+ * a gate ends up recording the drift it was meant to report.
+ *
+ * The check path is the one that has to be *proved* red, not merely written:
+ * `tests/contract/screenshot-sources.test.ts` runs this file as a subprocess
+ * against a throwaway tree, touches a renderer source, and asserts exit 1 with
+ * the file named on stderr. Driving `drift()` directly would leave `main()`
+ * free to return 0 on drift with every case still green — the gate and the
+ * thing it guards going quiet together, which is the defect this repository
+ * keeps finding.
  */
 
 import { createHash } from 'node:crypto';
@@ -226,14 +244,25 @@ export function readManifest(repoRoot = REPO_ROOT) {
   return JSON.parse(fs.readFileSync(absolute, 'utf8'));
 }
 
+const USAGE = 'usage: node scripts/screenshot-sources.mjs [--check | --write]';
+
 function main(argv) {
   const write = argv.includes('--write');
-  const unknown = argv.filter((arg) => arg !== '--write');
+  const check = argv.includes('--check');
+  const unknown = argv.filter((arg) => arg !== '--write' && arg !== '--check');
   if (unknown.length > 0) {
     // An unrecognised flag is an error, not a default: `--wirte` silently
     // reporting drift is the same class of defect as `--steps 6` passing.
     console.error(`unknown option(s): ${unknown.join(', ')}`);
-    console.error('usage: node scripts/screenshot-sources.mjs [--write]');
+    console.error(USAGE);
+    return 1;
+  }
+  if (write && check) {
+    // Refused rather than resolved by precedence. A caller that asked for both
+    // does not know what it wants, and picking one for it is how a gate ends up
+    // recording the drift it was meant to report.
+    console.error('--check and --write ask for opposite things; pass one of them');
+    console.error(USAGE);
     return 1;
   }
 
@@ -253,18 +282,29 @@ function main(argv) {
 
   const manifest = readManifest();
   if (!manifest) {
-    console.error(`${MANIFEST_PATH} is missing — run with --write to record the current state`);
+    console.error(
+      `${MANIFEST_PATH} is missing — run with --write to record the current state. ` +
+        'A missing manifest is a failure, not an empty comparison: with nothing recorded, ' +
+        'every screenshot is unaccounted for and the check has no subject.',
+    );
     return 1;
   }
   const report = drift(manifest);
+  const counts =
+    `${Object.keys(manifest.renderer ?? {}).length} renderer source(s) and ` +
+    `${Object.keys(manifest.screenshots ?? {}).length} screenshot(s)`;
   if (isClean(report)) {
-    console.log(`PASS — the screenshots match the renderer recorded in ${MANIFEST_PATH}`);
+    // The counts are printed on the green path too: "PASS" over an empty
+    // manifest and "PASS" over thirty files read the same otherwise, and the
+    // first is the shape of a gate that has stopped looking.
+    console.log(`PASS — ${counts} match ${MANIFEST_PATH}`);
     return 0;
   }
   for (const line of driftLines(report)) console.error(`[drift] ${line}`);
+  const moved = Object.values(report).reduce((total, list) => total + list.length, 0);
   console.error(
-    'FAIL — retake the screenshots in docs/screenshots/, then run ' +
-      '`node scripts/screenshot-sources.mjs --write`',
+    `FAIL — ${moved} file(s) moved since ${MANIFEST_PATH} was written. Retake the screenshots ` +
+      'in docs/screenshots/, then run `node scripts/screenshot-sources.mjs --write`',
   );
   return 1;
 }

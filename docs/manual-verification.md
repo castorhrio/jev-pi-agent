@@ -295,7 +295,9 @@ fixture 不发），第五个状态因此根本没法人工走查完；`revokeRu
 （该目录被忽略），上面五张是从那里挑出来提交的，所以**任何人重跑一次都能得到同一批图**。
 `tests/contract/screenshots.test.ts` 现在还会比对「图与渲染层源码是否同步」：
 `docs/screenshots/sources.json` 记着每张图与每个渲染层源文件的 sha256，改了组件没重拍图就是红
-（`node scripts/screenshot-sources.mjs` 报告漂移，`--write` 记录一次确认）。
+（`node scripts/screenshot-sources.mjs --check` 报告漂移并指名文件、退出 1，`--write` 记录一次确认）。
+`--check` 与默认行为是同一个判定，写出来是为了让「这条命令会不会改文件」在命令本身里就有答案；
+`--check --write` 同时给会被拒绝，而不是按先后顺序挑一个。
 
 **仍未做**：人眼对**视觉**的判断（空态的引导语是否够醒目、失败信息的排版是否压过内容、长中文在窄窗口是否撑破）。
 上面五张图让这件事**可以远程做**——把图发给任何一个人看，他就能回答这三问，不必先装应用；

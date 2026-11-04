@@ -481,3 +481,35 @@ Windows 桌面六步（无 Windows 机器）。三条仍是上表里的缺口，
 | 已发布 v1.0.0 的 feed 缺 `sha256` | 拿到 `castorhrio/jev-pi-agent` 的 `contents: write` 令牌的人跑一次 | `node scripts/publish-feed.mjs --apply --verify` | **仍阻塞**：本机无令牌、`gh` 未安装。修正版文档已判零 finding，只差上传 |
 | Windows 桌面六步 | 一台 Windows 机器 + 一次 `npm run package` | `node scripts\verify-main-chain.mjs --exec release\win-unpacked\UCAD.exe --report win-report.json` | **仍阻塞**：无 Windows 机器。回传通道（`--report`）已就绪并被门禁钉住形状 |
 | 五态人眼走查 | 一个人按判据看五张图（或走五个 URL）并签一行 | 打开 `docs/state-walkthrough.md`，逐条回答 | **仍阻塞**：判据与签字表本轮就位，签字还没有发生 |
+
+## 本轮（2026-11-04 深夜）截图漂移的「只检查不写」路径，第一次被证明会红
+
+上一轮把截图与渲染层源码接进了门禁：`docs/screenshots/sources.json` 记着每个渲染层源文件与每张图的
+sha256，`scripts/screenshot-sources.mjs` 重算并指名移动的那个文件。但那条命令的**失败路径**没有任何
+测试驱动——`tests/contract/screenshots.test.ts` 调的是 `drift()` 这个纯函数，`main()` 里若把漂移判成
+0 退出、或者干脆在比较之前就返回，所有用例照样绿。这正是本仓已经命名过三次的缺陷形状
+（`--steps 6` 通过、`skipIf` 守卫、上一轮那个让布局门禁在 import 阶段就死掉的反引号）：
+**守门人和被守的门一起哑**。
+
+1. **`--check` 成为一条写出来的路径**（`scripts/screenshot-sources.mjs`）。默认行为本来就是检查，
+   但默认不是一句话：一条 `node scripts/screenshot-sources.mjs` 的 CI 步骤，读者得先读懂它才敢信
+   ——「这条命令会不会写文件」对一个有 `--write` 兄弟旗标的命令是合理的问题。现在 `--check` 在命令
+   本身里回答它；`--check --write` 同时给会被**拒绝**而不是按优先级挑一个（同时要两件相反的事的调用方
+   并不知道自己要什么，替它猜就是让门禁记录下它本该报告的漂移）。绿路径也打印计数
+   （`PASS — 33 renderer source(s) and 9 screenshot(s) match …`）：空清单上的 PASS 和三十个文件上的
+   PASS 否则读起来一样，而前者正是「门禁已经不看东西了」的形状。
+2. **`tests/contract/screenshot-sources.test.ts`（8 项）跑的是命令，不是函数**。临时树里复制一份脚本
+   （脚本把根锚在自己所在位置，所以一份拷贝对它就是一个完整仓库），`--write` 记一次，然后：
+   - 改一行渲染层源码 → `--check` 退出 1，stderr 含 `[drift] changed since the screenshots were taken: apps/desktop/src/renderer/src/styles.css`，且**不**打印 PASS；
+   - 换掉一张图 → 退出 1 并指名那张图；新增一个组件 → 退出 1 并指名那个文件；
+   - `--check` 与默认都**不写** manifest（检查路径若顺手记录一次确认，第二次运行就把红变绿了）；
+   - `--check --write` 被拒；`--wirte` 被拒并打印用法；manifest 缺失时退出 1 而不是在空集合上报绿。
+3. **证明它会红**：在 `main()` 的漂移分支里插一句 `return 0`，上面四条（改源码 / 换图 / 新组件 /
+   不写 manifest）同时打红，其余四条仍绿——说明这组用例钉的正是「命令会不会说不」。
+   真实树上也验了一次：往 `styles.css` 末尾加一行注释，`node scripts/screenshot-sources.mjs --check`
+   退出 1 并打印 `[drift] changed since the screenshots were taken: apps/desktop/src/renderer/src/styles.css`；
+   恢复后退出 0。
+
+**这一轮没有做的事**：五态人眼走查的签字（需要一个人看那五张图，本轮没有发生，README 中英两半
+仍写着「没人看过」，`state-walkthrough.test.ts` 会拦住任何提前改口）、上传修正版 feed（无令牌）、
+Windows 桌面六步（无 Windows 机器）。三条仍是上表里的缺口，不假装完成。
