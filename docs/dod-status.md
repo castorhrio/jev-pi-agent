@@ -513,3 +513,33 @@ sha256，`scripts/screenshot-sources.mjs` 重算并指名移动的那个文件�
 **这一轮没有做的事**：五态人眼走查的签字（需要一个人看那五张图，本轮没有发生，README 中英两半
 仍写着「没人看过」，`state-walkthrough.test.ts` 会拦住任何提前改口）、上传修正版 feed（无令牌）、
 Windows 桌面六步（无 Windows 机器）。三条仍是上表里的缺口，不假装完成。
+
+## 本轮（2026-11-04）HEAD 上唯一的红：`partial` 画了首启块
+
+`tests/contract/layout.test.ts` 的 `the first-run block has an entry point, and counts its steps once`
+在 HEAD 上是红的，失败原文：
+
+```
+AssertionError: ?scenario=partial painted the first-run block: expected { leadSize: 13, …(6) } to be null
+```
+
+**结论：产品该改，不是断言该收窄。** 首启块说的是「还没有对话。在下方描述你的任务…」——
+这是关于**对话**的断言，它成立的前提是「会话列表真的读过了」。`partial` 里 `sessions.list` 失败，
+`useAppData` 把原因记进 `endpointErrors.sessions` 并回退成 `[]`，于是 `sessionId` 为 null、
+对话区为空，首启块照常渲染：左侧会话列说「会话列表读取失败（不是空的）」，右侧主区却说
+「还没有对话」——同一屏上两句话互相矛盾，而主区那句是对一份没读到的历史下的确定结论。
+这与 `loading` 分支已经修过的缺陷是同一个形状（「还没到达」不等于「没有」），只是这次是「读失败」。
+
+**改动**（`apps/desktop/src/renderer/src/App.tsx`，一处分支 + 一个 import）：
+对话区在 `data.endpointErrors.sessions` 有值时渲染 `ReadFailure`（`sessions.loadFailed` + 原因），
+与左侧会话列同一句话、同一个组件；首启块因此只在会话列表确实读过、且确实为空时出现。
+没有新增文案、没有新增组件、没有动 `empty` 场景（它没有 `endpointErrors`，首启块照旧）。
+
+**反向验证**：把新增分支删掉（回到旧写法）后重跑
+`xvfb-run -a npx vitest run tests/contract/layout.test.ts -t "the first-run block"`，
+同一条断言重新变红（`?scenario=partial painted the first-run block`）；恢复后
+`tests/contract/layout.test.ts` 37/37 绿，`tests/e2e/scenarios.e2e.test.tsx` 6/6 绿，
+`tsc --project apps/desktop/tsconfig.renderer.json --noEmit` 干净。
+
+**这一轮没有做的事**：五态人眼走查签字（本轮只把渲染结果逐态取了出来，签字与 README 中英两半
+的同步留给下一轮）、P1 的字体栈/嵌套圆角门禁、上传修正版 feed（无令牌）、Windows 六步（无 Windows 机器）。

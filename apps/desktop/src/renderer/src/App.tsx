@@ -45,6 +45,7 @@ import { McpPanel } from './components/McpPanel';
 import { RecentProjects } from './components/RecentProjects';
 import { HandoffPanel } from './components/HandoffPanel';
 import { PanelBoundary } from './components/PanelBoundary';
+import { ReadFailure } from './components/ReadFailure';
 import { UpdateControllerProvider } from './update-controller';
 import {
   HANDOFF_SECTIONS,
@@ -892,6 +893,23 @@ function Shell(): JSX.Element {
                     <div className="faint">
                       {t('common.loading')}
                     </div>
+                  ) : data.endpointErrors.sessions ? (
+                    /*
+                     * A session list that could not be read is not an empty
+                     * conversation, and the first-run pitch is a claim about
+                     * the conversation. `?scenario=partial` is the case that
+                     * made this visible: the workspace read succeeded, the
+                     * session list did not, and the chat area still painted
+                     * "还没有对话。在下方描述你的任务…" — a confident statement
+                     * about a history nobody had managed to read. The rail
+                     * already names the failure; the main region used to
+                     * contradict it. Same rule as the loading branch above:
+                     * "there is none" needs the read to have happened.
+                     */
+                    <ReadFailure
+                      label={t('sessions.loadFailed')}
+                      reason={data.endpointErrors.sessions}
+                    />
                   ) : view.messages.length === 0 && view.tools.length === 0 && !streamError ? (
 
                     <div className="first-run">
