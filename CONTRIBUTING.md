@@ -71,6 +71,27 @@ rather than a description of one. Where the failure instead reads
 `ELECTRON_DISABLE_SANDBOX=1` above is the same setting CI puts in that step's
 `env:`, and the gate measures geometry, not the sandbox.
 
+**The same Linux sentence has a second cause, and the command above does not fix it.**
+`xvfb-run` starts, exports a `DISPLAY` to its child, and the child still dies with
+`Missing X server or $DISPLAY`. Measured on this machine: `/tmp` is a tmpfs under a **user
+quota** (`82%` used, `348M` nominally free, and writing a single byte to it fails with
+`Unknown system error -122`). `/tmp/.X11-unix/X<n>` and the `Xauthority` that `xvfb-run` writes
+are exactly such bytes, so the server never gets a socket while the `DISPLAY` it exports points
+at nothing. A display-less host and a quota-blocked one print the same sentence, which is why
+this is in the document a newcomer reads rather than in one person's commit message.
+
+On a machine like that, ask for a server that already answers instead of starting a new one.
+`ls /tmp/.X11-unix` lists the live sockets; then:
+
+```bash
+ELECTRON_DISABLE_SANDBOX=1 DISPLAY=:140 npx vitest run tests/contract/layout.test.ts
+```
+
+That is how this gate was run here on 2026-11-05: 45 tests green, in about 90 seconds. The one
+condition the `xvfb-run` line above carries still applies — the screen behind that socket has to
+be at least as wide as the widest window the gate asks for, or the gate measures a clamped
+window and says so.
+
 ```bash
 npm run typecheck && npm run lint && npm run knip && npm test && npm run test:e2e
 ```

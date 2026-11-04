@@ -31,7 +31,7 @@
     "apps/desktop/src/renderer/src/main.tsx": "sha256:fd5b8eb4f8e6bb94e05c95638a63a194b507c16c95762931751a8acb66cc26d4",
     "apps/desktop/src/renderer/src/state/hooks.ts": "sha256:99e75698b764d85acd5b3e01615f3849c01e8c1c8656b39e614f18ae8892823e",
     "apps/desktop/src/renderer/src/state/session-reducer.ts": "sha256:e82390a35ca33d11b22652ddbc6a22e7bec5024d1430c6d85ca280c69ed01410",
-    "apps/desktop/src/renderer/src/styles.css": "sha256:fb22d14cad42e03ad1ccb1e5e52edd9731896f49741fdbed6f2e0b613ae56bd8",
+    "apps/desktop/src/renderer/src/styles.css": "sha256:f0c9f162589ac1952d8fad71833c48d2daa7d38428e5bcecc0813b24d144255f",
     "apps/desktop/src/renderer/src/update-controller.tsx": "sha256:a7f96869b392804ee90a67877732d3ccf63ebbc33969ec7dea195830981586ab",
     "apps/desktop/src/shared/i18n.ts": "sha256:351cace8ea0774eb47dfad39c71e727f1e70988ba6a3c4d6542640bc9877eba6"
   },
@@ -43,9 +43,7 @@
     "docs/screenshots/error.png": "sha256:d9cc8eca376e704968cf02bf17e9e71f9f1b9b7438c55ed7261feeb757c20e76",
     "docs/screenshots/handoff.png": "sha256:5af277931b614d5c15bdf5b2f7fc2b61c7d6e9a33fc9cff50dad5867e9b42cd7",
     "docs/screenshots/states/empty-768x700.png": "sha256:a57c8422b8af8c345380c02f43ae949109a220ae1f516b3c79450225b89c08ca",
-    "docs/screenshots/states/empty.png": "sha256:de8cfc081c3ceabf19c41411c744d3fac0c80652509136403374ec38b9f07e0e",
     "docs/screenshots/states/error-768x700.png": "sha256:97d772baa78eceec6aa5cd0f944810c007f377a58048bb9b30f77b38d3cc967f",
-    "docs/screenshots/states/error.png": "sha256:d9cc8eca376e704968cf02bf17e9e71f9f1b9b7438c55ed7261feeb757c20e76",
     "docs/screenshots/states/loading-768x700.png": "sha256:2aa286f397b7ae93086189dd6eb17497ac9e9822d847cfe0e9736e790dbf724c",
     "docs/screenshots/states/loading.png": "sha256:d9490b3da03231833ce39d0ffec6e6c8a9085065f9315c1082360c3dc1122624",
     "docs/screenshots/states/partial-768x700.png": "sha256:5d64b9533d5164cc81db6da35f15b5333e1afbbff2e4fc8aa0a3eba58144e13b",

@@ -2453,10 +2453,12 @@ table.grid .num {
   box-shadow: 0 12px 32px rgb(0 0 0 / 45%);
 }
 
+/* Concentric with the shell above: 7px corner over 4px of padding asks for 3px,
+   so a hovered item's fill meets the arc instead of leaving a hairline gap. */
 .more-menu button {
   text-align: left;
   padding: 6px 10px;
-  border-radius: var(--r-sm);
+  border-radius: 3px;
   color: var(--text-2);
   white-space: nowrap;
 }

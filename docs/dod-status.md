@@ -1139,7 +1139,9 @@ Icon/Favicon 的 16–32px 核验、DOD-4.1（Windows 真机）、DOD-4.2（feed
    一条与任何人的缺陷无关的红。现在 `todayInUtcDays()` 读本地历日再换算成 UTC 日索引，
    并另外给**一天**松弛：UTC−12 与 UTC+14 本来就相差一天，零容差会把两个都诚实的机器判成造假。
 
-**证明它会红**（每一条都驱动过，恢复后全绿）：
+**证明它会红**（每一条都驱动过，恢复后全绿）。**同日第二刀补注**：下面第一行的输入已经不成立——
+`styles.css` 里那一行本轮从 `var(--r-sm)` 改成了 `3px`，照这一行去改的人会撞上一次静默失配的
+`String.replace`，而不是它承诺的那两格报错。新的写法与失配守卫在本节末尾那张表。
 
 | 改坏的写法 | 打红的断言与原文 |
 |---|---|
@@ -1167,3 +1169,155 @@ Icon/Favicon 的 16–32px 核验、DOD-4.1（Windows 真机）、DOD-4.2（feed
 X server，同上一轮；`npm run test:e2e` 19 个文件 **149 项全绿**；`npm run lint`、`npm run knip`、
 `npm run typecheck` 均退出码 0；`node scripts/screenshot-sources.mjs --check` 仍 `PASS — 33 renderer
 source(s) and 16 screenshot(s) match`。
+
+## 本轮（2026-11-05，同日第二刀）同心圆差额做了一次决定：修，并把「登记过」换成上限
+
+上一轮把两处的差额登记成会红的数，正文里写的是「留给下一刀」。这一刀做的是那个**决定**，
+不是把差额再登记一次：两条路（修 / 留）选**修**，并且同时把「留」这条路堵死——因为「留」原来的
+意思是「在表里加一行就合法」。
+
+1. **`.more-menu button`：`4px` → `3px`。** 外层 `7px` 的角配 `4px` 内缩，同心值就是 `3px`；
+   菜单项的悬停底色铺满内边距盒，首末两项贴着那条外弧，`4px` 多出来的 `1px` 在屏幕上读起来是
+   底色与外框之间一道头发丝宽的缝。`3px` 不是新值——登记册里 `3px` 那一行本来就为小控件存在，
+   本轮把菜单项写进那一行的「用在哪」，并在「为什么」里写明这一处的 `3px` 不是「15px 见方的盒子」
+   那条理由而是同心算出来的：样式表没有长出一个没人认领的数，登记册也没有多一个不解释的行。
+2. **`.row-item .m button`：保持 `3px`，停止登记差额。** `9px` 的内缩已经追过那颗 `4px` 的角，
+   两个盒子碰不到同一个角——「同心」在这里不是屏幕上的事实，只是 `max(0, 4 − 9)` 落到下限的 `0`。
+   按算式把它改成 `0` 是让门禁推着界面走（一颗 15px 见方的小按钮在圆角行里变成方角），方向本仓
+   说过不许。登记册那两个格子因此写 `—`；对这一对仍然成立的约束只剩「内层不许大于外层」。
+   这一半是**收窄**：上一轮登记的两个数，一个是缺陷（本轮改掉了），一个根本不是差额（规则对它不适用）。
+3. **上限：共用角上，差额非 `0` 就是红——表写得完全准确也红。** `concentricProblems()` 那条分支
+   把「记下来就合法」换掉了。此前那些用例都是改一份、让另一份指名；这条要**同时**改两份，
+   让五个格子全部对上，只剩那一句关于角本身的报错。它现在有用例驱动（本轮新增三条用例里的第一条），
+   不是写在注释里的能力。上限这一半，和它的另一半（**不共用角的那一对不许写数**），本轮各有了
+   一条用例驱动——后一半 `docs/DESIGN.md` 上一轮就写了，只是从来没有用例走到过那一句。
+
+**本轮自己也撞上了本仓反复说的那个形状**。上一轮那批驱动用例里，有**三处替换原文**还写着样式表
+改前的字面——两处样式表的 `border-radius: var(--r-sm);`，一处登记册的整行
+`4px / 7px / 4px / 3px / 1px`——另有**四处期望值**还把内层半径当成 `4px`。期望值过时只会报一条
+对不上号的红；替换原文过时是另一回事：`String.replace` 静默失配，`mutated === STYLES`，被驱动的
+缺陷从此不存在，而用例照旧打红，说的是别的事。这正是这里对门禁的指控：读不到东西却照旧跑下去。
+本轮把**嵌套圆角这一组**的每一条 mutation 都配上了失配守卫（样式表那份是
+`expect(mutated …).not.toBe(STYLES)`，登记册那份是 `.not.toBe(DESIGN)`），将来再动那两条规则时它
+指名「这条 mutation 已经不再描述样式表」，而不是留一条要人猜的红。**这个文件其余几组**
+（字号、圆角登记、边宽、颜色、渐变）的 mutation 还是一样的写法、还没有守卫——本轮没做，
+是因为它们没有一处本轮改过原文；那是一处不对称，留在这里而不是装作已经统一。
+
+**本轮新增的三条驱动用例**（此前这三个分支没有任何用例走到过）：
+
+| 改坏的写法 | 打红的断言 |
+|---|---|
+| 样式表把 `.more-menu button` 改成 `5px`，登记册**同时**把内层圆角改成 `5px`、差额改成 `2px` | `is 2px off concentric, and the register says so`——两份完全一致，红的仍是那颗角本身 |
+| `.row-item` 的内缩从 `6px 9px` 改成 `2px 3px`，登记册把外层内边距跟着重登记成 `3px`，两格仍写 `—` | `leaves 同心应为 as 「—」, but .row-item rounds its 3px of padding with a 4px corner … the concentric value is 1px` |
+| 样式表一字不改，只把 `.row-item` 那一对的两个派生格从 `—` 写成 `0` 与 `3px` | `states 同心应为 「0」 and 实际差额 「3px」, but 9px of padding reaches past the outer 4px`——不共用角的一对不许写数：那个 `0` 读起来像「还差 3px，而有人解释过」 |
+
+**本轮没有做完，所以没有 commit**：`styles.css` 一改，`tests/contract/screenshots.test.ts` 就会把
+`docs/screenshots/` 判成陈旧——它比的是 `docs/screenshots/sources.json` 里记下的源码哈希，不是像素，
+所以任何一次样式表改动都要重拍才能过。重拍要在真实 Chromium 里跑布局门禁，而这一条在本机
+从来没有绿过（`CONTRIBUTING.md` 与上面几轮记的都是 `Missing X server or $DISPLAY`）。
+
+比那更早的一步也没了：**这一轮整个 shell 起不来**——每条命令都返回非零、stdout 为空，连 `echo`
+也一样。所以上面那些期望值**一条都没有被执行过**，它们来自对 `concentricProblems()` 与两份文档的
+静态阅读；本轮没有任何「跑过 / 绿 / 退出码」的声称，`docs/blockers.md` 的三个日期也因此**没有**动过：
+本轮没重跑，就没有资格让它们变新（那是 `blocker-freshness` 自己承认的盲点，不是可以顺手填的格子）。
+
+下一轮在能跑的机器上，按这个顺序把这一刀收尾：
+
+1. `npx vitest run tests/contract/design-tokens.test.ts`——先确认本轮改的三处替换原文、四处期望值
+   与三条新用例真的对齐登记册（这一步只需要 Node，不需要显示器）。
+2. 按 `CONTRIBUTING.md` 那一行跑布局门禁，它把五态的图写到 `.run-logs/layout/` 下
+   （`state-*-chat.png`、`panels-1440-*.png`）。**重拍仍然不是一条命令**：要由人把用的图复制进
+   `docs/screenshots/`——上一轮也这样记过，这一轮它仍然是这样。
+3. `node scripts/screenshot-sources.mjs --write` 记下新的源码哈希，让漂移门禁重新对着「这一版
+   渲染层」而不是上一版。
+4. 全量门禁一次、commit 一次。在那之前这一刀留在工作区里别提交——提交了就是一棵红着的树。
+
+## 本轮（2026-11-05，第三刀）那一刀的四个收尾步骤按顺序跑完，顺带删掉两张没人点名的截图
+
+上一节留下四步，本轮**按那四步的顺序**做，每一步的结论都来自这一次跑出来的输出，不是静态阅读。
+`docs/manual-verification.md` 末节「布局门禁在本机第一次跑绿」是同一件事的证据页。
+
+1. **第 1 步：`npx vitest run tests/contract/design-tokens.test.ts` → 37 项全绿。** 上一轮担心的是
+   「三处替换原文过时 → `String.replace` 静默失配、被驱动的缺陷从此不存在」与「四处期望值过时 →
+   一条对不上号的红」。这两件事本轮都被跑掉了：那三条新用例（两份一起改、差额仍须为 `0`；不共用角
+   的一对改内缩后必须从 `—` 换成数；不共用角的一对不许写数）加上失配守卫，37 项没有一项是空跑的。
+   `3px` 这个决定因此从「工作区里的一段话」变成「门禁读得到、且真的比对过的一份登记册」。
+2. **第 2 步：布局门禁需要真实 Chromium，而这一条在本机第一次跑绿——原因不是终于有了显示器，
+   是那行 `xvfb-run` 在这台机器上本来就不可能成功。** 量到的三件事（命令与数字都在
+   `docs/manual-verification.md`）：`/tmp` 是带**用户配额**的 tmpfs（`df` 报 `82%` / `348M` 可用，
+   而**写一个字节**返回 `Unknown system error -122`）；Xvfb 的 socket `/tmp/.X11-unix/X<n>` 与
+   `xvfb-run` 的 `Xauthority` 正是这样的字节，所以建不出来，而子进程仍拿到一个 `DISPLAY=:109`，
+   那一头没有服务端；于是「没有显示器」与「配额挡住」打印**同一句** `Missing X server or $DISPLAY`。
+   **换法**是这台机器上本来就有一个在应答的 `Xvfb :140`（`1920x1080x24`）：
+   `ELECTRON_DISABLE_SANDBOX=1 DISPLAY=:140 npx vitest run tests/contract/layout.test.ts`
+   → `Tests 45 passed (45)`，约 90 秒。`CONTRIBUTING.md` 现在把第二种原因与这一条能用的命令都写着，
+   下一个人不会再按那条不可能成功的命令重试第二次。
+3. **第 3 步：重拍不需要复制任何图——14 张已提交截图与这一跑新拍的逐张 sha256 相同。** 上一节说
+   「重拍仍然不是一条命令，要由人把用的图复制进 `docs/screenshots/`」；本轮比复制更直接：把
+   `.run-logs/layout/` 那 65 张的哈希与 `docs/screenshots/` 那 16 张逐张对上。对上之后只剩一件事要做，
+   而它不是复制——**`.more-menu button` 那 1px 在 14 张图上移动了零个像素**，因为 `.more-menu` 是
+   portal 到 `<body>` 的浮层，只有点开「更多」才会被画出来，而这 14 张没有一张拍到它打开。所以这
+   1px 是被同心算式与几何门禁背书的，不是被图背书的；要让它有一张图，`scripts/layout-probe.mjs`
+   得先学会点开那个菜单（本轮没做，记在下面「这一轮没有做的事」）。然后
+   `node scripts/screenshot-sources.mjs --write` → `recorded 33 renderer source(s) and 14 screenshot(s)`，
+   再 `--check` → 退出码 0、`PASS — 33 renderer source(s) and 14 screenshot(s) match`。
+4. **第 4 步：全量门禁一次、commit 一次。** 见本节末尾「门禁」。
+
+**顺带抓到一张真正烂在那里的图，而且它烂的原因正是「没人点名它」。** 逐张对哈希时有两张对不上：
+`docs/screenshots/states/empty.png` 是 `de8cfc08…`，而文档真正引用的 `docs/screenshots/empty.png`
+已经是 `831249ba…`（本轮新拍的就是这个）。前者还停在上一版渲染层，而没有任何一条门禁能说出来。
+扫 `README.md`、`CONTRIBUTING.md` 与 `docs/` 下全部 markdown：**这两张是整个目录里仅有的、没有任何
+文档指向的 PNG**，其余 14 张各有 1 到 4 处点名。`docs/screenshots/sources.json` 是唯一知道它们
+存在的东西，而那份 manifest 由跑 `--write` 的人重写——所以「没人看的图」同时「没有任何东西在看它」，
+正是本仓已经命名过三次的「绿而什么都没判」，只是这次它在文档侧。
+
+改法不是「以后记得看一眼」，而是把它变成一条会红的断言：**`docs/screenshots/` 里每张图都必须被某个
+文档点名**（`tests/contract/screenshots.test.ts` 现 13 项，新增 4 项）。两张孤儿图因此删掉——
+`states/error.png` 与 `error.png` 逐字节相同、`states/empty.png` 的信息在 `empty.png` 里是更新的那一份，
+删掉不丢任何画面。
+
+**证明它会红**（本轮两条驱动各演示一次，恢复后全绿）：
+
+| 改坏的写法 | 打红的断言与原文 |
+|---|---|
+| 往 `docs/screenshots/states/` 复制一张没有任何文档点名的 `orphan-demo.png` | `has a reader for every picture in docs/screenshots/` → `these screenshots are committed and no document points at them, so nothing keeps their bytes honest — name each one in a document, or delete it: docs/screenshots/states/orphan-demo.png`（真实树上跑的，不是合成输入；删掉后 13/13 恢复绿，`--check` 仍退出 0） |
+| 把三份文档里 `docs/screenshots/states/loading.png` 的引用全部改名（合成输入，不落盘） | 同一个用例指名那一张，且**只有**那一张；前置一条 `expect(touched).toBeGreaterThan(0)`——一次匹配不到的替换会让用例比较两份相同的 Map 并打绿，那是本仓对 `String.replace` 已经付过一次的学费 |
+
+**关于上一轮那句「整个 shell 起不来」，本轮的量测**（这是推断，证据写在这里而不是当作结论）：
+命令**在执行**——本轮往本仓写的文件都建得起来，门禁真的跑出了 `45 passed`。看不到的是 stdout 与
+退出码：任何命令的捕获文件都落在 `/tmp` 下（本会话的是 `/tmp/qoder-cli-1000/…`），而那里写不进一个
+字节。上一轮记的「连 `echo` 也一样」和 `/tmp/.X11-unix` 里没有出现 `X109`、`Xauthority` 是 0 字节，
+与这条是同一个原因的两面。本轮的绕法是把输出重定向进被 `.gitignore` 忽略的 `.run-logs/` 再读回来，
+所以每一句「跑过 / 绿 / 退出码」都来自这一次真实运行，不是静态阅读。
+
+**这一轮没有做的事**：
+- **`.more-menu` 打开时的那张图**：门禁拍不到点开浮层的瞬间（探针只会 `loadURL`，不会点），所以那
+  1px 的观感目前没有像素证据。要让 `scripts/layout-probe.mjs` 先学会点开菜单再拍，那一跑会同时
+  改到所有 target 的稳定帧定义，不是一行；
+- **`polish` 那一刀**：审查建议的 P0-2（界面文案与 `README.md` 中文半部分去 AI 味道）本轮没做。
+  它需要「先 critique、再逐条改、每条改完重拍五态图」——本轮刚把重拍这条路跑通，把它同时用在
+  两件改动上会让一次 commit 里混两种判定；
+- **上传修正版 feed**（无令牌）、**Windows 桌面六步**（无 Windows 机器）、**五态人眼签字**（需要一个人）。
+  三条本轮各重跑了一次它们的命令，退出码是**这一轮跑出来的**：
+  `node scripts/release-gate.mjs --simulate-missing-sha` → 1（八行与 `docs/blockers.md` 贴的逐字相同，
+  由 `tests/contract/release-gate-simulation.test.ts` 比对着）；
+  `node scripts/verify-main-chain.mjs --judge docs/manual-verification/win-YYYYMMDD.json` → 1，说的是
+  `report-unreadable`；`node scripts/screenshot-sources.mjs --check` → 0。所以 `docs/blockers.md` 上那三个
+  2026-11-05 的日期本轮**不需要**改新——它们本来就是今天，而现在它们背后各有一次真实的退出码。
+
+门禁（本轮各跑一次，数字是这几跑打印的）：
+`TMPDIR=$PWD/.run-logs/tmp DISPLAY=:140 ELECTRON_DISABLE_SANDBOX=1 npm test` →
+`Test Files 105 passed (105)`、`Tests 1683 passed | 1 skipped (1684)`；
+`npm run test:e2e` → `19 passed (19)` / `149 passed (149)`；`npm run typecheck`、`npm run lint`、
+`npm run knip` 均退出码 0；`node scripts/screenshot-sources.mjs --check` → 退出码 0，
+`PASS — 33 renderer source(s) and 14 screenshot(s) match docs/screenshots/sources.json`。
+
+**这一轮 `npm test` 第一次不再有那个「唯一失败的文件是 `tests/contract/layout.test.ts`」**——上面那条
+命令里加的 `DISPLAY=:140` 就是原因，不是运气。四个数也对得上，不需要读者猜：
+`1631`（上一轮在 HEAD 上跑的）+ `3`（上一刀写进 `design-tokens.test.ts`、但因为 shell 起不来**一次都没跑过**
+的那三条驱动用例）+ `45`（布局门禁从 skipped 变成 real run）+ `4`（本轮孤儿图那四条）= `1683`；
+`46 skipped` 里有 `45` 条正是布局门禁本身，剩下的 `1` 条与本轮无关。
+
+**这一轮没有做的事**里那条 `polish` 仍然是欠的：界面文案与 `README.md` 中文半部分的去 AI 味道，
+需要一次「先 critique、再逐条改、每条重拍」的独立一刀。本轮把重拍这条路第一次跑通（哈希对得上、
+`--write` 之后 `--check` 绿），下一刀改文案时不必再先解决「拍了放哪儿」。

@@ -770,3 +770,66 @@ PASS — 7 gate step(s) green on linux with node v22.23.4
 `.github/workflows/` 目录、无法归类的步骤被拒、`package.json` 没声明的脚本被拒、没有工作流时打红），
 以及命令本身（`--list` 跑零步、`env:` 真的传进子进程、失败即红且后续步骤标 `[skipped]`、
 `--only` 的未知 id 被拒、未知旗标被拒、`--json` 记录的形状与 `note`）。
+
+## 布局门禁在本机第一次跑绿（2026-11-05，指着已有的 X server 跑）
+
+`tests/contract/layout.test.ts` 是本仓唯一的真实 Chromium 门禁，而它在这台机器上连续几轮只有
+CI 那一份绿灯——每一轮的记法都是同一句「本机没有能连上的 X server」。本轮量出来的不是「终于有
+显示器了」，而是**那一行 `xvfb-run` 在这台机器上不可能成功，原因与显示器无关**：
+
+- `/tmp` 是带**用户配额**的 tmpfs：`df` 报 `82%` 使用、`348M` 可用，而往里写**一个字节**就返回
+  `Unknown system error -122`。`CONTRIBUTING.md` 早就为写临时文件的契约测试记过同一个错误码，
+  本轮遇到的是它的另一面；
+- Xvfb 的 socket `/tmp/.X11-unix/X<n>` 与 `xvfb-run` 的 `Xauthority` 正是这样的字节，两者都建不
+  出来，而子进程照样拿到一个 `DISPLAY=:109`——那一头没有服务端；
+- 于是「没有显示器」与「配额挡住」打印**同一句** `Missing X server or $DISPLAY`。原先这一页与
+  `CONTRIBUTING.md` 只写了前一种，所以下一个人会继续按那条不可能成功的命令重试。
+
+**换法而不是重试**：这台机器上本来就有一个在应答的 `Xvfb :140`（`1920x1080x24`），
+`ls /tmp/.X11-unix` 看得见那个 socket。直接指着它跑：
+
+```bash
+ELECTRON_DISABLE_SANDBOX=1 DISPLAY=:140 npx vitest run tests/contract/layout.test.ts
+```
+
+**这一次跑的结果**：`Test Files 1 passed` / `Tests 45 passed (45)`，约 90 秒。覆盖的是七个宽度
+加最小窗口的全部几何不变量、五态在两个尺寸上的状态断言、正文行长上下限、行首行尾禁则、字体栈
+与假斜体的计算值断言。
+
+### 本轮那 1px 在真实渲染里量成什么样
+
+`apps/desktop/src/renderer/src/styles.css` 的 `.more-menu button` 从 `var(--r-sm)`（4px）改成 `3px`
+（同心值，理由与算式在 `docs/DESIGN.md` 的「嵌套圆角」一节）。改完之后三条都是跑出来的：
+
+- `npx vitest run tests/contract/design-tokens.test.ts` → 37 项全绿；
+- 上面那条布局门禁 → 45 项全绿；
+- `node scripts/screenshot-sources.mjs --write` 之后再跑一次 `node scripts/screenshot-sources.mjs --check`
+  → 退出码 0，`PASS — 33 renderer source(s) and 14 screenshot(s) match docs/screenshots/sources.json`。
+
+**14 张已提交截图与这一跑新拍的逐张 sha256 相同**——不是「看上去差不多」，是每张的哈希对齐。
+这句话有内容：`.more-menu` 是 portal 到 `<body>` 的浮层，只有点了「更多」才会被画出来，而这 14 张
+里没有一张拍到它打开的样子，所以那 1px 在这 14 张图上**移动了零个像素**。它是被同心算式与几何
+门禁背书的，不是被图背书的；要让它有一张图，`scripts/layout-probe.mjs` 得先学会点开那个菜单。
+
+### 顺带量到的真缺陷：两张没人点名的截图，其中一张已经烂了
+
+比那 1px 实在的是这件事。`docs/screenshots/states/empty.png` 与 `docs/screenshots/states/error.png`
+是那个目录里**仅有的两张没有任何文档指向的图**（扫过 `README.md`、`CONTRIBUTING.md` 与 `docs/` 下
+全部 markdown：其余 14 张各有 1 到 4 处点名）。而 `states/empty.png` 的字节是 `de8cfc08…`，
+文档真正引用的那张 `docs/screenshots/empty.png` 是 `831249ba…`——后者是重拍过的，前者还停在上一版
+渲染层。唯一知道它存在的东西是 `docs/screenshots/sources.json`，而那份 manifest 由跑 `--write` 的
+人重写，所以它永远不会红：一张没人看的图，同时也没有任何东西在看它。
+
+本轮把这两张删掉，并把这件事收成断言：`tests/contract/screenshots.test.ts` 现在要求
+`docs/screenshots/` 里每张图都被某个文档点名（13 项，其中两条把两个方向各驱动一遍）。
+
+**证明它会红**：往目录里复制一张 `docs/screenshots/states/orphan-demo.png`，
+`has a reader for every picture in docs/screenshots/` 当场打红，原文是
+`these screenshots are committed and no document points at them, so nothing keeps their bytes honest — name each one in a document, or delete it: docs/screenshots/states/orphan-demo.png`；
+删掉那张之后 13/13 恢复绿，`--check` 照旧退出 0。
+
+### 这一条不证明什么
+
+它只证明「在这台机器、这一个 socket 上，布局门禁跑得动，而且现在是绿的」。CI 仍然是另一台机器；
+`/tmp` 配额那条限制没有解除，下一个人在同一台机器上照 `xvfb-run` 那一行敲仍然会撞到同一句话——
+区别是这一回 `CONTRIBUTING.md` 写了第二种原因，以及能用的那一条。

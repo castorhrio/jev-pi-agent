@@ -54,6 +54,20 @@
  *    innocent change (font hinting, a scrollbar, a subpixel edge) and gets
  *    switched off; see the note at the top of `scripts/layout-probe.mjs`.
  *
+ * ## Whether a picture has a reader at all
+ *
+ * The case above compares the manifest with the tree. It says nothing about
+ * whether a *person* is ever sent to a given image — and that gap is where a
+ * stale screenshot lives. This round met it for real:
+ * `docs/screenshots/states/empty.png` still held bytes from an older renderer,
+ * while `docs/screenshots/empty.png` — the picture `README.md` and
+ * `docs/state-walkthrough.md` actually name — had been retaken. Nothing was
+ * red, because the manifest is the only thing that knows the first file exists,
+ * and the manifest is rewritten by whoever runs `--write`. A committed image
+ * that no document points at is therefore a claim nobody can be asked to stand
+ * behind, so the last block below requires every screenshot in
+ * `docs/screenshots/` to be named by a document, and names the orphan.
+ *
  * ## What it does not judge
  *
  * Whether a screenshot looks good, or whether the pixels show what the caption
@@ -64,8 +78,8 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { existsSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { join, relative, sep } from 'node:path';
 import {
   MANIFEST_PATH,
   buildManifest,
@@ -73,6 +87,7 @@ import {
   driftLines,
   isClean,
   readManifest,
+  screenshotFiles,
 } from '../../scripts/screenshot-sources.mjs';
 
 const REPO_ROOT = join(import.meta.dirname, '..', '..');
@@ -269,5 +284,106 @@ describe('the screenshots are in sync with the renderer', () => {
     expect(lines).toContain(
       'recorded renderer source is gone: apps/desktop/src/renderer/src/components/New.tsx',
     );
+  });
+});
+
+/**
+ * Every markdown document a reader is sent to, as repo-relative posix paths.
+ *
+ * `README.md` and `CONTRIBUTING.md` plus everything under `docs/`. The whole
+ * tree rather than a hand-written list, for the reason `screenshot-sources.mjs`
+ * gives about the renderer: a list of "the files that matter" is a second fact,
+ * and the first document somebody adds would be outside it.
+ */
+function markdownDocuments(repoRoot = REPO_ROOT): string[] {
+  const files = ['README.md', 'CONTRIBUTING.md'].filter((file) =>
+    existsSync(join(repoRoot, file)),
+  );
+  const walk = (dir: string): string[] => {
+    const found: string[] = [];
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const full = join(dir, entry.name);
+      if (entry.isDirectory()) found.push(...walk(full));
+      else if (entry.name.endsWith('.md')) {
+        found.push(relative(repoRoot, full).split(sep).join('/'));
+      }
+    }
+    return found;
+  };
+  return [...files, ...walk(join(repoRoot, 'docs'))].sort();
+}
+
+/**
+ * The committed screenshots that no document names.
+ *
+ * Compared as a literal substring, because that is what a reader follows: a
+ * path that appears nowhere cannot be clicked, quoted or walked to.
+ */
+function orphanScreenshots(texts: Map<string, string>, shots: readonly string[]): string[] {
+  return shots.filter((shot) => ![...texts.values()].some((text) => text.includes(shot)));
+}
+
+/**
+ * A picture nobody points at is a claim nobody is asked to stand behind.
+ *
+ * The manifest keeps every screenshot honest about *bytes*, and the README keeps
+ * the six it shows honest about *size*. Between them sat a file that was neither
+ * shown nor measured nor named by a single document — `docs/screenshots/states/empty.png`,
+ * whose bytes still described a renderer that no longer exists while the picture
+ * documents actually reference had been retaken. Nothing could have reported
+ * that, because nothing was looking at it.
+ */
+describe('every committed screenshot is pointed at by a document', () => {
+  const documents = markdownDocuments();
+  const texts = new Map(documents.map((doc) => [doc, readFileSync(join(REPO_ROOT, doc), 'utf8')]));
+  const shots = screenshotFiles(REPO_ROOT);
+
+  it('reads documents and screenshots, so the check below is not vacuous', () => {
+    expect(documents.length, 'no markdown document was found to search').toBeGreaterThan(0);
+    expect(shots.length, 'no screenshot is committed').toBeGreaterThan(0);
+    // The third guard is the one that matters: a scan whose needle never appears
+    // in any document would report every screenshot as an orphan, and a scan that
+    // matches everything would report none. Prove the reference form is readable.
+    expect(
+      [...texts.values()].some((text) => text.includes('docs/screenshots/')),
+      'no document names a screenshot path, so the comparison below has no subject',
+    ).toBe(true);
+  });
+
+  it('has a reader for every picture in docs/screenshots/', () => {
+    const orphans = orphanScreenshots(texts, shots);
+    expect(
+      orphans,
+      `these screenshots are committed and no document points at them, so nothing keeps their ` +
+        `bytes honest — name each one in a document, or delete it:\n${orphans.join('\n')}`,
+    ).toEqual([]);
+  });
+
+  it('names the picture whose last reference was renamed away', () => {
+    // The direction a file survives being moved out from under: the picture stays
+    // on disk, the manifest still records it, and only the reference is gone.
+    const needle = 'docs/screenshots/states/loading.png';
+    expect(shots, `the drive assumes ${needle} is committed`).toContain(needle);
+
+    const renamed = new Map(texts);
+    let touched = 0;
+    for (const [doc, text] of renamed) {
+      if (!text.includes(needle)) continue;
+      renamed.set(doc, text.replaceAll(needle, 'docs/screenshots/states/loading-moved.png'));
+      touched += 1;
+    }
+    // A mutation that matched nothing would compare an untouched map with itself
+    // and pass — the silent-miss shape `design-tokens.test.ts` now guards against.
+    expect(touched, `no document names ${needle}, so this drive proved nothing`).toBeGreaterThan(0);
+
+    expect(orphanScreenshots(renamed, shots)).toEqual([needle]);
+  });
+
+  it('reports a brand-new picture nobody has pointed at yet', () => {
+    // The other half: adding an image is the common case, and it must not be
+    // greener than renaming one away.
+    expect(orphanScreenshots(texts, [...shots, 'docs/screenshots/states/newcomer.png'])).toEqual([
+      'docs/screenshots/states/newcomer.png',
+    ]);
   });
 });
