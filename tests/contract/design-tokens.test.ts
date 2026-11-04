@@ -37,6 +37,12 @@
  *    appears only on `border-left` or `::-webkit-scrollbar-thumb`;
  *  - every colour token in `:root` is in the colour table with the same value,
  *    and the table documents no token `:root` lacks;
+ *  - gradients are for icons only: no purple-pink gradient endpoint on a
+ *    surface, the one exception being the brand glyph `.brand-mark`, which is
+ *    named in this file the same way the two allowed 2px edges are;
+ *  - a nested box's radius never exceeds its outer box's: an inner corner that
+ *    is larger than its ancestor's sits on top of the ancestor's arc and reads
+ *    as a second, unargued layer;
  *  - `CONTRIBUTING.md` links the register, because a document nobody is sent to
  *    is a document nobody reads.
  *
@@ -52,6 +58,17 @@
  * 4px-tall meter and a 400px-wide dialog genuinely want different physical
  * corners. So the register is a list of *boxes*, not a scale, and the check is
  * set equality rather than a count.
+ *
+ * It does not assert the concentric-corner ideal either — "inner radius =
+ * outer radius − inner padding" — even though that is the rule a designer would
+ * state. The stylesheet does not obey it: `.more-menu` is 7px with 4px of
+ * padding and its buttons are 4px, where concentric would be 3px; `.row-item`
+ * is 4px with 6px of vertical padding and its buttons are 4px, where concentric
+ * would be 0. Asserting the ideal would mean restyling two button rules to make
+ * a test pass, which is the wrong direction for a gate to push. What is
+ * asserted is the defect the ideal exists to prevent: an inner corner *larger*
+ * than its outer one, which is the only case that reads as a second, unargued
+ * layer. The gap between the two is written down here rather than papered over.
  *
  * ## Why the red direction is driven with mutated copies
  *
@@ -141,8 +158,7 @@ function rootTokens(css: string): Map<string, string> {
  * make the "2px only on `border-left`" check pass over the narrow-window rules
  * — the ones most likely to grow a new edge.
  */
-function rules(css: string): Array<{ selector: string; body: string }> {
-  const code = codeOnly(css);
+function walkRules(code: string): Array<{ selector: string; body: string }> {
   const found: Array<{ selector: string; body: string }> = [];
   const stack: Array<{ selector: string; body: string }> = [];
   let pending = '';
@@ -167,6 +183,11 @@ function rules(css: string): Array<{ selector: string; body: string }> {
     }
   }
   return found;
+}
+
+/** The same walk over the stylesheet with its comments removed. */
+function rules(css: string): Array<{ selector: string; body: string }> {
+  return walkRules(codeOnly(css));
 }
 
 /** A `var(--x)` reference resolved through `:root`, or the value unchanged. */
@@ -358,6 +379,162 @@ function colourProblems(design: string, styles: string): string[] {
   return problems;
 }
 
+/** A `#rrggbb` colour as HSL, so a hue band can be stated in degrees. */
+function hexToHsl(hex: string): { h: number; s: number; l: number } {
+  const r = Number.parseInt(hex.slice(1, 3), 16) / 255;
+  const g = Number.parseInt(hex.slice(3, 5), 16) / 255;
+  const b = Number.parseInt(hex.slice(5, 7), 16) / 255;
+  const max = Math.max(r, g, b);
+  const min = Math.min(r, g, b);
+  const l = (max + min) / 2;
+  let h = 0;
+  let s = 0;
+  if (max !== min) {
+    const d = max - min;
+    s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+    if (max === r) h = ((g - b) / d + (g < b ? 6 : 0)) / 6;
+    else if (max === g) h = ((b - r) / d + 2) / 6;
+    else h = ((r - g) / d + 4) / 6;
+  }
+  return { h: h * 360, s, l };
+}
+
+/**
+ * The purple-pink band, in degrees.
+ *
+ * 245° is where a blue stops reading as "interactive" and starts reading as
+ * "decorative"; 315° is where it becomes a pink. The accent sits at 234°, just
+ * outside, which is why the band is stated as a range rather than as "not the
+ * accent".
+ */
+const PURPLE_PINK_HUE_MIN = 245;
+const PURPLE_PINK_HUE_MAX = 315;
+
+/**
+ * Every gradient endpoint in the stylesheet, with the hue it resolves to.
+ *
+ * `var(--accent)` is resolved through `:root` before the hue test, because the
+ * accent is a blue that sits eleven degrees below the purple-pink band: a token
+ * that drifted into the band would otherwise be invisible to this check, and
+ * the glyph's gradient is written with exactly that token.
+ */
+function gradientEndpoints(styles: string): Array<{ selector: string; color: string; hue: number }> {
+  const tokens = rootTokens(styles);
+  const endpoints: Array<{ selector: string; color: string; hue: number }> = [];
+  for (const rule of rules(styles)) {
+    if (!/linear-gradient|radial-gradient/.test(rule.body)) continue;
+    const resolved = rule.body.replace(
+      /var\(--([\w-]+)\)/g,
+      (whole: string, name: string) => tokens.get(name) ?? whole,
+    );
+    for (const match of resolved.matchAll(/#[0-9a-fA-F]{6}\b/g)) {
+      const color = match[0]!;
+      endpoints.push({ selector: rule.selector, color, hue: hexToHsl(color).h });
+    }
+  }
+  return endpoints;
+}
+
+/**
+ * Everything wrong with gradients: a purple-pink endpoint is decoration, and
+ * decoration has no place in this palette.
+ *
+ * The one exception is the brand glyph `.brand-mark`, which is a purple-pink
+ * gradient because it is the product's glyph and not a surface. The exception
+ * is a named selector in this file rather than a comment in the stylesheet, for
+ * the same reason `TWO_PX_EDGE` is: a comment is not a gate, and a whitelist
+ * that lives in the gate is a whitelist somebody has to edit on purpose.
+ * Renaming the glyph therefore turns this red until the exemption is re-argued
+ * here, which is the point.
+ */
+const BRAND_GLYPH = '.brand-mark';
+
+function gradientProblems(styles: string): string[] {
+  return gradientEndpoints(styles)
+    .filter(
+      (endpoint) =>
+        endpoint.hue >= PURPLE_PINK_HUE_MIN &&
+        endpoint.hue <= PURPLE_PINK_HUE_MAX &&
+        endpoint.selector !== BRAND_GLYPH,
+    )
+    .map(
+      (endpoint) =>
+        `docs/DESIGN.md: ${endpoint.selector} uses a purple-pink gradient endpoint ${endpoint.color} ` +
+        `(hue ${Math.round(endpoint.hue)}°) — gradients are for the brand glyph only, and the glyph ` +
+        `is ${BRAND_GLYPH}`,
+    );
+}
+
+/** A px length, or `null` for anything else (`50%`, `calc(…)`, a token). */
+function parsePx(value: string): number | null {
+  const match = /^(\d+(?:\.\d+)?)px$/.exec(value.trim());
+  return match === null ? null : Number(match[1]);
+}
+
+/**
+ * Every nested box pair whose two radii can be compared, outer first.
+ *
+ * A pair is a rule whose selector has a descendant or child combinator, where
+ * both the first component (the outer box) and the rule itself (the inner box)
+ * declare a `border-radius`. Two exemptions:
+ *
+ *   - pseudo-elements (the brand glyph, the tab underline) are drawn on purpose
+ *     and are gated elsewhere;
+ *   - percentage radii are circles, not corners, and cannot be compared with a
+ *     px value.
+ */
+function nestedPairs(
+  styles: string,
+): Array<{ selector: string; outerSelector: string; inner: number; outer: number }> {
+  const tokens = rootTokens(styles);
+  const rulesList = rules(styles);
+
+  const radiusBySelector = new Map<string, string>();
+  for (const rule of rulesList) {
+    const match = /(?:^|;)\s*border-radius\s*:\s*([^;]+);/.exec(rule.body);
+    if (match === null) continue;
+    radiusBySelector.set(rule.selector, resolveValue(match[1]!.trim().split(/\s+/)[0]!, tokens));
+  }
+
+  const pairs: Array<{ selector: string; outerSelector: string; inner: number; outer: number }> = [];
+  for (const rule of rulesList) {
+    if (/:{1,2}(?:after|before)/.test(rule.selector)) continue;
+    const innerRadius = radiusBySelector.get(rule.selector);
+    if (innerRadius === undefined) continue;
+    for (const selector of rule.selector.split(',').map((part) => part.trim())) {
+      const parts = selector.split(/[\s>+~]+/).filter(Boolean);
+      if (parts.length < 2) continue;
+      const outerSelector = parts[0]!;
+      const outerRadius = radiusBySelector.get(outerSelector);
+      if (outerRadius === undefined) continue;
+      const inner = parsePx(innerRadius);
+      const outer = parsePx(outerRadius);
+      if (inner === null || outer === null) continue;
+      pairs.push({ selector, outerSelector, inner, outer });
+    }
+  }
+  return pairs;
+}
+
+/**
+ * Everything wrong with nested radii: an inner box's radius must not exceed its
+ * outer box's.
+ *
+ * A radius that is larger than its ancestor's sits on top of the ancestor's
+ * corner arc and reads as a second, unargued layer — the same shape of defect
+ * that a new bare radius is. See the header for why the stricter concentric
+ * rule is not what this asserts.
+ */
+function nestedRadiusProblems(styles: string): string[] {
+  return nestedPairs(styles)
+    .filter((pair) => pair.inner > pair.outer + 0.01)
+    .map(
+      (pair) =>
+        `docs/DESIGN.md: ${pair.selector} (${pair.inner}px) inside ${pair.outerSelector} ` +
+        `(${pair.outer}px) has a larger radius — the inner corner sits on top of the outer one`,
+    );
+}
+
 /** Whether a contributor is sent to the register at all. */
 function routingProblems(contributing: string): string[] {
   return contributing.includes('docs/DESIGN.md')
@@ -382,6 +559,14 @@ describe('the register and the stylesheet are the same facts', () => {
     expect(colourProblems(DESIGN, STYLES)).toEqual([]);
   });
 
+  it('forbids purple-pink gradient endpoints on surfaces', () => {
+    expect(gradientProblems(STYLES)).toEqual([]);
+  });
+
+  it('keeps nested radii from exceeding their outer radius', () => {
+    expect(nestedRadiusProblems(STYLES)).toEqual([]);
+  });
+
   it('sends a contributor to the register', () => {
     expect(routingProblems(CONTRIBUTING)).toEqual([]);
   });
@@ -404,6 +589,29 @@ describe('the register is read as data, not as prose', () => {
     const used = radiiInUse(STYLES);
     expect([...used.keys()]).toEqual(expect.arrayContaining(['4px', '7px', '10px']));
     expect([...used.keys()]).not.toContain('var(--r-sm)');
+  });
+
+  it('finds the gradient the register allows, and the hue it resolves to', () => {
+    // The "the subject exists" half of the gradient check: a walker that found
+    // no gradients would pass over nothing. The glyph's gradient is written
+    // with `var(--accent)`, so this also proves the token is resolved before
+    // the hue test rather than skipped as an unparseable endpoint.
+    const endpoints = gradientEndpoints(STYLES);
+    expect(endpoints.length).toBeGreaterThanOrEqual(2);
+    expect(endpoints.map((endpoint) => endpoint.selector)).toContain(BRAND_GLYPH);
+    expect(endpoints.map((endpoint) => endpoint.color)).toContain('#9d6dff');
+    expect(endpoints.map((endpoint) => endpoint.color)).toContain('#6d7cff');
+  });
+
+  it('finds the nested boxes whose radii can be compared', () => {
+    // Same reason: `nestedPairs` returning `[]` would make the check above
+    // vacuously green. Both pairs are named, so a walker that stopped seeing
+    // descendant selectors is red rather than quiet.
+    const pairs = nestedPairs(STYLES);
+    expect(pairs.map((pair) => pair.selector)).toEqual(
+      expect.arrayContaining(['.more-menu button', '.row-item .m button']),
+    );
+    expect(pairs.every((pair) => pair.outerSelector.length > 0)).toBe(true);
   });
 
   it('reads the edge widths out of the rules, including the ones inside @media', () => {
@@ -487,6 +695,41 @@ describe('the gate goes red when the two copies disagree', () => {
     const mutated = DESIGN.replace(/^\| `--info` \|.*\n/m, '');
     expect(colourProblems(mutated, STYLES)).toEqual([
       expect.stringContaining('--info (#58a6ff) is declared in styles.css but has no row'),
+    ]);
+  });
+
+  it('names a surface that grew a purple-pink gradient', () => {
+    // The defect the rule exists to catch: a panel background drifting into the
+    // decorative band. `.badge` is a surface, so it has no exemption.
+    const mutated = STYLES.replace(
+      '.badge {',
+      '.badge {\n  background: linear-gradient(135deg, #1d1d21, #b06dff);',
+    );
+    expect(gradientProblems(mutated)).toEqual([
+      expect.stringContaining('.badge uses a purple-pink gradient endpoint #b06dff'),
+    ]);
+  });
+
+  it('names the glyph when its exemption is taken away', () => {
+    // The exemption is the selector `.brand-mark`, so renaming the glyph is the
+    // same act as revoking it: the gradient is still purple-pink, and nothing
+    // in this file vouches for the new name.
+    const mutated = STYLES.replace('.brand-mark {', '.brand-glyph {');
+    expect(gradientProblems(mutated)).toEqual([
+      expect.stringContaining('.brand-glyph uses a purple-pink gradient endpoint #9d6dff'),
+    ]);
+  });
+
+  it('names a nested radius that exceeds its outer radius', () => {
+    // `.more-menu` is the outer box (7px) and `.more-menu button` the inner one
+    // (4px); shrinking the outer below the inner is the defect this check
+    // exists to catch.
+    const mutated = STYLES.replace(
+      '.more-menu {\n  position: fixed;\n  z-index: 41;',
+      '.more-menu {\n  position: fixed;\n  z-index: 41;\n  border-radius: 2px;',
+    );
+    expect(nestedRadiusProblems(mutated)).toEqual([
+      expect.stringContaining('.more-menu button (4px) inside .more-menu (2px)'),
     ]);
   });
 

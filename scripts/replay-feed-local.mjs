@@ -198,11 +198,11 @@ export function documentHandler(bytes) {
 }
 
 /**
- * Serves the document on `127.0.0.1`, over TLS when a certificate is given.
+ * Starts the replica server.
  *
- * The cleartext form exists so the handler can be exercised without generating
- * a certificate; this command never uses it, because the address rule under
- * test is https-only.
+ * The document is served by `documentHandler`; this wrapper only adds TLS and
+ * the ephemeral port, so the TLS path is exercised without duplicating the
+ * serving logic.
  */
 export async function startReplica(bytes, options = {}) {
   const { port = 0, host = '127.0.0.1', cert = null, key = null } = options;
