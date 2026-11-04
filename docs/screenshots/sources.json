@@ -29,7 +29,7 @@
     "apps/desktop/src/renderer/src/error-message.ts": "sha256:b9dfafa0e699e8a98d5dbfbb9eb1d432c63fe77b65995970fcacae678c35c57a",
     "apps/desktop/src/renderer/src/i18n-context.tsx": "sha256:6de3a3a25e0c1ad5155a02bbb114d47007c82559cd811030e42d3adaa417bce0",
     "apps/desktop/src/renderer/src/main.tsx": "sha256:fd5b8eb4f8e6bb94e05c95638a63a194b507c16c95762931751a8acb66cc26d4",
-    "apps/desktop/src/renderer/src/state/hooks.ts": "sha256:8d8cfb9f1678dc92fec430ef68efb34d413da7c2ae13ce2684683eedb415b359",
+    "apps/desktop/src/renderer/src/state/hooks.ts": "sha256:99e75698b764d85acd5b3e01615f3849c01e8c1c8656b39e614f18ae8892823e",
     "apps/desktop/src/renderer/src/state/session-reducer.ts": "sha256:e82390a35ca33d11b22652ddbc6a22e7bec5024d1430c6d85ca280c69ed01410",
     "apps/desktop/src/renderer/src/styles.css": "sha256:a73596198b0157693e7815f47f532169fe9ff76e049c2318462aa7a7dfbcd8c8",
     "apps/desktop/src/renderer/src/update-controller.tsx": "sha256:a7f96869b392804ee90a67877732d3ccf63ebbc33969ec7dea195830981586ab",
