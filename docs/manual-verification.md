@@ -675,3 +675,94 @@ sha256sum docs/release/update-feed-v1.0.0.json
 接线（两条命令用的是地址而不是磁盘文件、闸门拿到的是第二次 run 写出的文件）、信任边界
 （只有两个子进程拿到 `NODE_EXTRA_CA_CERTS`）、字节一致（打印的哈希就是被托出去的字节的哈希；
 别的路径一律 404），以及这次端到端跑的真实 transcript。
+
+## CI 等价的一次跑，现在是一条命令（2026-11-05，`npm run verify:gates`）
+
+DoD 的「门禁即 DoD」有半句是「及 CI 等价」。这半句此前**没有可执行形式**：`npm test` 在 CI 上是
+`xvfb-run --auto-servernum --server-args="-screen 0 1920x1080x24" npm test` 外加
+`ELECTRON_DISABLE_SANDBOX=1`，在本机是另一条命令。那两个细节写在 `.github/workflows/ci.yml` 里
+和 `CONTRIBUTING.md` 的一段里，于是「CI 等价」等于「上一次记得怎么写」。**记得的命令是声称；
+写进文档的 URL 是别人没法复跑的声称。**
+
+`scripts/gate-local.mjs` 读工作流、跑它的 `run:` 步骤：同样的文本（连 `xvfb-run` 的 screen 参数一起）、
+同样的 `env:`、同样的 shell 旗标（`bash -eo pipefail`，GitHub 的 `run:` 就是它）、同样的顺序，
+第一步失败就停——和 CI 的 job 一样。**命令清单没有抄进脚本**：抄一份就是第二份事实，
+而它漂移的时候没人看得见。
+
+### 三条命令
+
+```bash
+node scripts/gate-local.mjs --list   # 只打印计划：将跑哪些命令、跳过哪一步、哪一步带了 env
+node scripts/gate-local.mjs          # 或 npm run verify:gates：真跑
+node scripts/gate-local.mjs --only test
+```
+
+`--json <路径>` 额外写一份 run 记录（HEAD、node、平台、每一步的退出码与耗时）。
+
+### 本机这一次的实际输出（2026-11-05，HEAD `2dba24f`）
+
+```
+$ npm run verify:gates
+[plan] 1 workflow(s): ci.yml
+[skip] setup                ci.yml:34  npm install -g npm@11.6.2 && npm ci
+[run ] typecheck            ci.yml:43  npm run typecheck
+[run ] lint                 ci.yml:46  npm run lint
+[run ] knip                 ci.yml:49  npm run knip
+[run ] test                 ci.yml:52  xvfb-run --auto-servernum --server-args="-screen 0 1920x1080x24" npm test
+[run ] test:e2e             ci.yml:69  xvfb-run --auto-servernum npm run test:e2e
+[run ] build                ci.yml:72  npm run build
+[run ] clean+build:packages ci.yml:75  npm run clean && npm run build:packages
+[env ] test: ELECTRON_DISABLE_SANDBOX=1
+[plan] 7 gate step(s), 1 setup step(s) not re-run here
+[run ] typecheck — npm run typecheck (ci.yml:43)
+[ok  ] typecheck (1.8s)
+[run ] lint — npm run lint (ci.yml:46)
+[ok  ] lint (7.3s)
+[run ] knip — npm run knip (ci.yml:49)
+[ok  ] knip (1.8s)
+[run ] test — xvfb-run --auto-servernum --server-args="-screen 0 1920x1080x24" npm test (ci.yml:52)
+[ok  ] test (84.3s)
+[run ] test:e2e — xvfb-run --auto-servernum npm run test:e2e (ci.yml:69)
+[ok  ] test:e2e (28.8s)
+[run ] build — npm run build (ci.yml:72)
+[ok  ] build (4.4s)
+[run ] clean+build:packages — npm run clean && npm run build:packages (ci.yml:75)
+[ok  ] clean+build:packages (5.4s)
+PASS — 7 gate step(s) green on linux with node v22.23.4
+```
+
+中间被折叠的是两段测试输出：`test` 那一步 `94` 个文件、`1490` 项通过（`1` 项按环境跳过），
+`test:e2e` 那一步 `18` 个文件、`147` 项通过。这两组数会随仓库变化，命令结论不会。
+
+### 每一步都被分成三类，而不是「看着像就跳过」
+
+- **gate** —— 本仓自己的脚本（`npm run <script>` / `npm test`，可以带 `xvfb-run` 包装）。原样执行。
+- **setup** —— `npm ci` / `npm install …`。打成 `[skipped]` 并写原因：runner 从空开始，这份检出不是，
+  在这里重跑安装会改动正在被量的树。
+- **无法归类** —— 例如 `./scripts/check.sh`。这是**跑之前就失败**：脚本不认识的工作流步骤，
+  继续下去只会给一条「门禁绿了」而那道门根本没跑。失败里带文件、行号、命令和两条修法。
+
+### 证明它会红（各演示一次，恢复后 17/17 绿）
+
+| 改坏的地方 | 打红的东西 |
+|---|---|
+| 把 `ci.yml` 的 `run: npm run knip` 改成 `run: npx knip` | `node scripts/gate-local.mjs --list` → `REFUSED — 1 workflow step(s) this gate cannot classify. Nothing was run.`（带 `ci.yml:49`、命令、两条修法）；`tests/contract/ci-gate-local.test.ts` 两条同时红 |
+| 把 `runStep()` 的退出码一律当成 0 | 子进程三条红：`exits 1, names the failing step…`、`--only` 那条、`writes a record…` |
+
+第二种是本轮真正要防的形状：计划读得再对，命令也可以「永远绿」——所以驱动脚本的是子进程用例，
+不是只测纯函数（本仓已经在 `screenshot-sources` 上踩过一次）。
+
+### 这一次跑证明了什么，不证明什么
+
+**证明**：CI 执行的那 7 条命令，在这台机器上、用同样的 shell 旗标与 env、按同样顺序，全绿；
+并且这份 transcript 任何人可以重跑得到同样的 7 步（`--list` 不打红即为同一步骤表）。
+
+**不证明**：一次 GitHub 托管 runner 上的运行。内核、Chromium 的 sandbox 情形、npm 版本都可能不同；
+`npm ci` 这一步在这里是 `[skipped]`，不是「CI 装依赖也绿」。run 记录（`--json`）把这句话写在自己的
+`note` 字段里，就是为了不让人把一份 transcript 读成一次 CI 运行。
+
+门禁：`tests/contract/ci-gate-local.test.ts`（17 项）钉住「计划等于工作流」（步骤 id 与顺序、
+`xvfb-run` 的 screen 参数、`ELECTRON_DISABLE_SANDBOX=1`、`run:` 步骤一个不漏、读的是整个
+`.github/workflows/` 目录、无法归类的步骤被拒、`package.json` 没声明的脚本被拒、没有工作流时打红），
+以及命令本身（`--list` 跑零步、`env:` 真的传进子进程、失败即红且后续步骤标 `[skipped]`、
+`--only` 的未知 id 被拒、未知旗标被拒、`--json` 记录的形状与 `note`）。

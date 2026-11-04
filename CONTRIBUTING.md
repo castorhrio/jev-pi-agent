@@ -51,6 +51,17 @@ CI runs exactly this sequence, plus a clean rebuild at the end: an incremental
 build cannot catch a wrong build order, because a stale `dist` satisfies any
 import.
 
+`npm run verify:gates` runs those same steps locally, and it reads them out of
+`.github/workflows/ci.yml` instead of carrying a copy of them: same commands,
+same `xvfb-run` wrappers and screen size, same `env:`, same `bash -eo pipefail`,
+in the same order, stopping at the first failure the way a CI job does. `--list`
+prints the plan without running anything, `--only <id>` runs one step, and
+`--json <path>` writes a record of what ran. A workflow step it cannot classify
+(`./scripts/check.sh` and friends) is refused **before** anything runs, because a
+step this command skipped in silence would still print the same green line. So
+"CI equivalent" is a command somebody can re-run, not a transcript somebody
+remembers.
+
 **The lock file and npm majors move together.** `package-lock.json` is written
 by npm 11, and CI pins the same version before `npm ci`. npm 10 materialises
 optional peer entries (`@emnapi/*`) that npm 11 prunes, so one lock file cannot

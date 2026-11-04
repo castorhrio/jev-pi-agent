@@ -25,7 +25,7 @@
 `tests/contract/dod-status.test.ts` 逐行核对：少一条、改一句、写一个不存在的路径、四态合计对不上，
 都会打红。所以这张表不是一段说明，是一条会红的门禁。
 
-四态合计：通过 13 / 未过 2 / 外部阻塞 1 / 不适用 0
+四态合计：通过 14 / 未过 1 / 外部阻塞 1 / 不适用 0
 
 | 条目 | 判据（取自 PRODUCT-DOD 原句） | 四态 | 证据（路径或命令） | 还差什么 |
 |---|---|---|---|---|
@@ -41,7 +41,7 @@
 | DOD-4.2 | 更新 feed `https` + `sha256` 校验 | 未过 | `scripts/verify-release-feed.mjs` `scripts/publish-feed.mjs` `tests/contract/release-feed.test.ts` | 应用侧校验已绿、修正版文档已判零 finding；**发布出去的 v1.0.0 feed 仍缺 `sha256`**，需要持有 `contents: write` 的人跑 `node scripts/publish-feed.mjs`，之后 `node scripts/verify-release-feed.mjs` 退出 0 |
 | DOD-4.3 | 明文/非 URL 覆盖被拒并打日志 | 通过 | `apps/desktop/src/main/update-feed.ts` `apps/desktop/src/main/update-feed-log.ts` `tests/contract/update-integrity.test.ts` | — |
 | DOD-4.4 | 未签名 SmartScreen 有说明 | 通过 | `README.md` | — |
-| DOD-5.1 | `npm run typecheck && lint && knip && test && test:e2e`（及 CI 等价）绿 | 未过 | `package.json` `.github/workflows/ci.yml` `tests/contract/ci-typecheck.test.ts` | 本机逐条全绿；**CI 等价跑一次还没有留档**——把一次绿运行的链接或日志追加进 `docs/manual-verification.md` |
+| DOD-5.1 | `npm run typecheck && lint && knip && test && test:e2e`（及 CI 等价）绿 | 通过 | `npm run verify:gates` `.github/workflows/ci.yml` `scripts/gate-local.mjs` `tests/contract/ci-gate-local.test.ts` `tests/contract/ci-typecheck.test.ts` `docs/manual-verification.md` | — |
 | DOD-5.2 | 注入/交接/凭据/更新合约测试能打红 | 通过 | `tests/contract/injection-contract.test.ts` `tests/contract/handoff-chain.test.ts` `tests/contract/keyring-gate.test.ts` `tests/contract/release-feed.test.ts` | — |
 | DOD-6.1 | token 来源（厂商 tokenizer vs 启发式）上屏 | 通过 | `apps/desktop/src/renderer/src/components/ContextDrawer.tsx` `apps/desktop/src/renderer/src/components/PreviewPane.tsx` | — |
 | DOD-6.2 | 凭据进 OS 钥匙串，不经环境变量/日志泄露 | 通过 | `apps/desktop/src/main/keyring-gate.ts` `tests/contract/keyring-gate.test.ts` `tests/contract/secret-vault.test.ts` `tests/contract/host-secret-channel.test.ts` | — |
@@ -765,6 +765,45 @@ Windows 桌面六步（无 Windows 机器）。README 中英两半仍写着「�
 恢复后：`tests/contract/layout.test.ts` 41/41、`tests/contract/dod-status.test.ts` 11/11、
 `tests/contract/typography.test.ts` 12/12 绿；`node scripts/screenshot-sources.mjs --check` 仍是
 `PASS — 33 renderer source(s) and 14 screenshot(s) match`（本轮产品样式一行未改）。
+
+**这一轮没有做的事**：上传修正版 feed（无令牌）、Windows 桌面六步（无 Windows 机器）、
+步骤 6 的人眼观感签字（需要一个人）。三条仍是上表里的缺口，不假装完成。
+
+## 本轮（2026-11-05）「CI 等价」从一句记得住的话，变成一条读工作流的命令
+
+上表里 `DOD-5.1` 是**未过**，还差的那半句写得具体：「CI 等价跑一次还没有留档」。这一轮做的只有它，
+也只有它需要做——`DOD-4.2` 的红仍是写权限令牌，`DOD-4.1` 仍需一台 Windows 机器，五态签字仍需一个人，
+三条都在 `docs/blockers.md` 里，本轮没有假装动过。
+
+**为什么不是再贴一次 terminal 日志。** 上一轮之前，「CI 等价」的写法是
+`npm test`（本机）与 `ci.yml` 里的
+`xvfb-run --auto-servernum --server-args="-screen 0 1920x1080x24" npm test` 加
+`ELECTRON_DISABLE_SANDBOX=1`（CI）——两条不同的命令，中间靠人记得。于是「跑过一次 CI 等价」既不能
+复现，也不能被检查：任何人手敲一遍都能得到一份不同的 transcript，而没有任何东西能说「这七步就是 CI 的七步」。
+
+1. **`scripts/gate-local.mjs`（`npm run verify:gates`）读 `.github/workflows/` 的 `run:` 步骤并原样执行**：
+   同样的文本（连 `xvfb-run` 的 screen 参数）、同样的 `env:`、同样的 shell 旗标（`bash -eo pipefail`）、
+   同样的顺序，第一步失败就停。命令清单**没有**抄进脚本——抄一份就是第二份事实，漂移时没人看得见。
+   每一步被分成三类并**打印出来**：`gate`（跑）、`setup`（`npm ci` 之类，打 `[skipped]` 带原因）、
+   **无法归类**（`./scripts/check.sh` 这种：跑之前就失败，因为继续下去只会给出一条「门禁绿了」而
+   那道门没跑）。`--list` 只打印计划（因此可以问「将要跑什么」而不启动 `npm test`），
+   `--only` 按计划里的 id 挑一步，`--json` 留一份 run 记录。
+2. **本机这一次跑（HEAD `2dba24f`，linux，node v22.23.4）**：7 个 gate 步骤全 `[ok]`，
+   `test` 84.3s（94 文件 / 1490 项），`test:e2e` 28.8s（18 文件 / 147 项），build 与 clean build 各一次，
+   最后一行 `PASS — 7 gate step(s) green on linux with node v22.23.4`。完整 transcript 在
+   `docs/manual-verification.md`「CI 等价的一次跑」一节。
+3. **`DOD-5.1` 因此改成「通过」**，证据是 `npm run verify:gates` 加那一节 transcript。这句「通过」的意思
+   是：CI 执行的七条命令在本机、用同样的旗标与 env、按同样顺序全绿，并且任何人可以重跑得到同一份步骤表。
+   **它仍然不是一次 GitHub 托管 runner 的运行**（内核、sandbox 情形、npm 版本都可能不同，`npm ci` 在这里是
+   `[skipped]`）——这句话写进了 run 记录的 `note` 字段，也写在那份 transcript 的「不证明」段落里。
+4. **证明它会红**（各演示一次，恢复后 17/17 绿）：把 `ci.yml` 的 `run: npm run knip` 改成 `run: npx knip`，
+   `node scripts/gate-local.mjs --list` 立刻 `REFUSED — 1 workflow step(s) this gate cannot classify.
+   Nothing was run.`，`tests/contract/ci-gate-local.test.ts` 两条同时红；把 `runStep()` 的退出码一律当成 0，
+   子进程三条红（失败即红、`--only`、run 记录）。第二种是本轮真正要防的形状：**计划读得再对，命令也可以
+   永远绿**——所以驱动脚本的是子进程用例，而不是只测纯函数。
+5. **顺带修掉一条会自己失效的门禁用例**：`tests/contract/dod-status.test.ts` 里「四态合计对不上要打红」
+   那条把 `通过 13` 硬写进断言，一旦真实合计变化，它就退化成一次静默的空替换。现在它从事先读出的
+   合计里减一，再断言打红——仍然会红，但不再需要每轮改一次。
 
 **这一轮没有做的事**：上传修正版 feed（无令牌）、Windows 桌面六步（无 Windows 机器）、
 步骤 6 的人眼观感签字（需要一个人）。三条仍是上表里的缺口，不假装完成。

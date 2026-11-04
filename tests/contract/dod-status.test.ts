@@ -349,9 +349,18 @@ describe('every DoD sentence has a state and a pointer that resolves', () => {
   });
 
   it('reports a total that no longer matches the rows', () => {
-    const broken = STATUS.replace('四态合计：通过 13 /', '四态合计：通过 12 /');
+    // The number is read out of the document and decremented rather than written
+    // here: a hard-coded count turns into a passing no-op the first round the
+    // real total changes, and a gate that silently stops asserting is the
+    // failure this whole file is about. `1` is the floor — a total of zero
+    // 通过 would make the replacement ambiguous.
+    const declared = /四态合计：通过 (\d+) \//u.exec(statusSection(STATUS));
+    expect(declared, 'the section states no 四态合计').not.toBeNull();
+    const pass = Number(declared![1]);
+    expect(pass).toBeGreaterThan(1);
+    const broken = STATUS.replace(`四态合计：通过 ${pass} /`, `四态合计：通过 ${pass - 1} /`);
     const problems = dodProblems({ dod: DOD, status: broken, blockers: BLOCKERS });
-    expect(problems.join('\n')).toContain('四态合计 says 通过 12');
+    expect(problems.join('\n')).toContain(`四态合计 says 通过 ${pass - 1}`);
   });
 
   it('reports a table that is all green while the blockers page still lists blockers', () => {

@@ -31,6 +31,7 @@
     "start": "npm run dev",
     "package": "npm run build && electron-builder --dir",
     "verify:release": "node scripts/release-gate.mjs",
+    "verify:gates": "node scripts/gate-local.mjs",
     "dist": "npm run build && npm run verify:release && electron-builder --win"
   },
   "build": {

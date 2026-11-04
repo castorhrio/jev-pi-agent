@@ -124,5 +124,6 @@ PASS — the report covers steps 1, 2, 3, 4, 5 on win32 against build 1.0.0
 | — | — | — | — | **三条均未解除**：等一个写权限令牌、一台 Windows 机器、一个人 |
 
 三条都**不阻塞**本仓库的门禁：`npm run typecheck`、`npm run lint`、`npm run knip`、
-`npm test`、`npm run test:e2e` 都不需要令牌、Windows 机器或人眼。它们阻塞的是
+`npm test`、`npm run test:e2e` 都不需要令牌、Windows 机器或人眼。这五步连同 build 与 clean build
+可以用一条命令跑完，而且命令清单是从 `.github/workflows/ci.yml` 读出来的：`npm run verify:gates`。它们阻塞的是
 「已发布产物与真机」这两件事，而那正是 `docs/dod-status.md` 表里还红着的行。
