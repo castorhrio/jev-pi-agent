@@ -188,7 +188,10 @@ that does not.
   `node scripts/publish-feed.mjs --apply --verify`, which refuses to run without
   a GitHub token with write access on the repository — this machine has none, so
   the step is blocked here rather than unfinished. Until whoever holds that token
-  runs it, 1.1.0 must not ship.
+  runs it, 1.1.0 must not ship — and that is enforced, not remembered:
+  `npm run dist` runs `node scripts/release-gate.mjs` before `electron-builder`
+  and refuses to produce an installer while the published feed is one the app
+  will not install from.
 - **The interactive terminal needs `node-pty`.** It is an optional dependency;
   without it the terminal panel reports that it is unavailable instead of
   pretending to work. The command channel still runs.
@@ -383,7 +386,9 @@ npm run package  # 免安装目录，不出安装包
   `scripts/verify-release-feed.mjs` 判为零 finding；覆盖那份 asset 只需一条命令
   `node scripts/publish-feed.mjs --apply --verify`，它在没有仓库写权限令牌时会直接
   拒绝执行——本机没有这个令牌，所以这一步是**卡住**的，不是没做完的。在拿到令牌的人
-  跑完它之前，1.1.0 不许发布。
+  跑完它之前，1.1.0 不许发布——而且这句是**被执行的**，不是靠人记得：
+  `npm run dist` 会在 `electron-builder` 之前跑 `node scripts/release-gate.mjs`，
+  只要已发布的 feed 仍是应用拒绝安装的那一份，它就不出安装包。
 - **交互式终端依赖 `node-pty`。** 它是可选依赖；缺失时终端面板会如实说不可用，
   而不是假装能跑。命令通道仍然可用。
 - **从真实 `.asar` 归档内解析适配器只能手动验证：本地打一次包，CI 不覆盖这一步。**

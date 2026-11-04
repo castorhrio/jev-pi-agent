@@ -3,6 +3,14 @@
 `docs/PRODUCT-DOD.md` 是锁定稿，不改它；这里逐条写**现在到哪一步、证据在哪、还差什么**。
 勾选只代表「有可复现的证据」，不代表「已过线」——过线由审查侧判定。
 
+**发布闸门**：`npm run dist` 会在 `electron-builder` 之前跑 `node scripts/release-gate.mjs`。
+已发布的 feed 只要被判成「应用不会从中安装」（`no-sha256` / `installer-latest-url` 之类），
+或压根没被量到（主机不应答、有检查被 `[skipped]` 跳过），构建就退出 1 并打印 `REFUSED`。
+所以「1.1.0 不许发布」现在是一条**会红的构建**，而不是一句靠人记得的约定；判定在
+`scripts/release-gate.mjs`，接线（`dist` 的顺序、`package` 不受影响、`--from-json` 不许上发布路径）
+由 `tests/contract/release-gate.test.ts` 钉住。`npm run package`（免安装目录）不受影响：
+它不出安装包，也不该需要 release 主机。
+
 | DoD 条目 | 现状 | 证据 | 还差什么 |
 |---|---|---|---|
 | 可证明注入 | **有证据** | Context Pack 纯函数 + 内容哈希；真机步骤 1 通过：`renderedHash=80e256b63523731c…`，同一轮重读同哈希，任务描述多一个字符变 `673b97ec35b5…`，注入原文与 `estimate="heuristic_chars_div_4"` 同屏（`docs/manual-verification.md` 2026-11-03 行） | Windows 桌面复跑一次 |
