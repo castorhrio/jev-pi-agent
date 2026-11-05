@@ -195,6 +195,54 @@
    */
   --lh-prose: 1.6;
   --ls-cjk: 0;
+
+  /*
+   * The gap between a Han character and a Latin word.
+   *
+   * Chinese prose in this app is full of Latin: `UCAD`, `base_url`, `MCP`, a
+   * file path, a count. Where the two scripts meet the eye needs a little air,
+   * or the Latin word reads as part of the Chinese one — the rule Chinese
+   * typesetting calls 中英混排间距, and the one item on this stylesheet's
+   * typography checklist it had no answer for at all.
+   *
+   * Two halves, dividing the work by what each of them can see:
+   *
+   *  - The sentence. `tests/contract/typography.test.ts` fails on a `zh-CN`
+   *    value that sets a Han character against a Latin *letter* with nothing
+   *    between them ('退出UCAD'), naming the line. Digits are left alone on
+   *    purpose: '第1步' is ordinary Chinese, and the round that first measured
+   *    this wrote that judgement into `docs/dod-status.md` — a gate over it
+   *    would be a copywriting preference wearing a layout error's clothes. The
+   *    dictionary writes 178 of those spaces across 90 entries today, and 3
+   *    more where the neighbour is a digit; the test counts them rather than
+   *    the stylesheet quoting them.
+   *
+   *  - The engine. `text-autospace: normal` is CSS Text 4's own answer: 1/8 em
+   *    between an ideograph and a Latin letter **or digit**, and nothing
+   *    anywhere else. That is the half a sentence cannot cover — a digit, an
+   *    interpolated path, a digest, something a person typed into the composer
+   *    — so it is measured rather than trusted. Measured, that is, for the
+   *    letter pair below; this build has put no tight digit boundary on a
+   *    gated screen, so the digit half rests on the property and on the
+   *    flow walk's census, which counts digits and letters alike.
+   *
+   * Measured in this app's own engine (Electron 44.5.1 / Chromium
+   * 152.0.7977.130) on this app's own page, by the layout gate: one of those
+   * boundaries written tight ('显示Agent', rendered into `.faint` at 13px)
+   * measures 1.625px inserted over a 13px em — 0.125em, the eighth, at both
+   * boundaries of that sentence. The same walk over the 509 boundaries in the
+   * gated sweep that already carry a space measures **0em** added: the property
+   * does not double-space, which is the 适度 half of the rule, and the direction
+   * this repository can measure today. `tests/contract/layout.test.ts` holds
+   * both.
+   *
+   * The value is a token rather than a declaration at each prose rule for the
+   * same reason `--lh-prose` is: "how much air between the scripts" is one
+   * decision, and those two tests fail if this token stops being `normal`, if
+   * `body` stops reading it, or if any rule anywhere sets `no-autospace` — a
+   * second decision about the same air, made silently.
+   */
+  --text-autospace: normal;
 }
 
 * {
@@ -249,6 +297,18 @@ body {
    * box that does not wrap.
    */
   text-wrap: pretty;
+  /*
+   * 中英混排间距, inherited by every box.
+   *
+   * Declared here for the same reason `text-wrap: pretty` is: the rule is about
+   * text, not about a surface, and a class list carrying it would be a second
+   * fact that drifts the day somebody adds a note somewhere new. The value, the
+   * measurement behind it and the half that belongs to the dictionary are in the
+   * `--text-autospace` comment above; `tests/contract/typography.test.ts` fails
+   * if this rule stops reading that token, and
+   * `tests/contract/layout.test.ts` fails if the engine stops paying it.
+   */
+  text-autospace: var(--text-autospace);
 }
 
 ::selection {

@@ -142,6 +142,83 @@ export const PROSE_MIN_CHARS = 20;
 export const MIN_LAST_LINE_GLYPHS = 2;
 
 /**
+ * What this repository counts as a Han character.
+ *
+ * One definition, read by both halves of 中英混排间距: the measurement below
+ * builds its regex from it, and `tests/contract/typography.test.ts` reads it out
+ * of this file's source to check the *dictionary* against the same set. Two
+ * spellings of the range is how the two halves end up judging different text —
+ * the same drift the two line-length numbers are exported to prevent.
+ *
+ * Written as the characters themselves rather than as escapes: this value is
+ * interpolated into the page script's regex *and* read back out of this file's
+ * source by a test that hands it straight to RegExp, and an escape sequence that
+ * survives the first trip as text resolves on the second one — but only if the
+ * file holds one backslash, which is a thing an editor and a formatter both have
+ * opinions about. The characters have no such dependency, and the code points are
+ * named below for anyone who needs them.
+ *
+ * U+3400–U+9FFF is the unified ideographs (Extension A through the main block),
+ * U+F900–U+FAFF the compatibility ideographs that turn up in names copied out of
+ * other encodings. Full-width punctuation is deliberately not in here: it is
+ * judged by 行首禁则 / 行尾禁则, which is a rule about marks.
+ */
+export const HAN_CLASS = '㐀-鿿豈-﫿';
+
+/**
+ * What this repository counts as the Latin side of a 中英混排 boundary.
+ *
+ * Letters *and* digits: a count ('第3条'), a path and a hexadecimal commit digest
+ * collide with an ideograph just as readily as a word does, and all three are
+ * what this app puts into a Chinese sentence at runtime.
+ *
+ * Exported next to HAN_CLASS for the same reason — the dictionary check in
+ * 'tests/contract/typography.test.ts' and the measurement below are two halves of
+ * one rule, and two spellings of either character set is how they end up judging
+ * different text.
+ */
+export const LATIN_CLASS = 'A-Za-z0-9';
+
+/**
+ * The gap the engine must leave between a Han character and a Latin one.
+ *
+ * 中英混排间距. Chinese prose here is full of Latin — `UCAD`, `base_url`, `MCP`,
+ * a path, a count — and where the two scripts meet the eye needs air, or the
+ * Latin word reads as part of the Chinese one. The dictionary writes a space at
+ * each of the 181 boundaries where a sentence puts the two together — 178 of them
+ * against a Latin letter, 3 against a digit, across 90 entries — and
+ * `tests/contract/typography.test.ts` counts that census rather than quoting it.
+ * What the dictionary cannot cover is the text it does not write: a path, a hash,
+ * a count, an engine name interpolated into a sentence at runtime. Those meet Han
+ * characters with no space between them, and the engine's default gap is zero.
+ *
+ * `text-autospace: normal` (styles.css, `--text-autospace`) is the CSS Text 4
+ * property for exactly this case: the engine inserts 1/8 em between an
+ * ideograph and a Latin letter or digit, and nothing anywhere else. 0.125 is
+ * that eighth, and it is the number this measurement asserts — not a taste
+ * value, and not a number this repository chose.
+ *
+ * Measured before it was declared, in this app's own engine (Electron 44 /
+ * Chromium 152): '中文abc中文' at 13px is 72.97px without the property and
+ * 76.22px with it — 3.25px over two boundaries, i.e. 1.625px each = 0.125em.
+ */
+export const MIN_HAN_LATIN_GAP_EM = 0.125;
+
+/**
+ * How far under {@link MIN_HAN_LATIN_GAP_EM} a measured boundary may sit before
+ * it counts as missing air.
+ *
+ * 0.02em is a third of a pixel at the 13px body size: wide enough for the
+ * subpixel rounding a per-character rect is subject to, far too narrow to let a
+ * dropped declaration pass — without `text-autospace` the gap is exactly zero,
+ * not 0.10em. It is exported rather than folded into the comparison inside the
+ * page script because the gate reads it back the way it reads the two
+ * line-length numbers: a threshold that exists only inside the measurement is a
+ * threshold nobody can see drift.
+ */
+export const HAN_LATIN_GAP_TOLERANCE_EM = 0.02;
+
+/**
  * Characters that do not count as text on a paragraph's last line.
  *
  * Closing punctuation and the marks that attach to the character before them,
@@ -665,6 +742,11 @@ export const MEASURE = `(() => {
   const END_FORBIDDEN = ${JSON.stringify(LINE_END_FORBIDDEN)};
   const MIN_LAST_GLYPHS = ${MIN_LAST_LINE_GLYPHS};
   const LAST_IGNORED = ${JSON.stringify(LAST_LINE_IGNORED)};
+  const GAP_FLOOR_EM = ${MIN_HAN_LATIN_GAP_EM - HAN_LATIN_GAP_TOLERANCE_EM};
+  const GAP_TOLERANCE_EM = ${HAN_LATIN_GAP_TOLERANCE_EM};
+  const GAP_DECLARED_EM = ${MIN_HAN_LATIN_GAP_EM};
+  const HAN_CHAR = new RegExp('[${HAN_CLASS}]');
+  const LATIN_CHAR = new RegExp('[${LATIN_CLASS}]');
   const longLines = [];
   const shortLines = [];
   const stubLines = [];
@@ -681,18 +763,72 @@ export const MEASURE = `(() => {
   let floorChecked = 0;
   let proseBlocks = 0;
   let proseLines = 0;
+  /*
+   * 中英混排间距, as the engine set it.
+   *
+   * The dictionary half of this rule lives in tests/contract/typography.test.ts
+   * (a zh-CN value may not set a Han character directly against a Latin letter
+   * or digit). This is the half the dictionary cannot reach: text assembled at
+   * runtime — a path, a hash, a count, an engine name — meets Han characters
+   * with no space between them, and the gap has to come from the engine.
+   *
+   * Two directions, and the counts say which one this app is living in.
+   *
+   * The rule has two halves, and they are not symmetric in evidence:
+   *
+   *  - 'boundaries' / 'minGapEm' / 'underGap': a Han character and a Latin one
+   *    touching with no space between them. The engine owes 1/8 em there. On the
+   *    current screens this set is **empty** - 0 boundaries across the 64 gated
+   *    frames of the 66-frame sweep - because every boundary the app's own text
+   *    puts on screen carries a space (178 of them written in the dictionary
+   *    alone) and none of its 45 interpolation slots touches a Han character. It
+   *    stays measured because the text that can produce one is text the
+   *    dictionary does not write: a file name, an agent's Chinese sentence,
+   *    something a person types. An empty list here is today's fact, not a
+   *    permanent exemption, and the gate says which it was.
+   *  - 'spacedBoundaries' / 'maxExtraEm' / 'doubleSpaced': where the space is
+   *    already in the sentence, the engine must add nothing. That is the half
+   *    measured over real ink right now - 509 boundaries across the gated frames -
+   *    and it is what makes this rule a measurement rather than a wish: an engine
+   *    that double-spaced would make Chinese prose read as a column of holes, and
+   *    only this direction can see it.
+   *
+   * Both counts travel with the verdict so a reader can tell 'green because the
+   * gap is good' from 'green because nothing was on screen', which is the failure
+   * this repository has had to design against over and over.
+   */
+  let hanLatinBoundaries = 0;
+  let hanLatinSpaced = 0;
+  let hanLatinMinGap = Infinity;
+  let hanLatinMaxExtra = 0;
+  let hanLatinCrossRun = 0;
+  let hanLatinCrossMax = 0;
+  let hanLatinCrossWithAir = 0;
+  const hanLatinSamples = [];
+  const hanLatinSpacedSamples = [];
+  const hanLatinUnder = [];
+  const hanLatinDouble = [];
   for (const el of all) {
     if (!visible(el)) continue;
     if (el.closest('.sr-only') !== null) continue;
     const own = ownText(el);
+    if (!CJK.test(own)) continue;
     /*
-     * Prose, not labels. A two-character tab label or a status segment is not
-     * a paragraph: it has no line length to judge and no break to check, and
-     * walking its characters would be the expensive half of this measurement
-     * for nothing. The threshold is PROSE_MIN_CHARS, exported above so the
-     * contract test can pin it.
+     * The three paragraph rules are about *paragraphs*: a two-character tab label
+     * has no line length to judge, no break to check and no last line that can be a
+     * runt, and walking its characters for nothing is the expensive half of this
+     * measurement. That is what PROSE_MIN_CHARS is for.
+     *
+     * It is not the scope of 中英混排间距. That rule is measured over the rendered
+     * text flow, below this loop, because the boundary this app actually produces
+     * sits between two elements - a tab's 工具调用, a child span's ' 3', then the
+     * next tab's 上下文 - and no single element's own text contains it. An earlier
+     * version walked elements instead of the flow, reported no boundary needing the
+     * engine at all, and stayed green while the pictures said otherwise: 59 of the
+     * 66 gated screenshots hash identically across two green sweeps, and 49 of
+     * those 59 change when the declaration is taken out.
      */
-    if (own.length < PROSE_MIN_CHARS || !CJK.test(own)) continue;
+    if (own.length < PROSE_MIN_CHARS) continue;
     const style = getComputedStyle(el);
     const size = parseFloat(style.fontSize);
     if (!Number.isFinite(size) || size <= 0) continue;
@@ -714,6 +850,10 @@ export const MEASURE = `(() => {
       const value = node.textContent || '';
       for (let i = 0; i < value.length; i += 1) {
         const ch = value[i];
+        // Whitespace carries no ink, so it has no box to group into a line. The
+        // 中英混排 walk below needs to know where a source space sat, and it
+        // tracks that itself over the whole document: this loop only ever
+        // reports where a glyph was painted.
         if (/\\s/.test(ch)) continue;
         const charRange = document.createRange();
         charRange.setStart(node, i);
@@ -842,6 +982,205 @@ export const MEASURE = `(() => {
         last: lastLine,
         text: own.slice(0, 30),
       });
+    }
+  }
+
+  /*
+   * 中英混排间距, measured over the rendered text flow.
+   *
+   * The rule is about where two scripts meet *in a sentence*, and this app's
+   * sentences are assembled by React out of several text nodes: a tab's
+   * '工具调用', a child span's ' 3', the next tab's '上下文'. Walking elements
+   * cannot see that last boundary - it lives between two elements, and neither
+   * element's own text contains both sides - which is exactly what the first
+   * version of this measurement did: it reported no boundary needing the engine,
+   * and the run of screenshots said otherwise — the count is written next to
+   * PROSE_MIN_CHARS above, and it is one number on purpose. So this walks text
+   * nodes in document order and joins them into the flow the reader actually sees.
+   *
+   * Two directions, one pass:
+   *
+   *  - a boundary with no space at the junction: the engine owes 1/8 em there,
+   *    which is what 'text-autospace: normal' is for;
+   *  - a boundary the source already spaced: the engine must add nothing, in
+   *    either direction. Measuring only the positive half would miss Chromium
+   *    *replacing* a written space with its own narrower eighth, which is a
+   *    layout change and a looser-tighter one, and a one-sided comparison cannot
+   *    see it.
+   *
+   * The gap is the width of the two characters' range with the inherited value
+   * minus the same range with 'no-autospace' forced on 'body', normalised by the
+   * ideograph's own font size. It is not read as "the second character's left
+   * edge minus the first one's right edge": the engine adds the space to the
+   * *preceding* character's advance, so both edges move together and that
+   * difference stays at whatever the two glyphs' side bearings happen to be -
+   * 0.2em on this app's stack, identical with the property on and off.
+   *
+   * One toggle for the whole frame, not one per element: every range is measured
+   * twice, once in each state, around a single style change on 'body'.
+   */
+  const hanLatinEdges = [];
+  const rectOf = (edge) => {
+    const range = document.createRange();
+    range.setStart(edge.node, edge.index);
+    range.setEnd(edge.node, edge.index + 1);
+    return range.getBoundingClientRect();
+  };
+  const pairWidth = (a, b) => {
+    /*
+     * The range in document order. 'a' and 'b' are neighbours in the flow, which
+     * is document order, but a Range whose end is set before its start does not
+     * throw - it collapses, reports width 0, and would hand the gate a gap of 0
+     * to blame on the stylesheet.
+     */
+    let first = a;
+    let last = b;
+    if (first.node !== last.node) {
+      const following = Node.DOCUMENT_POSITION_FOLLOWING;
+      if ((first.node.compareDocumentPosition(last.node) & following) === 0) {
+        first = b;
+        last = a;
+      }
+    } else if (first.index > last.index) {
+      first = b;
+      last = a;
+    }
+    const range = document.createRange();
+    range.setStart(first.node, first.index);
+    range.setEnd(last.node, last.index + 1);
+    return range.getBoundingClientRect().width;
+  };
+  const considerEdge = (a, b, spaced) => {
+    const aHan = HAN_CHAR.test(a.ch);
+    const bHan = HAN_CHAR.test(b.ch);
+    const aLatin = LATIN_CHAR.test(a.ch);
+    const bLatin = LATIN_CHAR.test(b.ch);
+    if (!((aHan && bLatin) || (aLatin && bHan))) return;
+    const ra = rectOf(a);
+    const rb = rectOf(b);
+    if ((ra.width === 0 && ra.height === 0) || (rb.width === 0 && rb.height === 0)) return;
+    /*
+     * Same line, and in that order. A pair split by a line break has no gap to
+     * judge - the engine puts the space at the end of the line it belongs to, or
+     * drops it at the start of the next - and a pair whose second character sits
+     * to the left is not adjacent in the flow at all.
+     */
+    if (Math.abs(ra.top - rb.top) > 2) return;
+    if (rb.left < ra.left) return;
+    hanLatinEdges.push({ a: a, b: b, spaced: spaced, inRun: a.node === b.node });
+  };
+  const flowWalker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+  let flowNode = flowWalker.nextNode();
+  let carry = null;
+  let carryGap = false;
+  while (flowNode !== null) {
+    const value = flowNode.textContent || '';
+    const host = flowNode.parentElement;
+    if (value.length === 0 || host === null || !visible(host) || host.closest('.sr-only') !== null) {
+      if (/\\s/.test(value)) carryGap = true;
+      flowNode = flowWalker.nextNode();
+      continue;
+    }
+    let last = null;
+    let gap = false;
+    for (let i = 0; i < value.length; i += 1) {
+      const ch = value[i];
+      if (/\\s/.test(ch)) {
+        gap = true;
+        continue;
+      }
+      const edge = { ch: ch, node: flowNode, index: i };
+      if (last === null) {
+        // the junction between the previous text node and this one
+        if (carry !== null) considerEdge(carry, edge, carryGap || gap);
+      } else {
+        considerEdge(last, edge, gap);
+      }
+      last = edge;
+      gap = false;
+    }
+    if (last !== null) {
+      carry = last;
+      carryGap = gap;
+    } else {
+      carryGap = true;
+    }
+    flowNode = flowWalker.nextNode();
+  }
+  if (hanLatinEdges.length > 0) {
+    const withAir = hanLatinEdges.map((edge) => pairWidth(edge.a, edge.b));
+    const previousValue = document.body.style.getPropertyValue('text-autospace');
+    document.body.style.setProperty('text-autospace', 'no-autospace');
+    const withoutAir = hanLatinEdges.map((edge) => pairWidth(edge.a, edge.b));
+    if (previousValue) document.body.style.setProperty('text-autospace', previousValue);
+    else document.body.style.removeProperty('text-autospace');
+    for (let i = 0; i < hanLatinEdges.length; i += 1) {
+      const edge = hanLatinEdges[i];
+      const han = HAN_CHAR.test(edge.a.ch) ? edge.a : edge.b;
+      const holder = han.node.parentElement;
+      const hanSize = holder === null ? 0 : parseFloat(getComputedStyle(holder).fontSize);
+      const em = Number.isFinite(hanSize) && hanSize > 0 ? hanSize : 13;
+      const gap = Number(((withAir[i] - withoutAir[i]) / em).toFixed(4));
+      const pair = edge.a.ch + edge.b.ch;
+      const where = holder === null ? 'body' : describe(holder);
+      if (!edge.spaced && !edge.inRun) {
+        /*
+         * Two scripts meeting at the junction of two boxes - a label's last
+         * character and the value element's first - is not a boundary
+         * text-autospace is defined to space. Chromium leaves it at zero, and
+         * this app's rows are not wrong for it: the separation there comes from
+         * the row's own gap, which the overlap and clipping rules above already
+         * measure. Asserting an eighth at these junctions would be a gate that
+         * blames the stylesheet for a fact about flex layout. How many there are
+         * and what they actually measured travel out as 'crossRunEdges' and
+         * 'crossRunMaxEm', so the exclusion is a recorded fact about this build
+         * and not a sentence a later reader has to take on trust.
+         */
+        hanLatinCrossRun += 1;
+        if (Math.abs(gap) > Math.abs(hanLatinCrossMax)) hanLatinCrossMax = gap;
+        if (gap >= GAP_FLOOR_EM) hanLatinCrossWithAir += 1;
+        continue;
+      }
+      if (edge.spaced) {
+        hanLatinSpaced += 1;
+        if (Math.abs(gap) > Math.abs(hanLatinMaxExtra)) hanLatinMaxExtra = gap;
+        if (hanLatinSpacedSamples.length < 4) {
+          hanLatinSpacedSamples.push({
+            pair: pair,
+            extraEm: gap,
+            fontSize: round(em),
+            element: where,
+          });
+        }
+        if (Math.abs(gap) > GAP_TOLERANCE_EM) {
+          hanLatinDouble.push({
+            element: where,
+            pair: pair,
+            extraEm: gap,
+            ceilingEm: GAP_TOLERANCE_EM,
+          });
+        }
+        continue;
+      }
+      hanLatinBoundaries += 1;
+      if (gap < hanLatinMinGap) hanLatinMinGap = gap;
+      if (hanLatinSamples.length < 6) {
+        hanLatinSamples.push({
+          pair: pair,
+          gapEm: gap,
+          fontSize: round(em),
+          element: where,
+        });
+      }
+      if (gap < GAP_FLOOR_EM) {
+        hanLatinUnder.push({
+          element: where,
+          pair: pair,
+          gapEm: gap,
+          fontSize: round(em),
+          floorEm: GAP_FLOOR_EM,
+        });
+      }
     }
   }
 
@@ -1105,6 +1444,50 @@ export const MEASURE = `(() => {
       })(),
       stubLines: stubLines.slice(0, 12),
       badBreaks: badBreaks.slice(0, 12),
+      /*
+       * 中英混排间距, as measured.
+       *
+       * 'boundaries' is how many places needed air from the engine and
+       * 'spacedBoundaries' how many had already been paid for by a space in the
+       * source. The first is empty on the current screens, so the gate proves the
+       * walk ran by asserting the two counts that are never empty —
+       * 'spacedBoundaries' and 'crossRunEdges' — and keeps 'boundaries' as the
+       * guard for the text the dictionary does not write. 'gapFloorEm' is the
+       * number this frame compared against, carried out so the contract test can
+       * check it against the exported constants rather than trust that the
+       * interpolation still reads them (the same reason 'minLastLineGlyphs'
+       * travels with 'stubLines').
+       */
+      hanLatin: {
+        boundaries: hanLatinBoundaries,
+        crossRunEdges: hanLatinCrossRun,
+        crossRunMaxEm:
+          hanLatinCrossRun === 0 ? null : Number(hanLatinCrossMax.toFixed(4)),
+        crossRunWithAir: hanLatinCrossWithAir,
+        spacedBoundaries: hanLatinSpaced,
+        minGapEm: hanLatinBoundaries === 0 ? null : Number(hanLatinMinGap.toFixed(4)),
+        maxExtraEm: hanLatinSpaced === 0 ? null : Number(hanLatinMaxExtra.toFixed(4)),
+        gapFloorEm: GAP_FLOOR_EM,
+        gapDeclaredEm: GAP_DECLARED_EM,
+        extraCeilingEm: GAP_TOLERANCE_EM,
+        underGap: hanLatinUnder.slice(0, 12),
+        doubleSpaced: hanLatinDouble.slice(0, 12),
+        samples: hanLatinSamples,
+        spacedSamples: hanLatinSpacedSamples,
+      },
+      /*
+       * The means behind it, read the way textWrap is: body's computed
+       * text-autospace. A browser that did not understand the property would
+       * drop the declaration and resolve normal anyway (it is the initial
+       * value), so this is not the assertion — the gap above is. It is here so
+       * a failure can say which of the two broke: the declaration leaving
+       * styles.css, or the engine not applying it.
+       */
+      textAutospace: (() => {
+        const style = getComputedStyle(document.body);
+        const value = style.getPropertyValue('text-autospace') || style.textAutospace || '';
+        return String(value).trim();
+      })(),
     },
   });
 })()`;

@@ -360,6 +360,63 @@ interface Measurement {
       last: string;
       text: string;
     }>;
+    /**
+     * 中英混排间距, as the engine set it — measured in both directions.
+     *
+     * The tight side (`boundaries`, `minGapEm`, `underGap`) is the air the engine
+     * owes a Han character that touches a Latin one with no space between them.
+     * On the current screens that set is **empty** — the app's own text writes the
+     * space, and `typography.test.ts` is the half that keeps it that way — so
+     * those rows are a guard for text the dictionary does not write (a path, an
+     * agent's sentence, something typed into the composer), not a measurement this
+     * sweep can make today.
+     *
+     * The spaced side (`spacedBoundaries`, `maxExtraEm`, `doubleSpaced`) is the
+     * other half of "moderate": where the sentence already has a space, the engine
+     * must add nothing. 509 boundaries across the gated frames answer that today,
+     * all at zero, which is why this direction is the one asserted over real ink.
+     *
+     * The three `*Em` fields are the numbers the page script compared against,
+     * carried out so the assertions below can check them against the exported
+     * constants instead of trusting the interpolation still reads them.
+     */
+    hanLatin: {
+      boundaries: number;
+      /** Junctions of two boxes, which text-autospace is defined not to space. */
+      crossRunEdges: number;
+      /**
+       * The largest gap measured at one of those junctions, or null when the frame
+       * had none — an absent measurement must not be readable as a zero.
+       */
+      crossRunMaxEm: number | null;
+      /** How many of them nevertheless got at least the engine's floor. */
+      crossRunWithAir: number;
+      spacedBoundaries: number;
+      minGapEm: number | null;
+      maxExtraEm: number | null;
+      gapFloorEm: number;
+      gapDeclaredEm: number;
+      extraCeilingEm: number;
+      underGap: Array<{
+        element: string;
+        pair: string;
+        gapEm: number;
+        fontSize: number;
+        floorEm: number;
+        text: string;
+      }>;
+      doubleSpaced: Array<{
+        element: string;
+        pair: string;
+        extraEm: number;
+        ceilingEm: number;
+        text: string;
+      }>;
+      samples: Array<{ pair: string; gapEm: number; fontSize: number; element: string }>;
+      spacedSamples: Array<{ pair: string; extraEm: number; fontSize: number; element: string }>;
+    };
+    /** body's computed `text-autospace`, as the engine resolved it. */
+    textAutospace: string;
   };
   /** axe-core violations, present only on surfaces-bearing targets (round 34). */
   violations?: Array<{
@@ -513,6 +570,38 @@ function declaredLastLineFloor(): number {
       'floor this gate enforces is not the one the measurement used',
   ).not.toBeNull();
   return Number(match![1]);
+}
+
+/**
+ * The 中英混排 gap band the measurement is supposed to be enforcing, read out of
+ * the page script the way the three numbers above are.
+ *
+ * Two numbers because the rule cuts both ways: an engine that leaves no air where
+ * a Han character touches a Latin one is the failure everybody expects, and an
+ * engine that adds its eighth *on top of a space the sentence already wrote* is
+ * the one nobody thinks to check — Chinese prose would read as a column of holes.
+ * The tolerance decides both, which is why it is one exported constant rather
+ * than a number written twice in two comparisons.
+ *
+ * Comments are stripped first: this file's own prose quotes `0.125` and `0.02`
+ * while explaining where they come from, and a regex over raw text reads an
+ * explanation as a declaration — the mistake `codeOnly` exists for.
+ */
+function declaredGapBand(): { ceiling: number; tolerance: number } {
+  const source = codeOnly(fs.readFileSync(PAGE_SCRIPTS, 'utf8'));
+  const ceiling = /export const MIN_HAN_LATIN_GAP_EM = ([\d.]+);/.exec(source);
+  expect(
+    ceiling,
+    'layout-page-scripts.mjs no longer exports MIN_HAN_LATIN_GAP_EM, so the gap this gate ' +
+      'enforces is not the number the measurement used',
+  ).not.toBeNull();
+  const tolerance = /export const HAN_LATIN_GAP_TOLERANCE_EM = ([\d.]+);/.exec(source);
+  expect(
+    tolerance,
+    'layout-page-scripts.mjs no longer exports HAN_LATIN_GAP_TOLERANCE_EM, so the slack ' +
+      'this gate allows is not the slack the measurement allowed itself',
+  ).not.toBeNull();
+  return { ceiling: Number(ceiling![1]), tolerance: Number(tolerance![1]) };
 }
 
 /**
@@ -2036,6 +2125,170 @@ describe('layout in a real browser engine', () => {
           `ended on '容。' under. MIN_LAST_LINE_GLYPHS is ${floor}: ` +
           'with `auto` the floor is a rule about luck, not about the engine.',
       ).toContain('pretty');
+    }
+  });
+
+  it('leaves the air the sentence already paid for alone', () => {
+    /*
+     * 中英混排间距, the direction this app can measure today.
+     *
+     * Where a Chinese sentence puts a space between the two scripts, the engine
+     * must not also insert its own eighth. Nobody writes that rule down as a
+     * defect to look for — it is the *loose* half of the same checklist item, and
+     * it is invisible until prose starts reading as a column of holes.
+     *
+     * It is asserted over real ink rather than over an empty list because that is
+     * what the sweep holds: every boundary the app's own text puts on screen is
+     * spaced, hundreds of them across the frames, and every one measures 0em of
+     * engine insertion. So the count is part of the assertion: a `doubleSpaced`
+     * list over nothing would look exactly like this one, and `spacedBoundaries`
+     * is what tells the two apart.
+     *
+     * The tolerance is checked against the exported constants before the verdict
+     * is read, like the three line-length numbers above: a measurement that
+     * quietly stopped interpolating HAN_LATIN_GAP_TOLERANCE_EM would otherwise
+     * enforce whatever slack it happened to carry.
+     */
+    const band = declaredGapBand();
+    for (const m of GEOMETRY) {
+      const gap = m.typeset.hanLatin;
+      expect(
+        gap.extraCeilingEm,
+        `${m.label}: the measurement allowed itself ${gap.extraCeilingEm}em of extra air, ` +
+          `but layout-page-scripts.mjs declares HAN_LATIN_GAP_TOLERANCE_EM = ${band.tolerance}`,
+      ).toBe(band.tolerance);
+      expect(
+        gap.doubleSpaced,
+        `${m.label}: the engine added air on top of a space that was already there — ` +
+          `中英混排 over ${gap.spacedBoundaries} spaced boundaries here, and a Chinese ` +
+          'sentence set like that reads as a column of holes\n' + lines(gap.doubleSpaced),
+      ).toEqual([]);
+    }
+    const spaced = GEOMETRY.reduce((sum, m) => sum + m.typeset.hanLatin.spacedBoundaries, 0);
+    expect(
+      spaced,
+      'the spacing measurement walked no spaced Han/Latin boundaries across the sweep, so ' +
+        'the assertion above was enforced over an empty list — either the walk stopped ' +
+        'finding boundaries or the product stopped writing spaces between the two scripts, ' +
+        'and both are defects this case exists to name',
+    ).toBeGreaterThan(100);
+  });
+
+  it('has the engine give air where one run puts the two scripts together', () => {
+    /*
+     * 中英混排间距, the guard.
+     *
+     * Where a Han character touches a Latin one with *no* space between them, the
+     * engine's `text-autospace: normal` is what keeps the word readable — and that
+     * is the only case where the gap has to come from the stylesheet rather than
+     * from the sentence.
+     *
+     * Two facts measured on the current build decide what this case may claim.
+     *
+     *  - Inside one text run, Chromium does insert the eighth: a boundary written
+     *    tight ('显示Agent' in `context.waiting`) measures 0.125em at 13px, and the
+     *    same boundary with the declaration removed measures 0em. That is the case
+     *    this assertion is for — text the dictionary does not write, which is to
+     *    say a path, a digest, an agent's sentence, something typed into the
+     *    composer. Today the app's own strings leave this set empty — 178 spaced
+     *    Han/letter boundaries and 45 interpolation slots, none of them touching a
+     *    Han character, which is `typography.test.ts`'s census to keep and this
+     *    case's guard to stay green for a reason. The mutation that tightens one of
+     *    those boundaries is recorded in `docs/dod-status.md` with the message it
+     *    produced, because a guard nobody has seen fail is a decoration.
+     *  - At the junction of two boxes — a label's last character and a value
+     *    element's first — Chromium inserts nothing, and this app has 0 to 13 of
+     *    those per frame, 225 across the gated sweep ('.def .k', '.badge', '.v',
+     *    'button.link'). They are not defects and not this rule's: the separation
+     *    there is the row's own gap, which the overlap and clipping assertions
+     *    above already measure. Counting
+     *    them is what proves the flow walk really crosses nodes; asserting an
+     *    eighth at them would blame the stylesheet for a fact about flex layout.
+     *
+     * Both numbers are read back out of the page script first, so this case cannot
+     * be green because the measurement drifted away from the declared band.
+     */
+    const band = declaredGapBand();
+    for (const m of GEOMETRY) {
+      const gap = m.typeset.hanLatin;
+      expect(
+        gap.gapDeclaredEm,
+        `${m.label}: the measurement compared against ${gap.gapDeclaredEm}em, but ` +
+          `layout-page-scripts.mjs declares MIN_HAN_LATIN_GAP_EM = ${band.ceiling}`,
+      ).toBe(band.ceiling);
+      expect(
+        gap.gapFloorEm,
+        `${m.label}: the gap floor the measurement used is ${gap.gapFloorEm}em, not the ` +
+          `${band.ceiling}em minus the ${band.tolerance}em tolerance this gate enforces — ` +
+          'the page script stopped reading its own exported constants',
+      ).toBe(band.ceiling - band.tolerance);
+      expect(
+        gap.underGap,
+        `${m.label}: a Han character touches a Latin one with less than ` +
+          `${band.ceiling - band.tolerance}em of air, and nothing in the sentence supplied ` +
+          'it — the text is either interpolated into Chinese without a space (see ' +
+          'typography.test.ts) or the engine stopped applying text-autospace\n' +
+          lines(gap.underGap),
+      ).toEqual([]);
+    }
+    const cross = GEOMETRY.reduce((sum, m) => sum + m.typeset.hanLatin.crossRunEdges, 0);
+    expect(
+      cross,
+      'the spacing walk found no boundary at the junction of two boxes anywhere in the ' +
+        'sweep, which is what a React-assembled label and its value always are — the pass ' +
+        'stopped joining text nodes, and every count above is then measured over nothing',
+    ).toBeGreaterThan(50);
+    /*
+     * And the exclusion the page script applies to those junctions is measured, not
+     * assumed. It skips them because Chromium inserts nothing there — a fact about
+     * this engine, stated in a comment, which is the kind of sentence this
+     * repository has kept having to turn into an assertion. So each frame reports
+     * the largest gap it saw at a box junction: if a later engine starts spacing
+     * them, the exclusion is a rule that has outlived its reason, and this is the
+     * case that says so instead of the rows quietly keeping their air for a reason
+     * nobody can name.
+     */
+    for (const m of GEOMETRY) {
+      const junctions = m.typeset.hanLatin;
+      if (junctions.crossRunMaxEm === null) continue;
+      expect(
+        Math.abs(junctions.crossRunMaxEm),
+        `${m.label}: the gap rule skips every Han/Latin boundary at the junction of two boxes ` +
+          `because this engine leaves them at zero, and this frame measured ` +
+          `${junctions.crossRunMaxEm}em over ${junctions.crossRunEdges} of them — the ` +
+          'exclusion in layout-page-scripts.mjs needs re-reading, and so does whatever the ' +
+          'row layout is doing there',
+      ).toBeLessThanOrEqual(band.tolerance);
+    }
+  });
+
+  it('resolves the gap the stylesheet declared, in this engine', () => {
+    /*
+     * The means, next to the two results, for the same reason `text-wrap` is:
+     * `text-autospace` is the property that decides the tight direction, and a
+     * browser that did not understand it would drop the declaration and resolve
+     * the initial value anyway. Today the tight set is empty, so a lost
+     * declaration would leave both result assertions above green — this is the
+     * assertion that cannot be green for the wrong reason, and it is what makes
+     * the guard above a guard rather than a note.
+     */
+    const css = codeOnly(fs.readFileSync(STYLES, 'utf8'));
+    const body = /(?:^|\n)body\s*\{([^}]*)\}/.exec(css);
+    expect(body, 'styles.css has no `body { … }` rule any more').not.toBeNull();
+    expect(
+      body![1],
+      'styles.css `body` no longer declares `text-autospace: var(--text-autospace)`; the gap ' +
+        'between the two scripts is then whatever the engine feels, and the tight-boundary ' +
+        'guard above goes green on an empty set',
+    ).toMatch(/text-autospace:\s*var\(--text-autospace\)\s*;/);
+
+    for (const m of GEOMETRY) {
+      expect(
+        m.typeset.textAutospace,
+        `${m.label}: the engine resolved body's \`text-autospace\` to ` +
+          `"${m.typeset.textAutospace || '(empty)'}", not the value styles.css declares. ` +
+          'Either the token lost its declaration, or this engine dropped it.',
+      ).toContain('normal');
     }
   });
 

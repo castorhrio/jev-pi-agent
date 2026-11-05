@@ -650,7 +650,7 @@ Windows 桌面六步（无 Windows 机器）。三条仍是上表里的缺口，
 | 中文不小于 12px，且与 `--fs-note` 是同一个数 | 同上，`--fs-min-cjk` | `tests/contract/typography.test.ts` |
 | 正文行长 ≤ 40 汉字（`--measure-prose: 36em`，落在 28–40 带内） | `styles.css` 的 `--measure-prose`；量测常量 `MAX_PROSE_LINE_CJK` 在 `scripts/layout-page-scripts.mjs` | `tests/contract/layout.test.ts`（五态 × 两个窗口尺寸） |
 | 行首 / 行尾禁则（句号不顶行首） | `LINE_START_FORBIDDEN` / `LINE_END_FORBIDDEN`，同上文件 | `tests/contract/layout.test.ts` |
-| 中英空隙：**量过，决定不做** | 扫 `apps/desktop/src/shared/i18n.ts` 全部字面量，「汉字紧邻拉丁字母/数字」出现 0 次 | 无门禁，理由见上一节（会拒绝「第1步」这类正常写法） |
+| 中英空隙：**字母那一半本轮收进门禁，数字那一半仍按上一轮的判断放过** | 句子侧：`apps/desktop/src/shared/i18n.ts` 的 178 处字母空格（另 3 处挨数字）分布在 90 条里、45 个插值槽 0 个紧贴汉字；引擎侧：`styles.css` 的 `--text-autospace`，常量 `MIN_HAN_LATIN_GAP_EM` / `HAN_LATIN_GAP_TOLERANCE_EM` / `HAN_CLASS` / `LATIN_CLASS` 在 `scripts/layout-page-scripts.mjs` | 句子侧 `tests/contract/typography.test.ts`（把一个空格删掉会红，指名 `i18n.ts:441` 与那一对字；`counts the boundaries the gap rule guards…` 把上面那几个数压成下限，不再是抄来的）；引擎侧 `tests/contract/layout.test.ts`（词典一字不改、只删那条声明也会红：`resolves the gap the stylesheet declared, in this engine`；带空格的 509 处每个边界加 0em；紧贴一旦出现必须给到 1/8em——本轮在 `div.faint` 上实测 0.125em） |
 | 字体栈按声明解析（Latin → 中文 → 通用），且汉字的框只落在声明的两个栈上 | `scripts/layout-page-scripts.mjs` 的 `families`；断言 `layout.test.ts` | `tests/contract/layout.test.ts`（41 项 × 两个窗口尺寸） |
 | 汉字不被合成斜体（假斜体） | 同上，`fakeItalics` | `tests/contract/layout.test.ts` |
 | 五态观感：判据已就位，**等一个人签字** | `docs/state-walkthrough.md` | `tests/contract/state-walkthrough.test.ts`（判据锚点 + README 与签字表不许矛盾） |
@@ -1592,3 +1592,115 @@ tests/contract/blocker-closing.test.ts tests/contract/doc-routing.test.ts tests/
 门禁：`npx vitest run tests/contract/screenshot-refs.test.ts tests/contract/screenshots.test.ts
 tests/contract/state-walkthrough.test.ts` → 9 + 17 + 33 全绿；`node scripts/screenshot-sources.mjs --check`
 → `PASS — 34 renderer source(s) and 14 screenshot(s)`。
+
+## 本轮（2026-11-06）中英混排间距：把上一轮那句「决定不做」拆成「字母做、数字不做」
+
+起点是审查清单 A 里唯一还没过的一条——**中英文之间要有适度的空隙**。上一轮量过一次这件事，
+并在上面那张索引表里写下「量过，决定不做」，理由是「一条会拒绝『第1步』这类正常写法的规则，
+是把风格偏好伪装成排版错误」。本轮没有推翻那句话，而是把它混在一起的两件事分开：
+
+- **汉字紧邻拉丁字母**（`显示Agent`、`改base_url`）：这不是风格偏好。而且它**复制到别处会丢**——
+  引擎的空隙只在屏幕上存在，同一句话被抄进 handoff 提示词、issue 或纯文本日志时一个像素都不剩。
+  所以这一半收进门禁，管在写字面的地方。
+- **汉字紧邻数字**（`第1步`、`3条改动`）：中文里的正常写法，上一轮的判断继续成立。
+  屏幕上它由 `text-autospace` 负责，而那是引擎那一半的事，不是文案的错。
+
+五条实现，都是先量再写：
+
+1. **「什么算汉字」收成一份**。`HAN_CLASS` / `LATIN_CLASS` 从 `scripts/layout-page-scripts.mjs`
+   导出，页面脚本的正则由它插值，`tests/contract/typography.test.ts` 从同一份源码读回。
+   此前 `typography.test.ts` 自己另写了 `U+4E00–U+9FFF`，比测量的范围窄：同一句中文，
+   字典侧放行而量测侧要管，两侧各自看着都对，diff 里看不出来。
+2. **句子侧**：665 条中文值扫下来「汉字紧邻拉丁字母」0 处；已经写了空格的 178 处，分布在 90 条里
+   （另有 3 处挨的是数字）；插值槽位 45 个，没有一个紧贴汉字——所以这条规则今天是零成本的，
+   它只挡下一句。**槽位也算**：写句子的人看不到将来填进来的是什么，而本仓的槽位多数是路径、键、
+   引擎名。这几个数从本轮起不是抄的：`typography.test.ts` 新增
+   `counts the boundaries the gap rule guards, so the guard is not green over nothing`——先用六条
+   fixture 钉住每种形状各算出几个（计数器本身若能看见紧贴的字母、数字、槽位，才有资格说「词典里
+   是 0」），再对真词典压下限：空格 > 100、槽位 > 20、紧贴的字母与紧贴的槽位必须为 0。
+3. **引擎侧量法换了**。第一版读的是「后一字的左缘减前一字的右缘」，而**开关 `text-autospace`
+   那个数一动不动**——因为 Chromium 把 autospace 加在*前一个字的前进宽度*上，两个边缘一起走，
+   差值只剩侧 bearing。现在量的是同一对字的 range 在继承值下与 `no-autospace` 下的宽度差，
+   除以**那个汉字自己的字号**（一行里混排的字级字号不同）；这条差值是会动的：带着声明量到
+   0.125em，删掉声明量到 0em，两个数都在下面那张表里。
+4. **两个方向都量，因为今天只有一个是实数**：屏幕上紧贴的边界 **0** 处、带空格的 **509** 处
+   （64 个进门禁的帧，共扫 66 帧）。带空格那 509 处必须加 0em——否则中文散成一列洞，这是「适度」
+   的另一半，也是本轮唯一能压在真墨上的断言；紧贴那 0 处一旦出现就必须给到 1/8em。
+   非空性由 `spacedBoundaries > 100` 与 `crossRunEdges > 50` 两个计数保证，不是由一句「应该会量到」
+   保证——后一个数（本轮 225 处，单帧 0 到 13 处）同时也是「这遍真的走过两个框的接缝」的证据。
+5. **草稿里的数复测不上，就改成量出来的**。这节第一版写的是 453 处带空格边界、「22 处槽位两侧都带
+   空格」、「每帧 1 到 13 处接缝」；重跑一遍是 **509 处**（64 个进门禁的帧）、**45 个槽位、0 个紧贴
+   汉字**、**0 到 13 处**（合计 225）。复测顺手清掉两处「设计改了、代码留在原地」的东西：元素遍历里
+   为这条规则加的 `pendingSpace`（连同从没被读过的 `node`/`index`/`space` 三个字段）和 flow 遍历旁边
+   没人调用过的 `edgeOf`——两处注释都写得像还在承重。第三处是「跨框接缝引擎不给空气」：它先前只是
+   豁免的理由，没有数；现在每帧把那些接缝实测的最大间隙（`crossRunMaxEm`）带出来，
+   `layout.test.ts` 要求它落在噪音容差内，引擎哪天改了口径就红，而不是继续被一句注释豁免着。
+
+**证明它会红**（除最后一行，都是本轮真实跑出来的原文，恢复后全绿；最后一行是写 `en` 用例时自己踩到的坑）：
+
+| 当时的改动 | 打红的断言与原文 |
+|---|---|
+| 把 `i18n.ts:441` 的 `显示 Agent 实际` 改成 `显示Agent实际` | `typography.test.ts > sets every Chinese sentence so no line starts or ends on a forbidden mark, and no two scripts meet without air` → `apps/desktop/src/shared/i18n.ts:441 (zh-CN.context.waiting): … sets a Han character directly against a Latin one ('示A') — 中英混排 wants a space at that boundary` |
+| 同上 | 新增那条点收也同时红：`counts the boundaries the gap rule guards…` → `the dictionary writes 2 Han/letter boundary(ies) with no space at all … expected 2 to be +0`。两个数是两处接缝（`示A` 与 `t实`），一句话改一处、边界是两个——**这条正是「计数器看得见」的证据**，看不见就报不出 2 |
+| 同上，且把 `MIN_HAN_LATIN_GAP_EM` 临时抬到 0.2 | `layout.test.ts > has the engine give air where one run puts the two scripts together` → `state-empty#chat: …` + `{"element":"div.faint","pair":"示A","gapEm":0.125,"fontSize":13,"floorEm":0.18…}`，`pair":"t实"` 那条也是 0.125。这一条同时是**引擎确实给了 1/8 em** 的数：13px 上 1.625px |
+| 同上，再把 `styles.css` body 里那行声明删掉 | 同一断言的 `gapEm` 变成 **0**，并多出 `resolves the gap the stylesheet declared, in this engine`（body 解析值不再是 `normal`）；`typography.test.ts` 另两条同时红：`sets the gap on the document rather than restating it per surface`（`body` 不再读那个 token）、`switches the gap off nowhere`（全表 `text-autospace` 一处都找不到） |
+| **只删那行声明**，词典一字不改 | 52 项里**只有一条**红：`resolves the gap the stylesheet declared, in this engine`。其余量测全绿——因为紧贴集合今天是空的，`underGap` 与 `doubleSpaced` 都无话可说。这就是为什么那条断言必须存在：它不看结果集合空不空，只看 `body` 在这台引擎里把声明解析成了什么。而屏幕上不是没动：两次绿跑都一致的 59 张图里 **49 张**变了（66 张中有 7 张本来就随帧抖动） |
+| 反向：`en` 侧那条嵌套用例先用 `source.replace(anchor, …)` 插 fixture | `'app.name': 'UCAD',` 在两个块里逐字节相同，`replace` 改的是**中文块**，英文块计数照常 → 用例绿着，什么都没证明。改成按行号 `splice`，并断言插入点落在 `const enUS` 之后 |
+
+**顺带把 `en` 词典纳入字面量覆盖率**（P1 里「两半只做一半」那条）。开这条当场撞到一个真缺陷：
+`stringLiterals()` 只数单引号，而 `i18n.ts:984` 的值用双引号写（句子里有撇号），于是
+「每条 = 两个字面量」在英文块上永远差 1（1329 对 1330）——门禁会去怪字典，其实怪计数器。
+计数器改成认两种引号、由**开启它的那个引号**闭合（双引号句子里的撇号是文本，不是第二个字面量）；
+现在 665 条 × 2 = 1330，两个块都对上，并且各有一条 fixture 证明它能红。
+
+## 本轮（2026-11-06）14 张图被迫重拍，以及看过之后的一句话
+
+改 `styles.css` 不是免费的：`docs/screenshots/sources.json` 记的是每个渲染层源文件在拍照那一刻的
+sha256，源文件一动，`screenshots.test.ts > records the renderer sources that are actually in the
+tree` 就红（本轮开工前 HEAD 上那条哈希还是对的，所以这一红是**本刀造成的**，不是历史欠账）。
+`demo-script.test.ts` 跟着一起红：面板里引用了 `screenshot-sources.mjs --check` 打印的那行 PASS，
+而那条命令当时正在失败——文档、清单、面板三处约好的一句话，脚本已经不说了。
+
+按 `CONTRIBUTING.md` 写好的三步走：图从布局门禁自己写的 `.run-logs/layout/` 里取（映射是仓库里
+已经写明的：四张主屏取 `panels-1440-*`，五态取 `state-*-chat` / `state-*-tight-chat`，两张加载态
+取 `loading-frame` / `loading-frame-tight`——门禁里就有一条盯着这两张，拿成 settled 那帧会红），
+`--write` 重新记录，`--check` 现在打印 `PASS — 34 renderer source(s) and 14 screenshot(s)`。
+14 张图的尺寸一张没变，所以走查表里写的 1440×900 / 768×700 仍然对得上那张图。**变了的只有 6 张**：
+四张主屏加 `states/permission*`；没变的 8 张是 `empty` / `error` / `loading` / `partial` 那几屏和它们的
+窄窗口版——同一条声明能让 59 张稳定帧里的 49 张重排，在一屏只有三行字的界面上却一个字节都不动。
+这正是「图」和「配对字距的量测」要同时存在的原因：一个说像素，一个说像素为什么这样。
+
+**看过之后**（`--write` 记录不了有没有人看，所以把看的结论写下来）：
+
+| 图 | 一句话 |
+|---|---|
+| `chat.png` | 三栏都在，中文正文里 `renderContextPack`、`renderedHash` 两侧有空格；中间只有一条对话，诚实但空 |
+| `decision.png` | 引擎链表 + 预览 + 决策记录三张卡，读得下去；第三张是「本会话决策 (0)」，一张几乎全空的卡 |
+| `states/permission-768x700.png` | 遮罩、五件、四个回答在窄窗口里分得清，没撑破 |
+| `error.png` | **这一张有问题**：整屏九成是黑的，标题 + 一行机器码 + 三个按钮挤在左上角。它想说的是「加载失败、可以怎么办」，看上去像「还没做完的页面」 |
+
+`error` 那张是本轮看出来的唯一观感缺陷，**本轮不动它**：那是第二刀（给失败态一张有版面的卡：
+哪个工作区、哪一步、为什么、三条动作），和本轮的排版/门禁不是同一件事，混在一起提交会让 diff
+说不清自己在做什么。记在这里，作为下一刀的第一个具体目标。
+
+走查表（`docs/state-walkthrough.md`）的签字栏**仍然没人签**：看过图的是本轮的编码侧，不是一个人。
+本轮做的是「图是新的、尺寸是对的、有人写过看了什么」，「一个人对着十张图答是/否/说不清」仍是
+`docs/blockers.md` 第 3 条。
+
+**这一轮没有做的事**：三条外部阻塞一条没解（无令牌 / 无 Windows 机器 / 无人眼签字），
+`docs/blockers.md` 上那三个 2026-11-05 的日期照旧；P0 的第二刀做了一半——图重拍了、看过、结论写在
+上面那一节，但**没有一个人对着十张图答题**，走查表的签字栏因此仍然没人能签，而 `error.png` 看出来的
+那个版面问题也只落成了下一刀的目标，没有在本轮动手；产品功能一条都没加——DoD 没勾满之前不堆功能。
+汉字与**数字**之间的空隙仍只在屏幕上由引擎负责，不进字典规则——那是上一轮留下的判断，本轮
+保留了它，并把理由写进 `typography.test.ts` 的 `LATIN_LETTER` 而不是只留在这份文档里。
+一个副产品：本轮点收发现词典里连「汉字紧贴数字」也是 **0** 处，所以那条豁免今天是空转的。
+不压它（压成 0 就等于禁止 `第1步` 这类正常写法），只把数记在 `gapCensus` 里，等它哪天真出现
+再说该不该管。
+
+门禁：`node scripts/gate-local.mjs` → `PASS — 7 gate step(s) green on linux with node v22.23.4`
+（typecheck 1.8s / lint 9.1s / knip 1.9s / test 99.1s，113 个文件全绿 / test:e2e 32.2s，21 个文件 /
+build 4.9s / clean+build:packages 5.7s）。**这一条要写明跑法**：`TMPDIR` 挪到 `.run-logs/tmp` 之后才成立——
+这台共享机的 `/tmp` 有配额，vite 的 SSR 临时目录写不进去时，同一份代码会假红 83 个文件（本轮第一次
+跑就是这样，量出来的数不可信）。本轮改到的两个用例文件：`tests/contract/typography.test.ts` 49 项、
+`tests/contract/layout.test.ts` 52 项全绿；`node scripts/screenshot-sources.mjs --check` →
+`PASS — 34 renderer source(s) and 14 screenshot(s)`。

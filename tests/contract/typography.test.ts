@@ -20,7 +20,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { dictionaryFor } from '../../apps/desktop/src/shared/i18n';
+import { dictionaryFor, type Locale } from '../../apps/desktop/src/shared/i18n';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(here, '..', '..');
@@ -79,6 +79,26 @@ function forbiddenSet(name: 'LINE_START_FORBIDDEN' | 'LINE_END_FORBIDDEN'): stri
 }
 
 /**
+ * One of the two character sets the layout measurement defines.
+ *
+ * 中英混排间距 is one rule in two places: this file checks the *dictionary* (the
+ * text the app writes), `scripts/layout-page-scripts.mjs` checks the *rendered
+ * page* (the text it does not). A rule with two halves has to be judged over one
+ * set of characters, and a second spelling of the Han range in this file is how
+ * the halves drift — the Chinese half of a sentence would be checked against
+ * U+4E00–U+9FFF while the engine half used the wider set, and neither would be
+ * wrong-looking in a diff. The page script owns the sets; they are read back out
+ * of its source rather than imported, for the same reason the two line-length
+ * numbers are: the page script is ESM JavaScript outside the TypeScript project,
+ * and the question is what the file declares, not what a copy resolves to.
+ */
+function charClass(name: 'HAN_CLASS' | 'LATIN_CLASS'): string {
+  const match = new RegExp(`export const ${name} = '([^']+)';`).exec(codeOnly(pageScripts));
+  expect(match, `layout-page-scripts.mjs no longer exports ${name}`).not.toBeNull();
+  return match![1]!;
+}
+
+/**
  * The dictionary the app renders, read with the line each key is written on.
  *
  * ## Why the source is read at all
@@ -102,6 +122,15 @@ const i18nSource = fs.readFileSync(I18N_PATH, 'utf8');
 /** The Chinese dictionary, read once. */
 const ZH_DICTIONARY = dictionaryFor('zh-CN');
 
+/**
+ * The English dictionary, read once.
+ *
+ * Its prose is not this file's subject — 行首禁则, the full-width marks and the
+ * gap between the two scripts are rules about Chinese — but its *shape* is: the
+ * same parser reads it, so the same audit of that parser applies to it.
+ */
+const EN_DICTIONARY = dictionaryFor('en-US');
+
 /** One dictionary entry, with the line it is written on. */
 interface Entry {
   readonly key: string;
@@ -111,24 +140,31 @@ interface Entry {
 }
 
 /**
- * Every `zh-CN` entry, with its line.
+ * Every entry of one dictionary, with its line.
  *
- * The block is delimited by `const zhCN: Dictionary = {` and the first `};` at
- * column 0 after it, and a key is a line that *starts* with `'key':`. That is
- * narrower than a JavaScript parser on purpose: a value may contain `//` (a
- * URL) or a `'` (an apostrophe), and a regex that tried to understand the
- * object would be wrong in a way that silently skips entries. The narrow rule
- * is checked for coverage below — every key the dictionary exports has to be
- * found — so a key written in another shape is a red run, not a silent skip.
+ * The block is delimited by `const zhCN: Dictionary = {` (or its `enUS` twin)
+ * and the first `};` at column 0 after it, and a key is a line that *starts*
+ * with `'key':`. That is narrower than a JavaScript parser on purpose: a value
+ * may contain `//` (a URL) or a `'` (an apostrophe), and a regex that tried to
+ * understand the object would be wrong in a way that silently skips entries.
+ * The narrow rule is checked for coverage below — every key the dictionary
+ * exports has to be found, in both locales — so a key written in another shape
+ * is a red run, not a silent skip.
+ *
+ * `zhEntries()` is the same reader pinned to the locale this file's typesetting
+ * rules are about; the two dictionaries are written in one shape, so the
+ * coverage and line-number machinery below serves both.
  */
-function zhEntries(source: string = i18nSource): Entry[] {
-  const start = source.indexOf('const zhCN: Dictionary = {');
-  expect(start, `${I18N_RELATIVE} no longer declares \`const zhCN: Dictionary = {\``)
-    .toBeGreaterThanOrEqual(0);
+function entriesFor(locale: Locale, source: string = i18nSource): Entry[] {
+  const dictionary = dictionaryFor(locale);
+  const decl = DICTIONARY_DECL[locale];
+  const start = source.indexOf(decl);
+  expect(start, `${I18N_RELATIVE} no longer declares \`${decl}\``).toBeGreaterThanOrEqual(0);
   const end = source.indexOf('\n};', start);
-  expect(end, 'the zhCN dictionary is not closed by a `};` at column 0').toBeGreaterThan(start);
+  expect(end, `the ${dictionaryName(locale)} dictionary is not closed by a \`};\` at column 0`)
+    .toBeGreaterThan(start);
 
-  // The 1-based line the `const zhCN` line sits on; index 0 of the block is it.
+  // The 1-based line the `const …` line sits on; index 0 of the block is it.
   const firstLine = source.slice(0, start).split('\n').length;
   const entries: Entry[] = [];
   source
@@ -138,7 +174,7 @@ function zhEntries(source: string = i18nSource): Entry[] {
       const match = /^\s*'([\w.-]+)':/u.exec(text);
       if (match === null) return;
       const key = match[1]!;
-      const value = ZH_DICTIONARY[key];
+      const value = dictionary[key];
       // A key the dictionary does not export is `i18n.test.ts`'s problem.
       if (value === undefined) return;
       entries.push({ key, value, line: firstLine + index });
@@ -146,16 +182,40 @@ function zhEntries(source: string = i18nSource): Entry[] {
   return entries;
 }
 
+function zhEntries(source: string = i18nSource): Entry[] {
+  return entriesFor('zh-CN', source);
+}
+
 /**
- * The `const zhCN: Dictionary = {` … `\n};` block of a source, comments removed.
+ * Where each dictionary is declared, as the exact text that opens its block.
+ *
+ * Both blocks are written `'key': 'value',` and both are closed by a `};` at
+ * column 0, which is what lets one reader and one literal counter serve them.
+ * The anchors are listed rather than derived from the locale names because the
+ * variable names do not match the locale tags (`zhCN` for `zh-CN`): a name
+ * assembled from the tag would be a second fact about a file this test only
+ * reads, and it would stop finding the block the day the variable is renamed.
+ */
+const DICTIONARY_DECL: Record<Locale, string> = {
+  'zh-CN': 'const zhCN: Dictionary = {',
+  'en-US': 'const enUS: Dictionary = {',
+};
+
+/** The variable name a block is declared in, for the failure messages. */
+function dictionaryName(locale: Locale): string {
+  return /const (\w+)/.exec(DICTIONARY_DECL[locale])![1]!;
+}
+
+/**
+ * The `const <name>: Dictionary = {` … `\n};` block of a source, comments removed.
  *
  * Comments are stripped before anything is counted: the block explains itself in
  * prose, and that prose contains apostrophes (`this turn's decision records`).
  * A counter that read them as string literals would report two more literals
  * than there are and the gate would be red for a sentence nobody renders.
  */
-function zhBlock(source: string): string | undefined {
-  const start = source.indexOf('const zhCN: Dictionary = {');
+function dictionaryBlock(source: string, locale: Locale): string | undefined {
+  const start = source.indexOf(DICTIONARY_DECL[locale]);
   if (start === -1) return undefined;
   const end = source.indexOf('\n};', start);
   if (end === -1) return undefined;
@@ -163,28 +223,40 @@ function zhBlock(source: string): string | undefined {
 }
 
 /**
- * How many single-quoted string literals a block contains.
+ * How many string literals a block contains, in either quote style.
  *
  * A character scan rather than a regex, because a value may contain an escaped
  * apostrophe (`'don\'t'`) and a regex that stopped at the first `'` would count
  * one literal as two. `\\` is skipped so an escaped backslash before a quote
  * does not end the string early.
+ *
+ * Both quote styles are scanned, and the *other* quote character is treated as
+ * ordinary text inside a string. The counter is proving one thing: every entry
+ * contributes exactly two literals, a key and a value. Reading only `'` broke
+ * that on the English block, which has a value written in double quotes because
+ * the sentence contains an apostrophe (`handoff.carryPromptTitle`) — and the
+ * gate reported 1,329 literals against 1,330 expected, blaming the dictionary
+ * for a fact about the counter. The two styles cannot be counted by two
+ * independent rules either: whichever quote *opened* the literal is the only one
+ * that closes it, so an apostrophe inside a double-quoted sentence is text, not
+ * the start of a second literal — which is why this is a scan with a state
+ * variable rather than two regexes.
  */
 function stringLiterals(block: string): number {
   let count = 0;
-  let inString = false;
+  let quote: string | null = null;
   for (let index = 0; index < block.length; index += 1) {
     const char = block[index]!;
-    if (inString) {
+    if (quote !== null) {
       if (char === '\\') {
         index += 1;
         continue;
       }
-      if (char === "'") inString = false;
+      if (char === quote) quote = null;
       continue;
     }
-    if (char === "'") {
-      inString = true;
+    if (char === "'" || char === '"') {
+      quote = char;
       count += 1;
     }
   }
@@ -204,11 +276,20 @@ function stringLiterals(block: string): number {
  * parser *and* absent from `Object.keys()`, so both sides of the comparison
  * shrink together and the gate stays green over a sentence nobody read.
  *
- * The count closes that direction. Every entry in this dictionary is written as
- * `'key': 'value',` — one literal for the key, one for the value — so the number
- * of string literals in the block is exactly twice the number of entries. A
- * nested object adds literals without adding entries, and the failure names the
- * two numbers and the difference.
+ * The count closes that direction. Every entry in either dictionary is written
+ * as one literal for the key and one for the value, so the number of string
+ * literals in the block is exactly twice the number of entries. A nested object
+ * adds literals without adding entries, and the failure names the two numbers
+ * and the difference.
+ *
+ * ## Why it runs over both dictionaries
+ *
+ * The typesetting rules in this file are about Chinese, so they read `zh-CN`
+ * alone — and the coverage check inherited that scope, which left the English
+ * block with a parser nobody was auditing: a nested object there is skipped by
+ * `entriesFor('en-US')` and absent from `Object.keys()` all the same. Coverage
+ * is a claim about the reader, not about the language, so both blocks are
+ * counted. The rules that are Chinese-only stay Chinese-only.
  *
  * ## What it cannot see
  *
@@ -218,17 +299,22 @@ function stringLiterals(block: string): number {
  * checks are the two halves of one claim: every key is read, and nothing else is
  * in there.
  */
-function literalCoverageProblems(source: string, entries: readonly Entry[]): string[] {
-  const block = zhBlock(source);
+function literalCoverageProblems(
+  source: string,
+  entries: readonly Entry[],
+  locale: Locale = 'zh-CN',
+): string[] {
+  const block = dictionaryBlock(source, locale);
+  const name = dictionaryName(locale);
   if (block === undefined) {
-    return [`${I18N_RELATIVE}: has no \`const zhCN: Dictionary = {\` … \`};\` block to count`];
+    return [`${I18N_RELATIVE}: has no \`${DICTIONARY_DECL[locale]}\` … \`};\` block to count`];
   }
   const literals = stringLiterals(block);
   const expected = entries.length * 2;
   if (literals === expected) return [];
   return [
-    `${I18N_RELATIVE}: the zhCN block carries ${literals} string literal(s) and the parser read ` +
-      `${entries.length} entr(ies), which is ${expected} literal(s) — ${literals - expected} ` +
+    `${I18N_RELATIVE}: the ${name} block carries ${literals} string literal(s) and the parser ` +
+      `read ${entries.length} entr(ies), which is ${expected} literal(s) — ${literals - expected} ` +
       'literal(s) are in the dictionary and in no sentence this gate checks. A nested object or ' +
       'an array of sentences is skipped by the parser and absent from Object.keys(), so the ' +
       'key-parity assertion shrinks with it and stays green',
@@ -255,6 +341,23 @@ function zhLines(): Map<string, number> {
  * (`scripts/layout-page-scripts.mjs`, rule 8); this is the fast half, and it
  * names the dictionary entry rather than a box on a page.
  *
+ * ## The third rule, and why it is here rather than only in the engine
+ *
+ * 中英混排间距 — the air where Han text and a Latin word meet. Two rules, not one:
+ * a Han character may not be set against a Latin *letter*, and it may not be set
+ * against an *interpolation slot* either, because a slot is that boundary one
+ * substitution away. Digits are exempt on purpose — '第1步' is ordinary Chinese —
+ * and `LATIN_LETTER` says why that is the right split rather than a hole.
+ *
+ * The engine half belongs to the layout gate and stays there: it is the only
+ * thing that can judge text this repository does not write (a file name, an
+ * agent's sentence, something typed into the composer). What the engine cannot do
+ * is travel — the eighth of an em it inserts exists only while the sentence is
+ * being painted, and the same line pasted into a handoff prompt, an issue or a
+ * log is back to no gap. So the dictionary carries its own space, and this is the
+ * half that keeps the rendered boundaries the layout gate measures (509 on the
+ * current build) honest without asking the engine for a favour.
+ *
  * A pure function of its input, so the red direction is driven on fixtures
  * rather than argued about.
  */
@@ -270,6 +373,25 @@ function typesetProblems(entries: readonly Entry[]): string[] {
       problems.push(
         `${where}: "${value}" sets a half-width , . ; : against a Han character — the ` +
           'full-width mark is the one that sets correctly in Chinese prose',
+      );
+    }
+
+    const tight = HAN_AGAINST_LATIN.exec(value);
+    if (tight !== null) {
+      problems.push(
+        `${where}: "${value}" sets a Han character directly against a Latin one ` +
+          `('${tight[0]}') — 中英混排 wants a space at that boundary. On screen the engine can ` +
+          'paint an eighth of an em there; copied into a handoff prompt, an issue or a log the ' +
+          'sentence loses it, and the reader has nothing marking where the identifier starts',
+      );
+    }
+
+    const slot = HAN_AGAINST_SLOT.exec(value);
+    if (slot !== null) {
+      problems.push(
+        `${where}: "${value}" sets a Han character directly against the interpolation slot ` +
+          `('${slot[0]}') — once the value is substituted that is a 中英混排 boundary with no ` +
+          'space in it, and the sentence is the only place the space can still be written',
       );
     }
 
@@ -293,6 +415,86 @@ function typesetProblems(entries: readonly Entry[]): string[] {
   }
 
   return problems;
+}
+
+/**
+ * How many boundaries of each shape a set of sentences actually holds.
+ *
+ * `typesetProblems` answers "is any sentence bad". It cannot answer "does the
+ * gap rule have anything to bite", which is the question a guard has to survive:
+ * a rule over an empty set is green for the same reason a skipped test is green.
+ * And `docs/dod-status.md` quotes this census — the count of spaces the
+ * dictionary writes, of digits it lets through on purpose, of interpolation
+ * slots it holds. A number a reader cannot re-measure is a claim, so the
+ * counting lives here, next to the rule it counts for, and the case below
+ * asserts the floors.
+ *
+ * Digits are *derived*, not declared: `LATIN` is the set the layout measurement
+ * judges the page by, `LATIN_LETTER` the narrower set the dictionary judges
+ * sentences by, and a digit is exactly what one counts and the other does not.
+ * Writing `0-9` a third time here would be the drift this file already removed
+ * from the Han range.
+ *
+ * A boundary is "spaced" when the source put whitespace between the two
+ * characters — which is what makes the spaced count the *paid-for* half and the
+ * tight count the defect. Slot adjacency is read from the `{ident}` shape
+ * itself, so a brace written for another reason is not counted as a hole.
+ */
+function gapCensus(entries: readonly Entry[]): {
+  spacedLetters: number;
+  tightLetters: number;
+  spacedDigits: number;
+  tightDigits: number;
+  slots: number;
+  tightSlots: number;
+} {
+  const isHan = new RegExp(`^[${HAN}]$`, 'u');
+  const isLatin = new RegExp(`^[${LATIN}]$`, 'u');
+  const isLetter = new RegExp(`^[${LATIN_LETTER}]$`, 'u');
+  const census = {
+    spacedLetters: 0,
+    tightLetters: 0,
+    spacedDigits: 0,
+    tightDigits: 0,
+    slots: 0,
+    tightSlots: 0,
+  };
+
+  for (const { value } of entries) {
+    let previous: string | null = null;
+    let gap = false;
+    for (const char of value) {
+      if (/^\s$/u.test(char)) {
+        gap = true;
+        continue;
+      }
+      if (previous !== null) {
+        const hanFirst = isHan.test(previous) && isLatin.test(char);
+        const latinFirst = isLatin.test(previous) && isHan.test(char);
+        if (hanFirst || latinFirst) {
+          const letter = isLetter.test(previous) || isLetter.test(char);
+          if (gap) {
+            if (letter) census.spacedLetters += 1;
+            else census.spacedDigits += 1;
+          } else if (letter) census.tightLetters += 1;
+          else census.tightDigits += 1;
+        }
+      }
+      previous = char;
+      gap = false;
+    }
+
+    for (const match of value.matchAll(/\{[A-Za-z0-9_]+\}/g)) {
+      census.slots += 1;
+      const before = value[match.index - 1];
+      const after = value[match.index + match[0].length];
+      const touchesHan =
+        (before !== undefined && isHan.test(before)) || (after !== undefined && isHan.test(after));
+      if (touchesHan) census.tightSlots += 1;
+    }
+  }
+
+  return census;
 }
 
 describe('the Chinese type floor', () => {
@@ -626,7 +828,7 @@ describe('the prose column on screen', () => {
  * to know what a *rendered* paragraph looks like — and it costs a browser, a
  * display and eight window widths. The other half of the same promise can be
  * answered in a millisecond: the strings the app renders are in one file, and
- * three of the four rules are properties of the string itself.
+ * every rule below is a property of the string itself.
  *
  *  - **全角标点**: a half-width `,` next to a Han character sets a gap the
  *    reader reads as a typo (the punctuation block below owns the rule; this
@@ -637,6 +839,13 @@ describe('the prose column on screen', () => {
  *    CSS fixes it. The sets are read from `scripts/layout-page-scripts.mjs`,
  *    the one place they are declared, so the fast half and the measured half
  *    cannot disagree about which characters are forbidden.
+ *  - **中英混排间距**: a Han character may not be set against a Latin letter or
+ *    an interpolation slot without a space between them. The census the case
+ *    below measures: 178 spaced Han/letter boundaries (3 more involving digits)
+ *    across 90 entries, 45 interpolation slots and no boundary of either kind
+ *    set tight. So this rule costs the current dictionary nothing and only ever
+ *    fires on the next sentence — and it is the half that survives being copied
+ *    into a handoff prompt, where the engine's own eighth of an em does not exist.
  *  - **行长**: the column is 28–40 characters, asserted above in both units.
  *
  * ## What is not asserted
@@ -647,7 +856,7 @@ describe('the prose column on screen', () => {
  * with `。`.
  */
 describe('the screen-side typeset', () => {
-  it('sets every Chinese sentence so no line can start or end on a forbidden mark', () => {
+  it('sets every Chinese sentence so no line starts or ends on a forbidden mark, and no two scripts meet without air', () => {
     const problems = typesetProblems(zhEntries());
     expect(
       problems,
@@ -681,6 +890,62 @@ describe('the screen-side typeset', () => {
       problems,
       `the dictionary carries sentences this gate never reads:\n  ${problems.join('\n  ')}`,
     ).toEqual([]);
+  });
+
+  it('reads the English dictionary with the same parser, and audits that parser the same way', () => {
+    /*
+     * The English half of "every literal is read".
+     *
+     * The typesetting rules stay Chinese-only — 行首禁则 means nothing to English
+     * prose — but coverage is a claim about the *reader*, and the reader is shared:
+     * a nested object in the `enUS` block is skipped by `entriesFor('en-US')` and
+     * absent from `Object.keys()` exactly as it would be in Chinese. Leaving the
+     * second block unaudited is the two-halves-done-one pattern this repository
+     * keeps being told about.
+     *
+     * Counting both quote styles is what made this case reachable at all: the
+     * English block has one value written in double quotes because the sentence
+     * carries an apostrophe, and a single-quote counter reported the block one
+     * literal short — so the check could not be turned on here without fixing the
+     * counter first.
+     */
+    const entries = entriesFor('en-US');
+    expect(entries.map((entry) => entry.key).sort()).toEqual(Object.keys(EN_DICTIONARY).sort());
+    const problems = literalCoverageProblems(i18nSource, entries, 'en-US');
+    expect(
+      problems,
+      `the English dictionary carries sentences this gate never reads:\n  ${problems.join('\n  ')}`,
+    ).toEqual([]);
+  });
+
+  it('reports a nested entry the English parser would skip', () => {
+    /*
+     * The same fixture as the Chinese case, one block over, so the `locale`
+     * parameter is proven to select a block rather than to be ignored.
+     *
+     * The insertion is done by line number, not by `replace`, and that is the
+     * shape this case was written to catch. The first entry of the English block
+     * is `'app.name': 'UCAD',` — a line byte-for-byte identical to the first
+     * entry of the Chinese block, so the obvious `source.replace(anchor, …)`
+     * edited *the Chinese one*, left the English block counting evenly, and the
+     * case would have passed by proving nothing. The line is read from the parsed
+     * entry and the splice is checked to land past the `const enUS` declaration.
+     */
+    const entries = entriesFor('en-US');
+    const lines = i18nSource.split('\n');
+    lines.splice(entries[0]!.line, 0, `  'app.nested': { 'a': 'One', 'b': 'Two' },`);
+    const nested = lines.join('\n');
+    expect(nested, 'the case did not add a nested entry').not.toBe(i18nSource);
+    expect(nested.indexOf('const enUS: Dictionary = {')).toBeLessThan(
+      nested.indexOf(`'app.nested': { 'a': 'One'`),
+    );
+    const problems = literalCoverageProblems(nested, entriesFor('en-US', nested), 'en-US');
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toContain('the enUS block carries');
+    // Five: the nested key, its two keys and its two values.
+    expect(problems[0]).toContain('5 literal(s) are in the dictionary and in no sentence');
+    // And the Chinese block is still read as itself, not as the edited one.
+    expect(literalCoverageProblems(nested, entriesFor('zh-CN', nested))).toEqual([]);
   });
 
   it('reports a nested entry the parser would skip', () => {
@@ -735,6 +1000,144 @@ describe('the screen-side typeset', () => {
     expect(problems.join('\n')).toContain('行首禁则');
   });
 
+  it('reports a Chinese sentence that sets a Han character against a Latin word', () => {
+    const problems = typesetProblems([
+      { key: 'demo.tight', value: '改base_url就能接上', line: 12 },
+    ]);
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toContain(`${I18N_RELATIVE}:12`);
+    expect(problems[0]).toContain('zh-CN.demo.tight');
+    expect(problems[0]).toContain('中英混排');
+    expect(problems[0]).toContain("'改b'");
+  });
+
+  it('reports a Chinese sentence that sets a Han character against an interpolation slot', () => {
+    // The missing space has not happened yet in this string — it happens when
+    // `count` is substituted, which is the moment nobody is reading the
+    // dictionary. The slot is where the rule has to bite.
+    const problems = typesetProblems([
+      { key: 'demo.slot', value: '共{count}条改动', line: 13 },
+    ]);
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toContain(`${I18N_RELATIVE}:13`);
+    expect(problems[0]).toContain('interpolation slot');
+    expect(problems[0]).toContain('共{count}');
+  });
+
+  it('accepts the spaced shape the dictionary writes at those boundaries', () => {
+    // The other direction, and the one that decides whether this rule can stay.
+    // A gate that went red on every sentence mixing Han and Latin would be
+    // deleted inside a week; the defect is the *missing* space, not the mix.
+    expect(
+      typesetProblems([
+        { key: 'demo.spaced', value: '改 base_url 就能接上', line: 14 },
+        { key: 'demo.slotSpaced', value: '共 {count} 条改动', line: 15 },
+      ]),
+    ).toEqual([]);
+  });
+
+  it('counts the boundaries the gap rule guards, so the guard is not green over nothing', () => {
+    /*
+     * The census `docs/dod-status.md` quotes, measured rather than typed.
+     *
+     * The gap rule passes today because the dictionary already writes the space
+     * (the spaced half) and forbids the shape that omits it (the tight half).
+     * Only the second half is asserted by `typesetProblems`, and a forbidden
+     * shape that never occurs is also a rule that never fires — which is how the
+     * previous round ended up writing "量过，决定不做" over a number nobody could
+     * re-measure. So the count is asserted here: the fixture pins what each shape
+     * contributes, and the real dictionary has to hold plenty of the paid-for
+     * shape for the tight shape's absence to mean anything.
+     */
+    expect(
+      gapCensus([
+        { key: 'demo.letters', value: '改 base_url 就能接上', line: 1 },
+        { key: 'demo.digits', value: '第 3 条', line: 2 },
+        { key: 'demo.tight', value: '改base_url就能接上', line: 3 },
+        { key: 'demo.tightDigit', value: '第3条', line: 4 },
+        { key: 'demo.slot', value: '共 {count} 条', line: 5 },
+        { key: 'demo.tightSlot', value: '共{count}条', line: 6 },
+      ]),
+    ).toEqual({
+      spacedLetters: 2,
+      spacedDigits: 2,
+      tightLetters: 2,
+      tightDigits: 2,
+      slots: 2,
+      tightSlots: 1,
+    });
+
+    const real = gapCensus(zhEntries());
+    expect(
+      real.tightLetters,
+      `the dictionary writes ${real.tightLetters} Han/letter boundary(ies) with no space at ` +
+        "all — that is the shape typesetProblems forbids, so either a sentence was added " +
+        'around the rule or the rule stopped reading it',
+    ).toBe(0);
+    expect(
+      real.tightSlots,
+      `the dictionary has ${real.tightSlots} interpolation slot(s) set hard against a Han ` +
+        'character: substituting the value produces the boundary nobody wrote',
+    ).toBe(0);
+    expect(
+      real.spacedLetters,
+      `the dictionary spaced only ${real.spacedLetters} Han/letter boundary(ies), which is too ` +
+        'few for "tight boundaries = 0" to be a fact about the prose rather than about the ' +
+        'census having stopped finding boundaries at all',
+    ).toBeGreaterThan(100);
+    expect(
+      real.slots,
+      `the dictionary holds ${real.slots} interpolation slot(s), so the slot half of this rule ` +
+        'is asserted over nothing',
+    ).toBeGreaterThan(20);
+    /*
+     * Not asserted: `real.tightDigits`.
+     *
+     * The fixture above proves the counter *sees* a digit set hard against Han, and
+     * the real dictionary happens to hold none today — so the decision to keep this
+     * file's set narrower than the measurement's (`LATIN_LETTER`, not `LATIN`, so
+     * '第1步' stays legal) is currently unexercised. It cannot be gated: a floor of
+     * zero would forbid the ordinary Chinese the exemption exists to allow, which is
+     * the failure mode this file's own history calls 风格偏好穿着排版错误的衣服. The
+     * decision is therefore kept where it can be read — the comment on LATIN_LETTER —
+     * and the census counts it so a later round can see whether it started to matter.
+     */
+  });
+
+  it('judges the dictionary by the characters the measurement judges the page by', () => {
+    /*
+     * One definition of "Han", one of "Latin", both owned by the page script.
+     *
+     * The two halves of this rule are `typesetProblems` (the sentence) and
+     * `scripts/layout-page-scripts.mjs` (the rendered page). If each spelled the
+     * character ranges out itself, the pair would drift the way two copies of a
+     * line-length number do — quietly, and with both sides looking correct in a
+     * diff. Both regexes below are built from the page script's exports, and the
+     * assertions are that the ranges mean what they say: an ideograph on one
+     * side, a letter or a digit on the other, and no punctuation in either.
+     */
+    expect(new RegExp(`[${HAN}]`, 'u').test('中')).toBe(true);
+    expect(new RegExp(`[${HAN}]`, 'u').test('，')).toBe(false);
+    expect(new RegExp(`[${LATIN}]`).test('3')).toBe(true);
+    expect(new RegExp(`[${LATIN}]`).test('_')).toBe(false);
+    /*
+     * And the one place the two halves part ways, said out loud instead of left
+     * to look like an accident: the dictionary lets a digit touch Han ('第1步' is
+     * Chinese, not a defect), the measurement does not — the engine has to leave
+     * its eighth there too. See LATIN_LETTER for why this is the right split and
+     * not a hole.
+     */
+    expect(new RegExp(`[${LATIN_LETTER}]`).test('3')).toBe(false);
+    expect(HAN_AGAINST_LATIN.test('第1步')).toBe(false);
+    expect(new RegExp(`(?:[${HAN}][${LATIN}]|[${LATIN}][${HAN}])`, 'u').test('第1步')).toBe(true);
+    // And both rules fire on the shape they describe, so a regex that stopped
+    // matching cannot pass by finding nothing.
+    expect(HAN_AGAINST_LATIN.test('改base就行')).toBe(true);
+    expect(HAN_AGAINST_LATIN.test('改 base 就行')).toBe(false);
+    expect(HAN_AGAINST_SLOT.test('共{count}条')).toBe(true);
+    expect(HAN_AGAINST_SLOT.test('共 {count} 条')).toBe(false);
+  });
+
   it('accepts a sentence that sets the full-width marks', () => {
     expect(
       typesetProblems([{ key: 'demo.ok', value: '先跑这条命令，然后看输出。', line: 10 }]),
@@ -743,10 +1146,10 @@ describe('the screen-side typeset', () => {
 });
 
 /**
- * The leading and the tracking: the two numbers a reader feels before they can
- * name anything.
+ * The leading, the tracking and the gap between the two scripts: the three
+ * numbers a reader feels before they can name anything.
  *
- * ## Why these two, and why now
+ * ## Why these, and why now
  *
  * The blocks above pin the size of the type and the length of the line. Neither
  * says how much air sits between two lines, or how far apart the glyphs in a
@@ -758,7 +1161,7 @@ describe('the screen-side typeset', () => {
  *
  * ## What is asserted, and what is not
  *
- * Four things, all mechanical:
+ * Five things, all mechanical:
  *
  *  1. `--lh-prose` is declared and sits inside the 1.5–2.0 band. Under 1.5 a
  *     Chinese paragraph's lines start to touch and the reader loses the line
@@ -770,6 +1173,16 @@ describe('the screen-side typeset', () => {
  *     own, and no rule anywhere writes a negative `letter-spacing`.
  *  4. a rule that sets prose type (`--fs-body` / `--fs-note`) never sets a
  *     leading under 1.2.
+ *  5. `--text-autospace` is declared, is the value that inserts the gap, and is
+ *     read by `body` rather than restated — 中英混排间距, the air between a Han
+ *     character and a Latin word when the sentence did not write one.
+ *
+ * The fifth is a token for the same reason the first two are: "how much air
+ * between the two scripts" is one decision for the whole document, and a
+ * decision written at one call site is a decision a later restyle can drop in
+ * silence. Its counterpart — `no-autospace` — is refused anywhere in the
+ * stylesheet, because a second rule switching the gap off *is* that second
+ * decision, made quietly.
  *
  * Not asserted: that *every* `line-height` is a token. The remaining bare
  * leadings are per-component — a table row, a code block, a caret glyph — and
@@ -777,9 +1190,12 @@ describe('the screen-side typeset', () => {
  * is gated is the two failure modes a reader can see: prose set too tight, and
  * Chinese tracked negative. The real-engine half of the same promise is in
  * `scripts/layout-page-scripts.mjs`, which flags any box with two or more line
- * boxes whose `lineHeight / size` is under 1.45.
+ * boxes whose `lineHeight / size` is under 1.45, and — for the gap — measures the
+ * air the engine actually left at every Han/Latin boundary on a gated screen, in
+ * both directions: none added where the sentence already wrote a space, an eighth
+ * of an em where it did not. Those are `tests/contract/layout.test.ts`'s cases.
  */
-describe('the leading and the tracking', () => {
+describe('the leading, the tracking and the gap', () => {
   /** The declarations of one rule, found by its selector. */
   function ruleBody(selector: string): string {
     for (const rule of codeOnly(styles).matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
@@ -789,14 +1205,23 @@ describe('the leading and the tracking', () => {
   }
 
   /** Every declaration of one property, with the selector that wrote it. */
-  function declarationsOf(property: 'line-height' | 'letter-spacing'): Array<{
+  function declarationsOf(property: 'line-height' | 'letter-spacing' | 'text-autospace'): Array<{
     selector: string;
     value: string;
   }> {
     const found: Array<{ selector: string; value: string }> = [];
+    /*
+     * `(?<![-\w])` is load-bearing. Without it a custom property is read as the
+     * property it is named after: `--text-autospace: normal` in `:root` matched
+     * `text-autospace:` as a substring, so the rule that token defines was
+     * reported as a second declaration *of* that property — a stylesheet that
+     * declares the gap once answering that it declares it twice.
+     */
     for (const rule of codeOnly(styles).matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
       const selector = rule[1]!.trim().replace(/\s+/g, ' ');
-      for (const match of rule[2]!.matchAll(new RegExp(`${property}:\\s*([^;]+);`, 'g'))) {
+      for (const match of rule[2]!.matchAll(
+        new RegExp(`(?<![-\\w])${property}:\\s*([^;]+);`, 'g'),
+      )) {
         found.push({ selector, value: match[1]!.trim() });
       }
     }
@@ -871,6 +1296,56 @@ describe('the leading and the tracking', () => {
     }
     expect(tight, 'prose set tighter than 1.2 is a paragraph the eye cannot track').toEqual([]);
   });
+
+  it('declares the gap between the two scripts once, as the value that inserts it', () => {
+    // `text-autospace: normal` is CSS Text 4's own answer to 中英混排间距: an
+    // eighth of an em between an ideograph and a Latin letter or digit, and
+    // nothing anywhere else. The other values are `auto` (the initial value,
+    // which inserts nothing in Chromium and is therefore a declaration that looks
+    // set and is not) and `no-autospace`, which is the gap switched off.
+    expect(
+      token('text-autospace'),
+      '--text-autospace is not `normal`, so "how much air between the scripts" has ' +
+        'stopped being one decision the stylesheet can answer',
+    ).toBe('normal');
+  });
+
+  it('sets the gap on the document rather than restating it per surface', () => {
+    // One inherited declaration is the whole mechanism: the gap is a property of
+    // text, not of a card or a pane, and a class list carrying it would be a
+    // second fact that misses the day somebody adds a note somewhere new.
+    expect(
+      ruleBody('body'),
+      '`body` no longer reads --text-autospace; the token is then a comment with a ' +
+        'colon in it, and the gap is whatever the engine feels like',
+    ).toMatch(/text-autospace:\s*var\(--text-autospace\)/);
+  });
+
+  it('switches the gap off nowhere', () => {
+    /*
+     * The `no-autospace` half, which is the direction a stylesheet drifts in.
+     *
+     * Nothing in this repository asks for the gap to be removed, and yet one
+     * declaration on one component — added to make a dense table row fit, most
+     * likely, where the tightness is the point of the row — would take the air out
+     * of Chinese prose on that surface and leave every other case green. The
+     * layout gate measures the *result* on gated screens; this reads the
+     * stylesheet, so it names the rule the day it is written rather than the day
+     * its surface is next photographed.
+     */
+    const declared = declarationsOf('text-autospace');
+    expect(
+      declared.length,
+      'the stylesheet sets text-autospace nowhere, so the gap between the two scripts ' +
+        'has stopped being a decision this repository makes',
+    ).toBeGreaterThan(0);
+    const off = declared.filter((decl) => /^(auto|no-autospace)$/.test(decl.value));
+    expect(
+      off.map((decl) => `${decl.selector} { text-autospace: ${decl.value} }`),
+      'these rules turn the 中英混排 gap off (or back to `auto`, which is off in this ' +
+        'engine) — a second decision about the same air, made silently',
+    ).toEqual([]);
+  });
 });
 
 describe('the font stacks', () => {
@@ -932,12 +1407,14 @@ describe('the font stacks', () => {
  *     character — neither before it nor after it;
  *  2. an `en-US` value never contains a full-width `，` `。` `；` `：` `、`.
  *
- * Not asserted: line length, spacing around Latin words, or whether a sentence
- * reads well. Those need a rendered page and a reader, and a gate that guessed
- * at them would go red on a legitimate sentence — which is how a typography
- * gate gets deleted. The two rules here cannot be right in the other direction:
- * there is no sentence in either language where the wrong-width mark is
- * correct.
+ * Not asserted here: line length (a rendered page decides that — the layout gate
+ * measures it), the gap between Han text and a Latin word (that is
+ * 中英混排间距, asserted above in `typesetProblems` and measured on screen by
+ * `tests/contract/layout.test.ts`, not a punctuation rule), or whether a sentence
+ * reads well. That last one needs a reader, and a gate that guessed at it would
+ * go red on a legitimate sentence — which is how a typography gate gets deleted.
+ * The two rules here cannot be right in the other direction: there is no sentence
+ * in either language where the wrong-width mark is correct.
  *
  * The dictionary is read through `dictionaryFor()` rather than by parsing the
  * source, so the check sees the values the app actually renders. A key that is
@@ -953,14 +1430,91 @@ describe('the font stacks', () => {
  * the app and the README were being judged by the same rule.
  */
 
-/** Han characters, the range both dictionaries write their prose in. */
-const HAN = '\u4e00-\u9fff';
+/**
+ * Han characters, the range both dictionaries write their prose in.
+ *
+ * Not written here. The layout measurement owns the range
+ * (`HAN_CLASS` in `scripts/layout-page-scripts.mjs`) because it is the half that
+ * has to match what the engine actually set, and this file's dictionary rules and
+ * that measurement are two halves of one promise. It used to be spelled a second
+ * time here as U+4E00–U+9FFF, which is the same *shape* of mistake as two copies
+ * of a line-length number: narrower, greener, and invisible in a diff.
+ */
+const HAN = charClass('HAN_CLASS');
+
+/** The Latin side: letters and digits, as the measurement counts them. */
+/**
+ * The Latin side as the *measurement* counts it: letters and digits.
+ *
+ * Kept as a name so the case below can state the difference out loud rather than
+ * leave two sets looking like an accident.
+ */
+const LATIN = charClass('LATIN_CLASS');
+
+/**
+ * The Latin side as the *dictionary* counts it: letters only.
+ *
+ * The measurement's set is letters **and** digits, and this one is deliberately
+ * narrower. Digits next to Han are normal Chinese — '第1步', '3条改动', '20%' —
+ * and a rule that rejected them would be a style preference wearing a layout
+ * error's clothes. That judgement is not new and not this file's to reverse: the
+ * round that first measured 中英混排间距 scanned every literal in this dictionary,
+ * found 0 tight boundaries, and wrote the decision down in `docs/dod-status.md`
+ * as *not a defect*, naming '第1步' as exactly the shape a gate would get wrong.
+ * So this gates the shape the app really does get wrong on paper — an identifier
+ * (`Agent`, `base_url`, `UCAD`, `MCP`) set hard against a Chinese sentence.
+ *
+ * Nothing is lost by the narrower set, only moved: what the engine owes a digit it
+ * pays, and `tests/contract/layout.test.ts` measures that in the browser at every
+ * boundary, letters and digits alike. The two halves are complementary instead of
+ * one being a stricter copy of the other — a sentence may write '第1步' and still
+ * render with its air, and may not write '显示Agent' even where a browser would
+ * paper over it.
+ */
+const LATIN_LETTER = 'A-Za-z';
 
 /** A half-width mark with a Han character on either side of it. */
 const HALF_WIDTH_NEAR_HAN = new RegExp(`(?:[,.;:](?=[${HAN}])|(?<=[${HAN}])[,.;:])`);
 
 /** A full-width mark, which English prose has no use for. */
 const FULL_WIDTH = /[，。；：、]/;
+
+/**
+ * A Han character set directly against a Latin letter or digit, with no space
+ * between them (中英混排).
+ *
+ * The gap is what the eye uses to tell where the Chinese ends and the identifier
+ * begins; without it '改base_url就能接上' reads as one long word, and the reader
+ * has to re-run the line to find the break. The check is on the *dictionary*, and
+ * the reason it belongs there rather than being left to the engine is that the
+ * engine's own eighth of an em (`text-autospace`, measured on the rendered page by
+ * the layout gate) exists only while the text is being painted: the same sentence
+ * copied out of a handoff prompt, pasted into an issue, or read in a plain-text
+ * log loses it entirely. A space in the source is worth the same in all four
+ * places.
+ */
+const HAN_AGAINST_LATIN = new RegExp(
+  `(?:[${HAN}][${LATIN_LETTER}]|[${LATIN_LETTER}][${HAN}])`,
+  'u',
+);
+
+/**
+ * A Han character set directly against an interpolation slot.
+ *
+ * This is 中英混排 with the missing space still in the future: '共{count}条' is
+ * clean text until `count` is substituted, at which point it *becomes* '共3条' and
+ * nobody wrote the boundary. The dictionary holds 45 of these slots and not one
+ * of them touches a Han character — the census case below counts them, because
+ * "all 45 are clear" is a claim about a scan, not a claim worth re-typing. That
+ * is why this direction is checkable here while the rendered half of it is,
+ * today, an empty set on screen. The slot name is matched
+ * as the translator matches it — `{ident}` — so a sentence with braces in it for
+ * another reason is not read as a hole in the rule.
+ */
+const HAN_AGAINST_SLOT = new RegExp(
+  `(?:[${HAN}]\\{[A-Za-z0-9_]+\\}|\\{[A-Za-z0-9_]+\\}[${HAN}])`,
+  'u',
+);
 
 describe('the punctuation', () => {
   const ZH = dictionaryFor('zh-CN');
