@@ -1,4 +1,5 @@
 import { useMemo } from 'react';
+import { DEMO_BOUNDARIES } from '../../../shared/demo-boundaries';
 import { useT } from '../i18n-context';
 
 /**
@@ -112,6 +113,30 @@ export function HelpPanel({
         <p className="muted">
           {t('help.whatIsDecisionBody')}
         </p>
+      </div>
+
+      {/*
+        The three external blockers, on screen.
+
+        `docs/demo-script.md` answers "did you run it on a real machine?" with
+        three offline commands and the line each one prints. That page is read
+        before the demo; this card is what is open *during* it. The commands and
+        the expected lines come from `shared/demo-boundaries.ts` — one list, read
+        by the page's gate and by this panel — so the two cannot drift into
+        quoting different commands. The sentence above each command is prose and
+        lives in the dictionary, in both locales.
+      */}
+      <div className="card">
+        <h2>{t('help.boundary.title')}</h2>
+        <p className="muted">{t('help.boundary.intro')}</p>
+        {DEMO_BOUNDARIES.map((boundary) => (
+          <div className="mt-3" key={boundary.id}>
+            <div className="step-title">{t(`help.boundary.${boundary.id}`)}</div>
+            <div className="code mt-1">{boundary.command}</div>
+            <div className="muted mt-1">{boundary.expected}</div>
+          </div>
+        ))}
+        <p className="muted mt-3">{t('help.boundary.footnote')}</p>
       </div>
 
       <div className="card">

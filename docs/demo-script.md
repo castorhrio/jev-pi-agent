@@ -236,6 +236,12 @@ PASS — … renderer source(s) and … screenshot(s) match …
 三条合起来是同一句话：**阻塞还在，但每一条都有一条命令能当场跑、有一行输出能当场念**，
 而不是一句「等条件具备」。
 
+**这三条也在屏幕上**：应用里 `帮助 → 本次演示的边界` 把上面三块原样列出来（一句话 + 那条命令 +
+它打印的那一行），所以现场不必切到终端，也不必背这一页。界面读的是
+`apps/desktop/src/shared/demo-boundaries.ts` 这一份列表，不是另抄一份：
+`tests/contract/demo-boundaries.test.ts` 把这一页的三块与那份列表逐字比对（命令、期望首行、
+以及每块上面那句粗体标题），改一处不改另一处会指名打红。
+
 **这三条的断言在哪**：`tests/contract/demo-script.test.ts` 的
 `describe('each external blocker has a command and a line on screen')`。它和上面 `[ok]` 那套**不是同一个机制**：
 `[ok]` 行按「哪一步的代码打印它」归因（`describe('a quote is tied to the step that prints it, not just to the file')`），

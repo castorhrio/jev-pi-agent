@@ -29,6 +29,8 @@
  * stayed green. The count gate makes the three edits one fact.
  */
 
+import { DEMO_BOUNDARIES } from '../../apps/desktop/src/shared/demo-boundaries';
+
 /** The subsection of `docs/demo-script.md` that carries the three blocks. */
 export const DEGRADED_SECTION_HEADING = '### 三条阻塞的现场降级路径';
 
@@ -38,12 +40,19 @@ export const DEGRADED_SECTION_HEADING = '### 三条阻塞的现场降级路径';
  * Order is the page's order, which is the blockers page's order: feed, Windows,
  * five states. Nothing reads the order; it is kept so a diff of this list reads
  * like a diff of the page.
+ *
+ * Derived from `apps/desktop/src/shared/demo-boundaries.ts` rather than
+ * restated, because the same three commands are now also **on screen**: the
+ * Help panel renders them so the person on stage can point at one instead of
+ * reciting the page. A second copy here would let the panel and the count gate
+ * disagree about how many blockers there are — the panel showing three while
+ * this list counts two, and every assertion in both gates staying green.
+ * `tests/contract/demo-boundaries.test.ts` compares the list against the page's
+ * blocks; this file only has to keep counting the same list the panel shows.
  */
-export const DEGRADED_COMMANDS = [
-  'node scripts/release-gate.mjs --simulate-missing-sha',
-  'node scripts/verify-main-chain.mjs --judge tests/fixtures/judge/fail.json',
-  'node scripts/screenshot-sources.mjs --check',
-] as const;
+export const DEGRADED_COMMANDS: readonly string[] = DEMO_BOUNDARIES.map(
+  (boundary) => boundary.command,
+);
 
 /** One `$ command` + first-output-line block of the section. */
 export interface DegradedBlock {

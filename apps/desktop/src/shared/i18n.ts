@@ -766,6 +766,15 @@ const zhCN: Dictionary = {
   'help.whatIsDecisionBody':
     '路由、风险、要不要继续这类判断，交给可替换的决策引擎完成：它只读状态摘要，返回带理由和置信度的结果。你能看到它为什么这么选，也能随时换成别的引擎。',
 
+  'help.boundary.title': '本次演示的边界',
+  'help.boundary.intro':
+    '这三条外部阻塞还没解除。每条下面是一条本机离线可跑的命令，和它打印的那一行——被问到「那你怎么证明」时，指着屏幕念，不要背计划。',
+  'help.boundary.feed': '一、feed 缺 sha256：让发布闸门自己说「不许发」。',
+  'help.boundary.windows': '二、Windows 未跑：一份手写报告为什么不算数。',
+  'help.boundary.states': '三、五态未签：先量「图还对着源码」。',
+  'help.boundary.footnote':
+    '这一块是只读的：它说明边界，不声称阻塞已经解除。解除之后，这三条会从 docs/demo-script.md 和这里一起消失。',
+
   'error.title': '出错了',
   'error.bridge': 'UCAD 桥接不可用：preload 未加载，请重启应用。',
   'error.retry': '重试',
@@ -1524,6 +1533,15 @@ const enUS: Dictionary = {
   'help.whatIsDecision': 'What is Decision?',
   'help.whatIsDecisionBody':
     'Routing, risk, and "should we keep going" live in an independent plane, handled by replaceable decision engines. An engine only reads a state summary and returns a result with a rationale and a confidence, so you can always see why it chose what it chose — and swap in a different engine.',
+
+  'help.boundary.title': 'What this demo does not cover',
+  'help.boundary.intro':
+    'Three external blockers are still open. Each one below is a command that runs offline on this machine, plus the line it prints — when someone asks how you can prove it, read that line off the screen instead of describing a plan.',
+  'help.boundary.feed': '1. The feed has no sha256: let the release gate refuse to publish.',
+  'help.boundary.windows': '2. Windows has not been run: why a hand-written report does not count.',
+  'help.boundary.states': '3. The five states are unsigned: first check the images still match the source.',
+  'help.boundary.footnote':
+    'This block is read-only: it states the boundary, it does not claim the blockers are closed. When one closes, it disappears from docs/demo-script.md and from here together.',
 
   'error.title': 'Something went wrong',
   'error.bridge': 'UCAD bridge unavailable — the preload did not load. Please restart the app.',
