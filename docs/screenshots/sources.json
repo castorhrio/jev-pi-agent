@@ -7,7 +7,7 @@
     "apps/desktop/src/renderer/src/components/Composer.tsx": "sha256:62908f43f2893dc7dd5f2b38f438e5b1f3ab86d6ccf49163a9b70c1dcc179e8a",
     "apps/desktop/src/renderer/src/components/ContextDrawer.tsx": "sha256:28c7afbd318ffd8f9bad7a6b3d03abec89df56b8292e144aa7883ee526c1d81b",
     "apps/desktop/src/renderer/src/components/DecisionPanel.tsx": "sha256:eee9cb79d42e66a02da59e9c3ef6ae8768c40b0ca1e21903ab5efa43de15f8a1",
-    "apps/desktop/src/renderer/src/components/EnvSelfCheck.tsx": "sha256:70caf8b891b6af41a60ca719a1b40660ab13f5527c69fefd1b27aca2247c8fed",
+    "apps/desktop/src/renderer/src/components/EnvSelfCheck.tsx": "sha256:0b5aee8a317d2be3d3fe60e331cd1c6cdf92bffa5ce01a0afb5a49d4537dd3a6",
     "apps/desktop/src/renderer/src/components/FileEditor.tsx": "sha256:009458a56a8897601b39bcf3ef47e2becfb2fc1a0ca46e4c3b60d9b7352a0920",
     "apps/desktop/src/renderer/src/components/HandoffPanel.tsx": "sha256:ed45779d5be4f9e08d5040276e466acb07787d3ca6945033ff4a674f2fb0035d",
     "apps/desktop/src/renderer/src/components/Help.tsx": "sha256:3e478ff3bb31b660add18a3850f5ffd960661ed6a22d3c84c0c246ed5a5de32f",
@@ -34,12 +34,12 @@
     "apps/desktop/src/renderer/src/state/session-reducer.ts": "sha256:e82390a35ca33d11b22652ddbc6a22e7bec5024d1430c6d85ca280c69ed01410",
     "apps/desktop/src/renderer/src/styles.css": "sha256:f0c9f162589ac1952d8fad71833c48d2daa7d38428e5bcecc0813b24d144255f",
     "apps/desktop/src/renderer/src/update-controller.tsx": "sha256:a7f96869b392804ee90a67877732d3ccf63ebbc33969ec7dea195830981586ab",
-    "apps/desktop/src/shared/i18n.ts": "sha256:461e36f8a0b38a12af33aeda028f6a56c139c186ab788d9d8c14e058d215f9c2"
+    "apps/desktop/src/shared/i18n.ts": "sha256:6be92c8ab7786beea5061ff6417ec74db4d1bc4f67d6644a7f678c649288c34f"
   },
   "screenshots": {
     "docs/screenshots/chat.png": "sha256:d9490b3da03231833ce39d0ffec6e6c8a9085065f9315c1082360c3dc1122624",
-    "docs/screenshots/context.png": "sha256:8e531481556e1ae9c47f1b1d0c04a65dc9471504e8edfb284d189bc5f5e7c9e9",
-    "docs/screenshots/decision.png": "sha256:f63d41615e0e620e1a6591762ea0e1176c807773f9429371bb69082bcd97737e",
+    "docs/screenshots/context.png": "sha256:b2ed3939ebc3cf1d46df3f02963e59eba4f57f12125c35574691a549ce545e23",
+    "docs/screenshots/decision.png": "sha256:9c3a12e4000ed034fcc008b29cef489467549fcb0e45a6e90172bdf412da139d",
     "docs/screenshots/empty.png": "sha256:6b3af557b2bdc244aacbf7d239da47c75eaa575d9c5f8d1592193ea724548295",
     "docs/screenshots/error.png": "sha256:d9cc8eca376e704968cf02bf17e9e71f9f1b9b7438c55ed7261feeb757c20e76",
     "docs/screenshots/handoff.png": "sha256:97627557cfdf014933c03f6c3b82e24ce952a88f31f6f4571fda360787d4577e",
