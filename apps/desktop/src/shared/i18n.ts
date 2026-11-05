@@ -227,7 +227,7 @@ const zhCN: Dictionary = {
   'stream.errorTitle': '无法加载这次会话的历史',
   'chat.you': '你',
   'stream.gapWarning': '事件流有 {count} 条缺口，下面显示的历史可能不完整。',
-  'sessions.loadFailed': '会话列表读取失败（不是空的）',
+  'sessions.loadFailed': '会话列表没读出来（不是没有会话）',
   'stream.unmodelledWarning':
     '有 {count} 条事件这个版本还不认识，所以没有显示出来。更新 UCAD 就能读到它们。',
 
@@ -240,12 +240,12 @@ const zhCN: Dictionary = {
   'welcome.open': '打开项目文件夹',
   'welcome.openFailed': '打开项目失败',
 
-  'empty.chat': '还没有对话。在下方描述你的任务，Agent 会先构建上下文再开始工作。',
+  'empty.chat': '还没有对话。在下面说清要做什么，Agent 会先看一遍项目再动手。',
   'empty.chatHint': 'Ctrl + Enter 发送 · @ 引用文件',
   'empty.chatSteps': '发送之后会发生什么',
-  'empty.chatStep1': '先看这件事该交给哪个 Agent、风险有多大，判断的理由会写进事件流，事后能回看。',
-  'empty.chatStep2': '再按 token 预算挑出相关的文件、符号与未提交的改动，打成一个 Context Pack。',
-  'empty.chatStep3': '这个包渲染成确定的字节后注入 Agent，右侧面板同时显示它实际拿到了什么。',
+  'empty.chatStep1': '先判断这件事该交给哪个 Agent、风险有多大，理由会记下来，事后能回看。',
+  'empty.chatStep2': '再按 token 预算挑出相关的文件、符号和未提交的改动，打成一个 Context Pack。',
+  'empty.chatStep3': '这个包原样交给 Agent，右侧「上下文」面板能看到它实际拿到了什么。',
   'empty.explorer': '选择左侧的文件查看内容。',
   'explorer.listFailed': '目录读取失败',
   'explorer.readFailed': '文件读取失败',
@@ -994,15 +994,15 @@ const enUS: Dictionary = {
   'welcome.openFailed': 'Could not open the project',
 
   'empty.chat':
-    'No conversation yet. Describe your task below — the agent builds context before it starts working.',
+    'No conversation yet. Say what you need below — the agent reads the project before it starts.',
   'empty.chatHint': 'Ctrl + Enter to send · @ to mention a file',
   'empty.chatSteps': 'What happens when you send',
   'empty.chatStep1':
-    'First it settles which agent takes the task and how risky it is, and writes that reasoning into the event stream.',
+    'First it decides which agent takes the task and how risky it is, and records why — you can read that later.',
   'empty.chatStep2':
     'Then it picks the relevant files, symbols and uncommitted changes within a token budget and packs them into a Context Pack.',
   'empty.chatStep3':
-    'The pack renders to fixed bytes and goes into the agent; the panel on the right shows what it actually received.',
+    'The pack goes to the agent as-is; the Context panel on the right shows what it actually received.',
   'empty.explorer': 'Select a file on the left to view it.',
   'explorer.listFailed': 'Could not read the directory',
   'explorer.readFailed': 'Could not read the file',

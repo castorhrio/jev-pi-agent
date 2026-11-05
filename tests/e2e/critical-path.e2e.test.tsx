@@ -211,7 +211,7 @@ describe('failures are reported, not disguised as state', () => {
     // The exact regression from round 2: a failed read rendered as an empty
     // list, so a project with unreadable history looked brand new.
     await waitFor(() =>
-      expect(screen.getAllByText(/会话列表读取失败/).length).toBeGreaterThan(0),
+      expect(screen.getAllByText(t('sessions.loadFailed')).length).toBeGreaterThan(0),
     );
     // And the specific reason must be visible, not swallowed.
     expect(screen.getAllByText(/sessions\.list failed/).length).toBeGreaterThan(0);

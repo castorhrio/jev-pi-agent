@@ -35,7 +35,7 @@
  * refuses the two ways of asking that have no answer.
  */
 
-import { execFileSync } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -93,19 +93,29 @@ function tree(): string {
   return root;
 }
 
-/** Runs the script inside `root`; never throws on a non-zero exit. */
+/**
+ * Runs the script inside `root`; never throws on a non-zero exit.
+ *
+ * `spawnSync`, not `execFileSync`. `execFileSync` returns stdout and *discards*
+ * stderr when the command succeeds — stderr only comes back attached to the
+ * thrown error. That made every assertion about a green run's verdict line
+ * unpassable: `--walkthrough` prints its paths on stdout and its
+ * `walkthrough: N image(s) …` sentence on stderr, so the case below could only
+ * ever see an empty string and the sentence it was written to pin was never
+ * read. A test that cannot see half of what it asserts is the same shape as a
+ * gate that cannot go red, one level down.
+ */
 function run(root: string, args: string[]): RunResult {
-  try {
-    const stdout = execFileSync(process.execPath, [join(root, SCRIPT_IN_TREE), ...args], {
-      cwd: root,
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-    return { code: 0, stdout, stderr: '' };
-  } catch (error) {
-    const failure = error as { status?: number; stdout?: string; stderr?: string };
-    return { code: failure.status ?? 1, stdout: failure.stdout ?? '', stderr: failure.stderr ?? '' };
-  }
+  const result = spawnSync(process.execPath, [join(root, SCRIPT_IN_TREE), ...args], {
+    cwd: root,
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  return {
+    code: result.status ?? 1,
+    stdout: result.stdout ?? '',
+    stderr: result.stderr ?? '',
+  };
 }
 
 /** The walkthrough document, relative to the tree root. */

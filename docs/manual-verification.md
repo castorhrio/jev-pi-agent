@@ -326,7 +326,7 @@ fixture 不发），第五个状态因此根本没法人工走查完；`revokeRu
 | 首启 | `docs/screenshots/empty.png` | `docs/screenshots/states/empty-768x700.png` | 引导语 + 三步在屏上，会话列说的是「还没有会话」，没有「加载中…」 |
 | 加载 | `docs/screenshots/states/loading.png` | `docs/screenshots/states/loading-768x700.png` | 读取未返回的那一帧：会话列与对话区都在说「加载中…」，**不**说「还没有对话」 |
 | 失败 | `docs/screenshots/error.png` | `docs/screenshots/states/error-768x700.png` | 标题「出错了」+ 原始失败文本 + 「重试」按钮，不是空面板 |
-| 部分失败 | `docs/screenshots/states/partial.png` | `docs/screenshots/states/partial-768x700.png` | 项目名在屏上，会话列说「会话列表读取失败（不是空的）」并带原因 |
+| 部分失败 | `docs/screenshots/states/partial.png` | `docs/screenshots/states/partial-768x700.png` | 项目名在屏上，会话列说「会话列表没读出来（不是没有会话）」并带原因 |
 | 权限 | `docs/screenshots/states/permission.png` | `docs/screenshots/states/permission-768x700.png` | 弹窗五件可读（类别 `SHELL` / 风险 `high` / 资源 / 命令 / 原因），四个回答都在 |
 
 窄窗口那一列是**同一批 target 在 768×700 下拍的**（`minWidth`/`minHeight`，产品允许的最小窗口），

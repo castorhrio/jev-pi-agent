@@ -43,11 +43,10 @@
 | 9 | `docs/screenshots/states/permission.png` | 1440×900 | `permission` 的三条判据 |
 | 10 | `docs/screenshots/states/permission-768x700.png` | 768×700 | 同上，另加：弹窗五件与四个回答在窄窗口下仍分得清 |
 
-看完把这一行填进文末的记录表（`YYYY-MM-DD` 换成当天日期；**第一列是日期的那一行就是签字**）：
-
-```
-| YYYY-MM-DD | 你的名字 | 10 张（五态 × 两个尺寸） | 15 条全满足 / 第 N 条不满足 | 无 / <屏幕上看到什么> | 五态判据全满足 / 第 N 条不满足：<屏幕上看到什么> |
-```
+看完把这一行填进文末的记录表（`YYYY-MM-DD` 换成当天日期；**第一列是日期的那一行就是签字**）。
+这一行不在这里抄：回执模板在下面「怎么把十张图 + 判据发给一个没装应用的人」一节第 3 条，
+它的列头与文末记录表的列头**逐字相同**——`tests/contract/state-walkthrough.test.ts` 逐格比对这两处，
+改一处不改另一处会当场红。一份模板，两个读者（自己填的人和远程答完发回来的人），不是两份。
 
 这十张图是布局门禁在真实 Chromium 里拍的，不是手绘也不是 mock：`npm test` 的
 `tests/contract/layout.test.ts` 把每个 target 的截图写进 `.run-logs/layout/`（该目录被忽略），
@@ -106,9 +105,13 @@ tar -czf walkthrough.tar.gz $(node scripts/screenshot-sources.mjs --walkthrough)
 
 1. **`walkthrough.tar.gz`**：十张图，五态 × 两个尺寸，顺序就是上面那张表的顺序；
 2. **这一页的 `## 判据` 一节**：十五问，每条只有是 / 否，判据里反引号包住的字就是屏幕上要找的字；
-3. **下面这一行记录模板**：他答完照着填，把这一行发回来。
+3. **下面这个回执模板**：他答完照着填，把这两行发回来。第一行是列头，与文末记录表的列头
+   **逐字相同**——不是「差不多」，是同一串字（`tests/contract/state-walkthrough.test.ts` 逐格比对，
+   改一处不改另一处会当场红）；第二行是占位，`YYYY-MM-DD` 换成当天日期。
 
 ```
+| 日期 | 走查人 | 看了哪几张 | 五态判据 | 不合格项 | 结论 |
+|---|---|---|---|---|---|
 | YYYY-MM-DD | 你的名字 | 10 张（五态 × 两个尺寸） | 15 条全满足 / 第 N 条不满足 | 无 / <屏幕上看到什么> | 五态判据全满足 / 第 N 条不满足：<屏幕上看到什么> |
 ```
 
@@ -137,7 +140,7 @@ tar -czf walkthrough.tar.gz $(node scripts/screenshot-sources.mjs --walkthrough)
 
 - 图：`docs/screenshots/empty.png`（1440×900）· 窄窗口：`docs/screenshots/states/empty-768x700.png`（768×700）· URL：`?scenario=empty`
 - 判据：
-  - [ ] 第一眼落在 `还没有对话。在下方描述你的任务，Agent 会先构建上下文再开始工作。` 上，
+  - [ ] 第一眼落在 `还没有对话。在下面说清要做什么，Agent 会先看一遍项目再动手。` 上，
         而不是落在空列表或列头上——引导语在折叠线以上，且比周围文字更醒目。
   - [ ] `发送之后会发生什么` 下面的三步**一眼能数出三步**，读完知道第一步要做什么，
         而不是一段读不完的散文。
@@ -171,9 +174,9 @@ tar -czf walkthrough.tar.gz $(node scripts/screenshot-sources.mjs --walkthrough)
 - 图：`docs/screenshots/states/partial.png`（1440×900）· 窄窗口：`docs/screenshots/states/partial-768x700.png`（768×700）· URL：`?scenario=partial`
 - 判据：
   - [ ] 项目名 `jev-pi-agent` **还在屏上**：一个面板读失败，不该把读成功的部分一起抹掉。
-  - [ ] 会话列说的是 `会话列表读取失败（不是空的）` 并带原因 `[fixture:partial] sessions.list failed`，
+  - [ ] 会话列说的是 `会话列表没读出来（不是没有会话）` 并带原因 `[fixture:partial] sessions.list failed`，
         而不是「没有会话」——后者会让用户以为数据没了。
-  - [ ] 读起来像**一次局部故障**，不像整页错误：`会话列表读取失败（不是空的）` 只出现在坏掉的那一列，好的那几列照常可读。
+  - [ ] 读起来像**一次局部故障**，不像整页错误：`会话列表没读出来（不是没有会话）` 只出现在坏掉的那一列，好的那几列照常可读。
 - 不合格长什么样：把读失败渲染成「没有会话」；整页变成错误页；失败原因被截断到看不见。
 - 依据：`tests/e2e/scenarios.e2e.test.tsx` 的 partial 一组断言。
 

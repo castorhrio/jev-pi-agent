@@ -376,6 +376,50 @@ function handoffProblems(
     }
   }
 
+  /*
+   * The third thing that travels: the row the answer comes back in.
+   *
+   * The images are checked against the script table and the manifest, and the
+   * criteria against the dictionary. The receipt was the one part of the
+   * handover that was still prose — "他答完照着填，把这一行发回来" — so the
+   * columns a remote walker fills were whatever the sender remembered, and the
+   * person filing the answer had to guess which cell meant what. The template
+   * is a table now, and its header has to be the record table's header cell for
+   * cell: sending and receiving are the same fact, or the answer arrives in a
+   * shape the record cannot hold.
+   */
+  const record = recordHeaderCells(markdown);
+  const template = receiptTemplate(markdown);
+  if (record === undefined) {
+    problems.push(
+      `docs/state-walkthrough.md: no \`${RECORD_HEADING}\` table, so the receipt template ` +
+        'has no columns to match',
+    );
+  } else if (template === undefined) {
+    problems.push(
+      'docs/state-walkthrough.md: the handover section carries no receipt template ' +
+        '(`| YYYY-MM-DD | …`), so the answer comes back in whatever shape the walker invents',
+    );
+  } else if (template.header === null) {
+    problems.push(
+      'docs/state-walkthrough.md: the receipt template has no header row, so the walker is ' +
+        'filling cells whose names only the sender knows',
+    );
+  } else if (template.header.join('|') !== record.join('|')) {
+    problems.push(
+      `docs/state-walkthrough.md: the receipt template's columns are ` +
+        `\`${template.header.join(' | ')}\` and the record table's are ` +
+        `\`${record.join(' | ')}\` — the row a walker sends back has to be the row the ` +
+        'record table can hold, so fix whichever of the two moved',
+    );
+  } else if (template.row.length !== record.length) {
+    problems.push(
+      `docs/state-walkthrough.md: the receipt template's placeholder row has ` +
+        `${template.row.length} cell(s) and its header has ${record.length}, so a walker ` +
+        'copying it fills a row that does not line up with the columns',
+    );
+  }
+
   for (const shot of new Set(screenshotsIn(section))) {
     if (repository.trackedScreenshot(shot)) continue;
     problems.push(
@@ -458,15 +502,113 @@ function signedDates(markdown: string): string[] {
  */
 const RECORD_COLUMNS = ['日期', '走查人', '看了哪几张', '结论'] as const;
 
-/** Whether the record table has the columns a signer needs. */
-function hasRecordColumns(markdown: string): boolean {
-  return markdown
-    .split('\n')
-    .some(
-      (line) =>
-        line.trim().startsWith('|') &&
-        RECORD_COLUMNS.every((column) => line.includes(column)),
-    );
+/** The heading the record table lives under. */
+const RECORD_HEADING = '## 记录';
+
+/** A markdown table's separator row: `|---|---|`. */
+const TABLE_SEPARATOR = /^\|[\s:|-]+\|$/;
+
+/** The cells of a markdown table row, trimmed and without the outer pipes. */
+function cells(line: string): string[] {
+  return line
+    .trim()
+    .replace(/^\|/, '')
+    .replace(/\|$/, '')
+    .split('|')
+    .map((cell) => cell.trim());
+}
+
+/**
+ * The body of the level-2 section whose heading starts with `heading`.
+ *
+ * `## 记录（走查人填，只追加）` carries a parenthetical, so the heading is
+ * matched by prefix rather than by equality — the same reason `scriptSection`
+ * and `handoffSection` exist, generalised so the record table can be read
+ * without a fourth copy of the same loop.
+ */
+function sectionBody(markdown: string, heading: string): string | undefined {
+  const lines = markdown.split('\n');
+  const start = lines.findIndex((line) => line.trim().startsWith(heading));
+  if (start === -1) return undefined;
+  const body: string[] = [];
+  for (const line of lines.slice(start + 1)) {
+    if (/^#{1,2} /.test(line)) break;
+    body.push(line);
+  }
+  return body.join('\n');
+}
+
+/**
+ * The record table's header cells, or `undefined` when the table is gone.
+ *
+ * Read from the `## 记录` section rather than from the whole document, because
+ * the handover section now carries a copy of the same header (the receipt
+ * template). A scan over the whole file would find the template's header and
+ * call the record table intact after the record table itself lost a column —
+ * two lists that are supposed to be one, agreeing by accident.
+ */
+function recordHeaderCells(markdown: string): string[] | undefined {
+  const body = sectionBody(markdown, RECORD_HEADING);
+  if (body === undefined) return undefined;
+  const header = body.split('\n').find((line) => line.trim().startsWith('|'));
+  return header === undefined ? undefined : cells(header);
+}
+
+/**
+ * The document with the record table's header row replaced.
+ *
+ * The header line now appears twice — once in the record table, once in the
+ * receipt template the handover section carries — so a plain `String.replace`
+ * edits whichever comes first, which is the template. A case that means "the
+ * record table lost a column" has to say so, or it tests the template instead
+ * and passes for the wrong reason.
+ */
+function withRecordHeader(markdown: string, header: string): string {
+  const at = markdown.indexOf(RECORD_HEADING);
+  if (at === -1) return markdown;
+  const head = markdown.slice(0, at);
+  const tail = markdown.slice(at);
+  const line = tail.split('\n').find((candidate) => candidate.trim().startsWith('|'));
+  if (line === undefined) return markdown;
+  return head + tail.replace(line, header);
+}
+
+/** The receipt template a remote walker fills in and sends back. */
+interface ReceiptTemplate {
+  /** The template's column names, or `null` when the header row is missing. */
+  readonly header: string[] | null;
+  /** The placeholder row: one cell per column, `YYYY-MM-DD` first. */
+  readonly row: string[];
+}
+
+/**
+ * The receipt template in the handover section.
+ *
+ * The handover sends three things: the images, the criteria, and the row the
+ * answer comes back in. The first two are already checked against the document
+ * they come from (`--walkthrough` reads the script table, the criteria are
+ * compared with the dictionary). The third was prose — "他答完照着填，把这一行
+ * 发回来" — and a row that is copied out of a sentence is a row whose columns
+ * are whatever the sender remembered. So the template is a table now, and its
+ * header has to be the record table's header, cell for cell: the person who
+ * fills it in and the person who files it are reading the same six words.
+ */
+function receiptTemplate(markdown: string): ReceiptTemplate | undefined {
+  const section = handoffSection(markdown);
+  if (section === undefined) return undefined;
+  const lines = section.split('\n');
+  const start = lines.findIndex((line) => line.trim().startsWith('| YYYY-MM-DD |'));
+  if (start === -1) return undefined;
+  const row = cells(lines[start]!);
+  let header: string[] | null = null;
+  for (let i = start - 1; i >= 0; i -= 1) {
+    const line = lines[i]!.trim();
+    if (TABLE_SEPARATOR.test(line)) continue;
+    if (!line.startsWith('|')) break;
+    header = cells(line);
+    break;
+  }
+  return { header, row };
 }
 
 /** The two language halves of the README, or `undefined` when the split is gone. */
@@ -671,7 +813,13 @@ function walkthroughProblems(
     }
   }
 
-  if (!hasRecordColumns(walkthrough)) {
+  const record = recordHeaderCells(walkthrough);
+  if (record === undefined) {
+    problems.push(
+      `docs/state-walkthrough.md: no \`${RECORD_HEADING}\` table, so a walkthrough has ` +
+        'nowhere to be signed',
+    );
+  } else if (!RECORD_COLUMNS.every((column) => record.includes(column))) {
     problems.push(
       `docs/state-walkthrough.md: the record table has no ${RECORD_COLUMNS.join(' / ')} ` +
         'columns, so a walkthrough has nowhere to be signed',
@@ -865,7 +1013,7 @@ describe('the five states have criteria a person can answer', () => {
     // say what must *not* be on screen. Renaming it therefore breaks both, and
     // the failure names both — which is the point: one renamed string can leave
     // two questions pointing at a screen that no longer exists.
-    const renamed = DICTIONARY.filter((value) => !value.includes('在下方描述你的任务'));
+    const renamed = DICTIONARY.filter((value) => !value.includes('在下面说清要做什么'));
     expect(renamed.length, 'the dictionary no longer carries empty.chat').toBeLessThan(
       DICTIONARY.length,
     );
@@ -1064,8 +1212,8 @@ describe('the five states have criteria a person can answer', () => {
     // A signature over an unknown amount of looking. The ten-image script is
     // the walk; a table that does not record how many of them were opened lets
     // "signed, all satisfied" stand for five images as easily as ten.
-    const narrowed = walkthrough.replace(
-      '| 日期 | 走查人 | 看了哪几张 | 五态判据 | 不合格项 | 结论 |',
+    const narrowed = withRecordHeader(
+      walkthrough,
       '| 日期 | 走查人 | 五态判据 | 不合格项 | 结论 |',
     );
     expect(narrowed, 'the record table header this case edits is gone').not.toBe(walkthrough);
@@ -1163,6 +1311,75 @@ describe('the ten images can be handed to somebody who has not installed the app
       walkthroughScreenshots(),
     );
     expect(problems.some((problem) => problem.includes('ghost.png'))).toBe(true);
+  });
+
+  it('the receipt template carries the record table\'s columns, cell for cell', () => {
+    // The third thing that travels with the images and the criteria. The
+    // template is what a remote walker fills in, and the record table is where
+    // the answer is filed; if the two disagree about the columns, the answer
+    // arrives in a shape the record cannot hold and the person filing it has to
+    // guess which cell meant what.
+    const record = recordHeaderCells(walkthrough);
+    expect(record, `no \`${RECORD_HEADING}\` table header`).toBeDefined();
+    const template = receiptTemplate(walkthrough);
+    expect(template, 'the handover section carries no receipt template').toBeDefined();
+    expect(template!.header, 'the receipt template has no header row').not.toBeNull();
+    expect(
+      template!.header,
+      'the receipt template and the record table name different columns',
+    ).toEqual(record);
+    expect(
+      template!.row,
+      'the receipt template\'s placeholder row does not fill every column',
+    ).toHaveLength(record!.length);
+  });
+
+  it('reports a receipt template whose columns drifted from the record table', () => {
+    // The red direction, and the reason this is a gate rather than a sentence:
+    // renaming one column in the template is a one-word edit that leaves the
+    // walker filling a cell the record table does not have.
+    const drifted = walkthrough.replace(
+      '| 日期 | 走查人 | 看了哪几张 | 五态判据 | 不合格项 | 结论 |\n|---|---|---|---|---|---|\n| YYYY-MM-DD |',
+      '| 日期 | 走查人 | 看了几张 | 五态判据 | 不合格项 | 结论 |\n|---|---|---|---|---|---|\n| YYYY-MM-DD |',
+    );
+    expect(drifted, 'the receipt template this case edits is gone').not.toBe(walkthrough);
+    const problems = handoffProblems(drifted, REPOSITORY, walkthroughScreenshots());
+    expect(
+      problems.some((problem) => problem.includes('the receipt template\'s columns are')),
+      problems.join('\n'),
+    ).toBe(true);
+  });
+
+  it('reports a record table that moved while the template stayed put', () => {
+    // The other direction: the record table gains a column and the template
+    // does not. Same failure, and the message has to name both lists so the
+    // reader can see which one moved.
+    const widened = withRecordHeader(
+      walkthrough,
+      '| 日期 | 走查人 | 看了哪几张 | 五态判据 | 不合格项 | 结论 | 备注 |',
+    );
+    expect(widened, 'the record table header this case edits is gone').not.toBe(walkthrough);
+    const problems = handoffProblems(widened, REPOSITORY, walkthroughScreenshots());
+    expect(
+      problems.some((problem) => problem.includes('the receipt template\'s columns are')),
+      problems.join('\n'),
+    ).toBe(true);
+  });
+
+  it('reports a receipt template whose placeholder row lost a cell', () => {
+    // A walker copies the placeholder row and fills it. A row with five cells
+    // under a six-column header is a row that silently shifts every answer one
+    // column to the left.
+    const short = walkthrough.replace(
+      '| YYYY-MM-DD | 你的名字 | 10 张（五态 × 两个尺寸） | 15 条全满足 / 第 N 条不满足 | 无 / <屏幕上看到什么> | 五态判据全满足 / 第 N 条不满足：<屏幕上看到什么> |',
+      '| YYYY-MM-DD | 你的名字 | 10 张（五态 × 两个尺寸） | 15 条全满足 / 第 N 条不满足 | 无 / <屏幕上看到什么> |',
+    );
+    expect(short, 'the receipt template row this case edits is gone').not.toBe(walkthrough);
+    const problems = handoffProblems(short, REPOSITORY, walkthroughScreenshots());
+    expect(
+      problems.some((problem) => problem.includes('placeholder row has')),
+      problems.join('\n'),
+    ).toBe(true);
   });
 
   it('reports a command that lists nothing, rather than passing over an empty pack', () => {

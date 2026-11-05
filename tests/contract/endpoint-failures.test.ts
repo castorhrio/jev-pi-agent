@@ -9,7 +9,7 @@
  * already paid for twice: `diagnostics.info()` failing rendered a red
  * **"not encrypted"** badge and "no log entries" on the one page whose job is
  * telling the user what is true, and a failed `sessions.list` painted
- * "还没有对话。在下方描述你的任务…" over a project that had conversations.
+ * "还没有对话。在下面说清要做什么…" over a project that had conversations.
  *
  * The fix was `endpointErrors: Partial<Record<EndpointKey, string>>` — the
  * reason travels with the fallback, and the key set is the union so a new

@@ -900,7 +900,7 @@ function Shell(): JSX.Element {
                      * the conversation. `?scenario=partial` is the case that
                      * made this visible: the workspace read succeeded, the
                      * session list did not, and the chat area still painted
-                     * "还没有对话。在下方描述你的任务…" — a confident statement
+                     * "还没有对话。在下面说清要做什么…" — a confident statement
                      * about a history nobody had managed to read. The rail
                      * already names the failure; the main region used to
                      * contradict it. Same rule as the loading branch above:
