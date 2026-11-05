@@ -344,8 +344,6 @@ function boundaryProblems(
 
 const page = existsSync(DEMO_PATH) ? readFileSync(DEMO_PATH, 'utf8') : '';
 const panel = existsSync(PANEL_PATH) ? readFileSync(PANEL_PATH, 'utf8') : '';
-const blockersPage = existsSync(BLOCKERS_PATH) ? readFileSync(BLOCKERS_PATH, 'utf8') : '';
-const readme = existsSync(README_PATH) ? readFileSync(README_PATH, 'utf8') : '';
 
 describe('the three blockers are on the page and on the screen', () => {
   it('the page and the panel agree about every block', () => {

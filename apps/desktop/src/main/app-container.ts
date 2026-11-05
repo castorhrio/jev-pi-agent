@@ -182,38 +182,25 @@ export class UcadApp {
    * A field `start()` is responsible for, refused rather than passed on as
    * `undefined`.
    *
-   * Only the dependencies that pass through `retentionDeps()` reach this
-   * function. That is intentional — see the scope note on `Started` in
-   * `container-contract.ts` — so this
-   * is not the container's general start-up check; the remaining `!` fields
-   * are checked by the scan-and-run contract test.
+   * The container declares its subsystems as `field!: T` because `start()` builds
+   * them in order; the `!` is a claim, not a guarantee, so a caller that reaches
+   * one before `start()` gets `undefined` with a `Database` type on it. The code
+   * is `CONTAINER_NOT_STARTED` and the component is `'container'`: the fault is
+   * the container's lifecycle, not the storage the caller would have used, and
+   * the message names the field.
    *
-   * The container declares its subsystems as `field!: T` because they are
-   * built in order by `start()`; the `!` is a claim, not a guarantee, and any
-   * caller that reaches a subsystem before `start()` (a test, a second entry
-   * point, a future main-process path that constructs the container early)
-   * gets `undefined` with a `Database` type on it. Downstream that becomes a
-   * fault report about the wrong layer. The code is `CONTAINER_NOT_STARTED`
-   * and the component is `'container'`: the fault is the container's
-   * lifecycle, not the storage the caller would have used, and a report that
-   * filters on `STORAGE_ERROR` or `component: 'storage'` must not collect it.
-   * The message names the field, which is the part a support report needs.
-   *
-   * **This sentence is a startup diagnostic, not interface copy.** It is
-   * thrown while bootstrap is still starting the app, reaches
-   * `app.whenReady().then(bootstrap).catch(...)` in `bootstrap.ts`, is
-   * printed to stderr and followed by `app.exit(1)` — no renderer exists yet,
-   * and no IPC channel carries it. It therefore stays out of `i18n.ts` on
-   * purpose: a translation there would suggest a user reads it in their own
-   * language, which is a promise this path cannot keep. The contract test in
-   * `app-container-started.test.ts` pins that it is absent from both
+   * **This sentence is a startup diagnostic, not interface copy.** It is thrown
+   * while bootstrap is still starting the app, printed to stderr and followed by
+   * `app.exit(1)` — no renderer exists yet — so it stays out of `i18n.ts` on
+   * purpose, and `app-container-started.test.ts` pins that it is absent from both
    * dictionaries.
    *
-   * `field` is typed as a real field of this class, and the value has to be
-   * the field it names: `requireStarted('db', this.sessionStore)` is a type
-   * error, and so is a name that is not a field at all. The `Started<…>` the
-   * call returns is what makes "this dependency went through the guard" a
-   * compile-time fact instead of a comment.
+   * Only the dependencies that pass through `retentionDeps()` reach this
+   * function; the remaining `!` fields are checked by the scan-and-run contract
+   * test. `field` is typed as a real field of this class and the value has to be
+   * the field it names, so `requireStarted('db', this.sessionStore)` is a type
+   * error. The `Started<…>` it returns is what makes "this dependency went
+   * through the guard" a compile-time fact.
    */
   private requireStarted<K extends keyof UcadApp>(
     field: K,
