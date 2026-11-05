@@ -21,6 +21,18 @@
  *  - every walkable state has a section, and every section has criteria that
  *    name something a person can actually find on screen (a backticked literal
  *    from `i18n.ts`, or the screenshot the section points at);
+ *  - and that literal is *in the dictionary*. Until this round the check only
+ *    asked whether a criterion quoted something in backticks, which meant a
+ *    criterion could quote copy the product no longer ships and stay green:
+ *    `250ddb4` rewrote the interface copy, and the walkthrough's criteria were
+ *    kept in step by hand. The document says so itself — "改文案会让判据读起来
+ *    对不上，那时该改的是这份文件" — and a rule that lives in a sentence is a
+ *    rule that holds until the round nobody reads the sentence. Each criterion
+ *    now has to quote at least one string the dictionary actually carries, so
+ *    renaming `empty.title` fails this file and names the criterion that went
+ *    stale. Fixture text (`[fixture:error] …`), the project name and the
+ *    permission category/risk values are legitimately not dictionary copy, so
+ *    the rule is "at least one", not "all of them";
  *  - every screenshot a section names exists, so the remote path — "send the
  *    images to someone who has not installed the app" — cannot rot into a 404;
  *  - every screenshot a section names is also *recorded* in
@@ -76,6 +88,7 @@ const WALKTHROUGH_PATH = join(REPO_ROOT, 'docs', 'state-walkthrough.md');
 const README_PATH = join(REPO_ROOT, 'README.md');
 const BOOTSTRAP_PATH = join(REPO_ROOT, 'apps', 'desktop', 'src', 'main', 'bootstrap.ts');
 const MANIFEST_PATH = join(REPO_ROOT, 'docs', 'screenshots', 'sources.json');
+const I18N_PATH = join(REPO_ROOT, 'apps', 'desktop', 'src', 'shared', 'i18n.ts');
 
 /** The fewest criteria a state may carry and still be a walkthrough. */
 const MIN_CRITERIA = 3;
@@ -85,6 +98,35 @@ const SCREENSHOT = /docs\/screenshots\/[\w./-]+\.png/g;
 
 /** A backticked literal: the on-screen text a criterion is anchored to. */
 const LITERAL = /`[^`\n]+`/;
+
+/** Every backticked literal in a criterion, without the backticks. */
+const LITERALS = /`([^`\n]+)`/g;
+
+/**
+ * Backticked words that are identifiers rather than prose.
+ *
+ * The same short list `ui-copy.test.ts` keeps for the same reason: `UCAD` is the
+ * product's name and `ctx` is a token the interface shows verbatim, so neither
+ * is copy the dictionary could carry. Everything else a criterion quotes has to
+ * be a string the product ships — a fixture's failure text and the permission
+ * category/risk values are the two legitimate exceptions, and they are covered
+ * by the rule being "at least one literal is dictionary copy" rather than "all
+ * of them are".
+ */
+const NON_PROSE_LITERALS = new Set(['UCAD', 'ctx']);
+
+/**
+ * What makes a backticked literal *prose*: a Han character, or a space.
+ *
+ * The distinction is what keeps the rule honest in both directions. `jev-pi-agent`
+ * is a project name, `SHELL` and `high` are a permission category and risk level,
+ * `UCAD` and `ctx` are the product's name and a token — none of them is copy the
+ * dictionary could carry, and a criterion that names one of them is still naming
+ * something a walker can find on screen. A literal with a Han character or a
+ * space is a sentence the interface says, and the interface's sentences live in
+ * `i18n.ts`.
+ */
+const PROSE_LITERAL = /[\u3400-\u9fff]|\s/;
 
 /** A dated record row, i.e. a signature. */
 const SIGNED_DATE = /^\d{4}-\d{2}-\d{2}$/;
@@ -114,6 +156,15 @@ interface Repository {
    * look at it.
    */
   readonly trackedScreenshot: (relativePath: string) => boolean;
+  /**
+   * Every string the interface dictionary ships, in both locales.
+   *
+   * The criteria quote the copy a walker will look for on screen, and the copy
+   * lives in `i18n.ts`. Comparing the two is what turns "the criteria are kept
+   * in step with the copy by hand" into a red run: a renamed string leaves the
+   * criterion quoting something no screen shows any more.
+   */
+  readonly dictionary: readonly string[];
 }
 
 /**
@@ -148,6 +199,40 @@ function windows(): { opening: Size; min: Size } {
 }
 
 const WINDOWS = windows();
+
+/**
+ * Every string the interface dictionary ships, in both locales.
+ *
+ * Read out of `i18n.ts` rather than imported, for the same reason the window
+ * sizes are read out of `bootstrap.ts`: the question is whether the criteria
+ * quote the copy the product ships, and importing a copy of the dictionary
+ * would answer a different question. Both dictionary blocks are parsed, so a
+ * criterion anchored to a string that exists in either language counts — the
+ * walkthrough is written in Chinese, and the two halves of the README are
+ * compared by `readme-parity.test.ts`, not here.
+ *
+ * Values may be single- or double-quoted, and may sit on the line after their
+ * key (`'terminal.distinct':` then the string), which is why the pattern allows
+ * whitespace — newlines included — between the two.
+ */
+function dictionaryValues(): string[] {
+  const source = readFileSync(I18N_PATH, 'utf8');
+  const values: string[] = [];
+  for (const name of ['zhCN', 'enUS']) {
+    const start = source.indexOf(`const ${name}: Dictionary = {`);
+    expect(start, `i18n.ts no longer declares ${name}`).toBeGreaterThan(-1);
+    const end = source.indexOf('\n};', start);
+    expect(end, `i18n.ts no longer closes ${name}`).toBeGreaterThan(start);
+    const block = source.slice(start, end);
+    for (const match of block.matchAll(
+      /'[^'\n]+':\s*(?:'((?:[^'\\]|\\.)*)'|"((?:[^"\\]|\\.)*)")/gs,
+    )) {
+      values.push((match[1] ?? match[2] ?? '').replace(/\\(['"\\])/g, '$1'));
+    }
+  }
+  expect(values.length, 'no dictionary value was read out of i18n.ts').toBeGreaterThan(0);
+  return values;
+}
 
 /**
  * A PNG's pixel size, read from its IHDR chunk.
@@ -401,10 +486,41 @@ function walkthroughProblems(
       );
     }
     for (const item of items) {
-      if (LITERAL.test(item)) continue;
+      const literals = [...item.matchAll(LITERALS)].map((match) => match[1]!);
+      if (literals.length === 0) {
+        problems.push(
+          `docs/state-walkthrough.md: a \`${state}\` criterion names nothing on screen ` +
+            `(${JSON.stringify(item.slice(0, 48))}); anchor it to a literal a walker can find`,
+        );
+        continue;
+      }
+      /*
+       * The literal has to be copy the product ships.
+       *
+       * "Quotes something in backticks" was the whole check until this round,
+       * and it is satisfied by a criterion quoting a string that was renamed
+       * two rounds ago — the walker then looks for text no screen shows and
+       * answers "否" about a screen that is correct. The dictionary is the only
+       * list of what the interface actually says, so a criterion has to name at
+       * least one of its strings. Fixture failure text, the project name and
+       * the permission category/risk values are not dictionary copy, which is
+       * why the rule is "at least one" rather than "all of them".
+       */
+      const prose = literals.filter(
+        (literal) => !NON_PROSE_LITERALS.has(literal) && PROSE_LITERAL.test(literal),
+      );
+      // Identifiers only: the criterion names something on screen that is not a
+      // sentence, so there is no copy for the dictionary to carry.
+      if (prose.length === 0) continue;
+      const anchored = prose.filter((literal) =>
+        repository.dictionary.some((value) => value.includes(literal)),
+      );
+      if (anchored.length > 0) continue;
       problems.push(
-        `docs/state-walkthrough.md: a \`${state}\` criterion names nothing on screen ` +
-          `(${JSON.stringify(item.slice(0, 48))}); anchor it to a literal a walker can find`,
+        `docs/state-walkthrough.md: a \`${state}\` criterion quotes ` +
+          `${prose.map((literal) => `\`${literal}\``).join(' / ')}, and none of them is ` +
+          'copy `apps/desktop/src/shared/i18n.ts` ships — the criterion is pointing a walker ' +
+          'at a screen that no longer exists, so fix the criterion (or the copy), not the gate',
       );
     }
 
@@ -522,6 +638,9 @@ const TRACKED_SHOTS = new Set<string>(
     : [],
 );
 
+/** The dictionary, read once: every criterion is compared against the same list. */
+const DICTIONARY = dictionaryValues();
+
 const REPOSITORY: Repository = {
   fileExists: (relativePath) => existsSync(join(REPO_ROOT, relativePath)),
   pngSize: (relativePath) => {
@@ -529,6 +648,7 @@ const REPOSITORY: Repository = {
     return existsSync(full) ? pngSize(readFileSync(full)) : null;
   },
   trackedScreenshot: (relativePath) => TRACKED_SHOTS.has(relativePath),
+  dictionary: DICTIONARY,
 };
 
 /**
@@ -549,6 +669,7 @@ function fakeRepo(overrides: Partial<Repository> = {}): Repository {
         : { ...WINDOWS.opening };
     },
     trackedScreenshot: () => true,
+    dictionary: DICTIONARY,
     ...overrides,
   };
 }
@@ -631,6 +752,29 @@ describe('the five states have criteria a person can answer', () => {
     expect(problems).toContain(
       'docs/state-walkthrough.md: no `### loading` section, so nobody can walk it',
     );
+  });
+
+  it('reports a criterion quoting copy the dictionary no longer ships', () => {
+    // The red direction of the anchor rule, driven without editing `i18n.ts`:
+    // the dictionary is a parameter, so a case can hand the check a list that
+    // has lost one string and watch the criteria that quote it go red. This is
+    // the shape `250ddb4` left behind — the copy was rewritten and the criteria
+    // were kept in step by hand, because nothing compared the two.
+    //
+    // `empty.chat` is the string two criteria quote: the first-run criterion
+    // quotes it whole, and the loading criterion quotes the first half of it to
+    // say what must *not* be on screen. Renaming it therefore breaks both, and
+    // the failure names both — which is the point: one renamed string can leave
+    // two questions pointing at a screen that no longer exists.
+    const renamed = DICTIONARY.filter((value) => !value.includes('在下方描述你的任务'));
+    expect(renamed.length, 'the dictionary no longer carries empty.chat').toBeLessThan(
+      DICTIONARY.length,
+    );
+    const problems = walkthroughProblems(walkthrough, readme, fakeRepo({ dictionary: renamed }));
+    expect(problems, problems.join('\n')).toHaveLength(2);
+    expect(problems.some((problem) => problem.includes('a `empty` criterion quotes'))).toBe(true);
+    expect(problems.some((problem) => problem.includes('a `loading` criterion quotes'))).toBe(true);
+    expect(problems[0]).toContain('apps/desktop/src/shared/i18n.ts');
   });
 
   it('reports a criterion that names nothing on screen', () => {
