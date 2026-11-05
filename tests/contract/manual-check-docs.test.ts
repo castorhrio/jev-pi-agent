@@ -336,6 +336,13 @@ const DOCUMENTS: readonly Document[] = [
   // here, by the same check the other documents get.
   'docs/release/REPLACE-FEED.md',
   'docs/manual-verification/README.md',
+  // The demo script. It used to name the verifier without a command line, so
+  // there was nothing here to compare; it now carries the Windows command a
+  // reviewer is told to run, which makes it one more document whose flags can
+  // rot. `demo-script.test.ts` pins that the command is the same literal the
+  // checklist gives; this file pins that the literal is a command the script
+  // would accept.
+  'docs/demo-script.md',
 ].map(readDocument);
 const README = DOCUMENTS[0]!;
 

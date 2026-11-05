@@ -49,6 +49,19 @@
  * there too, and they are checked by `state-walkthrough.test.ts`. This file only
  * keeps the demo script and the verifier talking about the same five steps.
  *
+ * ## The one sentence a reviewer asks for on stage
+ *
+ * The demo script also has to say, in the section where the question is asked,
+ * that the Windows six steps have **not** been run. That sentence lived only at
+ * the end of `docs/manual-verification.md`, which is the document nobody opens
+ * while standing in front of a reviewer: the question is asked of the demo
+ * script, so the answer has to be in the demo script. And because the answer is
+ * a command, the command has to be the same one the checklist gives — two
+ * documents spelling one command two ways is the drift this repository keeps
+ * finding. So the check is bidirectional: the demo script must carry the claim
+ * and the command, and `docs/manual-verification.md` must still carry both. The
+ * day a Windows run lands, both documents change together or this file goes red.
+ *
  * The checks are pure functions of `(document, scriptSource)`, so the red
  * direction is driven with mutated copies rather than argued about.
  */
@@ -62,6 +75,31 @@ import { DRIVEN_STEPS } from '../../scripts/verify-main-chain.mjs';
 const REPO_ROOT = join(import.meta.dirname, '..', '..');
 const DEMO_PATH = join(REPO_ROOT, 'docs', 'demo-script.md');
 const VERIFIER_PATH = join(REPO_ROOT, 'scripts', 'verify-main-chain.mjs');
+const MANUAL_PATH = join(REPO_ROOT, 'docs', 'manual-verification.md');
+
+/** The section a reviewer's "did you run it on a real machine?" lands in. */
+const WINDOWS_SECTION = '## 被问到「真机跑过吗」';
+
+/**
+ * The claim, as both documents spell it.
+ *
+ * Deliberately the tail of the sentence rather than the whole of it: the demo
+ * script bolds `Windows 六步仍未跑` and the checklist writes
+ * `Windows 真机六步仍未跑`, and pinning either whole phrase would make the two
+ * documents disagree about wording instead of about the fact. What has to be
+ * true in both is that the six steps have not been run.
+ */
+const WINDOWS_CLAIM = '六步仍未跑';
+
+/**
+ * The command that produces the report, spelled the way a Windows reader types
+ * it — the same literal `docs/manual-verification.md` gives.
+ */
+const WINDOWS_COMMAND =
+  'node scripts\\verify-main-chain.mjs --exec release\\win-unpacked\\UCAD.exe --report win-report.json';
+
+/** The flag that turns a carried-home report into a verdict. */
+const WINDOWS_JUDGE = '--judge';
 
 /** The step whose `[ok]` line no demo may quote: it is a person's walk, not a run. */
 const MANUAL_STEP = 6;
@@ -175,8 +213,78 @@ function demoProblems(document: string, scriptSource: string): string[] {
   return problems;
 }
 
+/**
+ * The section of a document that starts at `heading`, up to the next `## `.
+ *
+ * `undefined` when the heading is gone, on purpose: a document that dropped the
+ * section would otherwise make "the sentence is in the section" true of the
+ * whole file, which is the shape of a gate that stopped looking.
+ */
+function sectionOf(markdown: string, heading: string): string | undefined {
+  const start = markdown.indexOf(heading);
+  if (start === -1) return undefined;
+  const next = markdown.indexOf('\n## ', start + heading.length);
+  return next === -1 ? markdown.slice(start) : markdown.slice(start, next);
+}
+
+/**
+ * Every way the two documents disagree about the Windows run.
+ *
+ * Empty means the demo script answers the question where it is asked, with the
+ * command the checklist gives, and the checklist still says the same thing.
+ * Pure in `(demo, manual)` so each red direction is driven rather than argued.
+ */
+function windowsProblems(demo: string, manual: string): string[] {
+  const problems: string[] = [];
+
+  const section = sectionOf(demo, WINDOWS_SECTION);
+  if (section === undefined) {
+    return [
+      `docs/demo-script.md: has no \`${WINDOWS_SECTION}\` section, so the question a reviewer ` +
+        'asks on stage has nowhere to be answered',
+    ];
+  }
+  if (!section.includes(WINDOWS_CLAIM)) {
+    problems.push(
+      `docs/demo-script.md: the \`${WINDOWS_SECTION}\` section no longer says the Windows six ` +
+        'steps have not been run — a demo that is silent about it reads as "it was run"',
+    );
+  }
+  if (!section.includes(WINDOWS_COMMAND)) {
+    problems.push(
+      'docs/demo-script.md: the section no longer gives the command that produces the report, ' +
+        'so "we have not run it" comes with no way to run it',
+    );
+  }
+  if (!section.includes(WINDOWS_JUDGE)) {
+    problems.push(
+      'docs/demo-script.md: the section no longer says the carried-home report is judged with ' +
+        `\`${WINDOWS_JUDGE}\`, so the command it gives has no reader`,
+    );
+  }
+
+  // The other half of the same fact. If the checklist stops saying it, the demo
+  // script is the only place left claiming it — and the two documents are
+  // supposed to be one statement about one run.
+  if (!manual.includes(WINDOWS_CLAIM)) {
+    problems.push(
+      'docs/manual-verification.md: no longer says the Windows six steps have not been run, ' +
+        'while the demo script still does — one of the two is now wrong',
+    );
+  }
+  if (!manual.includes(WINDOWS_COMMAND)) {
+    problems.push(
+      'docs/manual-verification.md: no longer spells the Windows command the demo script gives, ' +
+        'so the two documents send the reader to two different commands',
+    );
+  }
+
+  return problems;
+}
+
 const document = existsSync(DEMO_PATH) ? readFileSync(DEMO_PATH, 'utf8') : '';
 const scriptSource = existsSync(VERIFIER_PATH) ? readFileSync(VERIFIER_PATH, 'utf8') : '';
+const manual = existsSync(MANUAL_PATH) ? readFileSync(MANUAL_PATH, 'utf8') : '';
 
 describe('the demo script demonstrates the steps the verifier drives', () => {
   it('the document is present, so the checks below have a subject', () => {
@@ -256,5 +364,66 @@ describe('the checks above, when the demo script has drifted', () => {
   it('reports a demo script that is missing altogether', () => {
     expect(demoProblems('', scriptSource)).toHaveLength(1);
     expect(demoProblems('', scriptSource)[0]).toContain('is missing or empty');
+  });
+});
+
+describe('the demo script answers "did you run it on Windows?" where it is asked', () => {
+  it('carries the claim, the command and the judge flag in the section a reviewer asks in', () => {
+    const problems = windowsProblems(document, manual);
+    expect(
+      problems,
+      `the demo script and the checklist disagree about the Windows run:\n  ${problems.join('\n  ')}`,
+    ).toEqual([]);
+  });
+
+  it('is not vacuous: the section, the claim and the command really are in the files', () => {
+    // Without this, a refactor that emptied `sectionOf` would leave the case
+    // above passing over nothing at all.
+    const section = sectionOf(document, WINDOWS_SECTION);
+    expect(section, `docs/demo-script.md has no \`${WINDOWS_SECTION}\` section`).toBeDefined();
+    expect(section!).toContain(WINDOWS_CLAIM);
+    expect(section!).toContain(WINDOWS_COMMAND);
+    expect(section!).toContain(WINDOWS_JUDGE);
+    // And the checklist really is the file being compared, rather than the case
+    // being green because nothing matched.
+    expect(manual).toContain(WINDOWS_CLAIM);
+    expect(manual).toContain(WINDOWS_COMMAND);
+  });
+
+  it('reports a demo script that dropped the sentence', () => {
+    // The failure this block exists for: the sentence goes back to living only
+    // at the end of the checklist, and the person on stage has nothing to say.
+    const withoutClaim = document.replaceAll(WINDOWS_CLAIM, '六步已跑');
+    expect(withoutClaim, 'the claim this case removes is gone').not.toBe(document);
+    const problems = windowsProblems(withoutClaim, manual);
+    expect(problems.some((problem) => problem.includes('have not been run'))).toBe(true);
+  });
+
+  it('reports a demo script that dropped the command', () => {
+    const withoutCommand = document.replace(WINDOWS_COMMAND, '跑一下那条命令');
+    expect(withoutCommand, 'the command this case removes is gone').not.toBe(document);
+    const problems = windowsProblems(withoutCommand, manual);
+    expect(problems.some((problem) => problem.includes('no way to run it'))).toBe(true);
+  });
+
+  it('reports a demo script that dropped the section', () => {
+    const withoutSection = document.replace(WINDOWS_SECTION, '## 别的标题');
+    expect(withoutSection, 'the heading this case removes is gone').not.toBe(document);
+    const problems = windowsProblems(withoutSection, manual);
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toContain('has nowhere to be answered');
+  });
+
+  it('reports a checklist that stopped saying it, while the demo script still does', () => {
+    // The other direction: the day a Windows run lands, the checklist row is
+    // updated and the demo script is not — or the reverse. Either way the two
+    // documents are no longer one statement, and this is where that shows.
+    const problems = windowsProblems(document, manual.replaceAll(WINDOWS_CLAIM, '六步已跑'));
+    expect(problems.some((problem) => problem.includes('one of the two is now wrong'))).toBe(true);
+  });
+
+  it('reports a checklist that spells a different command', () => {
+    const problems = windowsProblems(document, manual.replace(WINDOWS_COMMAND, 'node scripts\\verify-main-chain.mjs'));
+    expect(problems.some((problem) => problem.includes('two different commands'))).toBe(true);
   });
 });

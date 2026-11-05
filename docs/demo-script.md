@@ -152,6 +152,11 @@ UCAD 把这两件事做成屏幕上的字节与记录，再配上只追加的交
 ## 被问到「真机跑过吗」
 
 - 主链路的记录在 `docs/manual-verification.md`，一行一条：平台、构建、覆盖步骤、结果与证据（哈希前 12 位、日志原文）。
+- **Windows 六步仍未跑**，原因是本机没有 Windows 桌面；跑法是一条命令
+  `npm run package && node scripts\verify-main-chain.mjs --exec release\win-unpacked\UCAD.exe --report win-report.json`，
+  带回后 `--judge` 判：`node scripts\verify-main-chain.mjs --judge docs/manual-verification/win-YYYYMMDD.json`。
+  这一句必须在这里说出来，而不是只写在 `docs/manual-verification.md` 的末尾——现场被问到的是这份脚本，
+  不是那份清单；`tests/contract/demo-script.test.ts` 钉住这一句，也钉住它与清单里那条命令是同一串字。
 - 复现方式是一条命令：`npm run package` 之后 `node scripts/verify-main-chain.mjs`（Linux 需有桌面会话与系统钥匙串；
   Windows 加 `--exec release\win-unpacked\UCAD.exe`）。
 - 自动化门禁（`npm run typecheck && npm run lint && npm run knip && npm test && npm run test:e2e`）先绿，
