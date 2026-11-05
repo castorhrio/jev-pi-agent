@@ -37,14 +37,30 @@
 | DOD-2.3 | 设置里引擎链与实跑一致 | 通过 | `tests/contract/decision-chain.test.ts` | — |
 | DOD-3.1 | 执行前有记录在案的允许/拒绝 | 通过 | `tests/integration/ui-permission.test.ts` | — |
 | DOD-3.2 | 审计可查 | 通过 | `packages/permissions/src/permission-engine.ts` `tests/integration/ui-permission.test.ts` | — |
-| DOD-4.1 | Releases 上 NSIS 可装 | 外部阻塞 | `package.json` `scripts/verify-main-chain.mjs` `docs/blockers.md` `docs/manual-verification/README.md` | 需要一台 Windows 机器：装一次、过 SmartScreen、跑 `node scripts/verify-main-chain.mjs` 并 `--report` 带回报告，再用 `--judge` 判成过。**照着敲的一页**：`docs/manual-verification/README.md` |
-| DOD-4.2 | 更新 feed `https` + `sha256` 校验 | 未过 | `scripts/verify-release-feed.mjs` `scripts/publish-feed.mjs` `tests/contract/release-feed.test.ts` `docs/release/REPLACE-FEED.md` | 应用侧校验已绿、修正版文档已判零 finding；**发布出去的 v1.0.0 feed 仍缺 `sha256`**，需要持有 `contents: write` 的人跑 `node scripts/publish-feed.mjs`，之后 `node scripts/verify-release-feed.mjs` 退出 0。**照着敲的一页**：`docs/release/REPLACE-FEED.md` |
+| DOD-4.1 | Releases 上 NSIS 可装 | 外部阻塞 | `package.json` `scripts/verify-main-chain.mjs` `docs/blockers.md` `docs/manual-verification/README.md` | 需要一台 Windows 机器：装一次、过 SmartScreen、跑 `node scripts/verify-main-chain.mjs` 并 `--report` 带回报告，再用 `--judge` 判成过。**照着敲的一页**：`docs/manual-verification/README.md`。**阻塞在哪**：`docs/blockers.md` 第 2 节 |
+| DOD-4.2 | 更新 feed `https` + `sha256` 校验 | 未过 | `scripts/verify-release-feed.mjs` `scripts/publish-feed.mjs` `tests/contract/release-feed.test.ts` `docs/release/REPLACE-FEED.md` | 应用侧校验已绿、修正版文档已判零 finding；**发布出去的 v1.0.0 feed 仍缺 `sha256`**，需要持有 `contents: write` 的人跑 `node scripts/publish-feed.mjs`，之后 `node scripts/verify-release-feed.mjs` 退出 0。**照着敲的一页**：`docs/release/REPLACE-FEED.md`。**阻塞在哪**：`docs/blockers.md` 第 1 节 |
 | DOD-4.3 | 明文/非 URL 覆盖被拒并打日志 | 通过 | `apps/desktop/src/main/update-feed.ts` `apps/desktop/src/main/update-feed-log.ts` `tests/contract/update-integrity.test.ts` | — |
 | DOD-4.4 | 未签名 SmartScreen 有说明 | 通过 | `README.md` | — |
 | DOD-5.1 | `npm run typecheck && lint && knip && test && test:e2e`（及 CI 等价）绿 | 通过 | `npm run verify:gates` `.github/workflows/ci.yml` `scripts/gate-local.mjs` `tests/contract/ci-gate-local.test.ts` `tests/contract/ci-typecheck.test.ts` `docs/manual-verification.md` | — |
 | DOD-5.2 | 注入/交接/凭据/更新合约测试能打红 | 通过 | `tests/contract/injection-contract.test.ts` `tests/contract/handoff-chain.test.ts` `tests/contract/keyring-gate.test.ts` `tests/contract/release-feed.test.ts` `tests/contract/app-rules-build.test.ts` | — |
 | DOD-6.1 | token 来源（厂商 tokenizer vs 启发式）上屏 | 通过 | `apps/desktop/src/renderer/src/components/ContextDrawer.tsx` `apps/desktop/src/renderer/src/components/PreviewPane.tsx` | — |
 | DOD-6.2 | 凭据进 OS 钥匙串，不经环境变量/日志泄露 | 通过 | `apps/desktop/src/main/keyring-gate.ts` `tests/contract/keyring-gate.test.ts` `tests/contract/secret-vault.test.ts` `tests/contract/host-secret-channel.test.ts` | — |
+
+## 三条外部阻塞落在哪一行
+
+`docs/blockers.md` 的三节与上面那张四态表**不是**一一对应：两条阻塞各有一句 DoD 句子，第三条没有。
+这张小表就是那个对应关系，`tests/contract/dod-status.test.ts` 两个方向都核对——每一节都要在这里有一行、
+每一个「未过 / 外部阻塞」的行都要在这里被点到、点到的条目号必须真的在四态表里、写「无对应 DoD 句子」
+的那一行必须给出理由。所以「解除第 N 条阻塞」与「改哪一行」是同一件事，不是两件靠人记的事。
+
+| 阻塞（`docs/blockers.md`） | 落在哪一行 | 为什么 |
+|---|---|---|
+| 第 1 节 · 已发布的 v1.0.0 feed 缺 `sha256` | DOD-4.2 | 那一句要求 feed 带 `sha256` 校验，而发布出去的那份没有 |
+| 第 2 节 · Windows 桌面六步 | DOD-4.1 | 那一句要求 Releases 上的 NSIS 可装，而本机没有 Windows 机器 |
+| 第 3 节 · 五个界面状态的人眼走查 | 无对应 DoD 句子 | DoD 没有一句要求人眼走查；它落在旧表「权限门不可绕」行的「还差什么」里，签字之后改那一行 |
+
+第三行是这张表存在的理由：一条外部阻塞**没有** DoD 句子接着它，这件事本身要写下来。不写的话，
+下一轮读四态表会以为「未过 + 外部阻塞 = 2」就是全部缺口，而 `docs/blockers.md` 上还挂着第三节。
 
 ## 本轮 DoD 加载来源与未勾项（2026-11-05）
 

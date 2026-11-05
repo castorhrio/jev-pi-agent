@@ -84,6 +84,10 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import { DRIVEN_STEPS } from '../../scripts/verify-main-chain.mjs';
+// The three degraded-path commands and their block reader live in one module
+// because `blocker-closing.test.ts` counts the same list: a copy in each file
+// would let one gate be edited while the other kept counting the old length.
+import { DEGRADED_COMMANDS, degradedBlocks } from './degraded-commands.ts';
 
 const REPO_ROOT = join(import.meta.dirname, '..', '..');
 const DEMO_PATH = join(REPO_ROOT, 'docs', 'demo-script.md');
@@ -244,7 +248,7 @@ function stepClosure(source: string): Map<number, Set<string>> {
   for (let round = 0; round < MAX_CLOSURE_ROUNDS; round += 1) {
     let grew = false;
     for (const names of closure.values()) {
-      for (const [name, text] of byName) {
+      for (const [name] of byName) {
         if (names.has(name)) continue;
         const called = [...names].some((known) =>
           new RegExp(`\\b${name}\\s*\\(`).test(byName.get(known)!),
@@ -1103,21 +1107,8 @@ describe('the checks above, when the page or the run has drifted', () => {
  * that the page and the scripts still describe the same output.
  */
 
-/** The three commands, spelled the way the page gives them. */
-const DEGRADED_COMMANDS = [
-  'node scripts/release-gate.mjs --simulate-missing-sha',
-  'node scripts/verify-main-chain.mjs --judge tests/fixtures/judge/fail.json',
-  'node scripts/screenshot-sources.mjs --check',
-] as const;
-
 /** The shortest piece of a quoted line that counts as pinning wording. */
 const MIN_PIECE = 20;
-
-/** One `$ command` + first-output-line block of the section. */
-interface DegradedBlock {
-  readonly command: string;
-  readonly firstLine: string;
-}
 
 /** The script a `node scripts/…` command runs, or `undefined` for anything else. */
 function scriptOf(command: string): string | undefined {
@@ -1134,28 +1125,6 @@ function scriptOf(command: string): string | undefined {
  */
 function flatten(source: string): string {
   return source.replace(/' \+\s*\n\s*'/g, '').replace(/\s+/g, ' ');
-}
-
-/** The `$ command` blocks of a section, in document order. */
-function degradedBlocks(section: string): DegradedBlock[] {
-  const blocks: DegradedBlock[] = [];
-  let inside = false;
-  let lines: string[] = [];
-  for (const line of section.split('\n')) {
-    if (line.trim().startsWith('```')) {
-      if (inside) {
-        const [first, second] = lines;
-        if (first !== undefined && first.startsWith('$ ')) {
-          blocks.push({ command: first.slice(2).trim(), firstLine: (second ?? '').trim() });
-        }
-        lines = [];
-      }
-      inside = !inside;
-      continue;
-    }
-    if (inside) lines.push(line);
-  }
-  return blocks;
 }
 
 /**

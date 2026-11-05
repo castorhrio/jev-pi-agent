@@ -26,9 +26,17 @@
  *  - the section names the error a reader will search for (`Unknown system error
  *    -122`) and both `df` commands, because a section that describes the symptom
  *    in its own words is a section a reader cannot match against their terminal;
+ *  - the section says **which command is authoritative where**: `npm test` on CI,
+ *    `npm run test:local` on this machine, and that a red `npm test` here is not
+ *    a signal. That is the sentence the three commit messages were trying to be,
+ *    and it is the one a reader needs before they decide whether a red run means
+ *    anything — a page that only says "the suite fails here" leaves the reader
+ *    to guess which of the two commands they just ran;
  *  - and the script's own `--dry-run` reports a temp directory inside the
- *    repository — the one assertion here that runs the thing instead of reading
- *    it.
+ *    repository, for **all three** variables it sets — the one assertion here
+ *    that runs the thing instead of reading it. Checking only `TMPDIR` would
+ *    leave `TEMP` and `TMP` free to point at `/tmp`, which is the failure the
+ *    script exists to end.
  *
  * The checks are a pure function of `(documents, package.json, script source)`
  * so the red direction is driven on a mutated copy rather than argued about.
@@ -66,6 +74,21 @@ const LOCAL_SCRIPT = 'scripts/test-local.mjs';
 
 /** The scratch directory the script uses, as `.gitignore` spells it. */
 const TEMP_DIR_ENTRY = '.tmp/';
+
+/**
+ * The two sentences that say which command is authoritative where.
+ *
+ * Pinned as literals rather than as "the section mentions `npm test`", because
+ * the section already mentioned `npm test` while saying only that it is the
+ * command CI runs — which is true and does not answer the question a reader
+ * has. The question is "I ran `npm test` and it is red; is that a signal?", and
+ * the answer has to be on the page in words a reader can act on.
+ */
+const CI_AUTHORITY = 'CI 上 `npm test` 是权威';
+const LOCAL_RED_MEANING = '本机 `npm test` 红不构成信号';
+
+/** The three variables the script relocates, and the `--dry-run` line for each. */
+const TEMP_VARS = ['TMPDIR', 'TEMP', 'TMP'] as const;
 
 /** What the checks read. */
 interface Facts {
@@ -149,6 +172,17 @@ function localTestEnvProblems(facts: Facts): string[] {
     );
   }
 
+  // Which command is authoritative where. Both halves are needed: the first
+  // alone reads as "CI is fine", the second alone reads as "ignore the red".
+  for (const literal of [CI_AUTHORITY, LOCAL_RED_MEANING]) {
+    if (!body.includes(literal)) {
+      problems.push(
+        `docs/blockers.md: the local-test section does not say \`${literal}\`, so a reader who ` +
+          'just ran the red command is left to guess whether it means anything',
+      );
+    }
+  }
+
   // The two readings and the error string, because a reader matches their own
   // terminal against these literals and not against a paraphrase.
   for (const literal of ['df -h /tmp', 'df -i /tmp', 'Unknown system error -122']) {
@@ -217,6 +251,25 @@ describe('the local-test constraint is a command, not a disclaimer', () => {
     );
   });
 
+  it('reports a section that stopped saying which command is authoritative', () => {
+    // The sentence the three commit messages were trying to be. Without it the
+    // page says the suite fails here and leaves the reader to decide whether
+    // the red run they just saw means anything.
+    const problems = localTestEnvProblems({
+      ...facts,
+      blockers: BLOCKERS.replace(CI_AUTHORITY, '`npm test` 在 CI 上跑'),
+    });
+    expect(problems.some((problem) => problem.includes(CI_AUTHORITY))).toBe(true);
+  });
+
+  it('reports a section that stopped saying a red local run is not a signal', () => {
+    const problems = localTestEnvProblems({
+      ...facts,
+      blockers: BLOCKERS.replace(LOCAL_RED_MEANING, '本机也可能红'),
+    });
+    expect(problems.some((problem) => problem.includes(LOCAL_RED_MEANING))).toBe(true);
+  });
+
   it('reports a section that describes the failure without quoting it', () => {
     const problems = localTestEnvProblems({
       ...facts,
@@ -234,10 +287,23 @@ describe('the local-test constraint is a command, not a disclaimer', () => {
       encoding: 'utf8',
     });
     expect(run.status, `\`node ${LOCAL_SCRIPT} --dry-run\` exited ${run.status}: ${run.stderr}`).toBe(0);
-    const reported = /^TMPDIR=(.+)$/mu.exec(run.stdout)?.[1]?.trim();
-    expect(reported, `--dry-run printed no TMPDIR line:\n${run.stdout}`).toBeDefined();
-    expect(reported!.startsWith(REPO_ROOT), `--dry-run points TMPDIR at ${reported}, outside the checkout`).toBe(
-      true,
+    // All three, not just `TMPDIR`: the script sets `TMPDIR` / `TEMP` / `TMP`
+    // together because a library that reads `TEMP` first would otherwise still
+    // land in `/tmp`, and a gate that checked one of the three would be green
+    // about a relocation that only half happened.
+    for (const name of TEMP_VARS) {
+      const reported = new RegExp(`^${name}=(.+)$`, 'mu').exec(run.stdout)?.[1]?.trim();
+      expect(reported, `--dry-run printed no ${name} line:\n${run.stdout}`).toBeDefined();
+      expect(
+        reported!.startsWith(REPO_ROOT),
+        `--dry-run points ${name} at ${reported}, outside the checkout`,
+      ).toBe(true);
+    }
+    // And the three really are the same directory, so "relocated" is one place
+    // rather than three that happen to be inside the checkout.
+    const dirs = TEMP_VARS.map(
+      (name) => new RegExp(`^${name}=(.+)$`, 'mu').exec(run.stdout)?.[1]?.trim(),
     );
+    expect(new Set(dirs).size, `--dry-run reports ${dirs.join(' / ')}`).toBe(1);
   });
 });

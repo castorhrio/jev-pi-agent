@@ -33,6 +33,18 @@
  *    sentence names before it — this is the claim that was wrong, and it is the
  *    one a reader cannot check without opening two files.
  *
+ * ## The count, which is the one thing a closing recipe cannot check itself
+ *
+ * Closing a blocker is three edits in three files: delete the section here,
+ * delete the block from `docs/demo-script.md`, delete the entry from
+ * `DEGRADED_COMMANDS`. Each of those lists is read by a gate that **iterates**
+ * it, so deleting an entry makes the loop shorter and every assertion stays
+ * green — the recipe's own instruction ("`DEGRADED_COMMANDS` 同步删掉") was the
+ * only thing holding the three together, and it was prose. The last block in
+ * this file makes the three counts one fact: the number of `## N.` sections, the
+ * number of `$ ` blocks on the demo page, and the length of the command list
+ * have to be the same number, and a failure names which of the three is off.
+ *
  * ## What it deliberately cannot see
  *
  * Whether the list is **complete**. It can prove that the four places a section
@@ -53,13 +65,19 @@ import { describe, expect, it } from 'vitest';
 // a `## 1. …` section is" would drift, and the drift would show up as one gate
 // quietly reading nothing while the others stayed green.
 import { blockerSections } from './blockers-doc.ts';
+// The demo page's three blocks and the command list they are checked against,
+// from the module both gates read: a copy of the list in each file would let one
+// gate be edited while the other kept counting the old length.
+import { DEGRADED_COMMANDS, degradedBlocks, degradedSection } from './degraded-commands.ts';
 
 const REPO_ROOT = join(import.meta.dirname, '..', '..');
 const BLOCKERS_PATH = join(REPO_ROOT, 'docs', 'blockers.md');
+const DEMO_PATH = join(REPO_ROOT, 'docs', 'demo-script.md');
 
 const read = (path: string): string => (existsSync(path) ? readFileSync(path, 'utf8') : '');
 
 const BLOCKERS = read(BLOCKERS_PATH);
+const DEMO = read(DEMO_PATH);
 
 /** The heading a closing recipe starts at. */
 const CLOSING_HEADING = '### 解除时';
@@ -396,5 +414,117 @@ describe('every blocker says what to do the moment it lifts', () => {
     const problems = closingProblems(broken, readRepoFile);
     expect(problems).toHaveLength(1);
     expect(problems[0]).toContain('is not something this repository can run');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The three counts that have to be one number
+// ---------------------------------------------------------------------------
+
+/**
+ * Every way the three lists of blockers disagree about how many there are.
+ *
+ * Empty means `docs/blockers.md` has as many `## N.` sections as
+ * `docs/demo-script.md` has `$ ` blocks in its degraded-path subsection, and as
+ * many commands as `DEGRADED_COMMANDS` carries. Pure in its three inputs so the
+ * red direction is driven on a mutated copy rather than argued about.
+ */
+function blockerCountProblems(
+  blockers: string,
+  demo: string,
+  commands: readonly string[],
+): string[] {
+  const sections = blockerSections(blockers).length;
+  const section = degradedSection(demo);
+  if (section === undefined) {
+    return [
+      'docs/demo-script.md: has no `### 三条阻塞的现场降级路径` subsection, so the demo page ' +
+        'and the blockers page cannot be counted against each other',
+    ];
+  }
+  const blocks = degradedBlocks(section).length;
+  const problems: string[] = [];
+  if (sections !== blocks) {
+    problems.push(
+      `docs/blockers.md has ${sections} blocker section(s) and docs/demo-script.md shows ` +
+        `${blocks} degraded-path block(s) — closing one blocker means deleting one of each, and ` +
+        'one of the two pages was not edited',
+    );
+  }
+  if (sections !== commands.length) {
+    problems.push(
+      `docs/blockers.md has ${sections} blocker section(s) and DEGRADED_COMMANDS carries ` +
+        `${commands.length} command(s) — the list is iterated, so a deleted entry makes the loop ` +
+        'shorter and every other assertion stays green',
+    );
+  }
+  if (blocks !== commands.length) {
+    problems.push(
+      `docs/demo-script.md shows ${blocks} degraded-path block(s) and DEGRADED_COMMANDS carries ` +
+        `${commands.length} command(s) — a block with no command in the list is a block nothing ` +
+        'checks the output of',
+    );
+  }
+  return problems;
+}
+
+describe('the three lists of blockers are the same length', () => {
+  it('counts the same number of blockers on the page, on the demo page and in the list', () => {
+    const problems = blockerCountProblems(BLOCKERS, DEMO, DEGRADED_COMMANDS);
+    expect(
+      problems,
+      `the three lists disagree about how many blockers there are:\n  ${problems.join('\n  ')}`,
+    ).toEqual([]);
+  });
+
+  it('is not vacuous: all three counts are the number this repository has', () => {
+    // Without this, three parsers that all stopped matching would agree on zero
+    // and the case above would be green over nothing at all.
+    expect(blockerSections(BLOCKERS).length).toBe(3);
+    expect(degradedBlocks(degradedSection(DEMO) ?? '').length).toBe(3);
+    expect(DEGRADED_COMMANDS.length).toBe(3);
+  });
+
+  it('reports a blocker section deleted without the other two edits', () => {
+    // The recipe's own instruction, made checkable: delete section 1 here and
+    // leave the demo page and the list alone, and the failure names both.
+    const [first] = blockerSections(BLOCKERS) as [{ heading: string; body: string }];
+    // The whole section, heading and body: renaming the heading would leave the
+    // count at three and this case would pass for the wrong reason.
+    const withoutFirst = BLOCKERS.replace(`## ${first.heading}\n${first.body}`, '');
+    expect(withoutFirst, 'the section this case renames is gone').not.toBe(BLOCKERS);
+    const problems = blockerCountProblems(withoutFirst, DEMO, DEGRADED_COMMANDS);
+    expect(problems.some((problem) => problem.includes('docs/blockers.md has 2'))).toBe(true);
+    expect(problems.some((problem) => problem.includes('DEGRADED_COMMANDS carries 3'))).toBe(true);
+  });
+
+  it('reports a demo block deleted without the other two edits', () => {
+    const withoutBlock = DEMO.replace(
+      '$ node scripts/screenshot-sources.mjs --check\n',
+      '',
+    );
+    expect(withoutBlock, 'the block this case removes is gone').not.toBe(DEMO);
+    const problems = blockerCountProblems(BLOCKERS, withoutBlock, DEGRADED_COMMANDS);
+    expect(problems.some((problem) => problem.includes('shows 2 degraded-path block(s)'))).toBe(
+      true,
+    );
+  });
+
+  it('reports a command deleted from the list without the other two edits', () => {
+    // The direction that used to be invisible: the list is iterated, so a
+    // shorter list made every assertion in `demo-script.test.ts` pass over one
+    // fewer command.
+    const problems = blockerCountProblems(BLOCKERS, DEMO, DEGRADED_COMMANDS.slice(0, 2));
+    expect(problems.some((problem) => problem.includes('DEGRADED_COMMANDS carries 2'))).toBe(true);
+  });
+
+  it('reports a demo page that lost the subsection altogether', () => {
+    const problems = blockerCountProblems(
+      BLOCKERS,
+      DEMO.replace('### 三条阻塞的现场降级路径', '### 别的标题'),
+      DEGRADED_COMMANDS,
+    );
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toContain('cannot be counted against each other');
   });
 });

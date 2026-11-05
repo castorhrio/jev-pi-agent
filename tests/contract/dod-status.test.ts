@@ -28,7 +28,12 @@
  *  - the four-state total in prose equals the rows, so a dropped or added row
  *    cannot leave a comfortable summary behind;
  *  - while `docs/blockers.md` still lists external blockers, the table may not
- *    be all 通过 — the two documents are not allowed to disagree.
+ *    be all 通过 — the two documents are not allowed to disagree;
+ *  - and the two documents are joined by a mapping table: every blocker section
+ *    names the DoD row it lands on, every row that is 未过 or 外部阻塞 is named
+ *    by some blocker section, and a blocker with **no** DoD sentence says so and
+ *    says why. That last row is the point — a blocker nothing in the standard
+ *    answers is exactly the item a table-shaped reading of the DoD loses.
  *
  * The same document carries a second table this file reads: 已知残留（不修，登记）,
  * one row per non-fix somebody argued for and decided against. It is compared
@@ -717,5 +722,282 @@ describe('a decided non-fix stays registered', () => {
     expect(residualProblems(broken, RESIDUAL_TREE).join('\n')).toContain(
       'outside the roots this scan reads',
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The blockers page and the four-state table, joined
+// ---------------------------------------------------------------------------
+
+/**
+ * ## Why this block exists
+ *
+ * The four-state table answers "which DoD sentence is not met", and
+ * `docs/blockers.md` answers "what do I type to close it". Nothing joined them:
+ * a reader who wanted to know which row a blocker lands on had to read both
+ * documents and match them by subject, and a blocker with **no** DoD sentence
+ * behind it was invisible from the table — the table said 未过 1 / 外部阻塞 1
+ * while the blockers page carried three sections, and both documents were
+ * internally consistent.
+ *
+ * So the status document carries a mapping table, and this block reads it in
+ * both directions:
+ *
+ *  - every `## N.` section of the blockers page has exactly one row, and the
+ *    label after `第 N 节 ·` is the beginning of that section's heading — a
+ *    renumbered or retitled section is a red run, not a reader sent to the
+ *    wrong place;
+ *  - every row that is 未过 or 外部阻塞 is named by some row of the mapping —
+ *    a blocked DoD sentence with no closing recipe is a row nobody can act on;
+ *  - a target that is a `DOD-x.y` id has to be a row of the four-state table;
+ *  - and a target of `无对应 DoD 句子` has to say why, because that is the one
+ *    case the table cannot express and the one a reader will otherwise assume
+ *    away.
+ *
+ * The checks are a pure function of the two documents, so the red direction is
+ * driven on mutated copies rather than argued about.
+ */
+
+/** The heading of the mapping section. */
+const MAPPING_HEADING = '## 三条外部阻塞落在哪一行';
+
+/** The target a blocker uses when the DoD has no sentence for it. */
+const NO_DOD_ROW = '无对应 DoD 句子';
+
+/** One row of the mapping table. */
+interface MappingRow {
+  /** The blocker section number, as written after `第 `. */
+  readonly section: number;
+  /** The label after `第 N 节 ·`, which has to start the section's heading. */
+  readonly label: string;
+  /** A `DOD-x.y` id, or {@link NO_DOD_ROW}. */
+  readonly target: string;
+  /** Why, for the rows the table cannot express as an id. */
+  readonly reason: string;
+}
+
+/** The mapping section, heading included; empty when it is gone. */
+function mappingSection(markdown: string): string {
+  const lines = markdown.split('\n');
+  const start = lines.findIndex((line) => line.trim() === MAPPING_HEADING);
+  if (start === -1) return '';
+  const body: string[] = [lines[start]!];
+  for (let index = start + 1; index < lines.length; index += 1) {
+    if (/^## /.test(lines[index]!)) break;
+    body.push(lines[index]!);
+  }
+  return body.join('\n');
+}
+
+/** The rows of the mapping table, header and rule rows dropped. */
+function mappingRows(section: string): MappingRow[] {
+  const rows: MappingRow[] = [];
+  for (const line of section.split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed.startsWith('|')) continue;
+    const cells = trimmed
+      .replace(/^\|/, '')
+      .replace(/\|$/, '')
+      .split('|')
+      .map((cell) => cell.trim());
+    if (cells.every((cell) => /^:?-{3,}:?$/.test(cell))) continue;
+    if (cells[0] === '阻塞（`docs/blockers.md`）') continue;
+    const head = /^第\s*(\d+)\s*节\s*·\s*(.+)$/u.exec(cells[0] ?? '');
+    if (head === null) {
+      rows.push({ section: Number.NaN, label: cells[0] ?? '<empty>', target: '', reason: '' });
+      continue;
+    }
+    rows.push({
+      section: Number(head[1]),
+      label: head[2]!.trim(),
+      target: cells[1] ?? '',
+      reason: cells[2] ?? '',
+    });
+  }
+  return rows;
+}
+
+/**
+ * Every way the mapping table and the two documents disagree.
+ *
+ * Empty means each blocker section is mapped once, to a row that exists or to a
+ * justified "no DoD sentence", and every blocked DoD row is mapped from.
+ */
+function mappingProblems(documents: { status: string; blockers: string }): string[] {
+  const section = mappingSection(documents.status);
+  if (section.length === 0) {
+    return [
+      `docs/dod-status.md: no \`${MAPPING_HEADING}\` section, so nothing joins the four-state ` +
+        'table to the blockers page and a blocker with no DoD sentence is invisible from the table',
+    ];
+  }
+  const rows = mappingRows(section);
+  if (rows.length === 0) {
+    return [`docs/dod-status.md: the \`${MAPPING_HEADING}\` section has no rows`];
+  }
+
+  const problems: string[] = [];
+  const blockerHeadings = [...documents.blockers.matchAll(/^## (\d+)\. (.+)$/gm)].map((match) => ({
+    number: Number(match[1]),
+    heading: match[2]!.trim(),
+  }));
+  const dodTable = dodRows(statusSection(documents.status));
+  const dodIds = new Set(dodTable.map((row) => row.id));
+
+  for (const blocker of blockerHeadings) {
+    const mapped = rows.filter((row) => row.section === blocker.number);
+    if (mapped.length === 0) {
+      problems.push(
+        `docs/dod-status.md: \`docs/blockers.md\` 第 ${blocker.number} 节 (${blocker.heading}) ` +
+          'has no row in the mapping table, so a reader of the four-state table never learns ' +
+          'which DoD sentence it blocks',
+      );
+      continue;
+    }
+    if (mapped.length > 1) {
+      problems.push(
+        `docs/dod-status.md: \`docs/blockers.md\` 第 ${blocker.number} 节 is mapped ${mapped.length} ` +
+          'times — one blocker, one row',
+      );
+    }
+    const [row] = mapped as [MappingRow];
+    if (!blocker.heading.startsWith(row.label)) {
+      problems.push(
+        `docs/dod-status.md: the mapping row for 第 ${blocker.number} 节 says "${row.label}" and ` +
+          `\`docs/blockers.md\` calls that section "${blocker.heading}" — the row is about a ` +
+          'different blocker now',
+      );
+    }
+  }
+
+  for (const row of rows) {
+    if (Number.isNaN(row.section)) {
+      problems.push(
+        `docs/dod-status.md: the mapping row "${row.label}" does not start with \`第 N 节 ·\`, ` +
+          'so it cannot be matched to a blocker section',
+      );
+      continue;
+    }
+    if (!blockerHeadings.some((blocker) => blocker.number === row.section)) {
+      problems.push(
+        `docs/dod-status.md: the mapping table names 第 ${row.section} 节, and ` +
+          '`docs/blockers.md` has no such section',
+      );
+      continue;
+    }
+    if (row.target === NO_DOD_ROW) {
+      if (/^(—|-|)$/u.test(row.reason.trim()) || row.reason.trim().length < 10) {
+        problems.push(
+          `docs/dod-status.md: 第 ${row.section} 节 is mapped to "${NO_DOD_ROW}" with no reason — ` +
+            'a blocker the standard does not answer has to say where its result lands instead',
+        );
+      }
+      continue;
+    }
+    if (!dodIds.has(row.target)) {
+      problems.push(
+        `docs/dod-status.md: 第 ${row.section} 节 is mapped to \`${row.target}\`, which is not a ` +
+          'row of the four-state table',
+      );
+    }
+  }
+
+  for (const row of dodTable) {
+    if (row.state !== '未过' && row.state !== '外部阻塞') continue;
+    if (!rows.some((mapping) => mapping.target === row.id)) {
+      problems.push(
+        `docs/dod-status.md: ${row.id} is "${row.state}" and no blocker section is mapped to it, ` +
+          'so the row says something is missing and nothing says where to close it',
+      );
+    }
+  }
+
+  return problems;
+}
+
+describe('the blockers page and the four-state table are joined', () => {
+  it('maps every blocker section to a row, and every blocked row from a section', () => {
+    const problems = mappingProblems({ status: STATUS, blockers: BLOCKERS });
+    expect(
+      problems,
+      `the mapping table and the two documents disagree:\n  ${problems.join('\n  ')}`,
+    ).toEqual([]);
+  });
+
+  it('is not vacuous: three sections, three rows, two blocked DoD rows', () => {
+    // Without this, a parser that stopped matching would leave the case above
+    // green over an empty table — the shape of a gate that stopped looking.
+    const rows = mappingRows(mappingSection(STATUS));
+    expect(rows.length).toBe(3);
+    expect(rows.filter((row) => row.target === NO_DOD_ROW).length).toBe(1);
+    const blocked = dodRows(statusSection(STATUS)).filter(
+      (row) => row.state === '未过' || row.state === '外部阻塞',
+    );
+    expect(blocked.length).toBe(2);
+    for (const row of blocked) {
+      expect(rows.map((mapping) => mapping.target)).toContain(row.id);
+    }
+  });
+
+  it('reports a blocker section the mapping table never mentions', () => {
+    const line = mappingSection(STATUS)
+      .split('\n')
+      .find((candidate) => candidate.startsWith('| 第 2 节'));
+    expect(line, 'the 第 2 节 mapping row is gone').toBeDefined();
+    const broken = STATUS.replace(`${line!}\n`, '');
+    const problems = mappingProblems({ status: broken, blockers: BLOCKERS });
+    expect(problems.join('\n')).toContain('第 2 节');
+    expect(problems.join('\n')).toContain('has no row in the mapping table');
+  });
+
+  it('reports a mapping row that points at a DoD id the table does not have', () => {
+    const broken = STATUS.replace('| 第 1 节 · 已发布的 v1.0.0 feed 缺 `sha256` | DOD-4.2 |', '| 第 1 节 · 已发布的 v1.0.0 feed 缺 `sha256` | DOD-9.9 |');
+    expect(broken, 'the mapping row this case rewrites is gone').not.toBe(STATUS);
+    const problems = mappingProblems({ status: broken, blockers: BLOCKERS });
+    expect(problems.join('\n')).toContain('`DOD-9.9`');
+    expect(problems.join('\n')).toContain('not a row of the four-state table');
+  });
+
+  it('reports a blocked DoD row that no blocker section is mapped to', () => {
+    // The direction that used to be invisible: the row says 未过, the blockers
+    // page has the recipe, and nothing says they are the same thing.
+    const broken = STATUS.replace(
+      '| 第 1 节 · 已发布的 v1.0.0 feed 缺 `sha256` | DOD-4.2 |',
+      '| 第 1 节 · 已发布的 v1.0.0 feed 缺 `sha256` | 无对应 DoD 句子 |',
+    );
+    expect(broken, 'the mapping row this case rewrites is gone').not.toBe(STATUS);
+    const problems = mappingProblems({ status: broken, blockers: BLOCKERS });
+    expect(problems.join('\n')).toContain('DOD-4.2 is "未过"');
+  });
+
+  it('reports a "no DoD sentence" row that gives no reason', () => {
+    const line = mappingSection(STATUS)
+      .split('\n')
+      .find((candidate) => candidate.startsWith('| 第 3 节'));
+    expect(line, 'the 第 3 节 mapping row is gone').toBeDefined();
+    const cells = line!.trim().replace(/^\|/, '').replace(/\|$/, '').split('|');
+    cells[2] = ' — ';
+    const broken = STATUS.replace(line!, `| ${cells.map((cell) => cell.trim()).join(' | ')} |`);
+    expect(broken, 'the reason this case empties is gone').not.toBe(STATUS);
+    const problems = mappingProblems({ status: broken, blockers: BLOCKERS });
+    expect(problems.join('\n')).toContain('with no reason');
+  });
+
+  it('reports a mapping row whose label no longer matches the section heading', () => {
+    const broken = STATUS.replace(
+      '| 第 2 节 · Windows 桌面六步 |',
+      '| 第 2 节 · 更新检查 |',
+    );
+    expect(broken, 'the label this case rewrites is gone').not.toBe(STATUS);
+    const problems = mappingProblems({ status: broken, blockers: BLOCKERS });
+    expect(problems.join('\n')).toContain('the row is about a different blocker now');
+  });
+
+  it('reports a status document that lost the mapping section', () => {
+    const broken = STATUS.replace(mappingSection(STATUS), '');
+    expect(broken).not.toBe(STATUS);
+    expect(mappingProblems({ status: broken, blockers: BLOCKERS })).toEqual([
+      expect.stringContaining('no `## 三条外部阻塞落在哪一行` section'),
+    ]);
   });
 });

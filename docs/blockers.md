@@ -349,15 +349,21 @@ xvfb-run --auto-servernum --server-args="-screen 0 1920x1080x24" npm run test:lo
 是第二条约束——`tests/contract/layout.test.ts` 要一个真布局引擎，没有 `$DISPLAY` 时它自己
 会红并说明原因。这一条在本机跑出来是 **107 个文件绿、1 个红**（`layout.test.ts`，见下）。
 
+**该跑哪一条**：**CI 上 `npm test` 是权威**；本机 `npm test` 红不构成信号，请用 `npm run test:local`。
+这两句是这一节唯一要记住的东西，`tests/contract/local-test-env.test.ts` 逐字钉住它们——删掉任何一句，
+红的是这一页，不是那条命令。
+
 **它证明不了什么**：`npm test` 仍是 CI 跑的那条命令，**没有**被改成依赖 `.tmp/`——GitHub
 runner 的 `/tmp` 不是这台机器的 `/tmp`，一条只在挪走临时目录后才绿的闸门，量的是绕法而不是产品。
 `test:local` 是给需要它的机器用的，它每次运行都打印自己用的目录，所以一段 transcript 不会被
 误读成一次普通的 `npm test`。
 
-**这一节的断言在哪**：`tests/contract/local-test-env.test.ts` 钉住三件事——这一节点名的
+**这一节的断言在哪**：`tests/contract/local-test-env.test.ts` 钉住四件事——这一节点名的
 `npm run test:local` 真的在 `package.json` 的 `scripts` 里（写一条没人跑的替代命令是这一页
 最坏的形态）、`scripts/test-local.mjs` 真的把 `TMPDIR` 指到仓库内、`.tmp/` 真的被 `.gitignore`
-挡住；它还跑一次 `--dry-run`，断言脚本自己报出来的目录在仓库里。
+挡住、以及上面那两句「该跑哪一条」真的在这一节里；它还跑一次 `--dry-run`，断言脚本自己报出来的
+三个临时目录变量（`TMPDIR` / `TEMP` / `TMP`）都指向仓库里——只查一个的话，另外两个仍可能把
+临时文件放回 `/tmp`，而这一节说的正是「三个一起挪」。
 
 ## 交接记录（做了就加一行，只追加）
 
