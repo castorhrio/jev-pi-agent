@@ -62,7 +62,7 @@
             "type": "array",
             "minItems": 1,
             "items": { "type": "string" },
-            "description": "The lines the step recorded, as `<n>:<key>=<value>`. Never empty: a step with nothing to say gets a sentence saying so, because an empty list reads as \"nothing to say\". `judgeReport()` does not count that sentence as evidence — a `pass` with nothing behind it is a claim, not a result."
+            "description": "The lines the step recorded, as `<n>:<key>=<value>`. Never empty: a step with nothing to say gets a sentence saying so, because an empty list reads as \"nothing to say\". `judgeReport()` does not count that sentence as evidence — a `pass` with nothing behind it is a claim, not a result. Nothing here enumerates the keys: a Windows run's `keystore=dpapi`, `tray menu built` and `nsis installDir=…` lines are evidence like any other, and a report is never refused for carrying a fact this schema has no field for. That is deliberate — the shape is platform-neutral, so an honest Windows report cannot be judged out of shape for saying something only Windows can say. The three screenshots a Windows run carries home are the other half of that, and they are not judged at all."
           }
         }
       }

@@ -267,6 +267,94 @@ describe('every field the schema requires is a field the judgement reads', () =>
   });
 });
 
+describe('a Windows report is not refused for carrying Windows facts', () => {
+  /**
+   * The question this block answers, and why it is a block rather than a note.
+   *
+   * The Windows row is closed by a report from a machine this repository has
+   * never run on, and the schema has no field for the three things that differ
+   * there: DPAPI instead of a Secret Service, a real notification area instead
+   * of none, an NSIS install directory instead of an unpacked folder. If the
+   * shape were the place those facts had to live, an honest Windows report
+   * would be judged out of shape for saying something only Windows can say —
+   * and the row would be unclosable for a reason nobody could fix by running
+   * the steps again.
+   *
+   * It is not, because `evidence` is a free-form string. That is a property of
+   * the schema worth asserting rather than assuming: the cases below drive a
+   * Windows report through the judgement, and pin the two places the property
+   * is written down (the schema's own description and the page a person reads).
+   */
+
+  /** A report from a Windows run, with the facts only that platform produces. */
+  function windowsReport() {
+    return greenReport({
+      steps: [
+        {
+          n: 1,
+          verdict: 'pass',
+          evidence: ['1:turn 1 renderedHash=80e256b63523731c', '1:keystore=dpapi'],
+        },
+        { n: 2, verdict: 'pass', evidence: ['2:table rows=3'] },
+        { n: 3, verdict: 'pass', evidence: ['3:handoff id=h1'] },
+        { n: 4, verdict: 'pass', evidence: ['4:update state=up-to-date'] },
+        {
+          n: 5,
+          verdict: 'pass',
+          evidence: [
+            '5:tray menu built items=3',
+            '5:nsis installDir=C:\\Users\\runner\\AppData\\Local\\Programs\\UCAD',
+          ],
+        },
+      ],
+    });
+  }
+
+  it('judges green a report whose evidence names DPAPI, the tray and the NSIS install', () => {
+    const report = windowsReport();
+
+    expect(validateReportShape(report)).toEqual([]);
+    const judged = judgeReport(report, { expectedVersion: repoVersion() });
+    expect(judged.problems, judged.problems.join('\n')).toEqual([]);
+    expect(judged.ok).toBe(true);
+  });
+
+  it('leaves the evidence line free-form, so a platform fact needs no schema change', () => {
+    // The mechanism, not the outcome: `evidence.items` is `{ type: 'string' }`
+    // and nothing else. A `pattern` here would be the change that makes an
+    // honest Windows report unjudgeable, so the absence is asserted rather than
+    // left to be noticed after someone adds one.
+    const evidence = loadReportSchema().properties.steps.items.properties.evidence;
+
+    expect(evidence.items).toEqual({ type: 'string' });
+    expect(evidence).not.toHaveProperty('pattern');
+    expect(evidence).not.toHaveProperty('enum');
+    // And no required field is platform-specific: the five are the ones a run
+    // on any platform can fill.
+    expect(loadReportSchema().required).toEqual(['platform', 'build', 'ranAt', 'steps', 'note']);
+  });
+
+  it('says in the schema itself where a Windows fact goes', () => {
+    // A reader who opens only the schema has to be able to find this out. The
+    // description is the only prose in the file, so it is where the answer
+    // lives — and pinning it here means deleting the answer is a red run.
+    const description: string =
+      loadReportSchema().properties.steps.items.properties.evidence.description;
+
+    expect(description).toContain('dpapi');
+    expect(description).toContain('nsis');
+    expect(description).toContain('platform-neutral');
+  });
+
+  it('says the same thing on the page a person reads', () => {
+    const page = readFileSync(MANUAL_PAGE, 'utf8');
+
+    expect(page).toContain('这份 schema 是平台中立的');
+    expect(page).toContain('keystore=dpapi');
+    expect(page).toContain('tray menu built');
+  });
+});
+
 describe('the command refuses a report the schema refuses', () => {
   it('exits 1 and names the platform for a report that does not say which one it ran on', () => {
     const report = greenReport();

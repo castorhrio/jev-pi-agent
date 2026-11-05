@@ -23,6 +23,15 @@
  *    from `i18n.ts`, or the screenshot the section points at);
  *  - every screenshot a section names exists, so the remote path — "send the
  *    images to someone who has not installed the app" — cannot rot into a 404;
+ *  - every screenshot a section names is also *recorded* in
+ *    `docs/screenshots/sources.json`, so the sentence `node
+ *    scripts/screenshot-sources.mjs --check` prints — "these images still match
+ *    the renderer sources" — is a sentence about the ten images the walker is
+ *    sent to. Without this, the walkthrough could name an image the manifest
+ *    never hashed, and the check would be green about a different set of files
+ *    than the one a person is asked to look at. That is the same shape as a
+ *    README citing a test that was renamed: two lists that are supposed to be
+ *    one, drifting apart quietly;
  *  - every state is photographed at **two** sizes, and the narrow one really is
  *    the narrow one: its filename and its pixels both have to equal the
  *    `minWidth`/`minHeight` the product declares. A walkthrough that only ever
@@ -66,6 +75,7 @@ const REPO_ROOT = join(import.meta.dirname, '..', '..');
 const WALKTHROUGH_PATH = join(REPO_ROOT, 'docs', 'state-walkthrough.md');
 const README_PATH = join(REPO_ROOT, 'README.md');
 const BOOTSTRAP_PATH = join(REPO_ROOT, 'apps', 'desktop', 'src', 'main', 'bootstrap.ts');
+const MANIFEST_PATH = join(REPO_ROOT, 'docs', 'screenshots', 'sources.json');
 
 /** The fewest criteria a state may carry and still be a walkthrough. */
 const MIN_CRITERIA = 3;
@@ -95,6 +105,15 @@ interface Repository {
   readonly fileExists: (relativePath: string) => boolean;
   /** A PNG's pixel size, or `null` when the file is missing or not a PNG. */
   readonly pngSize: (relativePath: string) => Size | null;
+  /**
+   * Whether `docs/screenshots/sources.json` records a hash for this image.
+   *
+   * The manifest is what `scripts/screenshot-sources.mjs --check` compares the
+   * renderer sources against, so an image it does not record is an image that
+   * check says nothing about — while the walkthrough still sends a person to
+   * look at it.
+   */
+  readonly trackedScreenshot: (relativePath: string) => boolean;
 }
 
 /**
@@ -398,8 +417,19 @@ function walkthroughProblems(
       continue;
     }
     for (const shot of shots) {
-      if (repository.fileExists(shot)) continue;
-      problems.push(`docs/state-walkthrough.md: \`${state}\` shows \`${shot}\`, which is not in the repository`);
+      if (!repository.fileExists(shot)) {
+        problems.push(
+          `docs/state-walkthrough.md: \`${state}\` shows \`${shot}\`, which is not in the repository`,
+        );
+        continue;
+      }
+      if (repository.trackedScreenshot(shot)) continue;
+      problems.push(
+        `docs/state-walkthrough.md: \`${state}\` shows \`${shot}\`, which ` +
+          '`docs/screenshots/sources.json` does not record — an image the manifest never ' +
+          'hashed is one `node scripts/screenshot-sources.mjs --check` cannot say is still ' +
+          'the current screen, so the walker would be judging a picture no gate keeps honest',
+      );
     }
     problems.push(...pictureProblems(state, shots, repository));
 
@@ -475,12 +505,30 @@ function walkthroughProblems(
 
 const walkthrough = existsSync(WALKTHROUGH_PATH) ? readFileSync(WALKTHROUGH_PATH, 'utf8') : '';
 const readme = existsSync(README_PATH) ? readFileSync(README_PATH, 'utf8') : '';
+/**
+ * The screenshots `docs/screenshots/sources.json` records, by path.
+ *
+ * Read once, and read as a set of keys rather than as hashes: this file asks
+ * whether an image is *accounted for*, not whether its bytes are current —
+ * `tests/contract/screenshots.test.ts` and `scripts/screenshot-sources.mjs`
+ * own the bytes.
+ */
+const TRACKED_SHOTS = new Set<string>(
+  existsSync(MANIFEST_PATH)
+    ? Object.keys(
+        (JSON.parse(readFileSync(MANIFEST_PATH, 'utf8')) as { screenshots?: object }).screenshots ??
+          {},
+      )
+    : [],
+);
+
 const REPOSITORY: Repository = {
   fileExists: (relativePath) => existsSync(join(REPO_ROOT, relativePath)),
   pngSize: (relativePath) => {
     const full = join(REPO_ROOT, relativePath);
     return existsSync(full) ? pngSize(readFileSync(full)) : null;
   },
+  trackedScreenshot: (relativePath) => TRACKED_SHOTS.has(relativePath),
 };
 
 /**
@@ -500,6 +548,7 @@ function fakeRepo(overrides: Partial<Repository> = {}): Repository {
         ? { width: Number(match[1]), height: Number(match[2]) }
         : { ...WINDOWS.opening };
     },
+    trackedScreenshot: () => true,
     ...overrides,
   };
 }
@@ -610,6 +659,43 @@ describe('the five states have criteria a person can answer', () => {
     expect(problems).toContain(
       'docs/state-walkthrough.md: `empty` shows `docs/screenshots/gone.png`, which is not in the repository',
     );
+  });
+
+  it('every image the signature checklist names is recorded in the screenshot manifest', () => {
+    // The assertion the brief asked for, stated on its own so the failure names
+    // the checklist rather than a state: the ten images a signer is sent to are
+    // exactly the ten `node scripts/screenshot-sources.mjs --check` hashes. If
+    // one of them were missing from the manifest, that command would still print
+    // PASS — about the other files — while the walker judged an image nothing
+    // keeps in step with the renderer.
+    expect(existsSync(MANIFEST_PATH), `missing ${MANIFEST_PATH}`).toBe(true);
+    const script = scriptSection(walkthrough);
+    expect(script, `no \`${SCRIPT_HEADING}\` section`).toBeDefined();
+    const listed = screenshotsIn(script!);
+    expect(listed).toHaveLength(STATE_SCENARIOS.length * 2);
+
+    const untracked = listed.filter((shot) => !REPOSITORY.trackedScreenshot(shot));
+    expect(
+      untracked,
+      `the walkthrough sends a person to image(s) \`docs/screenshots/sources.json\` does not ` +
+        `record: ${untracked.join(', ')} — run \`node scripts/screenshot-sources.mjs --write\` ` +
+        'after retaking them, or the check is green about a different set of files',
+    ).toEqual([]);
+  });
+
+  it('reports a walkthrough image the screenshot manifest does not record', () => {
+    // The red direction of the case above. Without it, the check could be
+    // satisfied by a manifest that records everything and a walkthrough that
+    // names nothing — the two lists would agree by both being empty.
+    const problems = walkthroughProblems(
+      walkthrough,
+      readme,
+      fakeRepo({ trackedScreenshot: () => false }),
+    );
+    const untracked = problems.filter((problem) => problem.includes('does not record'));
+    expect(untracked, problems.join('\n')).toHaveLength(STATE_SCENARIOS.length * 2);
+    expect(untracked[0]).toContain('docs/screenshots/sources.json');
+    expect(untracked[0]).toContain('screenshot-sources.mjs --check');
   });
 
   it('reports a state that only has the wide picture', () => {

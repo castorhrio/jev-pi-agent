@@ -139,6 +139,27 @@ PASS — the report covers steps 1, 2, 3, 4, 5 on win32 against build 1.0.0
 把某个字段从 schema 的 `required` 里删掉之后同一份报告就不再被拒（证明 schema 是事实来源，
 不是脚本旁边的装饰），schema 里出现的每个关键字都必须是校验器真的实现了的那几个。
 
+### 这份 schema 是平台中立的，Windows 特有的事实落在证据行里
+
+一个值得先说清的问题：**Windows 特有的事实（DPAPI 加密、托盘、NSIS 安装路径）在 schema 里没有
+字段，这会不会让一份诚实的 Windows 报告判不过？** 不会，而且这是量过的，不是推断的：
+`tests/contract/main-chain-report-schema.test.ts` 里有一条用例，拿一份证据行写着
+`1:keystore=dpapi`、`5:tray menu built items=3`、`5:nsis installDir=…` 的报告去跑 `judgeReport()`，
+判绿。
+
+原因是 `evidence` 是**自由字符串**：schema 只要求它是至少一条字符串，不枚举键名，也不限制
+`<n>:<key>=<value>` 里的 `key` 能写什么。所以：
+
+- 平台特有的事实写进**证据行**，不需要改 schema，也不会因为「schema 里没有这个字段」被拒；
+- 平台特有的**旁证**是那三张截图（`win-YYYYMMDD-dpapi.png` / `-tray.png` / `-nsis.png`），
+  它们不参与判定，`--judge` 也不打开它们——第二节那条边界说的就是这件事；
+- schema 里唯一和平台有关的字段是 `platform`，而它只被要求「是一个非空字符串」；
+  「是不是 `win32`」是 `judgeReport()` 问的问题，不是 schema 问的问题。
+
+这条边界也写在 schema 自己的 `evidence.description` 里，所以只读 schema 的人也能看到它。
+反过来说：如果哪天有人给 `evidence` 加一条 `pattern` 去限制键名，一份诚实的 Windows 报告就会
+因为「说了只有 Windows 能说的话」被判不过——那才是真缺陷，而上面那条用例会当场打红。
+
 ## 六、不许做什么
 
 - **不许手写一份报告。** 报告是文档，文档可以手写，所以手写出来的东西和真报告长得一样；

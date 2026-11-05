@@ -92,6 +92,25 @@ condition the `xvfb-run` line above carries still applies — the screen behind 
 be at least as wide as the widest window the gate asks for, or the gate measures a clamped
 window and says so.
 
+**When no socket answers, start one — and check that it got a socket.** `:140` is this machine's
+display, not a fact about yours; on a host where `ls /tmp/.X11-unix` lists nothing, the line above
+points at a display that does not exist. Start your own and export it:
+
+```bash
+Xvfb :99 -screen 0 1920x1080x24 &
+export DISPLAY=:99
+ELECTRON_DISABLE_SANDBOX=1 npx vitest run tests/contract/layout.test.ts
+```
+
+Then look at `ls /tmp/.X11-unix` again before believing the run. A started `Xvfb` that never got a
+socket looks exactly like no `Xvfb` at all: the process is alive, `DISPLAY=:99` is exported, and the
+child still dies with `Missing X server or $DISPLAY`. Measured on this machine — `Xvfb :99` starts,
+`pgrep Xvfb` shows it, and `/tmp/.X11-unix/X99` never appears, because the socket is one of the bytes
+the quota above refuses. So the order is: pick a free display number (`:99` is taken if `X99` is
+already listed), start the server, **confirm the socket exists**, and only then run the gate. If the
+socket does not appear, the problem is `/tmp`, not the display — free space there or use a socket
+that already answers, and do not spend another round on `xvfb-run` variants that fail the same way.
+
 ```bash
 npm run typecheck && npm run lint && npm run knip && npm test && npm run test:e2e
 ```
