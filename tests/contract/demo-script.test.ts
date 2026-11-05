@@ -1584,7 +1584,9 @@ describe('the expected line is what the command prints, not what the source says
  *  - and the five things the brief asked the page to cover are on it: the app
  *    starts, the drawer's hash can be checked, the decision chain is visible,
  *    the permission prompt can be demonstrated, and the ten screenshots can be
- *    flipped through.
+ *    flipped through;
+ *  - and the one step whose command can exit 1 on the day carries the command
+ *    that says why, written after it rather than before it.
  *
  * Deliberately not asserted: wording, ordering, or that the demo would go well.
  */
@@ -1611,6 +1613,36 @@ const CHECKLIST_COVERS: readonly { readonly what: string; readonly literal: stri
   { what: 'the decision chain is visible', literal: '引擎链' },
   { what: 'the permission prompt can be demonstrated', literal: 'Agent 请求权限' },
   { what: 'the ten screenshots can be flipped through', literal: '--walkthrough' },
+];
+
+/**
+ * The steps whose command can exit 1 on the day, and the command that says why.
+ *
+ * ## Why this is a list rather than a sentence
+ *
+ * Step 6 is the only step on the page whose command can fail *because of a
+ * previous round's work*: `--walkthrough` exits 1 when an image in
+ * `docs/state-walkthrough.md` is not recorded in `docs/screenshots/sources.json`,
+ * which is exactly what a renderer change leaves behind. Every other step either
+ * cannot fail (a screenshot is a file) or has its own degraded command in step 7.
+ *
+ * The fallback was added to the page as prose, and prose is what this file
+ * exists to stop trusting: the sentence could be deleted, or moved above the
+ * command it rescues, and the page would still read fine to somebody who has not
+ * hit the failure. So the pair is checked, and the order is checked — a
+ * `--check` printed *before* `--walkthrough` is a reader who sees `[stale]`
+ * first and the ten paths second, which is the wrong way round on stage.
+ */
+const CHECKLIST_FALLBACKS: readonly {
+  readonly step: string;
+  readonly primary: string;
+  readonly fallback: string;
+}[] = [
+  {
+    step: 'the ten screenshots',
+    primary: 'node scripts/screenshot-sources.mjs --walkthrough',
+    fallback: 'node scripts/screenshot-sources.mjs --check',
+  },
 ];
 
 /** What the checklist is compared against. */
@@ -1672,6 +1704,21 @@ function checklistProblems(repository: DefenceRepository): string[] {
       `docs/defense-checklist.md: does not cover ${what} (\`${literal}\`), so the page is a list ` +
         'of commands rather than a rehearsal of the demonstration',
     );
+  }
+
+  for (const { step, primary, fallback } of CHECKLIST_FALLBACKS) {
+    const at = checklist.indexOf(primary);
+    // A missing primary is the coverage check's problem, not this one's: two
+    // failures for one deletion would name the same line twice.
+    if (at === -1) continue;
+    const after = checklist.indexOf(fallback, at + primary.length);
+    if (after === -1) {
+      problems.push(
+        `docs/defense-checklist.md: ${step} names \`${primary}\` and no fallback — that command ` +
+          'exits 1 when the images and the manifest disagree, which is what a renderer change ' +
+          `leaves behind, and the presenter finds out on stage. Name \`${fallback}\` after it.`,
+      );
+    }
   }
 
   const mine = HASH_LITERAL.exec(checklist);
@@ -1785,5 +1832,36 @@ describe('the defence-day checklist only names things that exist', () => {
     const problems = checklistProblems({ ...DEFENCE, checklist: '' });
     expect(problems).toHaveLength(1);
     expect(problems[0]).toContain('is missing or empty');
+  });
+
+  it('reports a screenshot step that lost its fallback', () => {
+    // The failure this case is for: the sentence is deleted in a tidy-up, the
+    // page still reads fine, and the one step with no second way to show the
+    // thing it shows is discovered on stage.
+    const problems = checklistProblems({
+      ...DEFENCE,
+      checklist: DEFENCE.checklist.replaceAll(
+        'node scripts/screenshot-sources.mjs --check',
+        'node scripts/screenshot-sources.mjs --write',
+      ),
+    });
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toContain('the ten screenshots');
+    expect(problems[0]).toContain('no fallback');
+  });
+
+  it('reports a fallback written before the command it rescues', () => {
+    // Order is the whole point: `--check` first reads as "check, then list",
+    // and a presenter following the page top-down sees `[stale]` before the ten
+    // paths. The pair is present, so only the position can catch it.
+    const walkthrough = 'node scripts/screenshot-sources.mjs --walkthrough';
+    const check = 'node scripts/screenshot-sources.mjs --check';
+    const moved = DEFENCE.checklist
+      .replaceAll(check, '')
+      .replace(walkthrough, `${check}\n\n${walkthrough}`);
+    expect(moved, 'the case did not move the fallback').not.toBe(DEFENCE.checklist);
+    const problems = checklistProblems({ ...DEFENCE, checklist: moved });
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toContain('no fallback');
   });
 });

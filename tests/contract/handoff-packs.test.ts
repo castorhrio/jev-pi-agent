@@ -412,6 +412,46 @@ const PACK_DATE = '20261105';
 /** The log file the command carries, at the path the pack says the app writes it. */
 const LOG_PATH = 'ucad-main-chain/AppData/Roaming/ucad/logs/app.log';
 
+/**
+ * Every way an archive fails to carry the run home.
+ *
+ * ## Why this is a function and not four assertions inside the case below
+ *
+ * The case below runs the pack's command for real and then checks the archive it
+ * produced. That proves the command works; it does not prove the check would
+ * notice if it did not. A gate whose failure path has never run is a gate that
+ * might be returning `[]` whatever it is handed — this repository has removed
+ * three of those, and the shape of the mistake is always the same: the positive
+ * case is written first, it passes, and nobody ever asks what the red looks like.
+ *
+ * So the member checks are a pure function of `(members, packaging)`, and the
+ * cases below drive it with a member list that lost one entry. The real run
+ * stays where it is: it is the half that proves the command, and this is the half
+ * that proves the check.
+ */
+function archiveProblems(
+  members: readonly string[],
+  packaging: typeof PACKAGING,
+): string[] {
+  const problems: string[] = [];
+  for (const member of packaging.members) {
+    if (members.some((name) => member.test(name))) continue;
+    problems.push(
+      `the archive has no member matching ${member.source}: ${members.join(', ')}`,
+    );
+  }
+  if (!members.some((name) => name.endsWith('app.log'))) {
+    problems.push(`the archive carries no application log: ${members.join(', ')}`);
+  }
+  // Five files, not "at least the ones we looked for": a command that archives
+  // the whole directory would pass the checks above and ship a scratch tree to
+  // the next reader.
+  if (members.length !== 5) {
+    problems.push(`the archive carries ${members.length} member(s)`);
+  }
+  return problems;
+}
+
 describe('the packaging command really puts the run in an archive', () => {
   it('produces an archive containing the report, the three screenshots and the log', () => {
     const document = read(PACKAGING.path);
@@ -446,23 +486,88 @@ describe('the packaging command really puts the run in an archive', () => {
       expect(listed.status, `the archive could not be listed:\n${listed.stderr}`).toBe(0);
       const members = listed.stdout.split('\n').filter((member) => member.length > 0);
 
-      for (const member of PACKAGING.members) {
-        expect(
-          members.some((name) => member.test(name)),
-          `the archive has no member matching ${member.source}: ${members.join(', ')}`,
-        ).toBe(true);
-      }
-      expect(
-        members.some((name) => name.endsWith('app.log')),
-        `the archive carries no application log: ${members.join(', ')}`,
-      ).toBe(true);
-      // Five files, not "at least the ones we looked for": a command that
-      // archives the whole directory would pass the checks above and ship a
-      // scratch tree to the next reader.
-      expect(members, `the archive carries ${members.length} member(s)`).toHaveLength(5);
+      const problems = archiveProblems(members, PACKAGING);
+      expect(problems, `the archive is not the run:\n  ${problems.join('\n  ')}`).toEqual([]);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+
+  it('fails loudly when one of the files it names is not there', () => {
+    /*
+     * The other half of "the command works": what it does when the run is
+     * incomplete. `tar` exits non-zero and names the missing file, which is the
+     * behaviour the pack depends on — a command that quietly archived the four
+     * files it found would produce an archive that passes a `-tzf` listing and
+     * reaches the next reader missing a screenshot.
+     *
+     * Driven by deleting one of the three images before the command runs, so the
+     * failure is the pack's own line failing rather than a hand-written one.
+     */
+    const document = read(PACKAGING.path);
+    const line = document
+      .split('\n')
+      .map((candidate) => candidate.trim())
+      .find((candidate) => candidate.startsWith(PACKAGING.fallback));
+    expect(line, `${PACKAGING.path} no longer carries a \`${PACKAGING.fallback}\` command`).toBeDefined();
+
+    const dir = mkdtempSync(join(tmpdir(), 'ucad-pack-'));
+    try {
+      copyFileSync(join(REPO_ROOT, FIXTURE_REPORT), join(dir, `win-${PACK_DATE}.json`));
+      // Two of the three screenshots: `win-${PACK_DATE}-nsis.png` is the one the
+      // run is missing, and it is the one the failure has to name.
+      for (const suffix of ['dpapi', 'tray']) {
+        writeFileSync(join(dir, `win-${PACK_DATE}-${suffix}.png`), TINY_PNG);
+      }
+      mkdirSync(join(dir, 'ucad-main-chain', 'AppData', 'Roaming', 'ucad', 'logs'), { recursive: true });
+      writeFileSync(join(dir, LOG_PATH), 'tray menu built\n');
+
+      const packed = spawnSync('bash', ['-c', line!], {
+        cwd: dir,
+        env: { ...process.env, TMPDIR: dir },
+        encoding: 'utf8',
+      });
+      expect(packed.status, 'the command exited 0 with a file missing from the run').not.toBe(0);
+      expect(
+        `${packed.stdout}${packed.stderr}`,
+        'the failure does not name the file that is missing, so the reader has to guess',
+      ).toContain(`win-${PACK_DATE}-nsis.png`);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('reports an archive that lost one of the five members', () => {
+    // The red direction of the check above, driven on a member list rather than
+    // on a real archive: a `tar` line with a typo in one filename still contains
+    // every member name the *text* check looks for, and the listing is the only
+    // place the difference shows up.
+    const members = [
+      `win-${PACK_DATE}.json`,
+      `win-${PACK_DATE}-dpapi.png`,
+      `win-${PACK_DATE}-tray.png`,
+      LOG_PATH,
+    ];
+    const problems = archiveProblems(members, PACKAGING);
+    expect(problems).toHaveLength(2);
+    expect(problems[0]).toContain('no member matching win-\\d{8}-nsis\\.png');
+    expect(problems[1]).toContain('carries 4 member(s)');
+  });
+
+  it('reports an archive that carries the whole scratch directory', () => {
+    // The other direction: a command that archives `.` passes every member check
+    // and ships a scratch tree. Only the count notices.
+    const members = [
+      `win-${PACK_DATE}.json`,
+      `win-${PACK_DATE}-dpapi.png`,
+      `win-${PACK_DATE}-tray.png`,
+      `win-${PACK_DATE}-nsis.png`,
+      LOG_PATH,
+      'ucad-main-chain/AppData/Roaming/ucad/logs/old.log',
+    ];
+    const problems = archiveProblems(members, PACKAGING);
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toContain('carries 6 member(s)');
   });
 });
 

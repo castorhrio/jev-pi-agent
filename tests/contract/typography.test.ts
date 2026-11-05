@@ -121,17 +121,17 @@ interface Entry {
  * is checked for coverage below — every key the dictionary exports has to be
  * found — so a key written in another shape is a red run, not a silent skip.
  */
-function zhEntries(): Entry[] {
-  const start = i18nSource.indexOf('const zhCN: Dictionary = {');
+function zhEntries(source: string = i18nSource): Entry[] {
+  const start = source.indexOf('const zhCN: Dictionary = {');
   expect(start, `${I18N_RELATIVE} no longer declares \`const zhCN: Dictionary = {\``)
     .toBeGreaterThanOrEqual(0);
-  const end = i18nSource.indexOf('\n};', start);
+  const end = source.indexOf('\n};', start);
   expect(end, 'the zhCN dictionary is not closed by a `};` at column 0').toBeGreaterThan(start);
 
   // The 1-based line the `const zhCN` line sits on; index 0 of the block is it.
-  const firstLine = i18nSource.slice(0, start).split('\n').length;
+  const firstLine = source.slice(0, start).split('\n').length;
   const entries: Entry[] = [];
-  i18nSource
+  source
     .slice(start, end)
     .split('\n')
     .forEach((text, index) => {
@@ -144,6 +144,95 @@ function zhEntries(): Entry[] {
       entries.push({ key, value, line: firstLine + index });
     });
   return entries;
+}
+
+/**
+ * The `const zhCN: Dictionary = {` … `\n};` block of a source, comments removed.
+ *
+ * Comments are stripped before anything is counted: the block explains itself in
+ * prose, and that prose contains apostrophes (`this turn's decision records`).
+ * A counter that read them as string literals would report two more literals
+ * than there are and the gate would be red for a sentence nobody renders.
+ */
+function zhBlock(source: string): string | undefined {
+  const start = source.indexOf('const zhCN: Dictionary = {');
+  if (start === -1) return undefined;
+  const end = source.indexOf('\n};', start);
+  if (end === -1) return undefined;
+  return codeOnly(source.slice(start, end));
+}
+
+/**
+ * How many single-quoted string literals a block contains.
+ *
+ * A character scan rather than a regex, because a value may contain an escaped
+ * apostrophe (`'don\'t'`) and a regex that stopped at the first `'` would count
+ * one literal as two. `\\` is skipped so an escaped backslash before a quote
+ * does not end the string early.
+ */
+function stringLiterals(block: string): number {
+  let count = 0;
+  let inString = false;
+  for (let index = 0; index < block.length; index += 1) {
+    const char = block[index]!;
+    if (inString) {
+      if (char === '\\') {
+        index += 1;
+        continue;
+      }
+      if (char === "'") inString = false;
+      continue;
+    }
+    if (char === "'") {
+      inString = true;
+      count += 1;
+    }
+  }
+  return count;
+}
+
+/**
+ * Every way the parser reads fewer sentences than the dictionary contains.
+ *
+ * ## Why the key-parity assertion above is not enough
+ *
+ * `zhEntries()` is compared against `Object.keys(ZH_DICTIONARY)`, which catches a
+ * key written in a shape the parser does not recognise (`"key":`, `key:`) — the
+ * dictionary exports it and the parser skips it. What that comparison cannot see
+ * is a string that is **not a top-level key at all**: a nested object, an array
+ * of sentences, a value split across two literals. Those are skipped by the
+ * parser *and* absent from `Object.keys()`, so both sides of the comparison
+ * shrink together and the gate stays green over a sentence nobody read.
+ *
+ * The count closes that direction. Every entry in this dictionary is written as
+ * `'key': 'value',` — one literal for the key, one for the value — so the number
+ * of string literals in the block is exactly twice the number of entries. A
+ * nested object adds literals without adding entries, and the failure names the
+ * two numbers and the difference.
+ *
+ * ## What it cannot see
+ *
+ * A value that is not a literal at all (`'key': SOME_CONST`) adds no literal and
+ * no entry, so the count stays even. That shape is caught by the key-parity
+ * assertion instead, because `dictionaryFor()` still exports the key. The two
+ * checks are the two halves of one claim: every key is read, and nothing else is
+ * in there.
+ */
+function literalCoverageProblems(source: string, entries: readonly Entry[]): string[] {
+  const block = zhBlock(source);
+  if (block === undefined) {
+    return [`${I18N_RELATIVE}: has no \`const zhCN: Dictionary = {\` … \`};\` block to count`];
+  }
+  const literals = stringLiterals(block);
+  const expected = entries.length * 2;
+  if (literals === expected) return [];
+  return [
+    `${I18N_RELATIVE}: the zhCN block carries ${literals} string literal(s) and the parser read ` +
+      `${entries.length} entr(ies), which is ${expected} literal(s) — ${literals - expected} ` +
+      'literal(s) are in the dictionary and in no sentence this gate checks. A nested object or ' +
+      'an array of sentences is skipped by the parser and absent from Object.keys(), so the ' +
+      'key-parity assertion shrinks with it and stays green',
+  ];
 }
 
 /** The line each `zh-CN` key is written on, built once. */
@@ -584,6 +673,36 @@ describe('the screen-side typeset', () => {
         `'${entry.key}':`,
       );
     }
+  });
+
+  it('reads every string literal in the dictionary, not only the ones it recognises', () => {
+    const problems = literalCoverageProblems(i18nSource, zhEntries());
+    expect(
+      problems,
+      `the dictionary carries sentences this gate never reads:\n  ${problems.join('\n  ')}`,
+    ).toEqual([]);
+  });
+
+  it('reports a nested entry the parser would skip', () => {
+    // The shape the key-parity assertion cannot see: `app.nested` is not a key
+    // the dictionary exports, so both sides of that comparison shrink together.
+    // Only the literal count notices the two sentences that went unread.
+    const nested = i18nSource.replace(
+      "  'app.name': 'UCAD',",
+      "  'app.name': 'UCAD',\n  'app.nested': { 'a': '甲', 'b': '乙' },",
+    );
+    expect(nested, 'the case did not add a nested entry').not.toBe(i18nSource);
+    const problems = literalCoverageProblems(nested, zhEntries(nested));
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toContain(`${I18N_RELATIVE}: the zhCN block carries`);
+    // Five: the nested key, its two keys and its two values.
+    expect(problems[0]).toContain('5 literal(s) are in the dictionary and in no sentence');
+  });
+
+  it('reports a dictionary block that is not there at all', () => {
+    const problems = literalCoverageProblems('const other = {};', []);
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toContain('has no `const zhCN: Dictionary = {`');
   });
 
   it('reports a half-width comma with the file and the line it is on', () => {
