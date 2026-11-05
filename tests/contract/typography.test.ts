@@ -20,6 +20,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
+import { dictionaryFor } from '../../apps/desktop/src/shared/i18n';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(here, '..', '..');
@@ -339,5 +340,86 @@ describe('the font stacks', () => {
     // rendering bug rather than emphasis. This app has no `em`/`i` rule at all,
     // so the rule is simply: no italics anywhere.
     expect(codeOnly(styles)).not.toMatch(/font-style:\s*italic/);
+  });
+});
+
+/**
+ * The punctuation: half-width marks in Chinese, full-width marks in English.
+ *
+ * ## Why this is a separate, deliberately small check
+ *
+ * The type rules above are about *size*; this one is about the characters
+ * between the words, and it is the half of Chinese typography that a source
+ * file can be wrong about without anyone seeing it. `，` and `,` are different
+ * characters with different widths, and a Chinese sentence that ends in a
+ * half-width `,` sets a gap the reader reads as a typo — but only if they are
+ * looking, and nobody proofreads 600 dictionary values.
+ *
+ * ## What is asserted, and what is not
+ *
+ * Two rules, both mechanical and both undisputed:
+ *
+ *  1. a `zh-CN` value never puts a half-width `,` `.` `;` `:` next to a Han
+ *     character — neither before it nor after it;
+ *  2. an `en-US` value never contains a full-width `，` `。` `；` `：` `、`.
+ *
+ * Not asserted: line length, spacing around Latin words, or whether a sentence
+ * reads well. Those need a rendered page and a reader, and a gate that guessed
+ * at them would go red on a legitimate sentence — which is how a typography
+ * gate gets deleted. The two rules here cannot be right in the other direction:
+ * there is no sentence in either language where the wrong-width mark is
+ * correct.
+ *
+ * The dictionary is read through `dictionaryFor()` rather than by parsing the
+ * source, so the check sees the values the app actually renders. A key that is
+ * missing from one locale is `i18n.test.ts`'s problem, not this file's.
+ */
+describe('the punctuation', () => {
+  const ZH = dictionaryFor('zh-CN');
+  const EN = dictionaryFor('en-US');
+
+  /** Han characters, the range both dictionaries write their prose in. */
+  const HAN = '\u4e00-\u9fff';
+
+  /** A half-width mark with a Han character on either side of it. */
+  const HALF_WIDTH_NEAR_HAN = new RegExp(`(?:[,.;:](?=[${HAN}])|(?<=[${HAN}])[,.;:])`);
+
+  /** A full-width mark, which English prose has no use for. */
+  const FULL_WIDTH = /[，。；：、]/;
+
+  it('never sets a half-width mark against a Han character in Chinese', () => {
+    const offenders = Object.entries(ZH)
+      .filter(([, value]) => HALF_WIDTH_NEAR_HAN.test(value))
+      .map(([key, value]) => `zh-CN.${key}: ${value}`);
+    expect(
+      offenders,
+      'these Chinese sentences use a half-width , . ; : next to a Han character — the ' +
+        'full-width mark is the one that sets correctly in Chinese prose',
+    ).toEqual([]);
+  });
+
+  it('never sets a full-width mark in English', () => {
+    const offenders = Object.entries(EN)
+      .filter(([, value]) => FULL_WIDTH.test(value))
+      .map(([key, value]) => `en-US.${key}: ${value}`);
+    expect(
+      offenders,
+      'these English sentences carry a full-width ，。；：、 — it is a Chinese mark, and it ' +
+        'sets a gap the reader reads as a typo',
+    ).toEqual([]);
+  });
+
+  it('is not vacuous: the dictionaries really are the ones being read', () => {
+    // A `dictionaryFor()` that returned `{}` would make both cases above green
+    // over nothing at all. The counts are the guard, and they are deliberately
+    // loose — this is not a key-count gate (`i18n.test.ts` owns parity).
+    expect(Object.keys(ZH).length, 'the Chinese dictionary is empty').toBeGreaterThan(100);
+    expect(Object.keys(EN).length, 'the English dictionary is empty').toBeGreaterThan(100);
+    // And the two rules really do fire on the shapes they describe, so a regex
+    // that stopped matching cannot pass by finding nothing.
+    expect(HALF_WIDTH_NEAR_HAN.test('先跑这条命令,然后看输出')).toBe(true);
+    expect(HALF_WIDTH_NEAR_HAN.test('先跑这条命令，然后看输出')).toBe(false);
+    expect(FULL_WIDTH.test('Run this command， then read the output')).toBe(true);
+    expect(FULL_WIDTH.test('Run this command, then read the output')).toBe(false);
   });
 });

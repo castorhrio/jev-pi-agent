@@ -789,6 +789,8 @@ const zhCN: Dictionary = {
   'diag.env.copying': '复制中…',
   'diag.env.copied': '已复制',
   'diag.env.copyFailed': '复制失败',
+  'diag.env.copyFailedHint':
+    '复制不可用（页面不在安全上下文，或浏览器拒绝了剪贴板权限）。请选中上面的命令手动复制。',
 
   'error.title': '出错了',
   'error.bridge': 'UCAD 桥接不可用：preload 未加载，请重启应用。',
@@ -1570,6 +1572,8 @@ const enUS: Dictionary = {
   'diag.env.copying': 'Copying…',
   'diag.env.copied': 'Copied',
   'diag.env.copyFailed': 'Copy failed',
+  'diag.env.copyFailedHint':
+    'Copying is unavailable (this page is not a secure context, or the clipboard permission was refused). Select the command above and copy it by hand.',
 
   'error.title': 'Something went wrong',
   'error.bridge': 'UCAD bridge unavailable — the preload did not load. Please restart the app.',

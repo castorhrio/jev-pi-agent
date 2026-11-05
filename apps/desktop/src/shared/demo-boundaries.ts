@@ -37,8 +37,15 @@
  * two homes.
  */
 
-/** Which blocker a block answers. Also the i18n key suffix. */
-export type DemoBoundaryId = 'feed' | 'windows' | 'states';
+/**
+ * Which blocker a block answers. Also the i18n key suffix.
+ *
+ * Not exported: nothing outside this module names it — the panel and the gates
+ * read `DemoBoundary.id`, which is this type. `knip` was red on the export for
+ * exactly that reason, and an export kept "just in case" is how a module grows
+ * a second public surface nobody asked for.
+ */
+type DemoBoundaryId = 'feed' | 'windows' | 'states';
 
 /** One blocker: the command to run, and the line it prints. */
 export interface DemoBoundary {
