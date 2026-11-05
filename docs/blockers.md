@@ -308,6 +308,57 @@ npx vitest run tests/contract/state-walkthrough.test.ts
 「那十张图还对着当前渲染层源码」；`tests/contract/demo-script.test.ts` 的
 `describe('each external blocker has a command and a line on screen')` 钉住演示页里那条命令与它的首行。
 
+## 本机全量测试的已知环境约束（不是外部阻塞）
+
+- **最近核对**：2026-11-05 ｜ **重跑这一条**：`npm run test:local`
+
+这一节不是第四条外部阻塞：它不需要令牌、不需要 Windows、不需要人，**换一台机器就不存在**。
+写在这里是因为它连续三轮以「本机 vitest 因 /tmp 不可写大面积失败，与本改动无关」的形式出现在
+commit message 里——同一句免责话出现三次之后，读者就不再读它，而这正是这一页整页在防的事。
+所以它变成一次根因排查、一条替代命令、一条会红的断言。
+
+**哪台机器**：`VM-0-5-ubuntu`（本仓的开发机）。`/tmp` 不是磁盘，是一块带**用户配额**的 tmpfs：
+
+```console
+$ df -h /tmp
+Filesystem      Size  Used Avail Use% Mounted on
+tmpfs           1.9G  1.5G  348M  82% /tmp
+
+$ df -i /tmp
+Filesystem     Inodes  IUsed   IFree IUse% Mounted on
+tmpfs         1048576  36120 1012456    4% /tmp
+
+$ mount | grep -w /tmp
+tmpfs on /tmp type tmpfs (rw,nosuid,nodev,size=1903632k,nr_inodes=1048576,inode64,usrquota)
+```
+
+**根因**：`usrquota` 的额度被历次测试留下的 `mkdtemp` 目录吃满（`/tmp/ucad-*` 近三千个），
+于是写入失败在 `EDQUOT` 上——Node 把它报成 `Unknown system error -122`，一个不含「磁盘满」
+也不含 `/tmp` 的错误串。`df` 说还有 348M 可用，`dd` 却立刻 `Disk quota exceeded`：**看 `df`
+看不出这件事**，这就是它被当成「与本改动无关」的原因。一次全量 `npm test` 的后果是
+**108 个测试文件里 77 个红**，红的全是写临时文件的那一步，与被测代码无关。
+
+**替代命令**（本机跑全量用这一条，两条环境约束一起解决）：
+
+```bash
+xvfb-run --auto-servernum --server-args="-screen 0 1920x1080x24" npm run test:local
+```
+
+`npm run test:local` 是 `scripts/test-local.mjs`：把 `TMPDIR` / `TEMP` / `TMP` 指到仓库内的
+`.tmp/`（已进 `.gitignore`），跑与 `npm test` 完全相同的 `vitest run`，跑完删掉；`xvfb-run`
+是第二条约束——`tests/contract/layout.test.ts` 要一个真布局引擎，没有 `$DISPLAY` 时它自己
+会红并说明原因。这一条在本机跑出来是 **107 个文件绿、1 个红**（`layout.test.ts`，见下）。
+
+**它证明不了什么**：`npm test` 仍是 CI 跑的那条命令，**没有**被改成依赖 `.tmp/`——GitHub
+runner 的 `/tmp` 不是这台机器的 `/tmp`，一条只在挪走临时目录后才绿的闸门，量的是绕法而不是产品。
+`test:local` 是给需要它的机器用的，它每次运行都打印自己用的目录，所以一段 transcript 不会被
+误读成一次普通的 `npm test`。
+
+**这一节的断言在哪**：`tests/contract/local-test-env.test.ts` 钉住三件事——这一节点名的
+`npm run test:local` 真的在 `package.json` 的 `scripts` 里（写一条没人跑的替代命令是这一页
+最坏的形态）、`scripts/test-local.mjs` 真的把 `TMPDIR` 指到仓库内、`.tmp/` 真的被 `.gitignore`
+挡住；它还跑一次 `--dry-run`，断言脚本自己报出来的目录在仓库里。
+
 ## 交接记录（做了就加一行，只追加）
 
 | 阻塞 | 日期 | 做的人 | 结果落在哪 | 判定 |

@@ -26,6 +26,7 @@
     "demo": "node scripts/demo-walkthrough.mjs",
     "pretest": "npm run build:packages",
     "test": "vitest run",
+    "test:local": "node scripts/test-local.mjs",
     "test:watch": "vitest",
     "test:e2e": "vitest run --config vitest.e2e.config.ts",
     "dev": "npm run build && electron .",

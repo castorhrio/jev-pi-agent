@@ -21,6 +21,9 @@ Thumbs.db
 .env.*
 coverage/
 .vitest/
+# The scratch directory `npm run test:local` uses on machines whose /tmp is a
+# quota-limited tmpfs; see docs/blockers.md 「本机全量测试的已知环境约束」.
+.tmp/
 
 .run-logs/
 .shots/
