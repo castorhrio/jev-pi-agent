@@ -172,6 +172,29 @@
    * the table below it still gets the width it needs.
    */
   --measure-prose: 36em;
+
+  /*
+   * The leading and the tracking: the two numbers a reader feels before they
+   * can name anything.
+   *
+   * Leading was written as a bare `1.6` in twenty rules and as `1.55`, `1.65`,
+   * `1.68` and `1.7` in a dozen more, so "how much air is between these lines"
+   * was answered per call site. The prose roles now read one number, and
+   * `tests/contract/typography.test.ts` holds it inside the 1.5–2.0 band: under
+   * 1.5 a Chinese paragraph's lines start to touch, and the reader loses the
+   * line they were on. The layout gate measures the same ratio in a real engine
+   * (scripts/layout-page-scripts.mjs, `lineHeight / size < 1.45` on any box with
+   * two or more line boxes), so this token is the fast half of a promise that is
+   * also measured on screen.
+   *
+   * Tracking is `0` on purpose, and the reason is written at the heading rule
+   * that uses it: Han glyphs already sit close to their neighbours, so the
+   * `-0.01em` copied from Latin display type only made the strokes touch. The
+   * gate asserts this number is not negative and that no rule anywhere writes a
+   * negative `letter-spacing` of its own.
+   */
+  --lh-prose: 1.6;
+  --ls-cjk: 0;
 }
 
 * {
@@ -190,7 +213,7 @@ body {
   color: var(--text);
   font-family: var(--sans);
   font-size: var(--fs-body);
-  line-height: 1.6;
+  line-height: var(--lh-prose);
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
   overflow: hidden;
@@ -387,7 +410,7 @@ textarea {
   resize: none;
   font-family: var(--sans);
   font-size: var(--fs-body);
-  line-height: 1.6;
+  line-height: var(--lh-prose);
 }
 
 select {
@@ -904,9 +927,11 @@ code,
    * Chinese (文件, 变更, 上下文…), and Han glyphs already sit close to their
    * neighbours, so the only thing -0.18px did was make the strokes touch. The
    * layout gate measures letter-spacing on Chinese text, which is how this
-   * was found rather than argued about.
+   * was found rather than argued about. The value is the `--ls-cjk` token so
+   * that "Chinese is not tracked" is one number in `:root` rather than a `0`
+   * that a later restyle can quietly turn into `-0.01em`.
    */
-  letter-spacing: 0;
+  letter-spacing: var(--ls-cjk);
 }
 
 /* The surface's one-line description is prose, so it takes the prose measure
@@ -1598,6 +1623,7 @@ code,
 .card > p {
   margin: 0;
   max-width: var(--measure-prose);
+  line-height: var(--lh-prose);
 }
 
 table.grid {
@@ -2227,7 +2253,7 @@ table.grid .num {
   max-width: var(--measure-prose);
   margin-bottom: 10px;
   font-size: var(--fs-min-cjk);
-  line-height: 1.6;
+  line-height: var(--lh-prose);
 }
 
 .console-in {

@@ -304,6 +304,137 @@ describe('the prose measure', () => {
   });
 });
 
+/**
+ * The leading and the tracking: the two numbers a reader feels before they can
+ * name anything.
+ *
+ * ## Why these two, and why now
+ *
+ * The blocks above pin the size of the type and the length of the line. Neither
+ * says how much air sits between two lines, or how far apart the glyphs in a
+ * word are — and those are the two settings a reader notices as "cramped" or
+ * "loose" without being able to point at them. They were also the two settings
+ * this stylesheet answered per call site: `line-height` was written as a bare
+ * `1.6` in twenty rules and as `1.55`, `1.65`, `1.68` and `1.7` in a dozen
+ * more, so "how much air" had no answer, only twenty answers.
+ *
+ * ## What is asserted, and what is not
+ *
+ * Four things, all mechanical:
+ *
+ *  1. `--lh-prose` is declared and sits inside the 1.5–2.0 band. Under 1.5 a
+ *     Chinese paragraph's lines start to touch and the reader loses the line
+ *     they were on; over 2.0 the paragraph stops reading as one block.
+ *  2. `--ls-cjk` is declared and is not negative. Han glyphs already sit close
+ *     to their neighbours, so negative tracking on Chinese is not a style, it
+ *     is strokes touching — the defect the heading rule's comment records.
+ *  3. the prose roles read those tokens instead of writing a number of their
+ *     own, and no rule anywhere writes a negative `letter-spacing`.
+ *  4. a rule that sets prose type (`--fs-body` / `--fs-note`) never sets a
+ *     leading under 1.2.
+ *
+ * Not asserted: that *every* `line-height` is a token. The remaining bare
+ * leadings are per-component — a table row, a code block, a caret glyph — and
+ * folding them into a scale is a redesign that moves pixels, not a gate. What
+ * is gated is the two failure modes a reader can see: prose set too tight, and
+ * Chinese tracked negative. The real-engine half of the same promise is in
+ * `scripts/layout-page-scripts.mjs`, which flags any box with two or more line
+ * boxes whose `lineHeight / size` is under 1.45.
+ */
+describe('the leading and the tracking', () => {
+  /** The declarations of one rule, found by its selector. */
+  function ruleBody(selector: string): string {
+    for (const rule of codeOnly(styles).matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+      if (rule[1]!.trim().replace(/\s+/g, ' ') === selector) return rule[2]!;
+    }
+    expect.fail(`styles.css has no \`${selector}\` rule`);
+  }
+
+  /** Every declaration of one property, with the selector that wrote it. */
+  function declarationsOf(property: 'line-height' | 'letter-spacing'): Array<{
+    selector: string;
+    value: string;
+  }> {
+    const found: Array<{ selector: string; value: string }> = [];
+    for (const rule of codeOnly(styles).matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+      const selector = rule[1]!.trim().replace(/\s+/g, ' ');
+      for (const match of rule[2]!.matchAll(new RegExp(`${property}:\\s*([^;]+);`, 'g'))) {
+        found.push({ selector, value: match[1]!.trim() });
+      }
+    }
+    return found;
+  }
+
+  /** A declared length, as a number; `undefined` when it is not one. */
+  function number(value: string): number | undefined {
+    const match = /^(-?\d+(?:\.\d+)?)(?:em|px)?$/.exec(value);
+    return match === null ? undefined : Number(match[1]);
+  }
+
+  it('declares a prose leading inside the band', () => {
+    const leading = number(token('lh-prose'));
+    expect(leading, `--lh-prose is ${token('lh-prose')}, which is not a number`).toBeDefined();
+    expect(leading!, 'leading under 1.5 lets a Chinese paragraph\'s lines touch').toBeGreaterThanOrEqual(1.5);
+    expect(leading!, 'leading over 2.0 stops the paragraph reading as one block').toBeLessThanOrEqual(2);
+  });
+
+  it('declares a Chinese tracking that is not negative', () => {
+    const tracking = number(token('ls-cjk'));
+    expect(tracking, `--ls-cjk is ${token('ls-cjk')}, which is not a number`).toBeDefined();
+    expect(tracking!, 'negative tracking on Han glyphs makes the strokes touch').toBeGreaterThanOrEqual(0);
+  });
+
+  it('sets the prose roles to that leading, rather than to a number of their own', () => {
+    // The four roles that carry a sentence: the document, the composer, a card's
+    // paragraph and the terminal's note. A prose role that writes `1.6` itself
+    // is the drift this token exists to stop.
+    for (const selector of ['body', 'textarea', '.card > p', '.terminal-note']) {
+      expect(ruleBody(selector), `${selector} does not read --lh-prose`).toMatch(
+        /line-height:\s*var\(--lh-prose\)/,
+      );
+    }
+  });
+
+  it('sets the Chinese heading to that tracking', () => {
+    // `.pane-head h1` is the rule the negative-tracking defect was found on; it
+    // is the one place the token is consumed, and a token nothing consumes is a
+    // comment with a colon in it.
+    expect(ruleBody('.pane-head h1')).toMatch(/letter-spacing:\s*var\(--ls-cjk\)/);
+  });
+
+  it('writes no negative tracking anywhere', () => {
+    const declared = declarationsOf('letter-spacing');
+    expect(declared.length, 'the stylesheet sets no letter-spacing at all').toBeGreaterThan(0);
+    const negative = declared.filter((decl) => {
+      if (/^var\(--[\w-]+\)$/.test(decl.value)) return false; // the token is checked above
+      const value = number(decl.value);
+      return value !== undefined && value < 0;
+    });
+    expect(
+      negative.map((decl) => `${decl.selector} { letter-spacing: ${decl.value} }`),
+      'these rules track text negatively; on Chinese that is strokes touching, not emphasis',
+    ).toEqual([]);
+  });
+
+  it('never sets prose type to a leading under 1.2', () => {
+    // A caret glyph may be set solid (`line-height: 1`); a sentence may not.
+    // The rule is stated over the rules that pick a prose size, so the caret and
+    // the badge stay out of it without an exemption list.
+    const tight: string[] = [];
+    for (const rule of codeOnly(styles).matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+      const body = rule[2]!;
+      if (!/font-size:\s*var\(--fs-(?:body|note)\)/.test(body)) continue;
+      const leading = /line-height:\s*([^;]+);/.exec(body);
+      if (leading === null) continue;
+      const value = number(leading[1]!.trim());
+      if (value !== undefined && value < 1.2) {
+        tight.push(`${rule[1]!.trim().replace(/\s+/g, ' ')} { line-height: ${leading[1]!.trim()} }`);
+      }
+    }
+    expect(tight, 'prose set tighter than 1.2 is a paragraph the eye cannot track').toEqual([]);
+  });
+});
+
 describe('the font stacks', () => {
   it('resolves Latin first, then Chinese, then a generic family', () => {
     /*
