@@ -87,7 +87,7 @@ On a machine like that, ask for a server that already answers instead of startin
 ELECTRON_DISABLE_SANDBOX=1 DISPLAY=:140 npx vitest run tests/contract/layout.test.ts
 ```
 
-That is how this gate was run here on 2026-11-05: 45 tests green, in about 90 seconds. The one
+That is how this gate was run here on 2026-11-05: every target green, in about 90 seconds. The one
 condition the `xvfb-run` line above carries still applies — the screen behind that socket has to
 be at least as wide as the widest window the gate asks for, or the gate measures a clamped
 window and says so.

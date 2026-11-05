@@ -34,7 +34,6 @@ export type Dictionary = Record<string, string>;
 
 const zhCN: Dictionary = {
   'app.name': 'UCAD',
-  'app.tagline': '统一 Coding Agent 桌面工作台',
 
   'menu.file': '文件',
   'menu.edit': '编辑',
@@ -67,7 +66,7 @@ const zhCN: Dictionary = {
 
   'providers.title': '模型供应商',
   'providers.subtitle':
-    '各厂商大多提供 OpenAI 兼容接口，换 base_url 即可接入。凭据只写入本地保险库，不回显明文。',
+    '多数厂商都提供 OpenAI 兼容接口，改 base_url 就能接上。凭据写进系统钥匙串，存进去就再也读不出来。',
   'providers.name': '供应商',
   'providers.configured': '已配置',
   'providers.unsupported': '未接入',
@@ -83,13 +82,13 @@ const zhCN: Dictionary = {
   'providers.quotaNotProvided': '未提供',
   'providers.quotaExhausted': '已耗尽',
   'providers.probeFailed': '探测失败',
-  'providers.probeDetail': '诊断原文（主进程）',
+  'providers.probeDetail': '诊断原文（未改写）',
   'providers.probeCode.AUTH_REQUIRED': '凭据无效或缺失',
   'providers.probeCode.BUDGET_EXCEEDED': '额度已耗尽',
   'providers.probeCode.NETWORK_ERROR': '无法连接',
   'providers.probeCode.RATE_LIMITED': '被限流',
   'providers.probeCode.ADAPTER_NOT_AVAILABLE': '未接入',
-  'providers.probeCode.STORAGE_ERROR': '凭据库不可读',
+  'providers.probeCode.STORAGE_ERROR': '系统钥匙串不可读',
   'providers.probeCode.UNKNOWN': '失败（未分类）',
   'editor.title': '文件编辑',
   'editor.edit': '编辑',
@@ -99,18 +98,19 @@ const zhCN: Dictionary = {
   'editor.saving': '保存中…',
   'editor.unsaved': '未保存',
   'editor.truncated': '内容已截断',
-  'editor.revisionHint': '内容哈希，用于乐观并发检测',
+  'editor.revisionHint': '内容哈希：写入前用来确认文件没被别人改过',
   'editor.conflict': '文件已被其他方修改',
   'editor.reload': '放弃我的修改并重新载入',
   'editor.overwrite': '仍然覆盖',
-  'editor.hint': '自动保存；写入会带上读取时的内容哈希，若文件已被改动会提示冲突',
+  'editor.hint': '自动保存。每次写入都带上读取时的内容哈希，对不上就不会静默覆盖。',
 
   'trust.title': '项目信任',
   'trust.untrusted': '不信任',
   'trust.trusted': '信任',
   'trust.restricted': '受限',
   'trust.untrusted.hint': '只读。可以浏览代码，但不能编辑文件或执行命令。',
-  'trust.trusted.hint': '允许编辑工作区内文件与执行经确认的命令。项目级 Skill 与 MCP 需要信任。',
+  'trust.trusted.hint':
+    '可以编辑工作区内的文件，也可以执行确认过的命令。项目级 Skill 和 MCP 服务器要求项目先被信任。',
   'trust.restricted.hint': '可读可写，但工作区外路径与破坏性 Git 操作一律询问。',
   'trust.failed': '信任状态没有改变：{reason}',
 
@@ -184,7 +184,7 @@ const zhCN: Dictionary = {
   // Handoff — the record that carries state to the next agent.
   'handoff.title': '交接摘要',
   'handoff.subtitle':
-    '把这次会话的实际状态交给下一个 Agent。不调用任何模型，也不做推断——只记录发生过什么。',
+    '把这次会话的实际状态交给下一个 Agent：不调用模型、不做推断，只记录发生过什么。',
   'handoff.empty': '还没有交接摘要。生成一份，记录当前目标、状态、相关文件、已做的决定与未完成的工作。',
   'handoff.emptyWithHistory':
     '本会话已有 {count} 份交接记录，列在下方。生成一份新的，把当前状态交给下一个 Agent。',
@@ -229,33 +229,30 @@ const zhCN: Dictionary = {
   'stream.gapWarning': '事件流有 {count} 条缺口，下面显示的历史可能不完整。',
   'sessions.loadFailed': '会话列表读取失败（不是空的）',
   'stream.unmodelledWarning':
-    '有 {count} 条事件是这个版本还不认识的，它们没有显示出来。请更新 UCAD 以免漏掉信息。',
+    '有 {count} 条事件这个版本还不认识，所以没有显示出来。更新 UCAD 就能读到它们。',
 
-  'welcome.title': '开始使用 UCAD',
-  'welcome.subtitle': '在一个窗口里使用多个 Coding Agent，共享同一份项目上下文。',
   'welcome.step1': '打开一个项目文件夹',
   'welcome.step1Hint': 'UCAD 只会读取你选择的目录，不会自动扫描其它位置。',
   'welcome.step2': '选择一个 Agent',
-  'welcome.step2Hint': 'V1 内置 Mock Agent，它会完整演示上下文注入与事件流的每个环节。',
+  'welcome.step2Hint': '随包内置 Mock Agent：不联网，但注入与事件流的每一步都会真的走一遍。',
   'welcome.step3': '描述你的任务',
-  'welcome.step3Hint': 'Agent 会先构建 Context Pack，再把注入内容放进它的输入，然后才开始工作。',
+  'welcome.step3Hint': '写清楚目标和「怎样算做完」，上下文就是按这句话检索的。',
   'welcome.open': '打开项目文件夹',
   'welcome.openFailed': '打开项目失败',
 
   'empty.chat': '还没有对话。在下方描述你的任务，Agent 会先构建上下文再开始工作。',
   'empty.chatHint': 'Ctrl + Enter 发送 · @ 引用文件',
   'empty.chatSteps': '发送之后会发生什么',
-  'empty.chatStep1': 'Decision Engine 判断该用哪个 Agent、风险有多大，并把理由写进事件流。',
-  'empty.chatStep2': 'Context Broker 在 Token 预算内检索相关文件、符号与 Git 变更，打成一个 Context Pack。',
-  'empty.chatStep3': '上下文被确定性渲染后注入 Agent 输入；右侧面板实时显示它拿到了什么。',
+  'empty.chatStep1': '先看这件事该交给哪个 Agent、风险有多大，判断的理由会写进事件流，事后能回看。',
+  'empty.chatStep2': '再按 token 预算挑出相关的文件、符号与未提交的改动，打成一个 Context Pack。',
+  'empty.chatStep3': '这个包渲染成确定的字节后注入 Agent，右侧面板同时显示它实际拿到了什么。',
   'empty.explorer': '选择左侧的文件查看内容。',
   'explorer.listFailed': '目录读取失败',
   'explorer.readFailed': '文件读取失败',
   'empty.changes': '工作区没有未提交的变更。',
-  'empty.context': '发送一轮指令后，这里会显示 Agent 实际收到的上下文包。',
   'empty.decision': '本会话还没有产生决策记录。',
   'empty.usage': '尚无用量记录。',
-  'empty.sessions': '还没有会话。点击上方"新建会话"开始。',
+  'empty.sessions': '还没有会话。点上面的「新建会话」就能开始。',
   'empty.sessionsNoWorkspace': '会话属于某个项目。先打开一个项目，再新建会话。',
   'empty.diff': '没有文本差异。',
 
@@ -266,30 +263,30 @@ const zhCN: Dictionary = {
   'terminal.subtitle':
     '在当前项目目录里启动一个由 UCAD 托管的 shell，键入的命令会直接写入它的 stdin。',
   'terminal.ptyNotice':
-    'node-pty 提供真实 ConPTY 会话：回显、光标寻址、vim 与 top 这类全屏程序都可用；不受权限引擎约束——受约束的是 Agent 的命令。',
+    'node-pty 提供真实 ConPTY 会话：回显、光标寻址、vim 与 top 这类全屏程序都可用；不受权限门约束——受约束的是 Agent 的命令。',
   'terminal.ptyUnavailable':
     '交互式终端不可用：{reason} 下面的命令通道仍可用，但它以管道运行：没有回显，也无法运行全屏程序。',
   'terminal.ptyLayers':
-    '三种 shell 互不相干：这里是你自己的交互终端；Agent 的命令走 UCAD 托管的 shell，受权限引擎约束，以 command.* 卡片出现在对话里；厂商运行时内部还有它自己的 shell，UCAD 既不拦截，也不假装能拦截。',
+    '三种 shell 互不相干：这里是你自己的交互终端；Agent 的命令走 UCAD 托管的 shell，受权限门约束，以 command.* 卡片出现在对话里；厂商运行时内部还有它自己的 shell，UCAD 既不拦截，也不假装能拦截。',
   'terminal.distinct':
     '这是你的控制台，不是 Agent 的命令工具。Agent 执行的命令以 command.* 卡片出现在对话记录里，两者的运行状态互不相干。',
   'terminal.exitCodeNote':
-    '管道 stdio 不会回报单条命令的 exitCode，因此这里不显示退出码；控制台进程结束后写入会失败，并在此标出原因。',
+    '命令走的是管道，单条命令的退出码传不回来，所以这里不显示退出码；控制台进程结束后再写入会失败，原因会标在这里。',
   'terminal.consoles': '控制台',
   'terminal.new': '新建控制台',
   'terminal.kill': '结束',
-  'terminal.empty': '还没有控制台。点击"新建控制台"，在当前项目目录里启动一个 shell。',
+  'terminal.empty': '还没有控制台。点上面的「新建控制台」就能启动一个 shell。',
   'terminal.noConsoles': 'node-pty 不可用，没有可创建或列出的终端。',
   'terminal.emptyCommand':
     '这里还没有命令输出。在下面的输入框里输入一条命令，它会在当前项目目录里运行。',
   'terminal.commandTitle': '命令通道',
   'terminal.newPipe': '新建通道',
   'terminal.emptyPipe':
-    '还没有命令通道。点击上方"新建通道"，命令会在当前项目目录里运行。',
+    '还没有命令通道。点上面的「新建通道」，命令会在当前项目目录里运行。',
   'terminal.output': '输出',
   'terminal.noOutput': '这个控制台还没有返回任何输出。',
   'terminal.noOutputHint':
-    '控制台通过 push:terminalData 回传输出。如果这里一直空白，说明输出通道没有收到数据，而不是命令执行成功且没有任何输出。',
+    '控制台的输出是异步回传的。这里一直空白，说明输出没有回到界面上——不等于命令跑完了而什么都没打印。',
   'terminal.running': '运行中',
   'terminal.killed': '已被结束',
   'terminal.ended': '已退出',
@@ -305,7 +302,7 @@ const zhCN: Dictionary = {
   // -- Project Intelligence (§4.8). Absence is a first-class, visible fact here.
   'intel.title': '项目智能',
   'intel.subtitle':
-    '每个 Provider 的能力逐项列出；未实现的方法与"查到了但为空"是两种不同的事实，这里分开显示。',
+    '每个 Provider 的能力逐项列出——没实现的方法不会冒充「查到了但为空」。',
   'intel.providers': 'Provider',
   'intel.tier': '层级',
   'intel.transport': '通道',
@@ -315,7 +312,7 @@ const zhCN: Dictionary = {
   'intel.optionalMethods': '可选方法',
   'intel.optionalPresent': '已实现',
   'intel.optionalAbsent': '未实现',
-  'intel.optionalNone': '声明的可选方法：无。缺席本身就是事实，不等于"没有结果"。',
+  'intel.optionalNone': '没有声明任何可选方法——这也是一条事实，不等于「查到了但为空」。',
   'intel.present': '支持',
   'intel.absent': '不支持',
   'intel.cap.symbolSearch': '符号搜索',
@@ -351,19 +348,19 @@ const zhCN: Dictionary = {
   'intel.cancelMissed': '取消没有命中任何在途操作。',
   'intel.ask': '询问 Provider',
   'intel.askHint':
-    '下面这七种查询里，只有 Provider 真正实现的方法才会返回结果；其余会明确显示为"未实现"。',
+    '下面这七种查询里，只有 Provider 真的实现过的那种才会有结果；其余直接标成「未实现」。',
   'intel.kind': '查询类型',
   'intel.queryInput': '查询内容',
   'intel.runQuery': '执行',
   'intel.querying': '查询中…',
   'intel.queryOk': '已返回结果',
   'intel.queryUnsupported':
-    '这个 Provider 没有实现该方法。这是"能力缺席"，不是"没有匹配结果"，也不是调用失败。',
+    '这个 Provider 没有实现该方法：这是能力缺席，不是查无结果，也不是调用失败。',
   'intel.queryError': '调用失败。',
   'intel.queryCancelled': '这次查询被取消了。',
   'intel.freshness': '新鲜度',
   'intel.items': '结果条目',
-  'intel.noItems': '没有匹配项。这是一次真实的空结果，不是失败。',
+  'intel.noItems': '没有匹配项。查询是成功的，只是没有结果——这不是失败。',
   'intel.summary': '概览',
   'intel.modules': '模块',
   'intel.entryPoints': '入口',
@@ -373,6 +370,7 @@ const zhCN: Dictionary = {
   'intel.unknownShape': '返回结构与已知形态不同，原样显示而不是猜测含义。',
 
   'composer.placeholder': '描述任务，例如：分析登录失败的原因并运行相关测试',
+  'composer.needsProject': '打开项目后才能在这里输入',
   'composer.task': '任务描述',
   'composer.send': '发送',
   'composer.stop': '停止',
@@ -420,10 +418,10 @@ const zhCN: Dictionary = {
   'permission.allow_session': '本次会话允许',
   'permission.allow_workspace': '本项目允许',
   'permission.deny': '拒绝',
-  'permission.explain': 'UCAD 的权限引擎不是操作系统沙箱；可拦截的 Agent 会同时启用厂商原生审批。',
+  'permission.explain': 'UCAD 的权限门不是操作系统沙箱；能被拦下的 Agent，厂商自己的审批也照样开着。',
 
   'context.title': '上下文',
-  'context.subtitle': '本轮 Agent 实际收到的内容。注入是确定性渲染的结果，可用 renderedHash 校验。',
+  'context.subtitle': '本轮 Agent 实际收到的内容。renderedHash 用来核对这段字节没有被改过。',
   'context.strategy': '策略',
   'context.items': '条目',
   'context.budget': '预算',
@@ -436,18 +434,18 @@ const zhCN: Dictionary = {
   'context.extend': '补充上下文',
   'context.extendPlaceholder': '例如：把 AuthService 的调用方也加进来',
   'context.extendBusy': '检索中…',
-  'context.extendHint': '受本轮 Token 预算约束',
+  'context.extendHint': '受本轮 token 预算约束',
   'context.waiting': '发送一轮指令后，这里会显示 Agent 实际收到的内容。',
   'context.waitingDetail':
-    '包括策略、条目、预算占用、估算来源与 renderedHash —— 不是笼统的摘要，而是可校验的原文。',
+    '策略、条目、预算占用、估算来源与 renderedHash 都在这里——给你读原文，不给你读摘要。',
   'context.previewTitle': '发送前预览',
   'context.previewHint':
-    '先看会被打进上下文的条目与预算，再决定要不要发送。预览是一次干跑：不写记录，也不占用本轮预算。',
+    '先看会被打进上下文的条目与预算，再决定要不要发送。预览不写记录，也不占用本轮预算。',
   'context.previewPlaceholder': '例如：分析登录失败的原因并运行相关测试',
   'context.previewAction': '预览上下文',
   'context.previewBusy': '构建中…',
   'context.previewResult': '预览结果',
-  'context.previewNote': '这份 Pack 不会落盘；它只是告诉你"发送后会发生什么"。',
+  'context.previewNote': '这份 Pack 不会落盘：它只告诉你，真的发送之后会打进哪些内容。',
   'context.previewEmpty': '先写一句目标，才能预览会打进什么。',
   'context.needWorkspace': '预览需要一个已打开的项目：请先打开项目文件夹。',
   'context.needSession': '预览需要一个会话，新建失败。',
@@ -464,10 +462,10 @@ const zhCN: Dictionary = {
   'context.freshness': '新鲜度',
   'context.fresh': '最新',
   'context.stale': '已过期',
-  'context.itemsEmpty': '这次构建没有检索到任何条目 —— 这是"检索结果为空"，不是"还没查"。',
+  'context.itemsEmpty': '这次没有检索到任何条目——是「检索结果为空」，不是「还没查」。',
   'context.omittedEmpty': '没有被省略的条目。',
   'context.omittedNotPersisted':
-    '被省略的条目明细不落盘（§8.1 schema 限制），这里显示的是事件里的数量。',
+    '被省略的条目明细不会存下来，所以这里只能显示事件里记录的数量。',
   'context.lastTurn': '上一轮实际注入的内容',
   'context.lastTurnNone': '本会话还没有跑过一轮，所以还没有注入记录。',
   'context.noInjection': '这一轮没有留下注入记录：Agent 可能在拿到 Pack 之前就结束了。',
@@ -476,7 +474,7 @@ const zhCN: Dictionary = {
   'context.hashCopyFailed': '复制失败，请手动选中下面的 hash',
   'context.noInjectionPlan': '这一轮还没有注入计划，因此没有可核对的 hash。',
   'context.hashExplains':
-    'render 是纯函数（I-1）：同一个 Pack 一定渲染出同一段字节、同一个 hash。hash 对不上，就说明这段字节被改过，或者 Pack 变了 —— 它能证明"没被改写"，不能证明"内容正确"。',
+    'render 是纯函数：同一个 Pack 一定渲染出同一段字节、同一个 hash。hash 对不上，说明这段字节被改过，或者 Pack 变了——它证明的是「没被改写」，不是「内容正确」。',
   'context.injectionMode': '注入方式',
   'context.injectionRendezvous': '注入位置',
   'context.injectionTokens': '注入估算（{source}）',
@@ -504,7 +502,7 @@ const zhCN: Dictionary = {
     '本轮已结束或这是预览包：没有可用的回合账本，预算按 Pack 自身计算。',
 
   'decision.title': '决策',
-  'decision.subtitle': '决策是独立平面：只接收状态摘要、返回类型化决策，不读代码、不执行命令。',
+  'decision.subtitle': '判断和执行是分开的：这里只读状态摘要、给出带理由的决定，不读代码，也不执行命令。',
   'decision.chain': '引擎链',
   'decision.autoRoute': '自动执行路由建议（默认关闭，仅显示建议）',
   'decision.allowNetwork': '允许声明 network 副作用的决策引擎',
@@ -537,12 +535,12 @@ const zhCN: Dictionary = {
   'decision.producedBy': '由谁给出',
   'decision.latency': '耗时',
   'decision.rationale': '理由',
-  'decision.fallbackReason': '发生了回落：{reason}（D-2：回落必须留痕）',
-  'decision.previewNote': '这是一次干跑：不会写入决策记录，也不会改变本轮实际走的链。',
+  'decision.fallbackReason': '发生了回落：{reason}',
+  'decision.previewNote': '这只是先跑一次：不写入决策记录，也不改变本轮真正要走的链。',
 
   'rules.title': '权限规则',
   'rules.subtitle':
-    '每次选择"本次会话允许"或"本项目允许"都会在这里留下一条规则；规则先于默认策略生效，也可以随时撤销。',
+    '每次选「本次会话允许」或「本项目允许」，这里都会留下一条规则；规则先于默认策略生效，也可以随时撤销。',
   'rules.filterAll': '全部',
   'rules.scopeHint': '会话 = 只对当前会话生效；项目 = 该项目所有会话；全局 = 所有项目。',
   'rules.scope': '作用域',
@@ -558,11 +556,11 @@ const zhCN: Dictionary = {
   'rules.revoking': '撤销中…',
   'rules.empty': '还没有任何规则：每次权限请求都会按默认策略询问。',
   'rules.onceNote':
-    '"允许一次"不会变成规则 —— 它只对当次请求生效，刷新后需要重新授权。',
+    '「允许一次」不会留下规则：它只管这一次请求，下一次还会再问。',
 
   'usage.title': '用量',
   'usage.turn': '本轮',
-  'usage.subtitle': '厂商未返回可靠数据时显示"不可用"，不把估算值当作精确数字。',
+  'usage.subtitle': '厂商没返回可靠数据时显示「不可用」，估算值不会冒充精确数字。',
   'usage.input': '输入 tokens',
   'usage.output': '输出 tokens',
   'usage.cost': '费用',
@@ -577,7 +575,7 @@ const zhCN: Dictionary = {
   'settings.agents': '智能体',
   'settings.intelligence': '代码理解',
   'settings.tools': '工具契约',
-  'settings.toolsNote': '该通道不提供写文件、执行命令与 Git 操作，避免绕过厂商原生审批。',
+  'settings.toolsNote': '这条通道不能写文件、不能执行命令，也不碰 Git——为的是不绕过厂商自己的审批。',
   'settings.secrets': '凭据',
   'settings.secretProvider': '供应商 ID',
   'settings.secretKey': '密钥名',
@@ -657,7 +655,7 @@ const zhCN: Dictionary = {
   // §12.1 Settings / MCP
   'mcp.title': 'MCP 服务器',
   'mcp.subtitle':
-    'MCP 是标准协议，这里只消费不实现。工具默认不会直接暴露给 Agent，要先在下面显式授权。',
+    'MCP 是标准协议，UCAD 只做客户端。工具默认不交给 Agent，要在下面明确授权。',
   'mcp.scope': '作用域',
   'mcp.scope_global': '全局',
   'mcp.scope_workspace': '本项目',
@@ -742,7 +740,7 @@ const zhCN: Dictionary = {
   'diagnostics.openDataDir': '打开数据目录',
 
   'help.title': '快速上手',
-  'help.subtitle': '三步开始，之后再逐步展开。',
+  'help.subtitle': '先走完这三步，其余面板等你需要时再看。',
   'help.shortcuts': '键盘快捷键',
   'help.sc.newSession': '新建会话',
   'help.sc.send': '发送消息',
@@ -753,10 +751,10 @@ const zhCN: Dictionary = {
   'help.sc.composer': '聚焦输入框',
   'help.whatIsContext': '上下文是什么',
   'help.whatIsContextBody':
-    '每次发送任务时，UCAD 会先在 Token 预算内检索出相关的文件、符号、Git 变更和项目概览，打包成一个 Context Pack，再确定性地渲染进 Agent 的输入。你可以在"上下文"页看到它实际收到了什么，并用 renderedHash 校验内容没有被改写。',
+    '每次发送任务，UCAD 先在 token 预算内检索相关的文件、符号、Git 变更和项目概览，打包成一个 Context Pack，再把它渲染进 Agent 的输入——同样的 Pack 永远渲染出同样的内容。你可以在「上下文」页读到实际注入了哪些字节，并用 renderedHash 核对它们没有被改写。',
   'help.whatIsDecision': '决策是什么',
   'help.whatIsDecisionBody':
-    '路由、风险、是否继续这类判断被放在独立平面上，由可替换的决策引擎完成。引擎只读取状态摘要，返回带理由和置信度的结果，你可以看到它为什么这么选，并随时换成别的引擎。',
+    '路由、风险、要不要继续这类判断，交给可替换的决策引擎完成：它只读状态摘要，返回带理由和置信度的结果。你能看到它为什么这么选，也能随时换成别的引擎。',
 
   'error.title': '出错了',
   'error.bridge': 'UCAD 桥接不可用：preload 未加载，请重启应用。',
@@ -779,7 +777,6 @@ const zhCN: Dictionary = {
 
 const enUS: Dictionary = {
   'app.name': 'UCAD',
-  'app.tagline': 'Unified Coding Agent Desktop',
 
   'menu.file': 'File',
   'menu.edit': 'Edit',
@@ -812,7 +809,7 @@ const enUS: Dictionary = {
 
   'providers.title': 'Model providers',
   'providers.subtitle':
-    'Most vendors expose an OpenAI-compatible API, so switching base_url is enough. Credentials are written to the local vault and never read back.',
+    'Most vendors expose an OpenAI-compatible API, so changing the base_url is enough. Credentials go into the OS keychain and cannot be read back out.',
   'providers.name': 'provider',
   'providers.configured': 'configured',
   'providers.unsupported': 'not wired',
@@ -826,13 +823,13 @@ const enUS: Dictionary = {
   'providers.quotaNotProvided': 'not provided',
   'providers.quotaExhausted': 'exhausted',
   'providers.probeFailed': 'probe failed',
-  'providers.probeDetail': 'diagnostic (main process)',
+  'providers.probeDetail': 'diagnostic text (unedited)',
   'providers.probeCode.AUTH_REQUIRED': 'credential missing or rejected',
   'providers.probeCode.BUDGET_EXCEEDED': 'quota exhausted',
   'providers.probeCode.NETWORK_ERROR': 'unreachable',
   'providers.probeCode.RATE_LIMITED': 'rate limited',
   'providers.probeCode.ADAPTER_NOT_AVAILABLE': 'not wired',
-  'providers.probeCode.STORAGE_ERROR': 'vault unreadable',
+  'providers.probeCode.STORAGE_ERROR': 'keychain unreadable',
   'providers.probeCode.UNKNOWN': 'failed (unclassified)',
   'editor.title': 'File editor',
   'editor.edit': 'Edit',
@@ -843,7 +840,7 @@ const enUS: Dictionary = {
   'editor.saving': 'Saving…',
   'editor.unsaved': 'unsaved',
   'editor.truncated': 'content truncated',
-  'editor.revisionHint': 'content hash, used for optimistic concurrency',
+  'editor.revisionHint': 'content hash: it proves the file was not changed under you before this write',
   'editor.conflict': 'This file was changed by something else',
   'editor.reload': 'Discard mine and reload',
   'editor.overwrite': 'Overwrite anyway',
@@ -974,18 +971,15 @@ const enUS: Dictionary = {
   'stream.unmodelledWarning':
     '{count} event(s) are not recognised by this version and were not displayed. Update UCAD so nothing is missed.',
 
-  'welcome.title': 'Get started with UCAD',
-  'welcome.subtitle':
-    'Use several coding agents in one window, sharing the same project context.',
   'welcome.step1': 'Open a project folder',
   'welcome.step1Hint':
     'UCAD only reads the folder you choose; it never scans anywhere else on its own.',
   'welcome.step2': 'Pick an agent',
   'welcome.step2Hint':
-    'V1 ships a Mock Agent that exercises every step of context injection and the event stream.',
+    'The bundled Mock Agent needs no network, and still runs every step of injection and the event stream for real.',
   'welcome.step3': 'Describe your task',
   'welcome.step3Hint':
-    'The agent builds a Context Pack first, injects it into its own input, and only then starts working.',
+    'Say the goal and what would count as done — the context is retrieved from that sentence.',
   'welcome.open': 'Open Project Folder',
   'welcome.openFailed': 'Could not open the project',
 
@@ -994,16 +988,15 @@ const enUS: Dictionary = {
   'empty.chatHint': 'Ctrl + Enter to send · @ to mention a file',
   'empty.chatSteps': 'What happens when you send',
   'empty.chatStep1':
-    'The Decision Engine picks the agent and assesses risk, writing its reasoning into the event stream.',
+    'First it settles which agent takes the task and how risky it is, and writes that reasoning into the event stream.',
   'empty.chatStep2':
-    'The Context Broker retrieves relevant files, symbols and git changes within a token budget, and packs them.',
+    'Then it picks the relevant files, symbols and uncommitted changes within a token budget and packs them into a Context Pack.',
   'empty.chatStep3':
-    'That pack is rendered deterministically into the agent’s input; the panel on the right shows what it received.',
+    'The pack renders to fixed bytes and goes into the agent; the panel on the right shows what it actually received.',
   'empty.explorer': 'Select a file on the left to view it.',
   'explorer.listFailed': 'Could not read the directory',
   'explorer.readFailed': 'Could not read the file',
   'empty.changes': 'The worktree has no uncommitted changes.',
-  'empty.context': 'After a turn, this shows the context the agent actually received.',
   'empty.decision': 'No decisions have been made in this session yet.',
   'empty.usage': 'No usage recorded yet.',
   'empty.sessions': 'No sessions yet. Click "New Session" above to start one.',
@@ -1022,11 +1015,11 @@ const enUS: Dictionary = {
   'terminal.ptyUnavailable':
     'The interactive terminal is unavailable: {reason} The command channel below still works, but it runs over a pipe: no echo, and no full-screen programs.',
   'terminal.ptyLayers':
-    'Three different shells: this one is your own interactive terminal; the agent’s commands run through the UCAD-managed shell, gated by the permission engine, and appear as command.* cards in the transcript; the vendor runtime has its own shell inside it, which UCAD neither intercepts nor pretends to.',
+    'Three different shells: this one is your own interactive terminal; the agent’s commands run through the UCAD-managed shell, checked by the permission gate, and appear as command.* cards in the transcript; the vendor runtime has its own shell inside it, which UCAD neither intercepts nor pretends to.',
   'terminal.distinct':
     "This is your console, not the agent's command tool. Commands the agent runs appear as command.* cards in the transcript, and the two never share state.",
   'terminal.exitCodeNote':
-    'A piped stdio console reports no per-command exitCode, so none is shown here; when the console process ends, writes start failing and the reason is recorded below.',
+    'A piped console reports no exit code per command, so none is shown here; when the console process ends, writes start failing and the reason is recorded below.',
   'terminal.consoles': 'Consoles',
   'terminal.new': 'New console',
   'terminal.kill': 'Kill',
@@ -1041,7 +1034,7 @@ const enUS: Dictionary = {
   'terminal.output': 'Output',
   'terminal.noOutput': 'This console has not returned any output yet.',
   'terminal.noOutputHint':
-    'Console output arrives over push:terminalData. If this stays blank, the output channel received nothing — which is not the same as "the command ran and printed nothing".',
+    'Console output comes back asynchronously. If this stays blank, nothing came back to the interface — which is not the same as the command running and printing nothing.',
   'terminal.running': 'running',
   'terminal.killed': 'killed',
   'terminal.ended': 'exited',
@@ -1057,7 +1050,7 @@ const enUS: Dictionary = {
   // -- Project Intelligence (§4.8). Absence is a first-class, visible fact here.
   'intel.title': 'Project intelligence',
   'intel.subtitle':
-    'Every provider is listed capability by capability. A method that is not implemented and a query that found nothing are two different facts, and this page keeps them apart.',
+    'Every provider is listed capability by capability — a method it never implemented will not be shown as a query that found nothing.',
   'intel.providers': 'Providers',
   'intel.tier': 'tier',
   'intel.transport': 'transport',
@@ -1115,7 +1108,7 @@ const enUS: Dictionary = {
   'intel.queryCancelled': 'The query was cancelled.',
   'intel.freshness': 'Freshness',
   'intel.items': 'Items',
-  'intel.noItems': 'No matches. This is a real empty result, not a failure.',
+  'intel.noItems': 'No matches. The query succeeded and found nothing — that is not a failure.',
   'intel.summary': 'Summary',
   'intel.modules': 'Modules',
   'intel.entryPoints': 'Entry points',
@@ -1126,6 +1119,7 @@ const enUS: Dictionary = {
 
   'composer.placeholder':
     'Describe your task, e.g. "find why login fails and run the related tests"',
+  'composer.needsProject': 'Type here once a project is open',
   'composer.task': 'Task description',
   'composer.send': 'Send',
   'composer.stop': 'Stop',
@@ -1175,11 +1169,11 @@ const enUS: Dictionary = {
   'permission.allow_workspace': 'Allow for this project',
   'permission.deny': 'Deny',
   'permission.explain':
-    "UCAD's permission engine is not an OS sandbox. Agents that can be intercepted also keep their vendor's native approval enabled.",
+    "UCAD's permission gate is not an OS sandbox. Agents that can be intercepted also keep their vendor's native approval enabled.",
 
   'context.title': 'Context',
   'context.subtitle':
-    'What the agent actually received this turn. The injection is a deterministic render — verify it with renderedHash.',
+    'What the agent actually received this turn. renderedHash is how you check those bytes were not altered.',
   'context.strategy': 'Strategy',
   'context.items': 'Items',
   'context.budget': 'Budget',
@@ -1195,7 +1189,7 @@ const enUS: Dictionary = {
   'context.extendHint': 'Constrained by this turn’s token budget',
   'context.waiting': 'After a turn, this shows what the agent actually received.',
   'context.waitingDetail':
-    'Strategy, items, budget used, estimate source and the renderedHash — not a summary, but text you can verify.',
+    'Strategy, items, budget used, the estimate source and the renderedHash — the text itself, not a summary of it.',
   'context.previewTitle': 'Preview before sending',
   'context.previewHint':
     'See the items and the budget that would be packed before you send. A preview is a dry run: it writes nothing and charges no turn budget.',
@@ -1223,7 +1217,7 @@ const enUS: Dictionary = {
   'context.itemsEmpty': 'The build retrieved no items — that is an empty retrieval, not an un-run one.',
   'context.omittedEmpty': 'Nothing was omitted.',
   'context.omittedNotPersisted':
-    'The per-item omit list is not persisted (§8.1 schema limit); the count shown comes from the event.',
+    'The list of omitted items is not stored, so only the count recorded in the event can be shown.',
   'context.lastTurn': 'What the last turn actually received',
   'context.lastTurnNone': 'This session has not run a turn yet, so there is no injection to show.',
   'context.noInjection': 'That turn left no injection: the agent may have ended before the pack was injected.',
@@ -1232,9 +1226,9 @@ const enUS: Dictionary = {
   'context.hashCopyFailed': 'Copy failed — select the hash below manually',
   'context.noInjectionPlan': 'This turn has no injection plan yet, so there is no hash to verify.',
   'context.hashExplains':
-    'render is pure (I-1): one pack always renders to the same bytes and the same hash. A hash that does not match means those bytes were altered or the pack changed — it proves "not tampered with", not "correct".',
+    'render is pure: one pack always renders to the same bytes and the same hash. A hash that does not match means those bytes were altered, or the pack changed — it proves “not tampered with”, not “correct”.',
   'context.injectionMode': 'Injection mode',
-  'context.injectionRendezvous': 'Rendezvous',
+  'context.injectionRendezvous': 'Injection point',
   'context.injectionTokens': 'Injected estimate ({source})',
   'context.injectionIndex': 'Index entries',
   'context.injectionEstimateWarn':
@@ -1261,7 +1255,7 @@ const enUS: Dictionary = {
 
   'decision.title': 'Decision',
   'decision.subtitle':
-    'Decision is its own plane: it reads a state summary, returns a typed decision, and never touches code or runs commands.',
+    'Deciding and doing are kept apart here: this reads a state summary and returns a decision with its reason. It never reads code, and it runs no commands.',
   'decision.chain': 'Engine chain',
   'decision.autoRoute': 'Apply routing suggestions automatically (off by default)',
   'decision.allowNetwork': 'Allow decision engines that declare network side effects',
@@ -1294,7 +1288,7 @@ const enUS: Dictionary = {
   'decision.producedBy': 'Produced by',
   'decision.latency': 'Latency',
   'decision.rationale': 'Rationale',
-  'decision.fallbackReason': 'A fallback was used: {reason} (D-2: a fallback always leaves a trace)',
+  'decision.fallbackReason': 'A fallback was used: {reason}',
   'decision.previewNote':
     'A dry run: nothing is written to the decision log, and the chain this turn actually runs is unchanged.',
 
@@ -1339,7 +1333,7 @@ const enUS: Dictionary = {
   'settings.intelligence': 'Code intelligence',
   'settings.tools': 'Tool Contract',
   'settings.toolsNote':
-    'This channel deliberately offers no file writes, command execution or git operations, so it cannot bypass a vendor’s own approval flow.',
+    'This channel offers no file writes, no command execution and no git operations, so it cannot bypass a vendor’s own approval flow.',
   'settings.secrets': 'Credentials',
   'settings.secretProvider': 'Provider ID',
   'settings.secretKey': 'Key name',
@@ -1412,7 +1406,7 @@ const enUS: Dictionary = {
   // §12.1 Settings / MCP
   'mcp.title': 'MCP servers',
   'mcp.subtitle':
-    'MCP is a standard protocol; this product consumes it rather than implementing it. Tools are not exposed to the Agent until you authorise them below.',
+    'MCP is a standard protocol; UCAD is a client of it, not a server. Tools are not handed to the Agent until you authorise them below.',
   'mcp.scope': 'Scope',
   'mcp.scope_global': 'Global',
   'mcp.scope_workspace': 'This project',
@@ -1497,7 +1491,7 @@ const enUS: Dictionary = {
   'diagnostics.openDataDir': 'Open data directory',
 
   'help.title': 'Quick start',
-  'help.subtitle': 'Three steps to begin; everything else can wait.',
+  'help.subtitle': 'Three steps to get going; the other panels can wait until you need them.',
   'help.shortcuts': 'Keyboard shortcuts',
   'help.sc.newSession': 'New session',
   'help.sc.send': 'Send message',

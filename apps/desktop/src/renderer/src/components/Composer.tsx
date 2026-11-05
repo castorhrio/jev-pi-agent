@@ -211,7 +211,7 @@ export const Composer = forwardRef<
                */
               aria-label={t('composer.task')}
               placeholder={
-                props.hasWorkspace ? t('composer.placeholder') : t('welcome.step1')
+                props.hasWorkspace ? t('composer.placeholder') : t('composer.needsProject')
               }
               disabled={!props.hasWorkspace}
               rows={2}

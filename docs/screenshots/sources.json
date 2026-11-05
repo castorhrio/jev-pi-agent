@@ -4,7 +4,7 @@
     "apps/desktop/src/renderer/src/App.tsx": "sha256:c02b1c37e8ff8017bc0a49e0337c4d4f419a1bca5c48f04a48902e3036948105",
     "apps/desktop/src/renderer/src/api.ts": "sha256:bbfd1f919033390000ff68a9612eeda6b39ca39048f141a55f31dd78e14ba3da",
     "apps/desktop/src/renderer/src/components/ChatLog.tsx": "sha256:0270c296f63c3e1b7eae19c55d78fbcbe2835d9eb688c11fa6a8fe3f09dffe2e",
-    "apps/desktop/src/renderer/src/components/Composer.tsx": "sha256:66a644844adc4930d24634f842c3b94f96584e193bfb9538e2fefbb9000bdca3",
+    "apps/desktop/src/renderer/src/components/Composer.tsx": "sha256:60d44d7647542ee41292e2fe66f9e1c13e850eb86628e2a714883646c2e7558d",
     "apps/desktop/src/renderer/src/components/ContextDrawer.tsx": "sha256:1e240214ad6a328be0336ba371de0d1f374d5340aacd2d9bec8ebfc7179c68e1",
     "apps/desktop/src/renderer/src/components/DecisionPanel.tsx": "sha256:eee9cb79d42e66a02da59e9c3ef6ae8768c40b0ca1e21903ab5efa43de15f8a1",
     "apps/desktop/src/renderer/src/components/FileEditor.tsx": "sha256:009458a56a8897601b39bcf3ef47e2becfb2fc1a0ca46e4c3b60d9b7352a0920",
@@ -33,22 +33,22 @@
     "apps/desktop/src/renderer/src/state/session-reducer.ts": "sha256:e82390a35ca33d11b22652ddbc6a22e7bec5024d1430c6d85ca280c69ed01410",
     "apps/desktop/src/renderer/src/styles.css": "sha256:f0c9f162589ac1952d8fad71833c48d2daa7d38428e5bcecc0813b24d144255f",
     "apps/desktop/src/renderer/src/update-controller.tsx": "sha256:a7f96869b392804ee90a67877732d3ccf63ebbc33969ec7dea195830981586ab",
-    "apps/desktop/src/shared/i18n.ts": "sha256:351cace8ea0774eb47dfad39c71e727f1e70988ba6a3c4d6542640bc9877eba6"
+    "apps/desktop/src/shared/i18n.ts": "sha256:5d06f9d141539f77a5bfdd50fe16ed2c53bd8bf491a6ee609a60cf995cc64e70"
   },
   "screenshots": {
     "docs/screenshots/chat.png": "sha256:d9490b3da03231833ce39d0ffec6e6c8a9085065f9315c1082360c3dc1122624",
-    "docs/screenshots/context.png": "sha256:65552d47bc54e5750b5207d46644a1581d86bbc191c2702f551014c6f84d35bf",
-    "docs/screenshots/decision.png": "sha256:b318f1cafd03bed18e91158dd878776c1a8307e98191bb98390592cac26a2f7f",
-    "docs/screenshots/empty.png": "sha256:831249ba312d481b78120993738499227f32b262f23f27c1f40d1f65b0c27100",
+    "docs/screenshots/context.png": "sha256:67030ac274ed04f9d0dfb06d7d0b8d8ded997c5d83138096755319424b9a6983",
+    "docs/screenshots/decision.png": "sha256:f63d41615e0e620e1a6591762ea0e1176c807773f9429371bb69082bcd97737e",
+    "docs/screenshots/empty.png": "sha256:06532a330e6d4f9a6ab4ccbcf40d2f7574fd513544e0418307e299c23c128639",
     "docs/screenshots/error.png": "sha256:d9cc8eca376e704968cf02bf17e9e71f9f1b9b7438c55ed7261feeb757c20e76",
-    "docs/screenshots/handoff.png": "sha256:5af277931b614d5c15bdf5b2f7fc2b61c7d6e9a33fc9cff50dad5867e9b42cd7",
-    "docs/screenshots/states/empty-768x700.png": "sha256:a57c8422b8af8c345380c02f43ae949109a220ae1f516b3c79450225b89c08ca",
+    "docs/screenshots/handoff.png": "sha256:97627557cfdf014933c03f6c3b82e24ce952a88f31f6f4571fda360787d4577e",
+    "docs/screenshots/states/empty-768x700.png": "sha256:c38ab735fb83fc4ad3d74946c1717f15113b09cd833c541f59b0c0e469f761d1",
     "docs/screenshots/states/error-768x700.png": "sha256:97d772baa78eceec6aa5cd0f944810c007f377a58048bb9b30f77b38d3cc967f",
-    "docs/screenshots/states/loading-768x700.png": "sha256:8ebb736dcf40777e9ef765832c70ad0a4f6dec3fe327a935d14afba1b9b214ac",
-    "docs/screenshots/states/loading.png": "sha256:3ad1404db478ba31df0a3fad93cd8e7e3dccea2c7f41500c9ea59e6ca81f7228",
+    "docs/screenshots/states/loading-768x700.png": "sha256:295ca2c2cd857b97ac0336343c43e84e79573986369bbe518783c71557a23b21",
+    "docs/screenshots/states/loading.png": "sha256:74c6075c5aa264a9262a387236a5e5dde433647aed3d17f9e28d264f70c9b238",
     "docs/screenshots/states/partial-768x700.png": "sha256:5d64b9533d5164cc81db6da35f15b5333e1afbbff2e4fc8aa0a3eba58144e13b",
-    "docs/screenshots/states/partial.png": "sha256:b2f049af4809260b7a731e589c78604953333479b8368ebcf1b082faf33e0e06",
-    "docs/screenshots/states/permission-768x700.png": "sha256:99d26ec5b3109cb36d96b8351ba87daeee28f3ee50ab9c40fbee98215b6f5bd6",
-    "docs/screenshots/states/permission.png": "sha256:437712e9029a342a5f0662f90d4c8d04c637caf316fa5b65d833984780db08b7"
+    "docs/screenshots/states/partial.png": "sha256:fa9f2c9ca596f95f5d155f8a93a78812fe4137a22ff824f0f4aee0108f80feb8",
+    "docs/screenshots/states/permission-768x700.png": "sha256:ca51d9f871984a5c055cc8ee806a1c42bd8de71544c76f62ffc5a9d3c1861ee0",
+    "docs/screenshots/states/permission.png": "sha256:a25119c1939548d30e15f9199ec1cc556eca5b20d96ace0545e57081286039b6"
   }
 }
