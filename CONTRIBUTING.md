@@ -468,6 +468,30 @@ For layout work, `tests/contract/layout.test.ts` measures a real Chromium window
 screenshots to `.run-logs/layout/`. Geometry is judged automatically; whether it *looks*
 right is still a human call.
 
+### Changing `renderer/src/**` means retaking the screenshots
+
+`docs/screenshots/` holds the pictures the README and `docs/state-walkthrough.md` show, and
+`docs/screenshots/sources.json` records the sha256 of every renderer source and every image at
+the moment they were taken. `node scripts/screenshot-sources.mjs --check` compares the two and
+goes red when a source moved — the right gate, at the wrong moment: it has been red three
+rounds running, each time because the person who edited a component found out from CI, after
+the commit.
+
+So the build says it first. `npm run build` — and therefore `npm run dev` and `npm run dist`,
+which both go through it — runs `scripts/screenshot-drift-hint.mjs` afterwards. It prints the
+same drift lines the gate prints, names the file that moved, and exits 0: it is a reminder, not
+a second gate, and it stays silent when the screenshots are current. When you see it:
+
+1. retake the images the change affects — `npm run dev:web` for a look, and the layout gate
+   above for the captures it writes to `.run-logs/layout/`; copy the ones the documents use
+   into `docs/screenshots/`;
+2. run `node scripts/screenshot-sources.mjs --write` to record the new state;
+3. `node scripts/screenshot-sources.mjs --check` should print `PASS — …`.
+
+`--write` records "the sources are now these bytes"; it cannot tell whether you looked at the
+pictures. That part is yours, and the gate's job is only to make skipping it a decision rather
+than an accident.
+
 ### The layout language
 
 Three rules keep the interface legible; each is enforced by a gate, so a change that breaks

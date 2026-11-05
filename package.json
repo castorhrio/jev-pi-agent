@@ -17,6 +17,7 @@
     "build:packages": "tsc --build tsconfig.build.json",
     "build:desktop": "npm run build:main -w @ucad/desktop && npm run build:preload -w @ucad/desktop && npm run build:renderer -w @ucad/desktop",
     "build": "npm run build:packages && npm run build:desktop",
+    "postbuild": "node scripts/screenshot-drift-hint.mjs",
     "clean": "tsc --build tsconfig.build.json --clean",
     "typecheck": "tsc --build tsconfig.build.json && tsc --build apps/desktop/tsconfig.main.json && tsc --project apps/desktop/tsconfig.renderer.json --noEmit",
     "lint": "eslint .",
