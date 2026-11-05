@@ -116,7 +116,7 @@ describe('the stylesheet is readable by this scan', () => {
     expect(declaresWrapping(notice!.declarations), '.notice must wrap a long token').toBe(true);
 
     const head = RULES.find((rule) => rule.selector === '.pane-head p');
-    expect(head, '.pane-head p is the fatal pane’s paragraph').toBeDefined();
+    expect(head, '.pane-head p is the pane subtitle, which can carry a downstream string').toBeDefined();
     expect(declaresWrapping(head!.declarations), '.pane-head p must wrap a long token').toBe(true);
   });
 });
@@ -147,8 +147,9 @@ describe('every downstream string is drawn in a box that cannot widen the window
 describe('the sites the previous round fixed by hand are still scanned', () => {
   /** The file and box each of them is drawn in. */
   const REQUIRED: readonly { file: string; element: string }[] = [
-    // The fatal pane: `App.tsx`'s `if (fatal)` branch, drawn verbatim.
-    { file: 'apps/desktop/src/renderer/src/App.tsx', element: '<p>' },
+    // The fatal pane: `App.tsx`'s `if (fatal)` branch, drawn verbatim in the
+    // same box a failed read is drawn in everywhere else.
+    { file: 'apps/desktop/src/renderer/src/App.tsx', element: '<p className="notice error">' },
     // The one component every failed read goes through.
     { file: 'apps/desktop/src/renderer/src/components/ReadFailure.tsx', element: '<div className="notice error">' },
     // The panel crash fallback, which draws `err.message` inline.

@@ -1309,8 +1309,8 @@ describe('the five states have criteria a person can answer', () => {
   });
 });
 
-/** The heading of the answer sheet: ten images, three questions each. */
-const QUICK_HEADING = '## 10 分钟速查表：十张图 × 三问';
+/** The heading of the answer sheet: ten images, thirty-two questions (the `error` pair asks four). */
+const QUICK_HEADING = '## 10 分钟速查表：十张图 × 三十二问';
 
 /** The heading of the section that says who is supposed to sign. */
 const UNSIGNED_HEADING = '## 还没有人签';
@@ -1415,8 +1415,8 @@ function quickProblems(markdown: string, repository: Repository): string[] {
   if (rows.length !== expected.length) {
     problems.push(
       `docs/state-walkthrough.md: the answer sheet has ${rows.length} row(s) and the walk is ` +
-        `${expected.length} (${STATE_SCENARIOS.length} states × 2 sizes × 3 criteria) — a sheet ` +
-        'with a row missing is a question nobody answers',
+        `${expected.length} (${STATE_SCENARIOS.length} states × 2 sizes, one row per criterion ` +
+        `of each state — a sheet with a row missing is a question nobody answers`,
     );
   }
 
@@ -1520,7 +1520,10 @@ function signerProblems(markdown: string): string[] {
 
 describe('the walkthrough is a form somebody can fill in ten minutes', () => {
   it('the answer sheet asks the criteria, of the ten images, in walk order', () => {
-    // Thirty rows: five states, two sizes, three criteria. The questions are
+    // Five states, two sizes, one row per criterion — which is sixteen criteria
+    // and thirty-two rows today, because `error` carries a fourth. The number is
+    // read off the criteria rather than written here, so a state that gains one
+    // moves this assertion with it instead of redding it. The questions are
     // quoted from the criteria rather than paraphrased, so this case is what
     // makes "the table and the criteria are one source" a red run.
     const problems = quickProblems(walkthrough, REPOSITORY);
@@ -1530,7 +1533,13 @@ describe('the walkthrough is a form somebody can fill in ten minutes', () => {
     ).toEqual([]);
     const body = sectionBody(walkthrough, QUICK_HEADING);
     expect(body, `no \`${QUICK_HEADING}\` section`).toBeDefined();
-    expect(quickRows(body!)).toHaveLength(STATE_SCENARIOS.length * 2 * 3);
+    const found = sections(walkthrough);
+    const criteria = STATE_SCENARIOS.reduce(
+      (total, state) => total + checklistItems(found.get(state) ?? '').length,
+      0,
+    );
+    expect(criteria, 'no state section carries a criterion').toBeGreaterThan(0);
+    expect(quickRows(body!)).toHaveLength(criteria * 2);
   });
 
   it('reports a question the criteria no longer say', () => {
@@ -1557,7 +1566,7 @@ describe('the walkthrough is a form somebody can fill in ten minutes', () => {
     // one — which is the point: a missing row is not one unanswered question,
     // it is every question below it answered about the wrong image.
     const missing = quickProblems(skipped, REPOSITORY);
-    expect(missing[0]).toContain('the answer sheet has 29 row(s)');
+    expect(missing[0]).toContain('the answer sheet has 31 row(s)');
     expect(missing.length).toBeGreaterThan(1);
 
     // Same rows, two of them swapped: the count is right and the order is not,
@@ -1777,8 +1786,8 @@ describe('the ten images can be handed to somebody who has not installed the app
     // under a six-column header is a row that silently shifts every answer one
     // column to the left.
     const short = walkthrough.replace(
-      '| YYYY-MM-DD | 你的名字 | 10 张（五态 × 两个尺寸） | 30 条全满足 / 第 N 条不满足 | 无 / <屏幕上看到什么> | 五态判据全满足 / 第 N 条不满足：<屏幕上看到什么> |',
-      '| YYYY-MM-DD | 你的名字 | 10 张（五态 × 两个尺寸） | 30 条全满足 / 第 N 条不满足 | 无 / <屏幕上看到什么> |',
+      '| YYYY-MM-DD | 你的名字 | 10 张（五态 × 两个尺寸） | 32 条全满足 / 第 N 条不满足 | 无 / <屏幕上看到什么> | 五态判据全满足 / 第 N 条不满足：<屏幕上看到什么> |',
+      '| YYYY-MM-DD | 你的名字 | 10 张（五态 × 两个尺寸） | 32 条全满足 / 第 N 条不满足 | 无 / <屏幕上看到什么> |',
     );
     expect(short, 'the receipt template row this case edits is gone').not.toBe(walkthrough);
     const problems = handoffProblems(short, REPOSITORY, walkthroughScreenshots());

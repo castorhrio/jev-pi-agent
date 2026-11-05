@@ -802,6 +802,8 @@ const zhCN: Dictionary = {
     '复制不可用（页面不在安全上下文，或浏览器拒绝了剪贴板权限）。请选中上面的命令手动复制。',
 
   'error.title': '出错了',
+  'error.fatalLead': '这一步没有完成。下面这行是它返回的原文，可以直接贴给别人。',
+  'error.fatalNext': '先点重试，它会把刚才失败的那一步重新跑一遍。还是不行就换一个项目文件夹；想先看怎么用，打开快速上手。',
   'error.bridge': 'UCAD 桥接不可用：preload 未加载，请重启应用。',
   'error.retry': '重试',
   'error.copyDetail': '复制详情',
@@ -1594,6 +1596,10 @@ const enUS: Dictionary = {
     'Copying is unavailable (this page is not a secure context, or the clipboard permission was refused). Select the command above and copy it by hand.',
 
   'error.title': 'Something went wrong',
+  'error.fatalLead':
+    'This step did not finish. The line below is what it returned, word for word — paste it to whoever you ask.',
+  'error.fatalNext':
+    'Start with Retry: it runs the failed step again. If it fails a second time, open a different project folder, or read the quick start first.',
   'error.bridge': 'UCAD bridge unavailable — the preload did not load. Please restart the app.',
   'error.retry': 'Retry',
   'error.copyDetail': 'Copy details',

@@ -54,6 +54,9 @@ import {
 const REPO_ROOT = join(import.meta.dirname, '..', '..');
 const SCRIPT = join(REPO_ROOT, 'scripts', 'gate-local.mjs');
 
+/** The module the gate reads the temp directory through; it travels with the script. */
+const PROBE = join(REPO_ROOT, 'scripts', 'temp-dir-probe.mjs');
+
 /** Where the script lives inside a throwaway tree, so its root is that tree. */
 const SCRIPT_IN_TREE = join('scripts', 'gate-local.mjs');
 
@@ -105,6 +108,10 @@ function tree(options: TreeOptions = {}): string {
   mkdirSync(join(root, 'scripts'), { recursive: true });
   mkdirSync(join(root, WORKFLOWS), { recursive: true });
   copyFileSync(SCRIPT, join(root, SCRIPT_IN_TREE));
+  // The gate reads the temp directory through a sibling module, so a tree with
+  // only the runner in it would die on the import rather than get to the
+  // behaviour these cases are about.
+  copyFileSync(PROBE, join(root, join('scripts', 'temp-dir-probe.mjs')));
   writeFileSync(
     join(root, 'package.json'),
     `${JSON.stringify(
@@ -136,12 +143,13 @@ function tree(options: TreeOptions = {}): string {
 }
 
 /** Runs the script inside `root`; never throws on a non-zero exit. */
-function run(root: string, args: string[]): RunResult {
+function run(root: string, args: string[], env: Record<string, string> = {}): RunResult {
   try {
     const stdout = execFileSync(process.execPath, [join(root, SCRIPT_IN_TREE), ...args], {
       cwd: root,
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'pipe'],
+      env: { ...process.env, ...env },
     });
     return { code: 0, stdout, stderr: '' };
   } catch (error) {
@@ -355,6 +363,56 @@ describe('the command runs the plan, and can say no', () => {
     expect(ran.stderr).toContain('[skipped] test — not run: an earlier step failed');
     expect(ran.stdout, 'a red run must not print PASS').not.toContain('PASS');
     expect(existsSync(join(root, 'after.txt')), 'a step after the breaker still ran').toBe(false);
+  });
+
+  it('refuses to run any step when the temp directory cannot be written', () => {
+    /*
+     * The false red this exists for: `/tmp` on a quota'd tmpfs, where the
+     * contract suite's `mkdtempSync(tmpdir())` fails and dozens of unrelated
+     * files go red over an errno that names no directory and no fix. The gate
+     * is supposed to be the DoD, so a red line about the machine has to say it
+     * is about the machine — and say it before `npm test` spends a minute
+     * discovering it 83 ways.
+     */
+    const root = tree({
+      scripts: {
+        lint: 'node -e "require(\'node:fs\').writeFileSync(\'ran.txt\', \'yes\')"',
+      },
+    });
+    const refused = run(root, [], { TMPDIR: join(root, 'package.json') });
+    expect(refused.code, 'an unwritable temp directory must be a red run').toBe(1);
+    expect(refused.stderr).toContain('[refused]');
+    expect(refused.stderr).toContain('is not usable');
+    expect(refused.stderr).toContain('This is the machine, not the tree.');
+    expect(refused.stderr).toContain('REFUSED —');
+    // `[run ]` is the *plan* line and is printed before the probe; `[ok  ]` is
+    // the outcome line, and a refused gate must not have produced one.
+    expect(refused.stdout, 'a refused gate must not report a step outcome').not.toContain('[ok  ]');
+    expect(refused.stdout).not.toContain('PASS');
+    expect(existsSync(join(root, 'ran.txt')), 'the gate ran a step over an unusable temp dir').toBe(
+      false,
+    );
+  });
+
+  it('runs the plan when TMPDIR points somewhere that passed the same write', () => {
+    // The control for the case above: the refusal is about the directory, not
+    // about the tree, so pointing TMPDIR at a writable directory has to be
+    // enough to get a green run out of the same fixture.
+    const root = tree();
+    const writable = join(root, 'tmp-here');
+    mkdirSync(writable, { recursive: true });
+    const ran = run(root, [], { TMPDIR: writable });
+    expect(ran.code, ran.stderr).toBe(0);
+    expect(ran.stdout).toContain('PASS — 1 gate step(s) green');
+  });
+
+  it('--list stays green over an unusable temp directory', () => {
+    // Listing is the question "what would run?", and a machine with a full
+    // quota still deserves an answer to it. The probe guards runs, not plans.
+    const root = tree();
+    const listed = run(root, ['--list'], { TMPDIR: join(root, 'package.json') });
+    expect(listed.code, listed.stderr).toBe(0);
+    expect(listed.stdout).toContain('PASS — listed 1 gate step(s); nothing was run');
   });
 
   it('--only runs one step, and an unknown id is refused with the ids it has', () => {

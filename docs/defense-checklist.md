@@ -83,7 +83,12 @@ node scripts/screenshot-sources.mjs --walkthrough
 
 被问到「这五个状态是真机跑的吗」：图是布局门禁在真实 Chromium 里拍的，不是手绘也不是 mock；
 但**观感**仍然要人眼看，判据与签字表在 `docs/state-walkthrough.md`，那一页的
-`## 10 分钟速查表` 是三十行的答题纸。
+`## 10 分钟速查表` 是三十二行的答题纸。
+
+被问到「失败那一屏呢」，照念 `error` 的第四条判据：**这一屏说得出下一步**——屏幕上那一句
+「先点重试，它会把刚才失败的那一步重新跑一遍」在三个按钮**之前**出现，`tests/e2e/scenarios.e2e.test.tsx`
+断言的就是这个先后顺序。答「否」的条件也写在那一态的「不合格长什么样」里：原因写了但没说下一步，
+三个按钮读起来像占位的。
 
 **它退出 1 时**：屏幕上是 `[unrecorded] …` 或 `no walkthrough images: …`，说的是**图与
 `docs/screenshots/sources.json` 不同步**，不是图坏了。先跑下面这条，让它说清是哪一张：

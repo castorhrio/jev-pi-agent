@@ -41,7 +41,7 @@
 | DOD-4.2 | 更新 feed `https` + `sha256` 校验 | 未过 | `scripts/verify-release-feed.mjs` `scripts/publish-feed.mjs` `tests/contract/release-feed.test.ts` `docs/release/REPLACE-FEED.md` | 应用侧校验已绿、修正版文档已判零 finding；**发布出去的 v1.0.0 feed 仍缺 `sha256`**，需要持有 `contents: write` 的人跑 `node scripts/publish-feed.mjs`，之后 `node scripts/verify-release-feed.mjs` 退出 0。**照着敲的一页**：`docs/release/REPLACE-FEED.md`。**阻塞在哪**：`docs/blockers.md` 第 1 节 |
 | DOD-4.3 | 明文/非 URL 覆盖被拒并打日志 | 通过 | `apps/desktop/src/main/update-feed.ts` `apps/desktop/src/main/update-feed-log.ts` `tests/contract/update-integrity.test.ts` | — |
 | DOD-4.4 | 未签名 SmartScreen 有说明 | 通过 | `README.md` | — |
-| DOD-5.1 | `npm run typecheck && lint && knip && test && test:e2e`（及 CI 等价）绿 | 通过 | `npm run verify:gates` `.github/workflows/ci.yml` `scripts/gate-local.mjs` `tests/contract/ci-gate-local.test.ts` `tests/contract/ci-typecheck.test.ts` `docs/manual-verification.md` | — |
+| DOD-5.1 | `npm run typecheck && lint && knip && test && test:e2e`（及 CI 等价）绿 | 通过 | `npm run verify:gates` `.github/workflows/ci.yml` `scripts/gate-local.mjs` `scripts/temp-dir-probe.mjs` `tests/contract/ci-gate-local.test.ts` `tests/contract/temp-dir.test.ts` `tests/contract/ci-typecheck.test.ts` `docs/manual-verification.md` | — |
 | DOD-5.2 | 注入/交接/凭据/更新合约测试能打红 | 通过 | `tests/contract/injection-contract.test.ts` `tests/contract/handoff-chain.test.ts` `tests/contract/keyring-gate.test.ts` `tests/contract/release-feed.test.ts` `tests/contract/app-rules-build.test.ts` | — |
 | DOD-6.1 | token 来源（厂商 tokenizer vs 启发式）上屏 | 通过 | `apps/desktop/src/renderer/src/components/ContextDrawer.tsx` `apps/desktop/src/renderer/src/components/PreviewPane.tsx` | — |
 | DOD-6.2 | 凭据进 OS 钥匙串，不经环境变量/日志泄露 | 通过 | `apps/desktop/src/main/keyring-gate.ts` `tests/contract/keyring-gate.test.ts` `tests/contract/secret-vault.test.ts` `tests/contract/host-secret-channel.test.ts` | — |
@@ -1704,3 +1704,82 @@ build 4.9s / clean+build:packages 5.7s）。**这一条要写明跑法**：`TMPD
 跑就是这样，量出来的数不可信）。本轮改到的两个用例文件：`tests/contract/typography.test.ts` 49 项、
 `tests/contract/layout.test.ts` 52 项全绿；`node scripts/screenshot-sources.mjs --check` →
 `PASS — 34 renderer source(s) and 14 screenshot(s)`。
+
+## 本轮（2026-11-06）失败那一屏从「左上角三行字」变成「原因 + 下一步」，走查表因此多出一条判据
+
+上一节 1680 行记下的那条观感缺陷就是本轮那一刀：那时候 `error.png` 是「整屏九成黑，标题 + 一行机器码 +
+三个按钮挤在左上角」，读起来像没做完的页面而不是失败的页面。范围只此一张屏，加上它带出来的判据变化
+与一条门禁加固；产品功能一条没加。
+
+**屏幕上改了什么**（`apps/desktop/src/renderer/src/App.tsx` 的 `if (fatal)` 分支）：
+
+- 原来标题下面那个 `<p>{fatal}</p>` 就是全部正文——机器码直接接在 `出错了` 后面，中间没有一句话说明
+  这行是什么。现在标题下先接 `error.fatalLead`（「这一步没有完成。下面这行是它返回的原文，可以直接贴给别人。」），
+  失败原文本身挪进 `.notice.error`——和 `partial` 那一态同一个盒子、同一条 `overflow-wrap: anywhere`，
+  于是它也是 `?reason=long` 那条门禁一直在量的那个框；按钮之前再接 `error.fatalNext`
+  （「先点重试，它会把刚才失败的那一步重新跑一遍…」）。
+- 版面：`.pane.fatal` 把这一列在窗口里居中，四个块共用 `--sp-3` 的 gap，子元素自带的 margin 全部收掉
+  （`.pane-head` 的 16px 与两个 `<p>` 的 UA `1em 0`）——flex 列里 margin 不折叠，不收就会在红框上下
+  各多出一截，那正是「像 assembled 不像 designed」的那口气。没有新颜色、没有新字号档：`--err`、
+  `--surface`、`--measure-prose`、`--sp-3` 都是既有 token。
+- `justify-content` 用 `safe center` 而不是 `center`：`?reason=long` 那一格（200 字符无断点路径）在
+  768×700 下能把这一列顶得比 pane 高，普通 `center` 会把顶部推出滚动区、再也滚不回去。本轮量过那一帧：
+  横向溢出 0、无元素出屏、无裁字，`重试` 仍在折叠线以上。
+- **没有做的**：这一屏仍然只有一列文字，窗口其余部分仍是背景色。本轮改的是「这一块读起来像不像一个
+  屏幕」，不是「把窗口填满」——要在 fatal 分支里重建 rail / statusbar 是另一件事，而且那正是
+  `layout-page-scripts.mjs` 里写明「fatal 那一屏没有 shell」的那条形状。
+
+**判据跟着动**：`docs/state-walkthrough.md` 的 `error` 一节多出第四条「这一屏说得出下一步」，
+答题纸因此从三十行变三十二行（判据十五条→十六条），`## 10 分钟速查表` 的标题、回执模板与记录表
+的「30 条全满足」一起改到 32。门禁那侧把两处**假设每态三条**的算术改成**从判据推导**
+（`quickProblems` 的差额消息与 `toHaveLength`），所以以后任何一态加一条判据，答题纸会跟着动，
+而不是让下一个人答一份对不上的题。`docs/defense-checklist.md` 第 6 步加了能当场照念的那一句，
+`tests/e2e/scenarios.e2e.test.tsx` 加了一条断言：`error.fatalNext` 必须出现在 `error.retry` **之前**
+（`compareDocumentPosition`）——「说了下一步」和「在按钮下面补一句解释」是两屏不同的东西，
+所以这条判据量的是顺序，不是存在。
+
+**另一条门禁（假红）**：本轮真的踩到了它。`npm test` 在 HEAD 未变的情况下红了 **2 个文件 8 个用例**，
+stderr 是 `Unknown system error -122, write`（EDQUOT）。这台共享机的 `/tmp` 是带 `usrquota` 的 tmpfs：
+`df` 报还有 348M，而该用户实际只剩不到 256K 的块——**64 KiB 写得进、256 KiB 写不进**，写到本轮收尾时
+连 1 字节都写不进（`printf` 直接 `write error`）。`mkdtempSync(tmpdir())` 全灭，所以红的是文件系统，
+不是产品。`scripts/temp-dir-probe.mjs` 是一个 1 MiB 的分配探测（0 字节 create 抓不到这个状态：inode 还有、
+块没有），`scripts/gate-local.mjs` 在跑任何步骤之前用它拒绝执行并打出可照抄的
+`TMPDIR=… node scripts/gate-local.mjs`，`tests/global-setup.ts` 在构建应用规则之前抛同一条消息——
+一个实现，两个入口。探测**只说它量到的事**：那 1 MiB 写得进去与否，不承诺整轮跑得下，
+消息里也没有承诺。红方向有用例：`tests/contract/temp-dir.test.ts` 7 项 + `ci-gate-local.test.ts` 3 项
+（拒绝、换到可写目录后转绿、`--list` 不探测）。
+
+**这一轮没有做的事**：三条外部阻塞一条没解——已发布 feed 仍缺 `sha256`（本机无令牌）、
+Windows 六步仍无机器、五态走查签字仍没有那个人；本轮只把 `error` 那一态的判据从三条改成四条，
+签字栏仍然空，`docs/blockers.md` 第 3 节因此改的是「为什么仍然阻塞」那一段，不是状态。
+P0 第二条（`release-gate --simulate-missing-sha` 与真实 `npm run dist` 逐字一致、有令牌那几条命令
+在三处双向一致）**核对后无需改动**：`tests/contract/release-gate-simulation.test.ts` 与
+`publish-rehearsal.test.ts` 本轮全绿，`docs/release/REPLACE-FEED.md`、`docs/blockers.md` 第 1 节与
+本节上面那张表列的是同一组命令，没有发现漏——没有为了「本轮也动一点」去改它。
+
+门禁（本轮实跑）：`TMPDIR=/var/tmp/ucad-gate DISPLAY=:140 ELECTRON_DISABLE_SANDBOX=1` 下逐步跑 CI 的
+七个 `run:` 步骤 → typecheck / lint / knip 退出 0，`npm test` **114 个文件全绿**
+（1951 passed / 1 skipped，其中 `layout.test.ts` 52 项、`state-walkthrough.test.ts` 40 项、
+`typography.test.ts` 49 项、新增的 `temp-dir.test.ts` 7 项），`npm run test:e2e` **21 个文件 163 项全绿**，
+`npm run build` 与 `npm run clean && npm run build:packages` 退出 0；
+`node scripts/screenshot-sources.mjs --check` → `PASS — 34 renderer source(s) and 14 screenshot(s)`。
+
+**为什么这里没有一行 `gate-local` 的 PASS**：那条命令的 `test` 步骤写着 `xvfb-run`，而 Xvfb 要在
+`/tmp` 里写一个 7 字节的 lock 文件——本轮收尾时这台机器的 `/tmp` 用户配额已经**连 1 字节都写不进**
+（`printf 'x' > /tmp/…` 直接 `write error`），`-nolock` 又只允许 root 用。这正是本轮那道新探测要说的事，
+所以把它跑出来的原文贴在这里：不带 `TMPDIR` 执行 `node scripts/gate-local.mjs` 打的是
+
+```
+[refused] /tmp is not usable: allocating 1 MiB there failed with UNKNOWN (errno -122). …
+REFUSED — nothing ran and nothing is proven. Re-run against a directory that passed the
+same write: TMPDIR=/var/tmp node scripts/gate-local.mjs
+```
+
+退出 1、一步没跑，而不是几十个文件的红。`errno -122` 是 Node 没有名字的那个码（EDQUOT），
+所以消息里带数字而不是只带 `UNKNOWN`。
+
+截图：`error.png` 17258 → 36378 字节、`states/error-768x700.png` 14326 → 32863，是本轮那一屏在
+两个窗口下的新框；另外 `decision.png` 差 1 字节、`handoff.png` 差 8 字节，两张都对照旧图**看过**，
+画面没有变化——同一份 DOM 两次编码的字节差，正是本仓不做像素 diff 的那条已知限度
+（`screenshot-sources.mjs` 文件头写明它量的是渲染层源码哈希，不是像素）。其余 10 张与上一轮提交的
+逐字节相同，所以这个 diff 里只动了四张图。

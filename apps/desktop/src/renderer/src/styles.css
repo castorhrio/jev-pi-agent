@@ -1003,10 +1003,44 @@ code,
   color: var(--text-2);
   font-size: var(--fs-body);
   max-width: var(--measure-prose);
-  /* The fatal pane's paragraph is the failure message verbatim (`App.tsx`'s
-     `if (fatal)` branch), so it has the same unbounded second half a notice
-     does. Same measurement, same rule, same reason it is `anywhere`. */
+  /* Every pane-head paragraph is a sentence whose second half may be one
+     unbreakable token — a path, a URL, a stack frame. Same measurement as
+     `.notice`, same reason it is `anywhere`. */
   overflow-wrap: anywhere;
+}
+
+/*
+ * The failed-load screen is one column of prose, centred in the window.
+ *
+ * It used to be the pane's default top-aligned flow, which put a heading, one
+ * line of machine text and three buttons in the upper-left corner of a
+ * 1440×900 window: `docs/screenshots/error.png` read as a page that had not
+ * finished loading rather than one that had failed. Centring is what makes the
+ * same four blocks a screen.
+ *
+ * `safe` is the load-bearing word. At the smallest window a 200-character
+ * failure reason makes this column taller than the pane, and a plain `center`
+ * would push its top out above the scrollport with no way to scroll back to it.
+ * `safe center` falls back to the start edge when the content does not fit, so
+ * the reason scrolls and the retry button stays reachable.
+ */
+.pane.fatal {
+  display: flex;
+  flex-direction: column;
+  justify-content: safe center;
+  gap: var(--sp-3);
+}
+
+/* The gap owns the spacing in this column, so no child adds its own: the head
+   carries a bottom margin and both paragraphs the UA's `1em 0`, and in a flex
+   column margins do not collapse, so each one would sit on top of the gap. */
+.pane.fatal > * {
+  margin: 0;
+}
+
+.fatal-next {
+  color: var(--text-2);
+  max-width: var(--measure-prose);
 }
 
 /* ===========================================================================

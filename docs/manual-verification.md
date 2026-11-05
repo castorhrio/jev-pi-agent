@@ -305,7 +305,9 @@ npm run dev:web
 - `loading`：在读取**还没回来**的那一帧拍照（`fixture.pending() > 0` 之后再看），会话列与对话区都在说加载中，
   并且**不出现**「还没有对话」——把未到达的历史渲染成「空」，是对还没读到的数据下确定结论。
 - `error`：`error.title` 与 fixture 的原始失败文本 `[fixture:error] workspace.listRecent failed` 同屏，
-  并给出重试按钮；不是一句「出错了」也不是空面板。
+  失败原文在带红边的块里（`.notice.error`，可选中可贴）；`error.fatalLead` 说清这一步为什么没完成、
+  下面那行是什么；`error.fatalNext` 那句「先点重试…」出现在三个按钮**之前**；再给出 `error.retry` 按钮。
+  不是一句「出错了」也不是空面板，也不是「只有三个动词、读完不知道下一步」。
 - `partial`：工作区读成功（项目名在屏上），会话列说「读取失败」并带原因 `[fixture:partial] sessions.list failed`，
   且不把失败渲染成「没有会话」。
 - `permission`：弹窗 `aria-modal="true"`、由 `aria-labelledby` 指向的标题可读，正文里有类别 `SHELL`、
@@ -325,7 +327,7 @@ fixture 不发），第五个状态因此根本没法人工走查完；`revokeRu
 |---|---|---|---|
 | 首启 | `docs/screenshots/empty.png` | `docs/screenshots/states/empty-768x700.png` | 引导语 + 三步在屏上，会话列说的是「还没有会话」，没有「加载中…」 |
 | 加载 | `docs/screenshots/states/loading.png` | `docs/screenshots/states/loading-768x700.png` | 读取未返回的那一帧：会话列与对话区都在说「加载中…」，**不**说「还没有对话」 |
-| 失败 | `docs/screenshots/error.png` | `docs/screenshots/states/error-768x700.png` | 标题「出错了」+ 原始失败文本 + 「重试」按钮，不是空面板 |
+| 失败 | `docs/screenshots/error.png` | `docs/screenshots/states/error-768x700.png` | 标题「出错了」+ 一句说明 + 原始失败文本（带红边的块）+ 「先点重试…」那句 + 「重试」按钮，不是空面板，也不是只剩三个动词 |
 | 部分失败 | `docs/screenshots/states/partial.png` | `docs/screenshots/states/partial-768x700.png` | 项目名在屏上，会话列说「会话列表没读出来（不是没有会话）」并带原因 |
 | 权限 | `docs/screenshots/states/permission.png` | `docs/screenshots/states/permission-768x700.png` | 弹窗五件可读（类别 `SHELL` / 风险 `high` / 资源 / 命令 / 原因），四个回答都在 |
 
@@ -342,14 +344,14 @@ fixture 不发），第五个状态因此根本没法人工走查完；`revokeRu
 `--check --write` 同时给会被拒绝，而不是按先后顺序挑一个。
 
 **仍未做**：人眼对**视觉**的判断（空态的引导语是否够醒目、失败信息的排版是否压过内容、长中文在窄窗口是否撑破）。
-上面十张图（五态 × 两个尺寸）让这件事**可以远程做**——把图发给任何一个人看，他就能回答这三问，不必先装应用；
-但「有人真的看过并签了字」这件事，本轮仍然没有发生，所以这一条不算通过。
+上面十张图（五态 × 两个尺寸）让这件事**可以远程做**——把图发给任何一个人看，他就能逐条回答那些判据，
+不必先装应用；但「有人真的看过并签了字」这件事，本轮仍然没有发生，所以这一条不算通过。
 DOM 断言证明「该有的字在屏上、不该有的不在」，证明不了「看上去像不像首启」。这一条留给 Windows 桌面的
 一次完整走查，和上表那一行一起记。
 
-**这一条现在可以交接了**：要回答的问题写在 `docs/state-walkthrough.md`——每态三条能用「是 / 否」回答的判据，
-每条锚在屏幕上真的会出现的字上（取自 `apps/desktop/src/shared/i18n.ts`），外加一份**5 分钟走查脚本**
-（十张图按顺序、每张图要回答什么、一行签字模板）和一张记录表。
+**这一条现在可以交接了**：要回答的问题写在 `docs/state-walkthrough.md`——每态能用「是 / 否」回答的判据
+（各三条，失败那一屏四条），每条锚在屏幕上真的会出现的字上（取自 `apps/desktop/src/shared/i18n.ts`），
+外加一份**5 分钟走查脚本**（十张图按顺序、每张图要回答什么、一行签字模板）和一张记录表。
 表里出现一行带日期的记录，就是一次签字；`tests/contract/state-walkthrough.test.ts` 把两件事绑在一起：
 表里没有带日期的一行时，README 中英两半都必须仍然写着「没人看过」；一旦签了字，README 必须带上那个日期。
 所以「走查过了」和「README 还道着歉」不会同时存在，反过来也一样。

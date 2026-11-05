@@ -75,6 +75,7 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { tempDirProblem, usableTempDir } from './temp-dir-probe.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 
@@ -580,6 +581,31 @@ function main(argv) {
 
   if (selected.length === 0) {
     console.error('no gate step was selected, so there is nothing to run and nothing to prove');
+    return 1;
+  }
+
+  /*
+   * The machine is checked before the tree is judged.
+   *
+   * `npm test` creates its throwaway trees under `os.tmpdir()`, so a temp
+   * directory without headroom turns dozens of unrelated files red over an
+   * errno that names no directory and no fix. Refusing here costs one 1 MiB
+   * allocation; running anyway costs a red gate that reads like a product
+   * defect, which is the failure this repository has named repeatedly — a
+   * verdict about something that was never actually measured.
+   */
+  const tempProblem = tempDirProblem();
+  if (tempProblem !== null) {
+    const usable = usableTempDir();
+    console.error(`[refused] ${tempProblem}`);
+    console.error(
+      usable === null
+        ? 'REFUSED — no fallback directory took the same write either, so nothing ran and ' +
+          'nothing is proven. Free space or raise the quota on the filesystem behind ' +
+          'os.tmpdir(), then re-run.'
+        : `REFUSED — nothing ran and nothing is proven. Re-run against a directory that ` +
+          `passed the same write: TMPDIR=${usable} node scripts/gate-local.mjs`,
+    );
     return 1;
   }
 

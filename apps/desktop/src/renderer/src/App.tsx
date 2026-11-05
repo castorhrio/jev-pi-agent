@@ -705,11 +705,20 @@ function Shell(): JSX.Element {
           <div className="spacer" />
           <LocaleSwitch locale={locale} onChange={setLocale} />
         </div>
-        <div className="pane">
+        {/*
+          `.app > .pane` with `.pane-head h1` and `.row-gap` as its children is
+          the shape `scripts/layout-page-scripts.mjs` reads as "this screen
+          settled", and `{fatal}` stays verbatim inside `.notice.error` because
+          that is the box the long-reason gate measures. Change either and the
+          layout gate starts measuring the wrong frame.
+        */}
+        <div className="pane fatal">
           <div className="pane-head">
             <h1>{t('error.title')}</h1>
-            <p>{fatal}</p>
+            <p>{t('error.fatalLead')}</p>
           </div>
+          <p className="notice error">{fatal}</p>
+          <p className="fatal-next">{t('error.fatalNext')}</p>
           <div className="row-gap">
             <button className="primary" onClick={() => setFatal(null)}>
               {t('error.retry')}

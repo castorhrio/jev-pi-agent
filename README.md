@@ -249,8 +249,9 @@ or it cannot tell a gap from a finished item.
   read as a first run, a failure, a permission prompt. `docs/manual-verification.md`
   step 6 records this as not done, and it is the one thing a screenshot cannot
   answer for itself. The questions to answer are written down in
-  `docs/state-walkthrough.md` — three yes/no criteria per state, anchored to text
-  that is actually on screen, plus the record table a walkthrough signs. Until
+  `docs/state-walkthrough.md` — yes/no criteria per state (three each, four for the
+  failed-load screen), anchored to text that is actually on screen, plus the record
+  table a walkthrough signs. Until
   that table carries a dated row, this bullet stays. Closing it needs a person
   to look at the five states and sign; no gate can answer that one.
 
@@ -459,8 +460,9 @@ npm run package  # 免安装目录，不出安装包
   与最小窗口各量一次，`docs/screenshots/` 里的图就是那道门禁拍的。没发生的是**有人看过它们**
   并说「这看起来像首启 / 像失败 / 像权限请求」。`docs/manual-verification.md` 步骤 6
   记着这件事没做——这是截图自己回答不了的那一问。要回答的问题写在
-  `docs/state-walkthrough.md`：每态三条能用「是 / 否」回答的判据，锚在屏幕上真的会出现的字上，
-  外加一张签了字才算数的记录表。那张表没有带日期的一行之前，这一条就留着。
+  `docs/state-walkthrough.md`：每态能用「是 / 否」回答的判据（各三条，失败那一屏四条），
+  锚在屏幕上真的会出现的字上，外加一张签了字才算数的记录表。那张表没有带日期的一行之前，
+  这一条就留着。
   关掉它**需要一个人**：看过五态并签字，这一问机器答不了。
 
 ### 参与贡献

@@ -107,6 +107,22 @@ describe('step 6 · error — a failure carries its reason', () => {
     // And a way out.
     expect(screen.getByRole('button', { name: t('error.retry') })).toBeTruthy();
   });
+
+  it('says what to do next, above the buttons it is talking about', async () => {
+    // The fourth `error` criterion in `docs/state-walkthrough.md` asks whether
+    // this screen "说得出下一步", and the answer has to be readable off the
+    // screen rather than inferred from three bare verbs. Order is the whole
+    // claim: the same sentence *below* the buttons explains a choice already
+    // made, so this asserts position, not presence.
+    mount('error');
+
+    const next = await screen.findByText(t('error.fatalNext'));
+    const retry = screen.getByRole('button', { name: t('error.retry') });
+    expect(
+      next.compareDocumentPosition(retry) & Node.DOCUMENT_POSITION_FOLLOWING,
+      'the next-step sentence sits after the buttons it describes',
+    ).toBeTruthy();
+  });
 });
 
 describe('step 6 · partial — one subsystem down, the rest still usable', () => {
