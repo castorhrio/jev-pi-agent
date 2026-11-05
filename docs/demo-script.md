@@ -30,7 +30,7 @@ npm run demo          # 或 node scripts/demo-walkthrough.mjs
 |---|---|---|---|
 | 1 | 开项目 `jev-pi-agent`，智能体选 `mock`，发一句「修复登录失败并补测试」 | 这一轮真的发生了，并且留下一个能读回来的 pack | `项目 jev-pi-agent` · `智能体 mock` · `本轮 turn-demo` · `Pack cp_demo_0000000000000000000000 · 2 条 · 180 tokens` |
 | 2 | 打开「上下文」抽屉 | 可证明注入：屏幕上的 hash 就是屏幕上那段字节的 sha256 | `注入的原文 <ucad-context pack="cp_demo_0000000000000000000000"` · `renderedHash 8847aa57a7138fd5` · `估算来源 heuristic_chars_div_4` |
-| 3 | 打开「决策」面板 | 可解释路由：引擎、理由、置信度在同一屏 | `引擎链 jev > rule` · `由谁给出 jev · 0.1.0` · `置信度 72%` · `理由 route -> 'mock' (default runtime)` |
+| 3 | 打开「决策」面板（这句 objective 是故意挑的模糊输入，为的是让 jev 引擎 abstain、让 rule 引擎给出答案——换一句就会换一条链路） | 可解释路由：引擎、理由、置信度在同一屏 | `引擎链 jev > rule` · `由谁给出 jev · 0.1.0` · `置信度 72%` · `理由 route -> 'mock' (default runtime)` |
 | 4 | 触发权限弹窗，点「拒绝」 | 权限门不可绕：拒绝被记成一条 `permission.resolved` | `Agent 请求权限 SHELL · 风险 high · rm -rf build` · `原因 清理构建产物` · `permission.resolved {"requestId":"req-demo","decision":"deny","decider":"user"}` |
 
 **念的时候怎么说**：第 2 步念「这段原文你可以自己算一遍 sha256，和上面这 16 位对得上」；
@@ -190,3 +190,48 @@ UCAD 把这两件事做成屏幕上的字节与记录，再配上只追加的交
   Windows 加 `--exec release\win-unpacked\UCAD.exe`）。
 - 自动化门禁（`npm run typecheck && npm run lint && npm run knip && npm test && npm run test:e2e`）先绿，
   真机记录才算数；两者不能互相替代。
+
+### 三条阻塞的现场降级路径
+
+初审答辩现场，这三条外部阻塞（`docs/blockers.md`）大概率还没解除：v1.0.0 的 feed 仍缺 `sha256`、
+Windows 六步仍未跑、五个界面状态仍没人签字。被问到「那你怎么证明」时，别只讲计划——下面三条命令
+都在本机离线可跑，屏幕上会留下一条**能指着念**的输出。每条只钉一行：那一行是脚本源码里的字面量，
+`tests/contract/demo-script.test.ts` 会核对它还在不在，改一句就红。
+
+**一、feed 缺 `sha256`：让发布闸门自己说「不许发」。**
+
+```bash
+$ node scripts/release-gate.mjs --simulate-missing-sha
+REFUSED — the published feed is one the app refuses to install from, so a release published now would not reach anyone through it: no version may ship until the feed is fixed (node scripts/publish-feed.mjs --dry-run, then --apply --verify)
+```
+
+它先印一行 `source: SIMULATED …` 说明这是模拟、不是测量，中间逐条列 finding（`no-sha256`、
+`installer-latest-url`），最后一行是上面这句判决，退出码 1。念的时候说：这不是我记着「1.1.0 不许发」，
+是 `npm run dist` 会在这里退出 1——规则在脚本里，不在我的记性里。
+
+**二、Windows 未跑：一份手写报告为什么不算数。**
+
+```bash
+$ node scripts/verify-main-chain.mjs --judge tests/fixtures/judge/fail.json
+[FAIL] step … failed in that run — a red report is a result, and the row stays open
+```
+
+前两行是路径与时间戳（每台机器不同），中间是五步各自的 `pass` / `fail`，然后才是上面这句，退出码 1。
+念的时候说：报告是文档，谁都能写；`--judge` 只认「每一步都带证据行」的报告，所以「我跑过了」这句话
+得由报告的形状来承担，不是由我说。判绿的那份在 `tests/fixtures/judge/green.json`，同一台机器上跑
+`--judge` 会退出 0——两份夹具放在一起，才说明这条命令真的在判，而不是永远说不行。
+
+**三、五态未签：先量「图还对着源码」。**
+
+```bash
+$ node scripts/screenshot-sources.mjs --check
+PASS — … renderer source(s) and … screenshot(s) match …
+```
+
+`…` 处是计数与清单路径 `docs/screenshots/sources.json`，退出码 0。念的时候说：这十张图不是手绘，
+是布局门禁在真实 Chromium 里拍的，这条命令量的是「图还是当前源码的照片」——改了渲染层而没重拍，
+它会指名说哪一张过期了。**观感**那一条仍然要人眼，判据与签字表在 `docs/state-walkthrough.md`，
+签了字之后 README 里「还没被人眼走查过」那句才该改。
+
+三条合起来是同一句话：**阻塞还在，但每一条都有一条命令能当场跑、有一行输出能当场念**，
+而不是一句「等条件具备」。

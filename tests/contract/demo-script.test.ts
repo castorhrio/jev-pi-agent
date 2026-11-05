@@ -847,3 +847,331 @@ describe('the checks above, when the page or the run has drifted', () => {
     expect(problems[0]).toContain('has no');
   });
 });
+
+// ---------------------------------------------------------------------------
+// The three external blockers, and the line on screen while they are open
+// ---------------------------------------------------------------------------
+
+/**
+ * ## Why this block exists
+ *
+ * `docs/blockers.md` and `docs/manual-verification.md` say, for each of the
+ * three external blockers, what to type, what to see and where to put the
+ * result. `docs/demo-script.md` said only what to *say* when a reviewer asks
+ * "did you run it on a real machine?" — a sentence, with nothing on screen
+ * behind it. On stage that is the weakest possible answer: the reviewer is
+ * being asked to believe a claim about a machine nobody in the room has.
+ *
+ * Each blocker does have a command that runs **offline, on this machine**, and
+ * prints one line that answers the question in the negative, out loud:
+ *
+ *  - the v1.0.0 feed has no `sha256`, so the release gate refuses to let a
+ *    version ship — `node scripts/release-gate.mjs --simulate-missing-sha`;
+ *  - the Windows six steps have not been run, and a hand-written report is not
+ *    evidence — `node scripts/verify-main-chain.mjs --judge …/fail.json`;
+ *  - the five states have not been signed off, but the images are still
+ *    photographs of the current sources — `node scripts/screenshot-sources.mjs --check`.
+ *
+ * So the section now carries three blocks, each a command plus the first line
+ * of its output. This block keeps the two halves together: the command has to
+ * be the one the script answers to, and the quoted line has to be a literal the
+ * script still prints. A reworded `REFUSED` sentence, a renamed flag or a
+ * deleted script is a red run rather than a page that reads well and proves
+ * nothing.
+ *
+ * ## Why the quoted line may be elided
+ *
+ * Two of the three lines carry a value that changes between machines — the
+ * report path, the counts and the manifest path. The document elides those with
+ * `…`, the same mark the `[ok]` quotes above use, and every literal piece of at
+ * least {@link MIN_PIECE} characters has to be in the script's source. Short
+ * pieces are dropped rather than checked: `PASS — ` is a label, not a claim.
+ *
+ * ## What is deliberately not asserted
+ *
+ * That the commands exit 0, or that the blockers are resolved. Two of the three
+ * exit 1 on purpose — that is the point of showing them. This block only pins
+ * that the page and the scripts still describe the same output.
+ */
+
+/** The three commands, spelled the way the page gives them. */
+const DEGRADED_COMMANDS = [
+  'node scripts/release-gate.mjs --simulate-missing-sha',
+  'node scripts/verify-main-chain.mjs --judge tests/fixtures/judge/fail.json',
+  'node scripts/screenshot-sources.mjs --check',
+] as const;
+
+/** The shortest piece of a quoted line that counts as pinning wording. */
+const MIN_PIECE = 20;
+
+/** One `$ command` + first-output-line block of the section. */
+interface DegradedBlock {
+  readonly command: string;
+  readonly firstLine: string;
+}
+
+/** The script a `node scripts/…` command runs, or `undefined` for anything else. */
+function scriptOf(command: string): string | undefined {
+  return /^node (scripts\/[\w.-]+\.mjs)\b/.exec(command)?.[1];
+}
+
+/**
+ * The source with its string concatenations joined and whitespace collapsed.
+ *
+ * A message long enough to matter is written across several `' … ' +` lines in
+ * the source, so a verbatim comparison against the raw text would fail on a
+ * line break rather than on a reworded sentence — the gate would be red for a
+ * reason that is not the claim.
+ */
+function flatten(source: string): string {
+  return source.replace(/' \+\s*\n\s*'/g, '').replace(/\s+/g, ' ');
+}
+
+/** The `$ command` blocks of a section, in document order. */
+function degradedBlocks(section: string): DegradedBlock[] {
+  const blocks: DegradedBlock[] = [];
+  let inside = false;
+  let lines: string[] = [];
+  for (const line of section.split('\n')) {
+    if (line.trim().startsWith('```')) {
+      if (inside) {
+        const [first, second] = lines;
+        if (first !== undefined && first.startsWith('$ ')) {
+          blocks.push({ command: first.slice(2).trim(), firstLine: (second ?? '').trim() });
+        }
+        lines = [];
+      }
+      inside = !inside;
+      continue;
+    }
+    if (inside) lines.push(line);
+  }
+  return blocks;
+}
+
+/**
+ * Every way the page and the three scripts disagree about what is on screen.
+ *
+ * Empty means each blocker has a block, the block's command is the one the page
+ * promises, and every literal piece of its expected first line is still printed
+ * by the script that command runs.
+ */
+function degradedProblems(
+  section: string | undefined,
+  read: (relativePath: string) => string | null,
+): string[] {
+  if (section === undefined) {
+    return [
+      `docs/demo-script.md: has no \`${WINDOWS_SECTION}\` section, so the three blockers have ` +
+        'nowhere to be answered on stage',
+    ];
+  }
+  const blocks = degradedBlocks(section);
+  const problems: string[] = [];
+
+  for (const command of DEGRADED_COMMANDS) {
+    const block = blocks.find((candidate) => candidate.command === command);
+    if (block === undefined) {
+      problems.push(
+        `docs/demo-script.md: gives no expected output for \`${command}\`, so that blocker is ` +
+          'answered with a sentence rather than with a line on screen',
+      );
+      continue;
+    }
+    const script = scriptOf(command);
+    if (script === undefined) {
+      problems.push(`docs/demo-script.md: \`${command}\` does not name a script this gate can read`);
+      continue;
+    }
+    const source = read(script);
+    if (source === null) {
+      problems.push(`docs/demo-script.md: \`${command}\` names \`${script}\`, which is not in the tree`);
+      continue;
+    }
+    const flat = flatten(source);
+    const literal = pieces(block.firstLine).filter((piece) => piece.length >= MIN_PIECE);
+    if (literal.length === 0) {
+      problems.push(
+        `docs/demo-script.md: the expected first line for \`${command}\` pins no wording of at ` +
+          `least ${MIN_PIECE} characters, so it cannot go red for the right reason`,
+      );
+      continue;
+    }
+    for (const piece of literal) {
+      if (!flat.includes(piece)) {
+        problems.push(
+          `docs/demo-script.md: quotes "${piece}" as the first line of \`${command}\`, and ` +
+            `${script} no longer prints it — the page describes output nobody will see`,
+        );
+      }
+    }
+  }
+
+  return problems;
+}
+
+/** The repository text at a path, or `null` when the file is not there. */
+function readRepoFile(relativePath: string): string | null {
+  const absolute = join(REPO_ROOT, relativePath);
+  return existsSync(absolute) ? readFileSync(absolute, 'utf8') : null;
+}
+
+describe('each external blocker has a command and a line on screen', () => {
+  it('gives every blocker a command whose script still prints the quoted line', () => {
+    const problems = degradedProblems(sectionOf(document, WINDOWS_SECTION), readRepoFile);
+    expect(
+      problems,
+      `the demo script and the three scripts disagree:\n  ${problems.join('\n  ')}`,
+    ).toEqual([]);
+  });
+
+  it('is not vacuous: three blocks, three scripts, three real sources', () => {
+    const section = sectionOf(document, WINDOWS_SECTION);
+    expect(section, `docs/demo-script.md has no \`${WINDOWS_SECTION}\` section`).toBeDefined();
+    const commands = degradedBlocks(section!).map((block) => block.command);
+    for (const command of DEGRADED_COMMANDS) {
+      expect(commands, `the page gives no block for \`${command}\``).toContain(command);
+      const script = scriptOf(command)!;
+      expect(existsSync(join(REPO_ROOT, script)), `${script} is not in the tree`).toBe(true);
+      // And the line really is compared against a script that prints something:
+      // an empty source would make every `includes` false, which is red — but a
+      // source that is the wrong file would make them false for the wrong
+      // reason, so the script has to be the one the command names.
+      expect(readRepoFile(script)!.length).toBeGreaterThan(0);
+    }
+  });
+
+  it('reports an expected line the script no longer prints', () => {
+    // The failure this block is for: a `REFUSED` sentence is reworded, the page
+    // keeps quoting the old one, and the person on stage points at a line that
+    // will never appear.
+    const broken = document.replace(
+      'a red report is a result, and the row stays open',
+      'a red report is a claim, and the row stays open',
+    );
+    expect(broken, 'the quote this case rewrites is gone').not.toBe(document);
+    const problems = degradedProblems(sectionOf(broken, WINDOWS_SECTION), readRepoFile);
+    expect(problems.some((problem) => problem.includes('no longer prints it'))).toBe(true);
+  });
+
+  it('reports a blocker that lost its command', () => {
+    const broken = document.replace('$ node scripts/screenshot-sources.mjs --check\n', '');
+    expect(broken, 'the command this case removes is gone').not.toBe(document);
+    const problems = degradedProblems(sectionOf(broken, WINDOWS_SECTION), readRepoFile);
+    expect(problems.some((problem) => problem.includes('gives no expected output'))).toBe(true);
+  });
+
+  it('reports a command whose script is not in the tree', () => {
+    // Driven through the reader rather than through the document: the three
+    // commands are fixed, so the only way a script can go missing is the tree
+    // losing it — and a page that quotes a script nobody can run is the same
+    // defect as a page that quotes a line nobody prints.
+    const problems = degradedProblems(sectionOf(document, WINDOWS_SECTION), () => null);
+    expect(problems.some((problem) => problem.includes('is not in the tree'))).toBe(true);
+  });
+
+  it('reports a section that is missing altogether', () => {
+    const problems = degradedProblems(undefined, readRepoFile);
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toContain('nowhere to be answered');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The one input the demo picks on purpose
+// ---------------------------------------------------------------------------
+
+/**
+ * ## Why this block exists
+ *
+ * `step3()` of `scripts/demo-walkthrough.mjs` sends `objective: '继续'` and
+ * `signals.turnIndex: 1` so that the jev engine abstains and the rule engine
+ * answers — which is what makes the panel show a **fallback** rather than a
+ * confident first-engine answer. The script says so in a comment; the page did
+ * not, so the one line a reviewer is most likely to question ("why did jev not
+ * answer?") had no answer on the page, and the person on stage would have had
+ * to open the source to find one.
+ *
+ * So the 30-second table's step 3 row now says the objective is deliberately
+ * vague, and this block pins both halves: the script still sends that objective,
+ * and the page still says why. Change the objective to something specific and
+ * the demo silently stops demonstrating the fallback — that is a red run here,
+ * not a discovery on stage.
+ */
+
+/** The objective the demo sends on purpose. */
+const VAGUE_OBJECTIVE = "objective: '继续'";
+
+/** The words the page uses to say it is on purpose. */
+const VAGUE_NOTE = '故意挑的模糊输入';
+
+/** The body of `step3()`, sliced to the next function definition. */
+function step3Body(source: string): string {
+  const start = source.indexOf('async function step3(');
+  if (start === -1) return '';
+  const end = source.indexOf('async function step4(', start);
+  return end === -1 ? source.slice(start) : source.slice(start, end);
+}
+
+/** The step 3 row of the 30-second table, or `undefined` when it is gone. */
+function step3Row(markdown: string): string | undefined {
+  const section = sectionOf(markdown, DEMO_CHAIN_SECTION);
+  if (section === undefined) return undefined;
+  return section.split('\n').find((line) => /^\|\s*3\s*\|/.test(line.trim()));
+}
+
+/**
+ * Every way the page and the script disagree about the vague objective.
+ *
+ * Empty means the script still sends it and the page still says it is on
+ * purpose. Pure in `(document, scriptSource)` so the red direction is driven
+ * with mutated copies rather than argued about.
+ */
+function vagueInputProblems(markdown: string, scriptSource: string): string[] {
+  const problems: string[] = [];
+  if (!step3Body(scriptSource).includes(VAGUE_OBJECTIVE)) {
+    problems.push(
+      `scripts/demo-walkthrough.mjs: step3() no longer sends \`${VAGUE_OBJECTIVE}\`, so the jev ` +
+        'engine may answer and the demo stops showing a fallback — the page still says it does',
+    );
+  }
+  const row = step3Row(markdown);
+  if (row === undefined) {
+    problems.push(
+      `docs/demo-script.md: the \`${DEMO_CHAIN_SECTION}\` section has no step 3 row, so the ` +
+        'vague objective is not explained anywhere a reviewer reads',
+    );
+  } else if (!row.includes(VAGUE_NOTE)) {
+    problems.push(
+      `docs/demo-script.md: the step 3 row does not say the objective is a ${VAGUE_NOTE}, so ` +
+        '"why did jev not answer?" has no answer on the page',
+    );
+  }
+  return problems;
+}
+
+describe('the demo says which input it picked on purpose', () => {
+  it('sends the vague objective and says so on the page', () => {
+    const problems = vagueInputProblems(document, walkthroughSource);
+    expect(problems, `the page and the run disagree:\n  ${problems.join('\n  ')}`).toEqual([]);
+  });
+
+  it('is not vacuous: the objective and the note really are in the files', () => {
+    expect(step3Body(walkthroughSource), 'step3() was not found').toContain(VAGUE_OBJECTIVE);
+    expect(step3Row(document), 'the step 3 row was not found').toContain(VAGUE_NOTE);
+  });
+
+  it('reports a page that stopped explaining the objective', () => {
+    const broken = document.replace(VAGUE_NOTE, '一句普通输入');
+    expect(broken, 'the note this case rewrites is gone').not.toBe(document);
+    const problems = vagueInputProblems(broken, walkthroughSource);
+    expect(problems.some((problem) => problem.includes('has no answer on the page'))).toBe(true);
+  });
+
+  it('reports a script that stopped sending the vague objective', () => {
+    const broken = walkthroughSource.replace(VAGUE_OBJECTIVE, "objective: '修复登录失败并补测试'");
+    expect(broken, 'the objective this case rewrites is gone').not.toBe(walkthroughSource);
+    const problems = vagueInputProblems(document, broken);
+    expect(problems.some((problem) => problem.includes('stops showing a fallback'))).toBe(true);
+  });
+});
