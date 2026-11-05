@@ -31,6 +31,14 @@ import { DEFAULT_AGENT_ID } from '@ucad/contracts';
  * at the line that does it; the contract gate asserts the objects are frozen,
  * so a later edit cannot quietly drop the wrapper either.
  *
+ * The freeze is **shallow**, and that is enough here for one reason worth
+ * writing down: every value in this table is a string, and a string has no
+ * properties to reassign, so freezing the object is the whole promise. If an id
+ * ever maps to an object (a version range, a list of fallbacks), `Object.freeze`
+ * stops being "immutable" and becomes "the top level is immutable" — the nested
+ * value would still be writable. That edit has to come with a deeper freeze or a
+ * `Readonly` type on the nested shape, not with this comment left standing.
+ *
  * ## This table must stay a literal type
  *
  * `as const satisfies Record<string, string>` is load-bearing, not style.

@@ -235,3 +235,10 @@ PASS — … renderer source(s) and … screenshot(s) match …
 
 三条合起来是同一句话：**阻塞还在，但每一条都有一条命令能当场跑、有一行输出能当场念**，
 而不是一句「等条件具备」。
+
+**这三条的断言在哪**：`tests/contract/demo-script.test.ts` 的
+`describe('each external blocker has a command and a line on screen')`。它和上面 `[ok]` 那套**不是同一个机制**：
+`[ok]` 行按「哪一步的代码打印它」归因（`describe('a quote is tied to the step that prints it, not just to the file')`），
+而这三条不是 `[ok]` 行，所以规则是「首行里每个 ≥20 字的字面量必须还在那条命令所跑脚本的源码里」
+（`MIN_PIECE = 20`；短于 20 字的片段是标签，不是主张）。改这三条命令、改它们的输出、或者改所跑脚本的措辞，
+要改的断言都在那一个 `describe` 里；`docs/blockers.md` 每一节末尾也各有一行指向它自己那套断言。

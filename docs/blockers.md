@@ -123,6 +123,43 @@ REFUSED — the published feed is one the app refuses to install from, so a rele
 `dist` / `verify:release` 里）；也不许改 `PUBLISHED_V1_FEED` 让演示变绿，那份记录的是 2026-11-04
 从 GitHub 抄下来的**线上字节**，改它等于把缺陷擦掉。
 
+### 解除时：令牌到手之后，一条命令、一行输出、四处要改的文档
+
+上面两半说的是「阻塞还在时怎么演示」。这一节说的是**解除的那一刻**：敲什么、看到什么算过、过完改哪几处。
+写在这里是因为解除之后如果不改文档，文档就会开始说谎——而说谎的那几处现在有名字，少改一处会打红。
+
+**跑这一条**（需要 `castorhrio/jev-pi-agent` 的 `contents: write`）：
+
+```bash
+GITHUB_TOKEN=… node scripts/publish-feed.mjs --apply --verify
+```
+
+**屏幕上第一行**（判据是退出码 0，不是这一行好看）：
+
+```console
+PASS — update-feed.json on castorhrio/jev-pi-agent v1.0.0 now carries sha256=…
+```
+
+**解除后要改的四处**：
+
+1. `docs/demo-script.md`「三条阻塞的现场降级路径」里**第一条**整块删掉（命令 + 输出 + 那句念法），
+   并把开头那句「三条外部阻塞」、小节标题里的「三条」、以及末尾「三条合起来是同一句话」一起改成两条；
+   `tests/contract/demo-script.test.ts` 的 `DEGRADED_COMMANDS` 同步删掉这一条——它按常量迭代，删一条
+   不会红，但同一 `describe` 里那条用例的名字写着 `is not vacuous: three blocks, three scripts, three
+   real sources`，名字要跟着改，否则它说的是三、量的是二；
+2. `docs/blockers.md` 这一节整节删掉，`## 2.` / `## 3.` 的编号跟着改，`tests/contract/doc-routing.test.ts`
+   的 `BLOCKER_COUNT` 从 3 改成 2（`tests/contract/blocker-freshness.test.ts` 只要求「至少有一节」，
+   不数个数，不用改）；
+3. `docs/dod-status.md`「Windows 安装包航运 · 随包 feed 真实网络」一行从**红**改成**有证据**，证据引用
+   上面那条 `--apply --verify` 的退出码 0，以及读的一方复核时
+   `node scripts/verify-release-feed.mjs` 打印的 `PASS —` 行；
+4. `README.md` 中英两半删掉那条 v1.0.0 局限，并同步 `tests/contract/readme-parity.test.ts` 的 `LIMITATIONS` 表。
+
+**这一节的断言在哪**：`tests/contract/release-gate-simulation.test.ts` 的
+`describe('the blockers page shows the refusal instead of describing it')` 逐行比对上面那段粘贴与
+`--simulate-missing-sha` 今天的输出；`tests/contract/demo-script.test.ts` 的
+`describe('each external blocker has a command and a line on screen')` 钉住演示页里那条命令与它的首行。
+
 ## 2. Windows 桌面六步（需要一台 Windows 机器）
 
 - **最近核对**：2026-11-05 ｜ **重跑这一条**：`node scripts/verify-main-chain.mjs --judge docs/manual-verification/win-YYYYMMDD.json`
@@ -168,6 +205,39 @@ PASS — the report covers steps 1, 2, 3, 4, 5 on win32 against build 1.0.0
 **做不到时不要做什么**：不许手写一份报告，也不许把「跑过 Linux」写成「Windows 通过」——
 `--judge` 只判文件说了什么，而文件可以手写，这句话写在报告自己的 `note` 字段里。
 
+### 解除时：报告带回之后，一条命令、一行输出、五处要改的文档
+
+**跑这一条**（不需要 Windows，也不启动任何进程——判的是文件说了什么）：
+
+```bash
+node scripts/verify-main-chain.mjs --judge docs/manual-verification/win-YYYYMMDD.json
+```
+
+**屏幕上第一行**（判据是退出码 0）：
+
+```console
+PASS — the report covers steps 1, 2, 3, 4, 5 on win32 against build 1.0.0
+```
+
+**解除后要改的五处**：
+
+1. `docs/demo-script.md`「被问到「真机跑过吗」」里那句 `Windows 六步仍未跑` 与
+   `docs/manual-verification.md` 里同一句**必须同时改**——`tests/contract/demo-script.test.ts` 的
+   `describe('the demo script answers "did you run it on Windows?" where it is asked')` 两个方向都打红，
+   只改一处会指名说「one of the two is now wrong」；
+2. `docs/demo-script.md`「三条阻塞的现场降级路径」里**第二条**整块删掉，`DEGRADED_COMMANDS` 同步删掉；
+3. `docs/blockers.md` 这一节整节删掉，`tests/contract/doc-routing.test.ts` 的 `BLOCKER_COUNT` 从 3 改成 2
+   （`blocker-freshness.test.ts` 不数 section 个数，不用改）；
+4. `docs/dod-status.md`「Windows 安装包航运 · NSIS 产出与安装」一行改成**有证据**，证据引用那份报告与
+   `--judge` 的退出码 0；
+5. `README.md` 中英两半那句「The Windows run of the manual checklist has not happened」/「Windows 六步未跑」
+   改成带日期的记录，并同步 `tests/contract/readme-parity.test.ts` 的 `LIMITATIONS` 表。
+
+**这一节的断言在哪**：`tests/contract/judge-samples.test.ts` 的
+`describe('the `--judge` samples in the Windows pack')` 逐行比对上面那两行与 `tests/fixtures/judge/` 里
+两份报告喂给 `--judge` 的完整输出；`tests/contract/demo-script.test.ts` 的
+`describe('each external blocker has a command and a line on screen')` 钉住演示页里那条命令与它的首行。
+
 ## 3. 五个界面状态的人眼走查（需要一个人）
 
 - **最近核对**：2026-11-05 ｜ **重跑这一条**：`node scripts/screenshot-sources.mjs --check`
@@ -206,6 +276,37 @@ PASS — the report covers steps 1, 2, 3, 4, 5 on win32 against build 1.0.0
 判据一条没改、图一张没重拍，所以上面那条 `--check` 说 PASS 时，它量到的仍然只是
 「那十张图还对着当前的渲染层源码」，而不是「有人看过它们」——这两件事的差别，就是这一节
 还留在「外部阻塞」而不是「有证据」的原因。
+
+### 解除时：签完字之后，一条命令、一行输出、四处要改的文档
+
+**跑这一条**（签字之后跑，它量的是「表里那一行与 README 那句是同一件事」）：
+
+```bash
+npx vitest run tests/contract/state-walkthrough.test.ts
+```
+
+**屏幕上第一行**（判据是退出码 0，且 `docs/state-walkthrough.md` 的记录表里多了一行带日期的签字）：
+
+```text
+✓ tests/contract/state-walkthrough.test.ts
+```
+
+**解除后要改的四处**：
+
+1. `docs/state-walkthrough.md` 记录表追加一行（日期 / 走查人 / 看了哪几张 / 结论写「五态判据全满足」）；
+2. `README.md` 中英两半那句「五个界面状态还没有被人眼走查过」/「has not happened」同时改口、带上同一个日期
+   ——`state-walkthrough.test.ts` 两个方向都打红：签了字而 README 没改、或 README 改了而表里没有签字；
+3. `docs/dod-status.md`「权限门不可绕」一行的「还差什么」改为已走查（带日期）；
+4. `docs/demo-script.md`「三条阻塞的现场降级路径」里**第三条**整块删掉，`DEGRADED_COMMANDS` 同步删掉
+   （用例名里的 `three blocks` 一起改，同第 1 条）；「演示之外」那节末尾那句「这一条在
+   `docs/manual-verification.md` 里如实写着「仍未做」」要改口，`docs/manual-verification.md` 里两处
+   `**仍未做**` 段落（2026-11-04 那节与它上一节各一段）都提到「步骤 6 的人眼走查」，两处一起改。
+
+**这一节的断言在哪**：`tests/contract/state-walkthrough.test.ts` 的
+`describe('the five states have criteria a person can answer')` 钉住判据与签字表；
+`tests/contract/screenshots.test.ts` 的 `describe('the screenshots are in sync with the renderer')` 钉住
+「那十张图还对着当前渲染层源码」；`tests/contract/demo-script.test.ts` 的
+`describe('each external blocker has a command and a line on screen')` 钉住演示页里那条命令与它的首行。
 
 ## 交接记录（做了就加一行，只追加）
 

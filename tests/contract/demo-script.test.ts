@@ -31,6 +31,12 @@
  *    apart. The attribution is computed from the source (see `stepRegions`),
  *    and a quote that cannot be tied to any step is red rather than waved
  *    through, because a quote the gate cannot place is a quote it cannot check;
+ *  - and every `pass()`/`fail()` call site that names a step sits inside that
+ *    step's code path (see `orphanVerdicts`). The attribution above asks whether
+ *    a *sentence* is reachable from a step; this asks whether the *verdict* is.
+ *    A `pass()` in a function no step calls is invisible to the first question —
+ *    no quote points at it — so the run would print one line fewer and every
+ *    check here would stay green;
  *  - the steps it quotes are **exactly** `DRIVEN_STEPS`, imported from the
  *    verifier rather than restated here. A demo that skips step 4 is a demo
  *    that never shows the update check; a demo that quotes a step the verifier
@@ -166,6 +172,16 @@ function codeOnly(source: string): string {
   return source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^[ \t]*\/\/.*$/gm, '');
 }
 
+/** One function definition in the verifier, with the text that follows it. */
+interface Slice {
+  readonly name: string;
+  /** Offset of `function` in the comment-stripped source. */
+  readonly start: number;
+  /** Offset one past the last character this definition owns. */
+  readonly end: number;
+  readonly text: string;
+}
+
 /**
  * The verifier's function definitions, each with the text that follows it.
  *
@@ -173,55 +189,155 @@ function codeOnly(source: string): string {
  * source is full of braces inside template literals and inside the page scripts
  * it injects, and a brace counter that is off by one would attribute a message
  * to the wrong step — silently, and in the direction that makes the gate green.
+ *
+ * The offsets are kept, not just the text, because the call-site check below
+ * asks "which function is this `pass()` inside" — a question about a position,
+ * which a concatenated string cannot answer.
  */
-function functionSlices(source: string): Map<string, string> {
+function functionSlices(source: string): Slice[] {
   const pattern = /(?:export\s+)?(?:async\s+)?function\s+([A-Za-z0-9_$]+)\s*\(/g;
   const hits = [...source.matchAll(pattern)].map((match) => ({
     name: match[1]!,
     start: match.index,
   }));
-  const slices = new Map<string, string>();
-  hits.forEach((hit, index) => {
+  return hits.map((hit, index) => {
     const end = index + 1 < hits.length ? hits[index + 1]!.start : source.length;
-    slices.set(hit.name, source.slice(hit.start, end));
+    return { name: hit.name, start: hit.start, end, text: source.slice(hit.start, end) };
   });
-  return slices;
 }
 
 /**
- * The source text each driven step can print from.
+ * How many rounds of "and the functions *those* functions call" to follow.
+ *
+ * Eight is a guard rail, not a behaviour: the source needs exactly one round
+ * today (`step5()` calls `trayMenuVerdict()`, which builds the message), and a
+ * second round would only matter if a helper started calling a helper. The
+ * number is here so the loop terminates on a source that calls itself in a
+ * cycle — without it, a recursive helper would hang the suite instead of
+ * failing it. If a message ever moves two helpers deep, the closure still finds
+ * it; if it moves nine deep, the quote goes red as "not inside any step's code
+ * path", which is a loud failure rather than a silent one.
+ */
+const MAX_CLOSURE_ROUNDS = 8;
+
+/**
+ * The functions each driven step's code can reach, by name.
  *
  * A step's `pass()` message is often built by a helper — `pass(5,
  * menuVerdict.message)` where `menuVerdict` came from `trayMenuVerdict()` — so a
- * region starts as the `stepN()` body and grows to include the body of every
- * function that body calls, until it stops growing. That is one level of
- * indirection more than the source happens to need today, on purpose: the
- * alternative is a gate that goes red the first time a message is moved into a
- * helper, which is how a gate gets deleted instead of fixed.
+ * region starts as `stepN()` and grows to include every function that region
+ * calls, until it stops growing. That is one level of indirection more than the
+ * source happens to need today, on purpose: the alternative is a gate that goes
+ * red the first time a message is moved into a helper, which is how a gate gets
+ * deleted instead of fixed.
  *
- * A step with no `stepN()` function has no region, and a quote attributed to it
+ * A step with no `stepN()` function has no entry, and a quote attributed to it
  * is then red — the same answer as a quote nobody prints.
  */
-function stepRegions(source: string): Map<number, string> {
+function stepClosure(source: string): Map<number, Set<string>> {
   const slices = functionSlices(codeOnly(source));
-  const regions = new Map<number, string>();
+  const byName = new Map(slices.map((slice) => [slice.name, slice.text]));
+  const closure = new Map<number, Set<string>>();
   for (const step of DRIVEN_STEPS) {
-    const body = slices.get(`step${step}`);
-    if (body !== undefined) regions.set(step, body);
+    if (byName.has(`step${step}`)) closure.set(step, new Set([`step${step}`]));
   }
-  for (let round = 0; round < 8; round += 1) {
+  for (let round = 0; round < MAX_CLOSURE_ROUNDS; round += 1) {
     let grew = false;
-    for (const [step, text] of regions) {
-      for (const [name, body] of slices) {
-        if (text.includes(body)) continue;
-        if (!new RegExp(`\\b${name}\\s*\\(`).test(text)) continue;
-        regions.set(step, `${text}\n${body}`);
+    for (const names of closure.values()) {
+      for (const [name, text] of byName) {
+        if (names.has(name)) continue;
+        const called = [...names].some((known) =>
+          new RegExp(`\\b${name}\\s*\\(`).test(byName.get(known)!),
+        );
+        if (!called) continue;
+        names.add(name);
         grew = true;
       }
     }
     if (!grew) break;
   }
+  return closure;
+}
+
+/**
+ * The source text each driven step can print from.
+ *
+ * The closure above, rendered back into text: `stepsPrinting()` asks whether a
+ * quoted sentence appears in a step's reachable code, which is a question about
+ * content rather than about position.
+ */
+function stepRegions(source: string): Map<number, string> {
+  const slices = functionSlices(codeOnly(source));
+  const byName = new Map(slices.map((slice) => [slice.name, slice.text]));
+  const regions = new Map<number, string>();
+  for (const [step, names] of stepClosure(source)) {
+    regions.set(
+      step,
+      [...names].map((name) => byName.get(name)!).join('\n'),
+    );
+  }
   return regions;
+}
+
+/**
+ * Every `pass(N, …)` / `fail(N, …)` call site that is not inside step N's code.
+ *
+ * ## Why this exists
+ *
+ * Everything above attributes a *sentence* to a step, and it does so by looking
+ * for the sentence in the step's reachable code. That is the right question for
+ * a quote, and it is not the same question as "does this step's code actually
+ * print anything". A `pass()` that sits in a function no step calls is invisible
+ * to the attribution: no quote points at it, so nothing goes red, and the step
+ * it names is a step whose verdict is printed by code the run never reaches.
+ *
+ * So the call sites are checked directly, from the other end: every verdict with
+ * a **numeric** step argument has to sit inside a function that step's closure
+ * contains. A verdict whose step is a variable (`fail(step, …)` in the runner's
+ * guard) or a word (`fail('run', …)` in the top-level catch) is not a claim
+ * about one step and is skipped — those two shapes are the only ones in the
+ * source, and the "not vacuous" case below counts the numeric ones so a source
+ * that stopped matching cannot pass this by finding nothing.
+ *
+ * The failure names the line and the function, because the fix is "move the
+ * message into the step that prints it", and that is a place, not a sentence.
+ */
+function orphanVerdicts(source: string): string[] {
+  const code = codeOnly(source);
+  const slices = functionSlices(code);
+  const closure = stepClosure(source);
+  const problems: string[] = [];
+  for (const match of code.matchAll(/\b(pass|fail)\(\s*(\d+)\s*,/g)) {
+    const step = Number(match[2]);
+    const at = match.index ?? 0;
+    const line = code.slice(0, at).split('\n').length;
+    const owner = slices.find((slice) => at >= slice.start && at < slice.end);
+    const where = `scripts/verify-main-chain.mjs:${line}`;
+    if (owner === undefined) {
+      problems.push(
+        `${where}: \`${match[1]}(${step}, …)\` sits outside every function, so no step's code ` +
+          'path prints it — the verdict is attributed to a step that never reaches it',
+      );
+      continue;
+    }
+    const names = closure.get(step);
+    if (names === undefined) {
+      problems.push(
+        `${where}: \`${match[1]}(${step}, …)\` names step ${step}, and there is no ` +
+          `\`step${step}()\` for it to belong to — the verdict is printed for a step the ` +
+          'verifier does not drive',
+      );
+      continue;
+    }
+    if (!names.has(owner.name)) {
+      problems.push(
+        `${where}: \`${match[1]}(${step}, …)\` sits in \`${owner.name}()\`, which step ${step}'s ` +
+          'code path never calls — the message would be attributed to a step that does not ' +
+          'print it',
+      );
+    }
+  }
+  return problems;
 }
 
 /** The steps whose code can print `piece`, in step order. */
@@ -568,6 +684,99 @@ describe('a quote is tied to the step that prints it, not just to the file', () 
     );
     expect(withMention, 'the comment this case adds is gone').not.toBe(SYNTHETIC_SOURCE);
     expect(stepsPrinting('the tray menu carries', stepRegions(withMention))).toEqual([5]);
+  });
+});
+
+/**
+ * ## Why this block exists
+ *
+ * Everything above asks "is this sentence printed by the step the demo
+ * attributes it to", and answers it by searching the step's reachable code for
+ * the sentence. That is the right question for a quote, and it leaves one hole
+ * open: a `pass()` that sits in a function **no step calls** is invisible to it.
+ * No quote points at that call site, so nothing goes red — and the step it names
+ * is a step whose verdict is printed by code the run never reaches. The gate
+ * would read as strict as ever while the run printed one line fewer.
+ *
+ * So the call sites are checked from the other end, by position rather than by
+ * text: every `pass(N, …)` / `fail(N, …)` with a numeric step has to sit inside
+ * a function that step's closure contains. The two shapes that are not a claim
+ * about one step — `fail(step, …)` in the runner's guard, `fail('run', …)` in
+ * the top-level catch — are skipped, and the "not vacuous" case counts the
+ * numeric ones so a source that stopped matching cannot pass by finding nothing.
+ *
+ * The red direction is driven on a source small enough to reason about, because
+ * the failure being demonstrated (a verdict printed by a function nobody calls)
+ * cannot be produced by editing the real verifier without also breaking the
+ * quotes above — and a case that reds for two reasons proves neither.
+ */
+
+/** A verifier whose step 1 prints its verdict through a helper, as step 5 does. */
+const INDIRECT_SOURCE = [
+  'async function step1(cdp) { helper(); }',
+  "function helper() { pass(1, 'the same turn reads the same hash in both surfaces'); }",
+].join('\n');
+
+describe('every verdict the verifier prints belongs to the step it names', () => {
+  it('finds no `pass()`/`fail()` call site outside the step that prints it', () => {
+    const problems = orphanVerdicts(scriptSource);
+    expect(
+      problems,
+      `the verifier prints verdicts from code no step reaches:\n  ${problems.join('\n  ')}`,
+    ).toEqual([]);
+  });
+
+  it('is not vacuous: every driven step has a numeric verdict call site', () => {
+    // Without this, an extractor that stopped matching would leave the case
+    // above green over an empty list — the shape of a gate that stopped looking.
+    const code = codeOnly(scriptSource);
+    const sites = [...code.matchAll(/\b(pass|fail)\(\s*(\d+)\s*,/g)].map((match) =>
+      Number(match[2]),
+    );
+    expect(sites.length, 'the verifier has no numeric `pass()`/`fail()` call site').toBeGreaterThanOrEqual(
+      DRIVEN_STEPS.length,
+    );
+    for (const step of DRIVEN_STEPS) {
+      expect(sites, `no verdict is printed for step ${step}`).toContain(step);
+    }
+    // And the two non-numeric shapes really are in the source, so the skip above
+    // is a decision about this file rather than a rule that never fires.
+    expect(code).toContain("fail('run', error.message)");
+    expect(code).toContain('fail(step, ');
+  });
+
+  it('accepts a verdict printed by a helper the step calls', () => {
+    // The indirection the closure exists for: `pass(1, …)` inside `helper()`,
+    // reached from `step1()`. A gate that only looked inside `stepN()` would
+    // call this an orphan and be wrong.
+    expect(orphanVerdicts(INDIRECT_SOURCE)).toEqual([]);
+  });
+
+  it('reports a verdict printed by a function no step calls', () => {
+    // The hole this block closes: the message is in the file, the step number is
+    // right, and the run never reaches the line that prints it.
+    const orphaned = [
+      'async function step1(cdp) { pass(1, `the same turn reads the same hash in both surfaces`); }',
+      "function helper() { pass(1, 'a line from nowhere'); }",
+    ].join('\n');
+    const problems = orphanVerdicts(orphaned);
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toContain('which step 1\'s code path never calls');
+    expect(problems[0]).toContain('helper()');
+  });
+
+  it('reports a verdict that names a step the verifier does not drive', () => {
+    const problems = orphanVerdicts(
+      'async function step1(cdp) { pass(7, `a step nobody drives`); }',
+    );
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toContain('there is no `step7()`');
+  });
+
+  it('reports a verdict that sits outside every function', () => {
+    const problems = orphanVerdicts("pass(1, 'printed at the top level');");
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toContain('outside every function');
   });
 });
 
