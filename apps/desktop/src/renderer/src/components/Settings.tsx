@@ -889,12 +889,15 @@ function ProviderSection({
 }
 
 function AgentRow({ agent }: { agent: AgentCatalogEntry }): JSX.Element {
+  const t = useT();
   const m = agent.manifest;
   return (
     <tr>
       <td>
         {m.displayName}
-        {m.isDefaultRuntime && <span className="badge accent ml-2">default</span>}
+        {m.isDefaultRuntime && (
+          <span className="badge accent ml-2">{t('settings.agents.default')}</span>
+        )}
       </td>
       <td className="mono">{m.kind}</td>
       <td className="mono">{m.transport}</td>
@@ -902,10 +905,14 @@ function AgentRow({ agent }: { agent: AgentCatalogEntry }): JSX.Element {
         <div className="row-gap">
           <span className={`dot ${agent.available ? 'ok' : 'err'}`} />
           <span className="faint">
-            {agent.available ? 'ready' : agent.unavailableReason ?? 'unavailable'}
+            {agent.available
+              ? t('settings.agents.ready')
+              : agent.unavailableReason ?? t('settings.agents.unavailable')}
           </span>
         </div>
-        {agent.restricted && <span className="badge warn">restricted</span>}
+        {agent.restricted && (
+          <span className="badge warn">{t('settings.agents.restricted')}</span>
+        )}
       </td>
     </tr>
   );

@@ -268,7 +268,9 @@ function DecisionsTab({ view }: { view: SessionViewState }): JSX.Element {
             </div>
             <div className="faint fs-fine mt-1">
               {decision.engineId}
-              {decision.fallbackUsed && <span className="badge warn ml-2">fallback</span>}
+              {decision.fallbackUsed && (
+                <span className="badge warn ml-2">{t('decision.fallback')}</span>
+              )}
             </div>
           </div>
         ))}

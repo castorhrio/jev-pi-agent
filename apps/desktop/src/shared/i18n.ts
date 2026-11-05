@@ -381,6 +381,9 @@ const zhCN: Dictionary = {
   'providers.inUse': '本会话正在用',
   'composer.sending': '发送中…',
   'composer.hint': 'Ctrl + Enter 发送 · Enter 换行',
+  // The badge is a status chip, not prose: it sits beside the sentence that
+  // explains the interruption, so it stays one word in both locales.
+  'composer.interruptedBadge': '已中断',
 
   'session.new': '新建会话',
   'session.resume': '恢复会话',
@@ -573,6 +576,10 @@ const zhCN: Dictionary = {
   'settings.title': '设置',
   'settings.subtitle': '凭据只能写入、不能读回；日志与界面都不含明文。',
   'settings.agents': '智能体',
+  'settings.agents.default': '默认',
+  'settings.agents.restricted': '受限',
+  'settings.agents.ready': '可用',
+  'settings.agents.unavailable': '不可用',
   'settings.intelligence': '代码理解',
   'settings.tools': '工具契约',
   'settings.toolsNote': '这条通道不能写文件、不能执行命令，也不碰 Git——为的是不绕过厂商自己的审批。',
@@ -1128,6 +1135,7 @@ const enUS: Dictionary = {
   'providers.inUse': 'in use for this session',
   'composer.sending': 'Sending…',
   'composer.hint': 'Ctrl + Enter to send · Enter for a new line',
+  'composer.interruptedBadge': 'Interrupted',
 
   'session.new': 'New Session',
   'session.resume': 'Resume session',
@@ -1330,6 +1338,10 @@ const enUS: Dictionary = {
   'settings.subtitle':
     'Credentials can be written but never read back; neither the logs nor this window ever shows plaintext.',
   'settings.agents': 'Agents',
+  'settings.agents.default': 'Default',
+  'settings.agents.restricted': 'Restricted',
+  'settings.agents.ready': 'Ready',
+  'settings.agents.unavailable': 'Unavailable',
   'settings.intelligence': 'Code intelligence',
   'settings.tools': 'Tool Contract',
   'settings.toolsNote':

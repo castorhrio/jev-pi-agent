@@ -145,6 +145,74 @@ describe('no hardcoded UI copy (defect class: English in a translated panel)', (
     ).toEqual([]);
   });
 
+  /**
+   * The single-word half of the same defect class.
+   *
+   * The check above only reads text nodes of two words or more, because a
+   * one-word node is usually a symbol or an identifier. That threshold is what
+   * let four English chips ship inside a Chinese interface: the composer's
+   * `INTERRUPTED` badge, the decision list's `fallback` badge, and the agents
+   * table's `default` / `restricted` badges. Each is one word, so each was
+   * invisible to every gate in this file — and a badge is exactly where a
+   * single word is *most* likely to be prose, because a chip has no room for
+   * a sentence.
+   *
+   * The rule: a text node that is one ASCII word is either translated, or it
+   * is on the allowlist below. The allowlist is short on purpose — a product
+   * name and one abbreviation — so that adding to it stays a deliberate act.
+   */
+  it('finds no bare English word as a JSX text node', () => {
+    const findings: string[] = [];
+
+    /** A text node that is exactly one ASCII token: `>fallback<`. */
+    const ONE_WORD = />([A-Za-z][A-Za-z0-9._-]{1,30})\s*</g;
+
+    /**
+     * One-word nodes that are not prose: the product name, and the `ctx`
+     * abbreviation the status bar uses for the context meter (it sits beside
+     * a number and a unit, and the full word would not fit).
+     */
+    const ONE_WORD_ALLOWED = new Set(['UCAD', 'ctx']);
+
+    /**
+     * A match inside a comment is documentation, not interface. The scan is
+     * textual, so `>fallback<` quoted in a comment would otherwise be reported
+     * as a defect in a file that renders nothing of the sort.
+     */
+    const inComment = (source: string, index: number): boolean => {
+      const blockOpen = source.lastIndexOf('/*', index);
+      const blockClose = source.lastIndexOf('*/', index);
+      if (blockOpen > blockClose) return true;
+      const lineStart = source.lastIndexOf('\n', index) + 1;
+      const line = source.slice(lineStart, index).trimStart();
+      return line.startsWith('//') || line.startsWith('*');
+    };
+
+    // The whole renderer, not just `components/`: the two-word check above
+    // learned this the hard way when `App.tsx` sat outside its reach. A chip
+    // in the top bar is exactly as visible as a chip in a panel.
+    for (const file of rendererFiles) {
+      const source = readFileSync(file, 'utf8');
+      for (const match of source.matchAll(ONE_WORD)) {
+        const value = match[1]!;
+        if (ONE_WORD_ALLOWED.has(value)) continue;
+        if (ALLOWED.includes(value)) continue;
+        if (looksLikeIdentifier(value)) continue;
+        if (inComment(source, match.index!)) continue;
+        // A literal inside `<th>` belongs to the table-header check below.
+        const before = source.slice(Math.max(0, match.index! - 80), match.index);
+        if (/<th\b[^<>]*$/.test(before)) continue;
+        const line = source.slice(0, match.index!).split('\n').length;
+        findings.push(`${rel(file)}:${line}: ${value}`);
+      }
+    }
+
+    expect(
+      findings,
+      `bare English words in the interface:\n  ${findings.join('\n  ')}`,
+    ).toEqual([]);
+  });
+
   it('finds no hardcoded table header', () => {
     const findings: string[] = [];
     // `<th>Some Label</th>` — a column heading written as a literal.

@@ -183,7 +183,7 @@ export const Composer = forwardRef<
       <div className="composer-inner">
         {props.interrupted && (
           <div className="notice warn">
-            <span className="badge warn">INTERRUPTED</span>
+            <span className="badge warn">{t('composer.interruptedBadge')}</span>
             <span className="muted">{t('session.interrupted')}</span>
           </div>
         )}
