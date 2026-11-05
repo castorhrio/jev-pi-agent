@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -494,12 +495,54 @@ describe('context', () => {
     // plan this fails, which is what stopped the crash above from being
     // reproducible in the first place.
     await waitFor(() =>
-      expect(screen.getAllByText(/^a3f19c7be2d8/)).toHaveLength(1),
+      expect(screen.getAllByText(/^7a7986f7cddd/)).toHaveLength(1),
     );
     expect(screen.getAllByText('prompt_prefix').length).toBeGreaterThan(0);
     expect(
       screen.getAllByText(/packages\/context\/src\/broker\.ts/).length,
     ).toBeGreaterThan(0);
+  });
+
+  it('shows a hash that is the hash of the bytes it shows', async () => {
+    /*
+     * The product's one claim a competitor cannot copy is that the injected
+     * bytes are *checkable*: the drawer prints the exact 原文 and the hash of
+     * it, and a user can copy the first and hash it themselves. That sentence
+     * is only true if the two agree — and they did not. The fixture printed
+     * `a3f19c7b…` above bytes whose sha256 is `7a7986f7…`, so the one screen
+     * the product exists to make verifiable was the one screen that failed
+     * verification, with every gate green.
+     *
+     * This test does what the user does: read the bytes off the screen, hash
+     * them with Node's own `createHash`, and compare with the hash printed
+     * above them. It is deliberately not `sha256Hex` from the product — using
+     * the product's own implementation would only prove the implementation
+     * agrees with itself.
+     *
+     * The other half of the DoD sentence ("改一字节哈希失配") is
+     * `tests/contract/injection-hash-consistency.test.ts`, which renders the
+     * real `InjectionRenderer` twice with one byte changed and asserts the new
+     * hash is again the sha256 of the new bytes.
+     */
+    const user = userEvent.setup();
+    mount();
+    await settle();
+    await openSurface(user, /^上下文/);
+
+    const hashNode = await screen.findByText(/^7a7986f7cddd/);
+    const shownHash = hashNode.textContent?.trim() ?? '';
+    expect(shownHash).toMatch(/^[0-9a-f]{64}$/);
+
+    // The rendered block is the only element carrying the injected 原文.
+    const renderedNode = await screen.findByText(/renderContextPack lives here/);
+    const shownBytes = renderedNode.textContent ?? '';
+    expect(shownBytes.length).toBeGreaterThan(0);
+
+    expect(
+      createHash('sha256').update(shownBytes, 'utf8').digest('hex'),
+      'the hash printed above the 原文 is not the sha256 of that 原文: a user who copies ' +
+        'the panel and hashes it gets a different value, which makes the panel decoration',
+    ).toBe(shownHash);
   });
 
   it('renders an extend delta instead of crashing the panel', async () => {

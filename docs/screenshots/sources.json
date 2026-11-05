@@ -5,7 +5,7 @@
     "apps/desktop/src/renderer/src/api.ts": "sha256:bbfd1f919033390000ff68a9612eeda6b39ca39048f141a55f31dd78e14ba3da",
     "apps/desktop/src/renderer/src/components/ChatLog.tsx": "sha256:0270c296f63c3e1b7eae19c55d78fbcbe2835d9eb688c11fa6a8fe3f09dffe2e",
     "apps/desktop/src/renderer/src/components/Composer.tsx": "sha256:62908f43f2893dc7dd5f2b38f438e5b1f3ab86d6ccf49163a9b70c1dcc179e8a",
-    "apps/desktop/src/renderer/src/components/ContextDrawer.tsx": "sha256:1e240214ad6a328be0336ba371de0d1f374d5340aacd2d9bec8ebfc7179c68e1",
+    "apps/desktop/src/renderer/src/components/ContextDrawer.tsx": "sha256:28c7afbd318ffd8f9bad7a6b3d03abec89df56b8292e144aa7883ee526c1d81b",
     "apps/desktop/src/renderer/src/components/DecisionPanel.tsx": "sha256:eee9cb79d42e66a02da59e9c3ef6ae8768c40b0ca1e21903ab5efa43de15f8a1",
     "apps/desktop/src/renderer/src/components/FileEditor.tsx": "sha256:009458a56a8897601b39bcf3ef47e2becfb2fc1a0ca46e4c3b60d9b7352a0920",
     "apps/desktop/src/renderer/src/components/HandoffPanel.tsx": "sha256:ed45779d5be4f9e08d5040276e466acb07787d3ca6945033ff4a674f2fb0035d",
@@ -24,7 +24,7 @@
     "apps/desktop/src/renderer/src/components/StoragePanel.tsx": "sha256:f800147e7d9fc847c01abf59656261a59e7bf096fe7491559dea0d9a49f3ae77",
     "apps/desktop/src/renderer/src/components/TerminalPanel.tsx": "sha256:e0327ce7daae71144768f46eea5b88725082e03c82ee4171d539348f2d5135b4",
     "apps/desktop/src/renderer/src/components/UpdateBanner.tsx": "sha256:86c5c146a42ce780f1ddc94baee66c82e4fe179eb81122ad5b7a754b77ff3d51",
-    "apps/desktop/src/renderer/src/dev/fixture-bridge.ts": "sha256:2e4e181a4d2a837e45373105f2220294b8a540b5d407066d0471e9039e1a3bde",
+    "apps/desktop/src/renderer/src/dev/fixture-bridge.ts": "sha256:c77130ba79e44822446f30be6a04143ceb7275cdaab3f9b067fd4f57f68844de",
     "apps/desktop/src/renderer/src/dev/scenarios.ts": "sha256:44d2349a0082a28eb3bc218e0d367a1dba6a90cbe2024b7de929d9f3a7a3062c",
     "apps/desktop/src/renderer/src/error-message.ts": "sha256:b9dfafa0e699e8a98d5dbfbb9eb1d432c63fe77b65995970fcacae678c35c57a",
     "apps/desktop/src/renderer/src/i18n-context.tsx": "sha256:6de3a3a25e0c1ad5155a02bbb114d47007c82559cd811030e42d3adaa417bce0",
@@ -33,11 +33,11 @@
     "apps/desktop/src/renderer/src/state/session-reducer.ts": "sha256:e82390a35ca33d11b22652ddbc6a22e7bec5024d1430c6d85ca280c69ed01410",
     "apps/desktop/src/renderer/src/styles.css": "sha256:f0c9f162589ac1952d8fad71833c48d2daa7d38428e5bcecc0813b24d144255f",
     "apps/desktop/src/renderer/src/update-controller.tsx": "sha256:a7f96869b392804ee90a67877732d3ccf63ebbc33969ec7dea195830981586ab",
-    "apps/desktop/src/shared/i18n.ts": "sha256:2c946f6831aa17e0d1e335a30bdc116ecda7bb3fb8020de96d45ddb6e22879da"
+    "apps/desktop/src/shared/i18n.ts": "sha256:a6e9c5fd49ca6b5a28f3e29417fdb6a458d22671673c3159a398dfb76fcc6cfb"
   },
   "screenshots": {
     "docs/screenshots/chat.png": "sha256:d9490b3da03231833ce39d0ffec6e6c8a9085065f9315c1082360c3dc1122624",
-    "docs/screenshots/context.png": "sha256:67030ac274ed04f9d0dfb06d7d0b8d8ded997c5d83138096755319424b9a6983",
+    "docs/screenshots/context.png": "sha256:8e531481556e1ae9c47f1b1d0c04a65dc9471504e8edfb284d189bc5f5e7c9e9",
     "docs/screenshots/decision.png": "sha256:f63d41615e0e620e1a6591762ea0e1176c807773f9429371bb69082bcd97737e",
     "docs/screenshots/empty.png": "sha256:06532a330e6d4f9a6ab4ccbcf40d2f7574fd513544e0418307e299c23c128639",
     "docs/screenshots/error.png": "sha256:d9cc8eca376e704968cf02bf17e9e71f9f1b9b7438c55ed7261feeb757c20e76",

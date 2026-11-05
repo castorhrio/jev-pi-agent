@@ -30,8 +30,8 @@
 | 条目 | 判据（取自 PRODUCT-DOD 原句） | 四态 | 证据（路径或命令） | 还差什么 |
 |---|---|---|---|---|
 | DOD-1.1 | Context Pack 纯函数 + 内容哈希 | 通过 | `packages/context/src/renderer.ts` `tests/contract/injection-contract.test.ts` | — |
-| DOD-1.2 | 界面可展示上一轮注入原文 | 通过 | `apps/desktop/src/renderer/src/components/ContextDrawer.tsx` `tests/e2e/critical-path.e2e.test.tsx` | — |
-| DOD-1.3 | 改一字节哈希失配 | 通过 | `tests/contract/injection-contract.test.ts` `docs/manual-verification.md` | — |
+| DOD-1.2 | 界面可展示上一轮注入原文 | 通过 | `apps/desktop/src/renderer/src/components/ContextDrawer.tsx` `tests/e2e/context-hash.e2e.test.tsx` | — |
+| DOD-1.3 | 改一字节哈希失配 | 通过 | `tests/contract/injection-contract.test.ts` `tests/e2e/context-hash.e2e.test.tsx` `docs/manual-verification.md` | — |
 | DOD-2.1 | 每次决策记录 rationale / confidence / 引擎 | 通过 | `tests/contract/decision-contract.test.ts` | — |
 | DOD-2.2 | 回落记为回落 | 通过 | `tests/contract/decision-chain.test.ts` | — |
 | DOD-2.3 | 设置里引擎链与实跑一致 | 通过 | `tests/contract/decision-chain.test.ts` | — |

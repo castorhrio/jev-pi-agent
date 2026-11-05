@@ -96,9 +96,6 @@ const MIN_CRITERIA = 3;
 /** A screenshot a section points at, e.g. `docs/screenshots/states/loading.png`. */
 const SCREENSHOT = /docs\/screenshots\/[\w./-]+\.png/g;
 
-/** A backticked literal: the on-screen text a criterion is anchored to. */
-const LITERAL = /`[^`\n]+`/;
-
 /** Every backticked literal in a criterion, without the backticks. */
 const LITERALS = /`([^`\n]+)`/g;
 

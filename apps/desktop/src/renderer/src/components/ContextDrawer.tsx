@@ -531,6 +531,27 @@ function InjectionBlock({ plan }: { plan: ContextInjectionPlan }): JSX.Element {
       .catch(() => setCopyState('failed'));
   }, [hash]);
 
+  /*
+   * The other half of the check, and the reason this panel exists.
+   *
+   * The claim is "copy the bytes, hash them yourself, compare with the hash
+   * printed above". Until now the bytes could only be copied by dragging a
+   * selection inside a `max-height: 280px; overflow: auto` block — and a
+   * selection that stops one line short produces a hash that does not match,
+   * which reads as "the product is lying" rather than "you missed a line".
+   * A button that copies exactly `plan.rendered` removes that failure mode
+   * from the one screen the product is built around.
+   */
+  const rendered = plan?.rendered ?? '';
+  const [bytesCopyState, setBytesCopyState] = useState<'idle' | 'copied' | 'failed'>('idle');
+  const copyBytes = useCallback(() => {
+    if (!rendered) return;
+    void navigator.clipboard
+      .writeText(rendered)
+      .then(() => setBytesCopyState('copied'))
+      .catch(() => setBytesCopyState('failed'));
+  }, [rendered]);
+
   if (!hash) {
     // No verifiable hash means there is nothing to verify. Saying that is the
     // honest result; rendering a panel full of empty rows is not.
@@ -596,6 +617,13 @@ function InjectionBlock({ plan }: { plan: ContextInjectionPlan }): JSX.Element {
         <>
           <div className="block-title mt-3">
             <span>{t('context.rendered')}</span>
+            <button className="link" onClick={copyBytes}>
+              {bytesCopyState === 'copied'
+                ? t('context.bytesCopied')
+                : bytesCopyState === 'failed'
+                  ? t('context.bytesCopyFailed')
+                  : t('context.bytesCopy')}
+            </button>
           </div>
           <div className="code" style={{ maxHeight: 280 }}>
             {plan.rendered}

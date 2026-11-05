@@ -563,6 +563,26 @@ const contextPack: ContextPack = {
   createdAt: ISO,
 };
 
+/**
+ * The plan the drawer reads back for `turn-1`.
+ *
+ * `renderedHash` is a **recorded** value, not a computed one: this module runs
+ * in a plain browser (and in `dev:web`), where `node:crypto` does not exist, so
+ * the hash cannot be derived here the way Main derives it. It is therefore the
+ * one number in this file that a person can get wrong by editing `rendered`
+ * and forgetting it — and it was wrong: it read `a3f19c7b…` while the bytes
+ * below it hash to `7a7986f7…`, so the demo screen printed a hash that did not
+ * match the 原文 printed under it. Anyone who copied the panel's bytes and
+ * hashed them got a different value, on the one screen this product exists to
+ * make checkable.
+ *
+ * `tests/contract/injection-hash-consistency.test.ts` now recomputes
+ * `sha256(rendered)` with Node's own `createHash` and compares it to this
+ * literal, so editing the bytes without re-recording the hash is a red run
+ * rather than a screenshot that quietly lies. Re-record it with:
+ *
+ *   node -e "const c=require('crypto');console.log(c.createHash('sha256').update(<rendered>,'utf8').digest('hex'))"
+ */
 const contextInjection: ContextInjectionPlan = {
   turnId: 'turn-1',
   packId: 'pack-1',
@@ -578,7 +598,7 @@ const contextInjection: ContextInjectionPlan = {
   },
   rendered:
     '## Context\n\n- packages/context/src/broker.ts — renderContextPack lives here\n- apps/desktop/src/renderer/src/App.tsx — the surface that crashed\n',
-  renderedHash: 'a3f19c7be2d8405f6c1a9e7d3b85f04c2a1d6e9b7f35c80d2a4e6b19f0c37',
+  renderedHash: '7a7986f7cddd7d2dcd6f2bdf867f8d95f4d3425ab9bcc0265e07f85f092a68ea',
   index: [
     { itemId: 'i1', kind: 'file', ref: 'packages/context/src/broker.ts', stale: false, tokens: 1_820 },
     { itemId: 'i2', kind: 'git_diff', ref: 'apps/desktop/src/renderer/src/App.tsx', stale: false, tokens: 640 },
@@ -622,7 +642,7 @@ const packBuiltPayload = {
   omittedCount: 1,
   estimatedTokens: 2_460,
   estimateSource: 'heuristic_chars_div_4',
-  renderedHash: 'a3f19c7be2d8405f6c1a9e7d3b85f04c2a1d6e9b7f35c80d2a4e6b19f0c37',
+  renderedHash: '7a7986f7cddd7d2dcd6f2bdf867f8d95f4d3425ab9bcc0265e07f85f092a68ea',
   injectionMode: 'prompt_prefix',
 };
 

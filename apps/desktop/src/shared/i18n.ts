@@ -475,6 +475,9 @@ const zhCN: Dictionary = {
   'context.hashCopy': '复制 hash',
   'context.hashCopied': '已复制',
   'context.hashCopyFailed': '复制失败，请手动选中下面的 hash',
+  'context.bytesCopy': '复制原文',
+  'context.bytesCopied': '已复制',
+  'context.bytesCopyFailed': '复制失败，请手动选中下面的原文',
   'context.noInjectionPlan': '这一轮还没有注入计划，因此没有可核对的 hash。',
   'context.hashExplains':
     'render 是纯函数：同一个 Pack 一定渲染出同一段字节、同一个 hash。hash 对不上，说明这段字节被改过，或者 Pack 变了——它证明的是「没被改写」，不是「内容正确」。',
@@ -1232,6 +1235,9 @@ const enUS: Dictionary = {
   'context.hashCopy': 'Copy hash',
   'context.hashCopied': 'Copied',
   'context.hashCopyFailed': 'Copy failed — select the hash below manually',
+  'context.bytesCopy': 'Copy bytes',
+  'context.bytesCopied': 'Copied',
+  'context.bytesCopyFailed': 'Copy failed — select the bytes below by hand',
   'context.noInjectionPlan': 'This turn has no injection plan yet, so there is no hash to verify.',
   'context.hashExplains':
     'render is pure: one pack always renders to the same bytes and the same hash. A hash that does not match means those bytes were altered, or the pack changed — it proves “not tampered with”, not “correct”.',
