@@ -49,6 +49,7 @@
  *   node scripts/screenshot-sources.mjs           # report drift, exit 1 if any
  *   node scripts/screenshot-sources.mjs --check   # the same, said out loud
  *   node scripts/screenshot-sources.mjs --write   # record the current state
+ *   node scripts/screenshot-sources.mjs --walkthrough  # list the ten images a walkthrough needs
  *
  * `--check` exists because the default is a check and a default is not a
  * sentence. A CI step or a release checklist that reads
@@ -58,6 +59,20 @@
  * `--check --write` is refused rather than resolved by precedence: a caller
  * that asked for both does not know what it wants, and guessing for it is how
  * a gate ends up recording the drift it was meant to report.
+ *
+ * `--walkthrough` is the handover half of the same idea, and it exists because
+ * the five-state walkthrough (`docs/state-walkthrough.md`) is the one part of
+ * the DoD that a machine cannot answer: it needs a person to look at ten PNGs
+ * and say yes or no. Handing that to somebody who has not installed the app
+ * means handing them the ten files, and "the ten files" was, until this flag,
+ * a table in a document that a reader had to copy out by hand — the exact place
+ * where a handover loses an image. So the list is read from the document (one
+ * fact, not two) and printed one path per line, which is what makes
+ * `tar -czf walkthrough.tar.gz $(node scripts/screenshot-sources.mjs --walkthrough)`
+ * a single command. It prints paths and nothing else on stdout for that reason;
+ * the verdict goes to stderr, and it exits 1 when an image it listed is not in
+ * the manifest — a handover that ships a picture no gate keeps honest is worse
+ * than no handover.
  *
  * The check path is the one that has to be *proved* red, not merely written:
  * `tests/contract/screenshot-sources.test.ts` runs this file as a subprocess
@@ -105,6 +120,21 @@ export const SHOTS_DIR = 'docs/screenshots';
 /** The manifest this script writes and the gate reads. */
 export const MANIFEST_PATH = 'docs/screenshots/sources.json';
 
+/**
+ * The document that says which images a five-state walkthrough needs.
+ *
+ * Read rather than restated: the ten images are already listed there, in the
+ * order a walker opens them, and a second list in this script would be a second
+ * fact that drifts the first time somebody adds a state.
+ */
+export const WALKTHROUGH_PATH = 'docs/state-walkthrough.md';
+
+/** The heading whose table is the walkthrough's image list. */
+export const WALKTHROUGH_HEADING = '## 5 分钟走查脚本';
+
+/** A committed screenshot, as the walkthrough document spells it. */
+const WALKTHROUGH_SHOT = /docs\/screenshots\/[\w./-]+\.png/g;
+
 /** Extensions that can change what the renderer draws. */
 const RENDERER_EXT = /\.(ts|tsx|css)$/;
 
@@ -139,6 +169,31 @@ export function rendererSources(repoRoot = REPO_ROOT) {
 /** Every committed screenshot, sorted. */
 export function screenshotFiles(repoRoot = REPO_ROOT) {
   return walk(repoRoot, SHOTS_DIR).filter((file) => file.toLowerCase().endsWith('.png'));
+}
+
+/**
+ * The images a five-state walkthrough needs, in the order the document lists them.
+ *
+ * The table under `## 5 分钟走查脚本` is the list; this reads it and nothing
+ * else. Empty when the document or the heading is gone, which the caller turns
+ * into a failure rather than into "no images to send".
+ */
+export function walkthroughScreenshots(repoRoot = REPO_ROOT) {
+  const absolute = path.join(repoRoot, WALKTHROUGH_PATH);
+  if (!fs.existsSync(absolute)) return [];
+  const lines = fs.readFileSync(absolute, 'utf8').split('\n');
+  const start = lines.findIndex((line) => line.trim() === WALKTHROUGH_HEADING);
+  if (start === -1) return [];
+  const shots = [];
+  for (const line of lines.slice(start + 1)) {
+    // A level-1/2 heading ends the section, so the criteria below it are not
+    // read as part of the list.
+    if (/^#{1,2} /.test(line)) break;
+    for (const match of line.matchAll(WALKTHROUGH_SHOT)) {
+      if (!shots.includes(match[0])) shots.push(match[0]);
+    }
+  }
+  return shots;
 }
 
 /** The sha256 of a file, as `sha256:<hex>`. */
@@ -244,16 +299,28 @@ export function readManifest(repoRoot = REPO_ROOT) {
   return JSON.parse(fs.readFileSync(absolute, 'utf8'));
 }
 
-const USAGE = 'usage: node scripts/screenshot-sources.mjs [--check | --write]';
+const USAGE =
+  'usage: node scripts/screenshot-sources.mjs [--check | --write | --walkthrough]';
 
 function main(argv) {
   const write = argv.includes('--write');
   const check = argv.includes('--check');
-  const unknown = argv.filter((arg) => arg !== '--write' && arg !== '--check');
+  const walkthrough = argv.includes('--walkthrough');
+  const unknown = argv.filter(
+    (arg) => arg !== '--write' && arg !== '--check' && arg !== '--walkthrough',
+  );
   if (unknown.length > 0) {
     // An unrecognised flag is an error, not a default: `--wirte` silently
     // reporting drift is the same class of defect as `--steps 6` passing.
     console.error(`unknown option(s): ${unknown.join(', ')}`);
+    console.error(USAGE);
+    return 1;
+  }
+  if (walkthrough && (write || check)) {
+    // `--walkthrough` lists files; the other two judge or record them. Asking
+    // for both is asking for two different answers, and picking one for the
+    // caller is how a handover ships the wrong list.
+    console.error('--walkthrough lists the walkthrough images; it does not combine with --check or --write');
     console.error(USAGE);
     return 1;
   }
@@ -264,6 +331,38 @@ function main(argv) {
     console.error('--check and --write ask for opposite things; pass one of them');
     console.error(USAGE);
     return 1;
+  }
+
+  if (walkthrough) {
+    const shots = walkthroughScreenshots();
+    if (shots.length === 0) {
+      console.error(
+        `no walkthrough images: ${WALKTHROUGH_PATH} has no \`${WALKTHROUGH_HEADING}\` table, ` +
+          'so there is nothing to hand to a person who has not installed the app',
+      );
+      return 1;
+    }
+    // Paths on stdout and nothing else, so the output can be handed straight to
+    // `tar`/`cp`; the verdict goes to stderr where it cannot be mistaken for a
+    // file name.
+    for (const shot of shots) console.log(shot);
+    const manifest = readManifest();
+    const recorded = new Set(Object.keys(manifest?.screenshots ?? {}));
+    const unrecorded = shots.filter((shot) => !recorded.has(shot));
+    if (unrecorded.length > 0) {
+      for (const shot of unrecorded) {
+        console.error(
+          `[unrecorded] ${shot} is in the walkthrough and not in ${MANIFEST_PATH}, so ` +
+            '`--check` cannot say it is still the current screen',
+        );
+      }
+      return 1;
+    }
+    console.error(
+      `walkthrough: ${shots.length} image(s), all recorded in ${MANIFEST_PATH} — ` +
+        'send these to whoever answers the criteria',
+    );
+    return 0;
   }
 
   if (write) {

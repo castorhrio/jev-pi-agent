@@ -108,6 +108,46 @@ function run(root: string, args: string[]): RunResult {
   }
 }
 
+/** The walkthrough document, relative to the tree root. */
+const WALKTHROUGH = join('docs', 'state-walkthrough.md');
+
+/** A second committed screenshot, so the walkthrough list has two entries. */
+const SECOND_SCREENSHOT = join('docs', 'screenshots', 'states', 'loading.png');
+
+/**
+ * A tree that also carries a walkthrough document listing two images.
+ *
+ * The document is written here rather than copied from the repository because
+ * this file is about the *command*: what it prints, what it refuses, and what
+ * it does when the list and the manifest disagree. Whether the real document
+ * lists the right ten images is `state-walkthrough.test.ts`'s question.
+ */
+function walkthroughTree(): string {
+  const root = tree();
+  mkdirSync(join(root, 'docs', 'screenshots', 'states'), { recursive: true });
+  writeFileSync(join(root, SECOND_SCREENSHOT), 'also not really a png', 'utf8');
+  writeFileSync(
+    join(root, WALKTHROUGH),
+    [
+      '# 走查',
+      '',
+      '## 5 分钟走查脚本',
+      '',
+      '| # | 图 | 尺寸 |',
+      '|---|---|---|',
+      `| 1 | \`${SCREENSHOT.split('\\').join('/')}\` | 1440×900 |`,
+      `| 2 | \`${SECOND_SCREENSHOT.split('\\').join('/')}\` | 768×700 |`,
+      '',
+      '## 判据',
+      '',
+      '正文。',
+      '',
+    ].join('\n'),
+    'utf8',
+  );
+  return root;
+}
+
 /** A tree whose manifest has been written, i.e. a clean checkout. */
 function recordedTree(): string {
   const root = tree();
@@ -212,6 +252,66 @@ describe('the screenshot-drift command', () => {
     expect(typo.code).toBe(1);
     expect(typo.stderr).toContain('unknown option(s): --wirte');
     expect(typo.stderr).toContain('usage: node scripts/screenshot-sources.mjs');
+  });
+
+  it('lists the walkthrough images, one path per line, and nothing else on stdout', () => {
+    // The list is what a handover ships, so stdout has to be usable as an
+    // argument list: `tar -czf walkthrough.tar.gz $(… --walkthrough)` is the
+    // command the walkthrough document gives, and a verdict line on stdout
+    // would become a file name.
+    const root = walkthroughTree();
+    expect(run(root, ['--write']).code).toBe(0);
+
+    const listed = run(root, ['--walkthrough']);
+    expect(listed.code, listed.stderr).toBe(0);
+    expect(listed.stdout.trim().split('\n')).toEqual([
+      SCREENSHOT.split('\\').join('/'),
+      SECOND_SCREENSHOT.split('\\').join('/'),
+    ]);
+    expect(listed.stderr).toContain('2 image(s)');
+    expect(listed.stderr).toContain(MANIFEST.split('\\').join('/'));
+  });
+
+  it('fails when the walkthrough document is gone, instead of handing over nothing', () => {
+    const root = recordedTree();
+    const listed = run(root, ['--walkthrough']);
+    expect(listed.code).toBe(1);
+    expect(listed.stdout.trim()).toBe('');
+    expect(listed.stderr).toContain('no walkthrough images');
+    expect(listed.stderr).toContain(WALKTHROUGH.split('\\').join('/'));
+  });
+
+  it('fails when an image it would ship is not in the manifest', () => {
+    // A picture `--check` cannot say is still the current screen is a picture
+    // nobody has verified, and shipping it is how a walker answers questions
+    // about a screen the product no longer draws.
+    const root = walkthroughTree();
+    expect(run(root, ['--write']).code).toBe(0);
+    writeFileSync(join(root, SECOND_SCREENSHOT), 'replaced after recording', 'utf8');
+    rmSync(join(root, MANIFEST), { force: true });
+    expect(run(root, ['--write']).code).toBe(0);
+    writeFileSync(join(root, 'docs', 'screenshots', 'states', 'ghost.png'), 'ghost', 'utf8');
+    writeFileSync(
+      join(root, WALKTHROUGH),
+      readFileSync(join(root, WALKTHROUGH), 'utf8').replace(
+        '## 判据',
+        '| 3 | `docs/screenshots/states/ghost.png` | 1440×900 |\n\n## 判据',
+      ),
+      'utf8',
+    );
+
+    const listed = run(root, ['--walkthrough']);
+    expect(listed.code).toBe(1);
+    expect(listed.stderr).toContain('[unrecorded] docs/screenshots/states/ghost.png');
+  });
+
+  it('refuses --walkthrough together with the two flags that judge or record', () => {
+    const root = walkthroughTree();
+    for (const other of ['--check', '--write']) {
+      const both = run(root, ['--walkthrough', other]);
+      expect(both.code, `--walkthrough ${other} was accepted`).toBe(1);
+      expect(both.stderr).toContain('does not combine');
+    }
   });
 
   it('fails when the manifest is missing, instead of comparing nothing', () => {

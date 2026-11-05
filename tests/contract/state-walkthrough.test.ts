@@ -82,6 +82,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { STATE_SCENARIOS } from '../../apps/desktop/src/renderer/src/dev/scenarios';
+import { walkthroughScreenshots } from '../../scripts/screenshot-sources.mjs';
 
 const REPO_ROOT = join(import.meta.dirname, '..', '..');
 const WALKTHROUGH_PATH = join(REPO_ROOT, 'docs', 'state-walkthrough.md');
@@ -133,6 +134,25 @@ const TIGHT_NAME = /-(\d+)x(\d+)\.png$/;
 
 /** The heading the five-minute script lives under. */
 const SCRIPT_HEADING = '## 5 分钟走查脚本';
+
+/**
+ * The heading of the handover section: how the ten images reach a person who
+ * has not installed the app.
+ *
+ * The walkthrough has been answerable from a distance since the criteria were
+ * written, and the one step that was never written down is the step that makes
+ * it remote: getting the ten files to the person. "Send them the images" is not
+ * an instruction — the ten paths live in a table, and a handover that copies
+ * them by hand loses one, which is a state that was never walked and a row that
+ * still reads "all satisfied".
+ */
+const HANDOFF_HEADING = '## 怎么把十张图 + 判据发给一个没装应用的人';
+
+/** The command that lists the ten images, as the handover section spells it. */
+const HANDOFF_COMMAND = 'node scripts/screenshot-sources.mjs --walkthrough';
+
+/** The one command that turns that list into something sendable. */
+const HANDOFF_PACK = `tar -czf walkthrough.tar.gz $(${HANDOFF_COMMAND})`;
 
 interface Size {
   readonly width: number;
@@ -290,6 +310,88 @@ function scriptSection(markdown: string): string | undefined {
     body.push(line);
   }
   return body.join('\n');
+}
+
+/** The body of the handover section, or `undefined` when it is gone. */
+function handoffSection(markdown: string): string | undefined {
+  const lines = markdown.split('\n');
+  const start = lines.findIndex((line) => line.trim() === HANDOFF_HEADING);
+  if (start === -1) return undefined;
+  const body: string[] = [];
+  for (const line of lines.slice(start + 1)) {
+    if (/^#{1,2} /.test(line)) break;
+    body.push(line);
+  }
+  return body.join('\n');
+}
+
+/**
+ * Every way the handover section stops being something a stranger can follow.
+ *
+ * `listed` is what `node scripts/screenshot-sources.mjs --walkthrough` prints
+ * today, so the section and the command are compared rather than assumed to
+ * agree: a section that tells the reader to run a command whose output is not
+ * the ten images is a handover that ships the wrong files, and the reader has
+ * no second list to check it against.
+ */
+function handoffProblems(
+  markdown: string,
+  repository: Repository,
+  listed: readonly string[],
+): string[] {
+  const problems: string[] = [];
+  const section = handoffSection(markdown);
+  if (section === undefined) {
+    return [
+      `docs/state-walkthrough.md: no \`${HANDOFF_HEADING}\` section, so the ten images have ` +
+        'no way to reach a person who has not installed the app',
+    ];
+  }
+
+  if (!section.includes(HANDOFF_COMMAND)) {
+    problems.push(
+      `docs/state-walkthrough.md: the handover section no longer names \`${HANDOFF_COMMAND}\`, ` +
+        'so the reader is back to copying ten paths out of a table by hand',
+    );
+  }
+  if (!section.includes(HANDOFF_PACK)) {
+    problems.push(
+      `docs/state-walkthrough.md: the handover section no longer names \`${HANDOFF_PACK}\`, ` +
+        'so "send the images" is an instruction with no command behind it',
+    );
+  }
+  // The three things that have to travel together: the images, the criteria,
+  // and the row the answer comes back in. One of them missing is a handover
+  // that ends in a question nobody can answer or an answer nobody can file.
+  for (const [what, literal] of [
+    ['the criteria section', '`## 判据`'],
+    ['the record row template', '| YYYY-MM-DD |'],
+    ['the fact that the reader needs no app', '不需要装应用'],
+  ] as const) {
+    if (!section.includes(literal)) {
+      problems.push(
+        `docs/state-walkthrough.md: the handover section does not name ${what} ` +
+          `(\`${literal}\`), so the pack it describes is incomplete`,
+      );
+    }
+  }
+
+  for (const shot of new Set(screenshotsIn(section))) {
+    if (repository.trackedScreenshot(shot)) continue;
+    problems.push(
+      `docs/state-walkthrough.md: the handover section names \`${shot}\`, which ` +
+        '`docs/screenshots/sources.json` does not record — the pack would ship a picture no ' +
+        'gate keeps honest',
+    );
+  }
+
+  if (listed.length === 0) {
+    problems.push(
+      `docs/state-walkthrough.md: \`${HANDOFF_COMMAND}\` lists no image, so the handover ` +
+        'section describes a command that hands over nothing',
+    );
+  }
+  return problems;
 }
 
 /**
@@ -983,5 +1085,89 @@ describe('the five states have criteria a person can answer', () => {
     );
     const dated = readme.replace(/by eye/g, 'by eye on 2026-11-05').replace(/人眼/g, '人眼（2026-11-05）');
     expect(walkthroughProblems(signed, dated, fakeRepo())).toEqual([]);
+  });
+});
+
+/**
+ * The handover: the ten images, the fifteen questions, and the row that comes back.
+ *
+ * The walkthrough has been answerable from a distance since the criteria were
+ * written — the document says so itself, in the "只有图" half of 怎么走. What it
+ * never said is how the images get to the person answering, and that is the one
+ * step where a remote walkthrough quietly loses a state: ten paths in a table,
+ * copied by hand, is nine images and a row that still reads "all satisfied".
+ *
+ * So the section is checked against the command it names, and the command is
+ * checked against the document it reads. Neither half alone is enough: a
+ * section naming a command that prints something else is a pack of the wrong
+ * files, and a command whose list nobody sends is a list nobody uses.
+ */
+describe('the ten images can be handed to somebody who has not installed the app', () => {
+  it('the handover section is there, and names the command, the pack and the row', () => {
+    const problems = handoffProblems(walkthrough, REPOSITORY, walkthroughScreenshots());
+    expect(
+      problems,
+      `the handover section and the command disagree:\n  ${problems.join('\n  ')}`,
+    ).toEqual([]);
+  });
+
+  it('the command lists exactly the ten images the five-minute script walks', () => {
+    // The list is read from the document by the command, so this is the check
+    // that the reading works: a parser that returned nine paths would leave the
+    // section green and the pack one image short.
+    const script = scriptSection(walkthrough);
+    expect(script, `no \`${SCRIPT_HEADING}\` section`).toBeDefined();
+    const listed = walkthroughScreenshots();
+    expect(listed).toEqual(screenshotsIn(script!));
+    expect(listed).toHaveLength(STATE_SCENARIOS.length * 2);
+    for (const shot of listed) {
+      expect(TRACKED_SHOTS.has(shot), `${shot} is not in sources.json`).toBe(true);
+    }
+  });
+
+  it('reports the section being deleted', () => {
+    const problems = handoffProblems(
+      walkthrough.replace(HANDOFF_HEADING, '## 怎么把图发出去'),
+      REPOSITORY,
+      walkthroughScreenshots(),
+    );
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toContain(HANDOFF_HEADING);
+  });
+
+  it('reports a renamed command, and a pack line that lost its command', () => {
+    const renamed = handoffProblems(
+      walkthrough.replaceAll(HANDOFF_COMMAND, 'node scripts/screenshot-sources.mjs --list'),
+      REPOSITORY,
+      walkthroughScreenshots(),
+    );
+    expect(renamed.some((problem) => problem.includes(HANDOFF_COMMAND))).toBe(true);
+
+    const unpacked = handoffProblems(
+      walkthrough.replace(HANDOFF_PACK, 'tar -czf walkthrough.tar.gz docs/screenshots'),
+      REPOSITORY,
+      walkthroughScreenshots(),
+    );
+    expect(unpacked.some((problem) => problem.includes(HANDOFF_PACK))).toBe(true);
+  });
+
+  it('reports a pack that would ship an image no gate keeps honest', () => {
+    const withGhost = walkthrough.replace(
+      HANDOFF_PACK,
+      `${HANDOFF_PACK}\n\n另附 \`docs/screenshots/states/ghost.png\`。`,
+    );
+    expect(withGhost, 'the pack line this case edits is gone').not.toBe(walkthrough);
+    const problems = handoffProblems(
+      withGhost,
+      fakeRepo({ trackedScreenshot: () => false }),
+      walkthroughScreenshots(),
+    );
+    expect(problems.some((problem) => problem.includes('ghost.png'))).toBe(true);
+  });
+
+  it('reports a command that lists nothing, rather than passing over an empty pack', () => {
+    const problems = handoffProblems(walkthrough, REPOSITORY, []);
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toContain('lists no image');
   });
 });
