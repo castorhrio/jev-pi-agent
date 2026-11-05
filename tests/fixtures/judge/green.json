@@ -1,0 +1,18 @@
+{
+  "platform": "win32",
+  "build": {
+    "executable": "C:\\UCAD\\UCAD.exe",
+    "version": "1.0.0",
+    "sizeBytes": 122806279,
+    "modifiedAt": "2026-11-05T08:41:02.000Z"
+  },
+  "ranAt": "2026-11-05T09:12:44.000Z",
+  "steps": [
+    { "n": 1, "verdict": "pass", "evidence": ["1:turn 1 renderedHash=80e256b63523731c"] },
+    { "n": 2, "verdict": "pass", "evidence": ["2:table rows=7"] },
+    { "n": 3, "verdict": "pass", "evidence": ["3:permission.resolved seen"] },
+    { "n": 4, "verdict": "pass", "evidence": ["4:update feed ignored: not https"] },
+    { "n": 5, "verdict": "pass", "evidence": ["5:tray menu built items=4"] }
+  ],
+  "note": "A fixture, not a run: this file exists so the pack can show what --judge prints when a report covers every step. It is not evidence about any machine."
+}

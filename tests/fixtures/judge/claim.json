@@ -1,0 +1,18 @@
+{
+  "platform": "win32",
+  "build": {
+    "executable": "C:\\UCAD\\UCAD.exe",
+    "version": "1.0.0",
+    "sizeBytes": 122806279,
+    "modifiedAt": "2026-11-05T08:41:02.000Z"
+  },
+  "ranAt": "2026-11-05T09:12:44.000Z",
+  "steps": [
+    { "n": 1, "verdict": "pass", "evidence": ["(the step recorded no evidence line)"] },
+    { "n": 2, "verdict": "pass", "evidence": ["(the step recorded no evidence line)"] },
+    { "n": 3, "verdict": "pass", "evidence": ["(the step recorded no evidence line)"] },
+    { "n": 4, "verdict": "pass", "evidence": ["(the step recorded no evidence line)"] },
+    { "n": 5, "verdict": "pass", "evidence": ["(the step recorded no evidence line)"] }
+  ],
+  "note": "A fixture, not a run: five rows that say pass and record nothing. This is the shape --judge refuses, and the reason it can refuse it is that buildReport() only calls a step pass after the step recorded something."
+}

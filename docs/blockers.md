@@ -160,6 +160,9 @@ PASS — the report covers steps 1, 2, 3, 4, 5 on win32 against build 1.0.0
 **一页操作单**：`docs/manual-verification/README.md` 是这一条的带回包——报告与三张截图的
 命名约定（`win-YYYYMMDD.json`）、`--judge` 的五条红各是什么原文、报告长什么样、判过之后改哪三处。
 它和这一节说的是同一件事，区别是它写给「手上只有一台 Windows 机器和一个浏览器」的人。
+那一页贴的判绿/判红样例不是照着写的：每一块都是 `tests/fixtures/judge/` 里一份报告喂给 `--judge`
+的**完整输出**，由 `tests/contract/judge-samples.test.ts` 逐行比对——所以照着敲的人看到的每一行，
+这一页都承诺过。
 
 **做不到时不要做什么**：不许手写一份报告，也不许把「跑过 Linux」写成「Windows 通过」——
 `--judge` 只判文件说了什么，而文件可以手写，这句话写在报告自己的 `note` 字段里。

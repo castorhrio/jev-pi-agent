@@ -107,23 +107,19 @@ node scripts\verify-main-chain.mjs --exec release\win-unpacked\UCAD.exe --report
 
 ### 带回来之后，先自己判一次
 
-```bash
-node scripts/verify-main-chain.mjs --judge docs/manual-verification/win-20261105.json
-```
+`node scripts/verify-main-chain.mjs --judge docs/manual-verification/win-20261105.json`
 
-**判绿**（退出码 0）：五行 `step N: pass`，然后一行
+**判绿**（退出码 0）：五行 `step N: pass`，然后一行 `PASS —`，再跟四条 `[note]`。
+完整样子在第五节——那一块是命令真的打印出来的，不是照着写的。
 
-```
-PASS — the report covers steps 1, 2, 3, 4, 5 on win32 against build 1.0.0
-```
+**判红**（退出码 1）：红的那一步在行里就看得见，后面跟着它为什么红。
+下面这一块是把 `tests/fixtures/judge/fail.json` 喂给同一条命令的**完整输出**：
 
-后面还跟着四条 `[note]`，完整样子在下一节。
+`node scripts/verify-main-chain.mjs --judge tests/fixtures/judge/fail.json`
 
-**判红**（退出码 1）：红的那一步在行里就看得见，后面跟着它为什么红——
-
-```
-report: docs/manual-verification/win-20261105.json
-platform: win32 · build: 1.0.0 · ranAt: 2026-11-05T…
+```text
+report: tests/fixtures/judge/fail.json
+platform: win32 · build: 1.0.0 · ranAt: 2026-11-05T09:12:44.000Z
   step 1: pass
   step 2: fail
   step 3: pass
@@ -134,6 +130,10 @@ FAIL — 1 thing(s) in this report keep the row open
 [note] a red report is still evidence: carry it home as it is rather than editing it
 ```
 
+第一行是命令打印的路径：它打印的是你给的那个路径解析后的绝对路径，这一页按仓库根目录写成相对路径，
+其余每一行逐字相同。`[FAIL]` 与 `FAIL —` 走 **stderr**，其余走 stdout——所以上面那条 `*>`
+不是讲究：只重定向 stdout 的人会拿到一个看起来什么都没说的块。
+
 判红**不是**要你重跑一遍再交：一份红的报告是结果，把它改成绿才是错的（第七节）。
 重跑就新增一个文件，旧的那份留着——它记着当时那台机器上真的发生了什么。
 
@@ -141,19 +141,34 @@ FAIL — 1 thing(s) in this report keep the row open
 
 ## 五、带回来之后怎么判（读的人跑这条，不必读 JSON）
 
-```bash
-node scripts/verify-main-chain.mjs --judge docs/manual-verification/win-YYYYMMDD.json
-```
+`node scripts/verify-main-chain.mjs --judge docs/manual-verification/win-YYYYMMDD.json`
 
-**期望输出**（退出码 0）：
+**期望输出**（退出码 0）——下面这一块是把 `tests/fixtures/judge/green.json` 喂给同一条命令的
+**完整输出**，从第一行到最后一行：
 
-```
+`node scripts/verify-main-chain.mjs --judge tests/fixtures/judge/green.json`
+
+```text
+report: tests/fixtures/judge/green.json
+platform: win32 · build: 1.0.0 · ranAt: 2026-11-05T09:12:44.000Z
+  step 1: pass
+  step 2: pass
+  step 3: pass
+  step 4: pass
+  step 5: pass
 PASS — the report covers steps 1, 2, 3, 4, 5 on win32 against build 1.0.0
 [note] every `pass` row carries the evidence lines the step recorded, not just a verdict
 [note] this judges what the file says, not that the run happened — see the `note` inside the report
 [note] step 6 is the five states a person walks in `npm run dev:web`; no report closes it
 [note] the three screenshots a run carries home are evidence for a reader, not for this command — it reads the report and nothing else
 ```
+
+`PASS —` 之前还有六行：`report:`、`platform:`、五行 `step N: pass`。这一页以前只从 `PASS —` 开始写，
+于是照着它敲的人会看到六行没被承诺过的输出，还得自己判断是不是哪里错了——「期望输出」和命令打印的
+东西对不上，正是这一页最不该犯的错。
+
+`tests/fixtures/judge/` 里的三份报告是**夹具，不是证据**：它们的 `note` 字段自己写着这句话。
+它们存在的理由只有一个——让这一页能贴出命令真的打印的东西，而不是让人以为仓库里躺着一份 Windows 报告。
 
 判定要求四件事同时成立，每一条各自会红、各有一句话：
 
@@ -172,6 +187,31 @@ PASS — the report covers steps 1, 2, 3, 4, 5 on win32 against build 1.0.0
 它判的是**文件里写了什么**，不是这次运行真的发生过——这句话在 `judgeReport()` 的注释里、
 在报告自己的 `note` 字段里、也在这条命令的输出里。它也不能替 step 6 收口：
 五态是人眼走查（`docs/state-walkthrough.md`），任何报告都关不掉那一行。
+
+### 一份手写的报告会被拒在哪一句
+
+`node scripts/verify-main-chain.mjs --judge tests/fixtures/judge/claim.json`
+
+```text
+report: tests/fixtures/judge/claim.json
+platform: win32 · build: 1.0.0 · ranAt: 2026-11-05T09:12:44.000Z
+  step 1: pass
+  step 2: pass
+  step 3: pass
+  step 4: pass
+  step 5: pass
+[FAIL] step 1 says it passed but carries no evidence line — a pass with nothing behind it is a claim, not a result; run it again so the step records what it saw
+[FAIL] step 2 says it passed but carries no evidence line — a pass with nothing behind it is a claim, not a result; run it again so the step records what it saw
+[FAIL] step 3 says it passed but carries no evidence line — a pass with nothing behind it is a claim, not a result; run it again so the step records what it saw
+[FAIL] step 4 says it passed but carries no evidence line — a pass with nothing behind it is a claim, not a result; run it again so the step records what it saw
+[FAIL] step 5 says it passed but carries no evidence line — a pass with nothing behind it is a claim, not a result; run it again so the step records what it saw
+FAIL — 5 thing(s) in this report keep the row open
+[note] a red report is still evidence: carry it home as it is rather than editing it
+```
+
+五行 `pass` 和一份真报告长得一模一样，差别只在证据行。真跑的报告撞不上这一条：`buildReport()`
+只在一步真的 `record()` 过之后才写 `pass`，所以「说 pass 却什么都没记」只可能是手写的。
+这是这份报告**唯一**能被查的那件事，也是第七节「不许手写一份报告」不是一句空话的原因。
 
 ## 六、报告长什么样
 

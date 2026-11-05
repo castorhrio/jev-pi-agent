@@ -1390,3 +1390,41 @@ source(s) and 16 screenshot(s) match`。
 `npm run test:e2e` → `19 passed (19)` / `149 passed (149)`；`npm run typecheck`、`npm run lint`、
 `npm run knip` 均退出码 0。两个数对得上：`1683 + 3`（本轮布局那三条）`+ 4`（截图那张新表四条）`= 1690`；
 布局门禁本身从 `45` 条变成 `48` 条，跳过的仍然只有那 1 条与本轮无关的。
+
+## 本轮（2026-11-05 夜）判绿/判红那两块样例，从「照着写的」变成「命令打印的」
+
+`docs/manual-verification/README.md` 是 DOD-4.1 的带回包，它教读者认两样东西：一份判绿的输出、
+一份判红的输出。两块都是手写的，而手写的输出错在**块的形状**上，不在句子上——所以
+`handoff-packs.test.ts` 看不见：它钉的每个片段都在，也都还在脚本源码里。
+
+量到的两处：
+
+1. **判绿那块从 `PASS —` 开始**，漏掉了命令在它之前打印的六行（`report:`、`platform:`、
+   五行 `step N: pass`）。照着这一页敲的人会看到六行没被承诺过的输出，然后自己判断是不是哪里错了。
+   「期望输出」和命令打印的东西对不上，正是这一页最不该犯的错。
+2. **判红那块指向 `docs/manual-verification/win-20261105.json`**，一个不存在的文件。这一页自己的
+   规矩是「报告是带回来的，不是编的」，然后它拿一份编出来的报告当期望输出——读者无法复现。
+
+改法是把样例接到一次**真的运行**上，而不是再抄一遍：
+
+- `tests/fixtures/judge/{fail,green,claim}.json` 三份报告夹具，`note` 字段自己写着「这是夹具，不是证据」；
+- 这一页在每个样例上方写一行命令（`` `node scripts/verify-main-chain.mjs --judge tests/fixtures/judge/…` ``），
+  下面的块就是那条命令的**完整输出**，从第一行到最后一行；
+- `tests/contract/judge-samples.test.ts` 跑 `judgeReportCommand()`，把块与输出逐行比对，并核对退出码
+  （`fail` → 1、`green` → 0、`claim` → 1）。唯一的归一化是第一行：命令打印解析后的绝对路径，
+  这一页按仓库根目录写成相对路径，其余逐字。
+
+第三份夹具 `claim.json` 是这一轮补的：五行 `pass`、证据行是占位符。它教的是「说 pass 却什么都没记」
+这一种红——和「某一步 fail」是两种红，下一步动作不同，只给一种读者就认不出另一种。
+
+**证明它会红**（本轮真实跑出来的）：把判绿那块改回从 `PASS —` 开始，`judge-samples.test.ts` 当场红在
+`are what the command prints, line for line`，并指名 `tests/fixtures/judge/green.json` 的行数与命令打印的
+行数不一致；恢复后 7/7 绿。另外四条反向用例（改一个字、删掉一个样例、多贴一个本检查不跑的报告、
+块里少一行）各自打红，都是纯函数驱动，不碰磁盘。
+
+**这一轮没有做的事**：三条外部阻塞一条都没解除（无令牌、无 Windows 机器、无人眼签字），
+`docs/blockers.md` 上那三个 2026-11-05 的日期照旧；本轮改的是「读者照着这一页敲，看到的东西对不对」，
+不是「阻塞解没解」。
+
+门禁：`npm run typecheck`、`npm run lint`、`npm run knip` 退出码 0；`npx vitest run tests/contract/judge-samples.test.ts
+tests/contract/handoff-packs.test.ts tests/contract/manual-check-docs.test.ts` → 39 passed。
