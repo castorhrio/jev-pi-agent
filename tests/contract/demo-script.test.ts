@@ -79,10 +79,12 @@
  * direction is driven with mutated copies rather than argued about.
  */
 
+import { spawnSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
+import { DEMO_BOUNDARIES, type DemoBoundary } from '../../apps/desktop/src/shared/demo-boundaries';
 import { DRIVEN_STEPS } from '../../scripts/verify-main-chain.mjs';
 // The three degraded-path commands and their block reader live in one module
 // because `blocker-closing.test.ts` counts the same list: a copy in each file
@@ -1351,5 +1353,205 @@ describe('the demo says which input it picked on purpose', () => {
     expect(broken, 'the objective this case rewrites is gone').not.toBe(walkthroughSource);
     const problems = vagueInputProblems(document, broken);
     expect(problems.some((problem) => problem.includes('stops showing a fallback'))).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The line on screen is output, not source
+// ---------------------------------------------------------------------------
+
+/**
+ * ## Why this block exists
+ *
+ * The block above asks whether each expected line is still **in the source** of
+ * the script its command runs. That is a real check and it has a hole the size
+ * of the whole point: a sentence can be in the source and never printed. A
+ * message moved into a branch the flag does not take, a `pass()` behind an
+ * early return, a line that only prints when the network answers — all of them
+ * are "in the file", so the page, the shared list and the panel agree, and the
+ * person on stage points at a line that will never appear.
+ *
+ * Worse, the two sides of that comparison are the page and the list, and both
+ * are edited by the same person in the same commit. Two copies of one sentence
+ * that agree with each other and with a source file prove that the sentence was
+ * typed three times, not that it is printed once.
+ *
+ * So this block runs the three commands and compares against **stdout and
+ * stderr of a real run**. It is the same rule the block above applies, moved
+ * one step closer to the screen: every literal piece of at least
+ * {@link MIN_PIECE} characters in an expected line has to be a substring of
+ * what the command actually printed.
+ *
+ * ## Why both streams
+ *
+ * The three commands split their answer: `release-gate.mjs
+ * --simulate-missing-sha` prints its `REFUSED` line on stdout, and
+ * `verify-main-chain.mjs --judge` prints the `[FAIL] step …` line on stderr. A
+ * check that read only stdout would be red about a line the reader does see,
+ * and the fix for that would be to weaken the check rather than to fix it.
+ *
+ * ## What is deliberately not asserted
+ *
+ * That the commands exit 0. Two of the three exit 1 on purpose — that is what
+ * they are demonstrating. Nor the wording of the rest of the output: this block
+ * only asks whether the quoted line is among the lines printed.
+ */
+
+/** How long one of the three commands may take before the run counts as failed. */
+const RUN_TIMEOUT_MS = 120_000;
+
+/** One command's real run: everything it printed, and how it ended. */
+interface CommandRun {
+  /** stdout and stderr, joined — the reader sees both. */
+  readonly output: string;
+  /** The exit code, or `null` when the run was killed (a timeout, a signal). */
+  readonly status: number | null;
+}
+
+/**
+ * Run one `node scripts/…` command from the repository root.
+ *
+ * `process.execPath` rather than the literal `node` in the command: the command
+ * is written for a reader's shell, and the test has to run under the same
+ * interpreter as the suite rather than whatever `node` resolves to on `PATH`.
+ */
+function runCommand(command: string): CommandRun {
+  const script = scriptOf(command);
+  if (script === undefined) return { output: '', status: null };
+  const args = command.split(/\s+/).slice(2);
+  const result = spawnSync(process.execPath, [join(REPO_ROOT, script), ...args], {
+    cwd: REPO_ROOT,
+    encoding: 'utf8',
+    timeout: RUN_TIMEOUT_MS,
+  });
+  return { output: `${result.stdout ?? ''}\n${result.stderr ?? ''}`, status: result.status };
+}
+
+/** Each command is run once per file rather than once per case. */
+const commandRuns = new Map<string, CommandRun>();
+
+/** The cached run of a command, so three cases do not spawn three times. */
+function runOnce(command: string): CommandRun {
+  const cached = commandRuns.get(command);
+  if (cached !== undefined) return cached;
+  const run = runCommand(command);
+  commandRuns.set(command, run);
+  return run;
+}
+
+/**
+ * Every way the shared list quotes a line its command does not print.
+ *
+ * Empty means each expected line is a substring of a real run's output. Pure in
+ * `(boundaries, run)` so the red direction is driven with a mutated list and a
+ * stubbed run instead of argued about.
+ */
+function outputProblems(
+  boundaries: readonly DemoBoundary[],
+  run: (command: string) => CommandRun | undefined,
+): string[] {
+  const problems: string[] = [];
+  for (const boundary of boundaries) {
+    const result = run(boundary.command);
+    if (result === undefined) {
+      problems.push(
+        `apps/desktop/src/shared/demo-boundaries.ts: \`${boundary.id}\` shows a line for ` +
+          `\`${boundary.command}\`, and nothing ran it — a line nobody ran is a line nobody saw`,
+      );
+      continue;
+    }
+    if (result.status === null) {
+      problems.push(
+        `apps/desktop/src/shared/demo-boundaries.ts: \`${boundary.command}\` did not finish ` +
+          '(killed by a timeout or a signal), so the line the panel shows was never printed',
+      );
+      continue;
+    }
+    const literal = pieces(boundary.expected).filter((piece) => piece.length >= MIN_PIECE);
+    if (literal.length === 0) {
+      problems.push(
+        `apps/desktop/src/shared/demo-boundaries.ts: \`${boundary.id}\` pins no wording of at ` +
+          `least ${MIN_PIECE} characters, so its expected line cannot go red for the right reason`,
+      );
+      continue;
+    }
+    for (const piece of literal) {
+      if (!result.output.includes(piece)) {
+        problems.push(
+          `apps/desktop/src/shared/demo-boundaries.ts: \`${boundary.id}\` shows "${piece}" as ` +
+            `the line \`${boundary.command}\` prints, and that command never printed it — the ` +
+            'page, the list and the panel agree on a sentence the script does not say',
+        );
+      }
+    }
+  }
+  return problems;
+}
+
+describe('the expected line is what the command prints, not what the source says', () => {
+  it('every expected line is a substring of a real run of its own command', () => {
+    const problems = outputProblems(DEMO_BOUNDARIES, runOnce);
+    expect(
+      problems,
+      `the panel quotes lines the commands do not print:\n  ${problems.join('\n  ')}`,
+    ).toEqual([]);
+  });
+
+  it('is not vacuous: three commands, three runs, three lines with wording to check', () => {
+    // Without this, a list whose expected lines were all short pieces would pass
+    // the case above by having nothing to compare — the shape of a gate that
+    // stopped looking.
+    expect(DEMO_BOUNDARIES).toHaveLength(3);
+    expect(new Set(DEMO_BOUNDARIES.map((boundary) => boundary.command)).size).toBe(3);
+    for (const boundary of DEMO_BOUNDARIES) {
+      const literal = pieces(boundary.expected).filter((piece) => piece.length >= MIN_PIECE);
+      expect(
+        literal.length,
+        `${boundary.id} has no piece of at least ${MIN_PIECE} characters to look for`,
+      ).toBeGreaterThan(0);
+      const result = runOnce(boundary.command);
+      expect(result.status, `\`${boundary.command}\` did not finish`).not.toBeNull();
+      expect(result.output.trim().length, `\`${boundary.command}\` printed nothing`).toBeGreaterThan(
+        0,
+      );
+    }
+  });
+
+  it('reports an expected line the command never prints', () => {
+    // The failure this block is for: the sentence is in the script's source (so
+    // the block above stays green), the page and the list both quote it, and the
+    // run never reaches the line that prints it.
+    const broken = DEMO_BOUNDARIES.map((boundary) =>
+      boundary.id === 'feed'
+        ? {
+            ...boundary,
+            expected:
+              'REFUSED — the published feed is one the app would happily install from, and ' +
+              'this sentence is printed by nothing at all',
+          }
+        : boundary,
+    );
+    const problems = outputProblems(broken, runOnce);
+    expect(problems.some((problem) => problem.includes('never printed it'))).toBe(true);
+    expect(problems.some((problem) => problem.includes('`feed`'))).toBe(true);
+  });
+
+  it('reports a command that was never run', () => {
+    const problems = outputProblems(DEMO_BOUNDARIES, () => undefined);
+    expect(problems).toHaveLength(DEMO_BOUNDARIES.length);
+    expect(problems[0]).toContain('nothing ran it');
+  });
+
+  it('reports a run that was killed before it printed anything', () => {
+    const problems = outputProblems(DEMO_BOUNDARIES, () => ({ output: '', status: null }));
+    expect(problems.some((problem) => problem.includes('did not finish'))).toBe(true);
+  });
+
+  it('reports an expected line with no wording long enough to check', () => {
+    const broken = DEMO_BOUNDARIES.map((boundary) => ({ ...boundary, expected: 'PASS — …' }));
+    const problems = outputProblems(broken, runOnce);
+    expect(problems.some((problem) => problem.includes('cannot go red for the right reason'))).toBe(
+      true,
+    );
   });
 });

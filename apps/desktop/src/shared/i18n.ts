@@ -786,6 +786,7 @@ const zhCN: Dictionary = {
   'diag.env.footnote':
     '这三条对应 docs/blockers.md 里还没解除的外部阻塞：它们说明边界，不声称已经解除。解除之后，这三条会从 docs/demo-script.md 和这里一起消失。',
   'diag.env.copy': '复制命令',
+  'diag.env.copying': '复制中…',
   'diag.env.copied': '已复制',
   'diag.env.copyFailed': '复制失败',
 
@@ -1566,6 +1567,7 @@ const enUS: Dictionary = {
   'diag.env.footnote':
     'These are the external blockers still open in docs/blockers.md. This block states the boundary; it does not claim they are closed. When one closes, it leaves docs/demo-script.md and this page together.',
   'diag.env.copy': 'Copy command',
+  'diag.env.copying': 'Copying…',
   'diag.env.copied': 'Copied',
   'diag.env.copyFailed': 'Copy failed',
 
