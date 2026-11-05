@@ -42,6 +42,21 @@
  * the page's bold heading, word for word — because the move was about which
  * page carries the block, not about what it says.
  *
+ * ## The fourth line: who can close it
+ *
+ * The command answers "how do you prove it". The question a reviewer asks next
+ * is "then whose is it" — and the panel used to stop at "you can run this
+ * yourself", which is an answer about the reader rather than about the blocker.
+ * Each block now carries one more line naming the holder, and it is not a new
+ * fact: `docs/blockers.md` already introduces each blocker with
+ * `## N. <title>（需要…）`, and the parenthetical is the holder. So the same
+ * string is compared in three places — the blockers page's heading, the panel's
+ * `diag.env.<id>.who` sentence, and the Chinese half of `README.md` — and a
+ * heading renamed without the other two going red is exactly the drift this
+ * file exists to prevent. The English half of the dictionary is a translation
+ * and is only required to exist, for the same reason the three sentences above
+ * are.
+ *
  * ## What is deliberately not asserted
  *
  * Layout, wording of the English translation, or that the three commands still
@@ -49,8 +64,9 @@
  * that prints it, and `blocker-closing.test.ts` counts the three lists. This
  * file only keeps the page and the panel talking about the same three blocks.
  *
- * The checks are pure functions of `(page, boundaries, dictionary, panelSource)`
- * so every red direction is driven on a mutated copy instead of argued about.
+ * The checks are pure functions of `(page, boundaries, dictionary, panelSource,
+ * blockersPage, readme)` so every red direction is driven on a mutated copy
+ * instead of argued about.
  */
 
 import { existsSync, readFileSync } from 'node:fs';
@@ -59,10 +75,13 @@ import { describe, expect, it } from 'vitest';
 
 import { DEMO_BOUNDARIES, type DemoBoundary } from '../../apps/desktop/src/shared/demo-boundaries';
 import { dictionaryFor } from '../../apps/desktop/src/shared/i18n';
+import { blockerSections } from './blockers-doc.ts';
 import { DEGRADED_COMMANDS, DEGRADED_SECTION_HEADING, degradedBlocks, degradedSection } from './degraded-commands.ts';
 
 const REPO_ROOT = join(import.meta.dirname, '..', '..');
 const DEMO_PATH = join(REPO_ROOT, 'docs', 'demo-script.md');
+const BLOCKERS_PATH = join(REPO_ROOT, 'docs', 'blockers.md');
+const README_PATH = join(REPO_ROOT, 'README.md');
 const PANEL_PATH = join(
   REPO_ROOT,
   'apps',
@@ -74,12 +93,47 @@ const PANEL_PATH = join(
   'EnvSelfCheck.tsx',
 );
 
+/**
+ * The two documents the holder is compared against, read once.
+ *
+ * Module-level so the default arguments below can use them; the cases that need
+ * a mutated copy pass one in explicitly.
+ */
+const BLOCKERS_PAGE = existsSync(BLOCKERS_PATH) ? readFileSync(BLOCKERS_PATH, 'utf8') : '';
+const README_TEXT = existsSync(README_PATH) ? readFileSync(README_PATH, 'utf8') : '';
+
 /** The dictionary the panel reads its sentences from. */
 const ZH = dictionaryFor('zh-CN');
 const EN = dictionaryFor('en-US');
 
 /** The key a boundary's sentence lives under. */
 const claimKey = (id: string): string => `diag.env.${id}`;
+
+/** The key the holder sentence lives under. */
+const whoKey = (id: string): string => `diag.env.${id}.who`;
+
+/**
+ * The parenthetical of a blocker's heading: `## 2. Windows 桌面六步（需要一台 Windows 机器）`
+ * → `需要一台 Windows 机器`.
+ *
+ * `undefined` when the heading carries none, so a heading that lost its holder
+ * is reported rather than silently compared against an empty string.
+ */
+function holderOf(heading: string): string | undefined {
+  return /（([^（）]+)）\s*$/u.exec(heading)?.[1];
+}
+
+/**
+ * The Chinese half of the README, from `## 中文` to the end.
+ *
+ * The English half is a translation and is pinned by `readme-parity.test.ts`;
+ * this file only asks whether the Chinese half — the one a Chinese reader
+ * deciding "whose blocker is this" opens — names the same holder as the page.
+ */
+function chineseHalf(markdown: string): string {
+  const at = markdown.indexOf('\n## 中文');
+  return at === -1 ? '' : markdown.slice(at);
+}
 
 /**
  * The page's bold heading for a block, with the markdown markers removed.
@@ -106,18 +160,23 @@ function headingsIn(section: string): string[] {
 }
 
 /**
- * Every way the page, the shared list and the panel disagree.
+ * Every way the page, the shared list, the panel, the blockers page and the
+ * README disagree.
  *
- * Empty means the three agree. `dictionary` is passed in rather than read here
- * so a case can hand the check a dictionary that lost one sentence and watch
- * the panel's claim go red — the same shape `state-walkthrough.test.ts` uses
- * for the criteria.
+ * Empty means they agree. `dictionary` is passed in rather than read here so a
+ * case can hand the check a dictionary that lost one sentence and watch the
+ * panel's claim go red — the same shape `state-walkthrough.test.ts` uses for
+ * the criteria. `blockersPage` and `readmeText` are passed in for the same
+ * reason: the holder is one string in three documents, and a case that renames
+ * it in one of them has to be able to watch the other two go red.
  */
 function boundaryProblems(
   page: string,
   boundaries: readonly DemoBoundary[],
   dictionary: Record<string, string>,
   panelSource: string,
+  blockersPage: string = BLOCKERS_PAGE,
+  readmeText: string = README_TEXT,
 ): string[] {
   const problems: string[] = [];
   const section = degradedSection(page);
@@ -197,6 +256,56 @@ function boundaryProblems(
     }
   });
 
+  // The holder: one string, three documents. The blockers page's heading
+  // parenthetical is the source; the panel's sentence has to contain it, and so
+  // does the Chinese half of the README. A heading renamed on its own is the
+  // drift this block exists for — the panel would keep naming a holder the page
+  // no longer names, and every other assertion here would stay green.
+  const holders = blockerSections(blockersPage).map((section) => holderOf(section.heading));
+  if (holders.length !== boundaries.length) {
+    problems.push(
+      `docs/blockers.md: has ${holders.length} \`## N.\` section(s) and demo-boundaries.ts ` +
+        `carries ${boundaries.length} — the panel shows one holder per blocker, so the two ` +
+        'lists have to be the same length',
+    );
+  }
+  const zhReadme = chineseHalf(readmeText);
+  boundaries.forEach((boundary, index) => {
+    const holder = holders[index];
+    if (holder === undefined) {
+      problems.push(
+        `docs/blockers.md: section ${index + 1} has no \`（需要…）\` in its heading, so the ` +
+          `panel's "who can close it" line for \`${boundary.id}\` has no source`,
+      );
+    } else if (holder !== boundary.needs) {
+      problems.push(
+        `docs/blockers.md: section ${index + 1} needs "${holder}" and demo-boundaries.ts says ` +
+          `"${boundary.needs}" — the panel would name a holder the page does not`,
+      );
+    }
+
+    const who = dictionary[whoKey(boundary.id)];
+    if (who === undefined) {
+      problems.push(
+        `apps/desktop/src/shared/i18n.ts: has no \`${whoKey(boundary.id)}\`, so the panel ` +
+          'renders the raw key under that command',
+      );
+    } else if (!who.includes(boundary.needs)) {
+      problems.push(
+        `apps/desktop/src/shared/i18n.ts: \`${whoKey(boundary.id)}\` does not name ` +
+          `"${boundary.needs}", the holder docs/blockers.md names — the screen and the page ` +
+          'would answer "whose is it" differently',
+      );
+    }
+
+    if (zhReadme !== '' && !zhReadme.includes(boundary.needs)) {
+      problems.push(
+        `README.md: the Chinese half never says "${boundary.needs}", so a reader deciding ` +
+          `whose blocker \`${boundary.id}\` is has to open docs/blockers.md`,
+      );
+    }
+  });
+
   // The panel has to render the list, not merely import it. A card that shows
   // the title and the footnote but no commands is a card that answers nothing,
   // and every comparison above would still be green about a list nobody reads.
@@ -205,6 +314,7 @@ function boundaryProblems(
     ['the command', 'boundary.command'],
     ['the expected line', 'boundary.expected'],
     ['the per-block sentence', 'diag.env.${boundary.id}'],
+    ['who can close it', 'diag.env.${boundary.id}.who'],
   ] as const) {
     if (!panelSource.includes(marker)) {
       problems.push(
@@ -212,6 +322,15 @@ function boundaryProblems(
           `(\`${marker}\`), so the three blocks are on the page and not on the screen`,
       );
     }
+  }
+  // The page describes what the panel shows. It said "一句话 + 那条命令 + 它打印的
+  // 那一行" while the panel grew a fourth line; a page that lists three things
+  // about a card that shows four is the same drift one layer out.
+  if (!page.includes('谁能关掉它')) {
+    problems.push(
+      'docs/demo-script.md: does not mention the "谁能关掉它" line the panel shows under each ' +
+        'command, so the page describes a card with one line fewer than the screen has',
+    );
   }
   if (!/DEMO_BOUNDARIES\s*\.\s*map\s*\(/.test(panelSource)) {
     problems.push(
@@ -225,6 +344,8 @@ function boundaryProblems(
 
 const page = existsSync(DEMO_PATH) ? readFileSync(DEMO_PATH, 'utf8') : '';
 const panel = existsSync(PANEL_PATH) ? readFileSync(PANEL_PATH, 'utf8') : '';
+const blockersPage = existsSync(BLOCKERS_PATH) ? readFileSync(BLOCKERS_PATH, 'utf8') : '';
+const readme = existsSync(README_PATH) ? readFileSync(README_PATH, 'utf8') : '';
 
 describe('the three blockers are on the page and on the screen', () => {
   it('the page and the panel agree about every block', () => {

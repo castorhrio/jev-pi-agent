@@ -61,6 +61,16 @@ export interface DemoBoundary {
    * panel that quietly shows yesterday's sentence.
    */
   readonly expected: string;
+  /**
+   * Who can close it: the parenthetical of the blocker's heading on the
+   * blockers page, verbatim (`需要写权限令牌` / `需要一台 Windows 机器` /
+   * `需要一个人`).
+   *
+   * Chinese, and never rendered directly — the panel is bilingual, so the
+   * sentence it shows is the dictionary's. This field is the fact that sentence
+   * has to carry, which is why it is compared rather than displayed.
+   */
+  readonly needs: string;
 }
 
 /**
@@ -78,15 +88,18 @@ export const DEMO_BOUNDARIES: readonly DemoBoundary[] = [
       'REFUSED — the published feed is one the app refuses to install from, so a release ' +
       'published now would not reach anyone through it: no version may ship until the feed is ' +
       'fixed (node scripts/publish-feed.mjs --dry-run, then --apply --verify)',
+    needs: '需要写权限令牌',
   },
   {
     id: 'windows',
     command: 'node scripts/verify-main-chain.mjs --judge tests/fixtures/judge/fail.json',
     expected: '[FAIL] step … failed in that run — a red report is a result, and the row stays open',
+    needs: '需要一台 Windows 机器',
   },
   {
     id: 'states',
     command: 'node scripts/screenshot-sources.mjs --check',
     expected: 'PASS — … renderer source(s) and … screenshot(s) match …',
+    needs: '需要一个人',
   },
 ];

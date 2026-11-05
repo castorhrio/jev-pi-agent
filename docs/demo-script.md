@@ -237,10 +237,16 @@ PASS — … renderer source(s) and … screenshot(s) match …
 而不是一句「等条件具备」。
 
 **这三条也在屏幕上**：应用里 `诊断 → 本机环境自检` 把上面三块原样列出来（一句话 + 那条命令 +
-它打印的那一行，命令旁边有「复制命令」），所以现场不必切到终端，也不必背这一页。界面读的是
-`apps/desktop/src/shared/demo-boundaries.ts` 这一份列表，不是另抄一份：
+它打印的那一行 + 一行「谁能关掉它」，命令旁边有「复制命令」），所以现场不必切到终端，也不必背这一页。
+界面读的是 `apps/desktop/src/shared/demo-boundaries.ts` 这一份列表，不是另抄一份：
 `tests/contract/demo-boundaries.test.ts` 把这一页的三块与那份列表逐字比对（命令、期望首行、
 以及每块上面那句粗体标题），改一处不改另一处会指名打红。
+
+**「谁能关掉它」那一行不是新写的一句话**：它是 `docs/blockers.md` 每节标题括号里的那半句
+（`需要写权限令牌` / `需要一台 Windows 机器` / `需要一个人`），原样搬上屏幕。评审问完「你怎么证明」
+之后的下一句通常是「那这条归谁」——屏幕上有答案，比翻文档强。同一个字符串在三处被核对：
+`docs/blockers.md` 的标题、面板里 `diag.env.<id>.who` 那句话、以及 `README.md` 中文半节；
+改标题而不改另外两处，`tests/contract/demo-boundaries.test.ts` 会指名打红。
 
 **这三条的断言在哪**：`tests/contract/demo-script.test.ts` 的
 `describe('each external blocker has a command and a line on screen')`。它和上面 `[ok]` 那套**不是同一个机制**：

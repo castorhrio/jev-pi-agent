@@ -160,10 +160,17 @@ const LIMITATIONS: readonly Limitation[] = [
   // and because "we know, here is what it means, here is when it is fixed" is
   // the honest form of a limitation. The three keywords are the three facts
   // that make it actionable: which release, what is missing, when it is fixed.
+  //
+  // The fourth keyword is the holder. A bullet that says "this is blocked" and
+  // stops leaves the reader asking the question a reviewer asks next — *whose*
+  // is it — and the answer used to live only in `docs/blockers.md`. The same
+  // phrase is now on screen (`diag.env.<id>.who`) and pinned to the blockers
+  // page's heading by `demo-boundaries.test.ts`; this row keeps the two
+  // languages from dropping it on one side.
   {
     id: 'the published v1.0.0 feed has no `sha256`',
-    en: ['v1.0.0', 'sha256', '1.1.0'],
-    zh: ['v1.0.0', 'sha256', '1.1.0'],
+    en: ['v1.0.0', 'sha256', '1.1.0', 'write token'],
+    zh: ['v1.0.0', 'sha256', '1.1.0', '写权限令牌'],
   },
   // The Windows row of the DoD table, stated where a reader deciding whether the
   // release was ever run on Windows will see it. `docs/dod-status.md` tells the
@@ -176,8 +183,8 @@ const LIMITATIONS: readonly Limitation[] = [
   // Windows reader gets whichever half they opened.
   {
     id: 'the Windows run of steps 1-5 has not happened, and a report can close it',
-    en: ['windows', 'win-report.json', '--judge', 'evidence'],
-    zh: ['windows', 'win-report.json', '--judge', '证据'],
+    en: ['windows', 'win-report.json', '--judge', 'evidence', 'windows machine'],
+    zh: ['windows', 'win-report.json', '--judge', '证据', 'windows 机器'],
   },
   // The one limitation that is about a *person*, not a gate. The five states
   // are asserted, measured and photographed, and every one of those is a
@@ -194,8 +201,8 @@ const LIMITATIONS: readonly Limitation[] = [
   // states are covered" would drop the middle one and go red here.
   {
     id: 'the five interface states have not been walked through by eye',
-    en: ['five interface states', 'by eye', 'step 6'],
-    zh: ['五个界面状态', '人眼', '步骤 6'],
+    en: ['five interface states', 'by eye', 'step 6', 'needs a person'],
+    zh: ['五个界面状态', '人眼', '步骤 6', '需要一个人'],
   },
 ];
 

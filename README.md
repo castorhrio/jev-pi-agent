@@ -225,7 +225,9 @@ or it cannot tell a gap from a finished item.
   and refuses to produce an installer while the published feed is one the app
   will not install from. That refusal can be watched on a machine
   that cannot publish anything: `node scripts/release-gate.mjs --simulate-missing-sha`
-  prints the same `REFUSED` lines offline and exits 1.
+  prints the same `REFUSED` lines offline and exits 1. Closing it needs a write
+  token on the repository: whoever holds one runs
+  `node scripts/publish-feed.mjs --apply --verify`, and this machine has none.
 - **The Windows run of the manual checklist has not happened.** Steps 1–5 are
   driven by `node scripts/verify-main-chain.mjs`, and they have run on a Linux
   desktop session; Windows is a different platform (DPAPI, tray, NSIS), so the
@@ -237,7 +239,8 @@ or it cannot tell a gap from a finished item.
   matches this repository's version, and gives evidence for every `pass` — five
   `pass` lines with nothing recorded are a claim, not a result.
   `docs/manual-verification.md` has the copyable commands and the table a run
-  signs.
+  signs. Closing it needs a Windows machine: one run of the six steps there,
+  carried home as a report; this host is not Windows.
 - **The five interface states have not been walked through by eye.** They are
   asserted, measured and photographed: `npm run test:e2e` checks what each one
   paints, the layout gate measures all five in a real Chromium at 1440×900 and
@@ -248,7 +251,8 @@ or it cannot tell a gap from a finished item.
   answer for itself. The questions to answer are written down in
   `docs/state-walkthrough.md` — three yes/no criteria per state, anchored to text
   that is actually on screen, plus the record table a walkthrough signs. Until
-  that table carries a dated row, this bullet stays.
+  that table carries a dated row, this bullet stays. Closing it needs a person
+  to look at the five states and sign; no gate can answer that one.
 
 ### Contributing
 
@@ -438,6 +442,8 @@ npm run package  # 免安装目录，不出安装包
   `npm run dist` 会在 `electron-builder` 之前跑 `node scripts/release-gate.mjs`，
   只要已发布的 feed 仍是应用拒绝安装的那一份，它就不出安装包。这次拒绝在没有发布权限的机器上也能**看见**：
   `node scripts/release-gate.mjs --simulate-missing-sha` 离线打印同一份 `REFUSED` 文案并退出 1。
+  关掉它**需要写权限令牌**：持有 `castorhrio/jev-pi-agent` 写权限的人跑
+  `node scripts/publish-feed.mjs --apply --verify` 即可，本机没有这个令牌。
 - **Windows 上的手工清单还没有真机跑过。** 步骤 1–5 由
   `node scripts/verify-main-chain.mjs` 驱动，目前只在 Linux 桌面会话里跑通过；
   Windows 是另一个平台（DPAPI、托盘、NSIS），发布前仍要在那里跑一次。
@@ -446,7 +452,8 @@ npm run package  # 免安装目录，不出安装包
   判定。退出码 0 意味着报告覆盖步骤 1–5、自报 `"platform": "win32"`、
   版本与本仓库一致，且每一步 `pass` 都带着它自己记的证据行——五行 `pass`
   什么都没有，是「声称」而不是「结果」。可复制的命令与签字的表在
-  `docs/manual-verification.md`。
+  `docs/manual-verification.md`。关掉它**需要一台 Windows 机器**：在那台机器上跑一次六步、
+  把报告带回来，本机不是 Windows。
 - **五个界面状态还没有被人眼走查过。** 它们被断言、被测量、被拍照：
   `npm run test:e2e` 检查每一态画了什么，布局门禁在真实 Chromium 里把五态在 1440×900
   与最小窗口各量一次，`docs/screenshots/` 里的图就是那道门禁拍的。没发生的是**有人看过它们**
@@ -454,6 +461,7 @@ npm run package  # 免安装目录，不出安装包
   记着这件事没做——这是截图自己回答不了的那一问。要回答的问题写在
   `docs/state-walkthrough.md`：每态三条能用「是 / 否」回答的判据，锚在屏幕上真的会出现的字上，
   外加一张签了字才算数的记录表。那张表没有带日期的一行之前，这一条就留着。
+  关掉它**需要一个人**：看过五态并签字，这一问机器答不了。
 
 ### 参与贡献
 

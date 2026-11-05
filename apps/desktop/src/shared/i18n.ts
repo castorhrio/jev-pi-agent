@@ -783,6 +783,15 @@ const zhCN: Dictionary = {
   'diag.env.feed': '一、feed 缺 sha256：让发布闸门自己说「不许发」。',
   'diag.env.windows': '二、Windows 未跑：一份手写报告为什么不算数。',
   'diag.env.states': '三、五态未签：先量「图还对着源码」。',
+  // 谁能关掉这条：评审问完「你怎么证明」之后的下一句。三句都含
+  // docs/blockers.md 每节标题括号里的那半句（`DemoBoundary.needs`），
+  // tests/contract/demo-boundaries.test.ts 逐条核对——改标题不改这里会红。
+  'diag.env.feed.who':
+    '谁能关掉它：需要写权限令牌——持有 castorhrio/jev-pi-agent 写权限的人跑一条命令即可，本机没有这个令牌。',
+  'diag.env.windows.who':
+    '谁能关掉它：需要一台 Windows 机器——在那台机器上跑一次六步、把报告带回来，本机不是 Windows。',
+  'diag.env.states.who':
+    '谁能关掉它：需要一个人——看过五态并签字，这一问机器答不了。',
   'diag.env.footnote':
     '这三条对应 docs/blockers.md 里还没解除的外部阻塞：它们说明边界，不声称已经解除。解除之后，这三条会从 docs/demo-script.md 和这里一起消失。',
   'diag.env.copy': '复制命令',
@@ -1566,6 +1575,15 @@ const enUS: Dictionary = {
   'diag.env.feed': '1. The feed has no sha256 — the release gate says so itself, and refuses to publish.',
   'diag.env.windows': '2. Windows has not been run — and a hand-written report does not count as a run.',
   'diag.env.states': '3. The five states are unsigned — first check the screenshots still match the source.',
+  // The holder, in the reader's language. Only the Chinese half is pinned to
+  // `docs/blockers.md` (the page is Chinese); these are hand-written and
+  // checked for existing, like the three sentences above.
+  'diag.env.feed.who':
+    'Who can close it: a write token on castorhrio/jev-pi-agent — whoever holds one runs a single command, and this machine has none.',
+  'diag.env.windows.who':
+    'Who can close it: a Windows machine — one run of the six steps there, carried home as a report; this host is not Windows.',
+  'diag.env.states.who':
+    'Who can close it: a person — someone looks at the five states and signs; no gate can answer that one.',
   'diag.env.footnote':
     'These are the external blockers still open in docs/blockers.md. This block states the boundary; it does not claim they are closed. When one closes, it leaves docs/demo-script.md and this page together.',
   'diag.env.copy': 'Copy command',

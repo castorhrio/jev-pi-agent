@@ -12,6 +12,17 @@ import { useT } from '../i18n-context';
  * and the screen cannot quote different commands. Why each blocker is open is
  * `docs/blockers.md`, not here.
  *
+ * ## The line under the expected output: who can close it
+ *
+ * The command answers "how do you prove it". The question a reviewer asks next
+ * is "then whose is it, and where does it get closed" — and the panel used to
+ * stop at "you can run this yourself", which is an answer about the reader, not
+ * about the blocker. So each block carries one more line, `diag.env.<id>.who`,
+ * naming the holder: a write token, a Windows machine, a person. It is not a new
+ * fact and it is not a new command — it is the parenthetical of that blocker's
+ * heading in `docs/blockers.md` (`DemoBoundary.needs`), and the gate compares
+ * the two, so the screen cannot name a different holder than the page.
+ *
  * ## The copy button, and what happens when copying is not available
  *
  * The command is long enough that retyping it from a screenshot is a way to get
@@ -129,6 +140,7 @@ export function EnvSelfCheck(): JSX.Element {
               </div>
             ) : null}
             <div className="muted mt-1 env-check-expected">{boundary.expected}</div>
+            <div className="muted mt-1 env-check-who">{t(`diag.env.${boundary.id}.who`)}</div>
           </div>
         );
       })}
