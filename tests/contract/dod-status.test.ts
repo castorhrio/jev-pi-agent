@@ -1477,6 +1477,271 @@ function receiptProblems(documents: { status: string; blockers: string }): strin
   return problems;
 }
 
+// ---------------------------------------------------------------------------
+// The closing sequence is written once
+// ---------------------------------------------------------------------------
+
+/**
+ * ## Why this block exists
+ *
+ * The receipt table above records a closing *after* it happened. It does not
+ * say what to run *before* — and that answer was spread over three documents:
+ * `docs/blockers.md` 第 1 节 says what a token holder types, the execution page
+ * `docs/release/REPLACE-FEED.md` is the one they follow top to bottom, and this
+ * page said nothing at all. A reader who wanted the sequence had to read two
+ * pages and reconcile them, and nothing compared the two.
+ *
+ * So the receipt section carries a `### 有令牌时` subsection with the sequence
+ * and the exit code each command is expected to return, and this block checks
+ * that the three documents say the same thing:
+ *
+ *  - every command in the sequence is one this repository can run;
+ *  - every command in the sequence appears **verbatim** in the execution page —
+ *    a status page that names a flag the pack does not is a reader typing a
+ *    command that does not exist;
+ *  - every command in `docs/blockers.md` 第 1 节's token half appears in the
+ *    sequence — the summary may not be narrower than the page it summarises;
+ *  - every command line says what it exits with, because "it worked" is the
+ *    exit code and nothing else;
+ *  - the subsection points at both documents, so a reader can get from here to
+ *    the page they follow.
+ *
+ * Not asserted: that the commands succeed. That is the receipt's job, and it
+ * needs a token this machine does not have.
+ */
+
+/** The heading of the sequence subsection. */
+const CLOSING_HEADING = '### 有令牌时';
+
+/** The execution page the sequence has to agree with. */
+const REPLACE_FEED_PATH = 'docs/release/REPLACE-FEED.md';
+
+/** The subsection, heading included; empty when it is gone. */
+function closingSubsection(markdown: string): string {
+  const lines = markdown.split('\n');
+  const start = lines.findIndex((line) => line.trim().startsWith(CLOSING_HEADING));
+  if (start === -1) return '';
+  const body: string[] = [lines[start]!];
+  for (let index = start + 1; index < lines.length; index += 1) {
+    if (/^#{2,3} /.test(lines[index]!)) break;
+    body.push(lines[index]!);
+  }
+  return body.join('\n');
+}
+
+/** The command lines inside a document's fenced blocks, comments stripped. */
+function commandsIn(markdown: string): string[] {
+  const found: string[] = [];
+  let fenced = false;
+  for (const line of markdown.split('\n')) {
+    if (/^\s*```/u.test(line)) {
+      fenced = !fenced;
+      continue;
+    }
+    if (!fenced) continue;
+    const text = line.replace(/\s+#.*$/u, '').trim();
+    if (!/^(?:node |GITHUB_TOKEN=)/u.test(text)) continue;
+    found.push(text);
+  }
+  return found;
+}
+
+/** The same lines, comments kept, so the exit code can be read off them. */
+function commandLinesIn(markdown: string): string[] {
+  const found: string[] = [];
+  let fenced = false;
+  for (const line of markdown.split('\n')) {
+    if (/^\s*```/u.test(line)) {
+      fenced = !fenced;
+      continue;
+    }
+    if (!fenced) continue;
+    const text = line.trim();
+    if (!/^(?:node |GITHUB_TOKEN=)/u.test(text)) continue;
+    found.push(text);
+  }
+  return found;
+}
+
+/** The `### 有令牌的人` half of `docs/blockers.md` 第 1 节; empty when it is gone. */
+function blockerTokenHalf(blockers: string): string {
+  const lines = blockers.split('\n');
+  const start = lines.findIndex((line) => line.trim().startsWith('### 有令牌的人'));
+  if (start === -1) return '';
+  const body: string[] = [lines[start]!];
+  for (let index = start + 1; index < lines.length; index += 1) {
+    if (/^#{2,3} /.test(lines[index]!)) break;
+    body.push(lines[index]!);
+  }
+  return body.join('\n');
+}
+
+/** A command with its `VAR=…` prefix removed, so the script path can be checked. */
+function bareCommand(command: string): string {
+  return command.replace(/^[A-Z_]+=…\s+/u, '');
+}
+
+/**
+ * Every way the three documents disagree about how 第 1 节 is closed.
+ *
+ * Empty means the subsection exists, every command in it is runnable, appears
+ * verbatim in the execution page, covers the blockers page's token half, and
+ * says what it exits with.
+ */
+function closingSequenceProblems(documents: {
+  status: string;
+  blockers: string;
+  replaceFeed: string;
+}): string[] {
+  const section = closingSubsection(documents.status);
+  if (section.length === 0) {
+    return [
+      `docs/dod-status.md: no \`${CLOSING_HEADING}\` subsection under the receipt section, so ` +
+        'the commands that close 第 1 节 are written nowhere a reader can check them',
+    ];
+  }
+
+  const problems: string[] = [];
+  const sequence = commandsIn(section);
+  if (sequence.length === 0) {
+    return [`docs/dod-status.md: \`${CLOSING_HEADING}\` names no command`];
+  }
+
+  for (const command of sequence) {
+    const problem = commandProblem(bareCommand(command));
+    if (problem !== undefined) {
+      problems.push(`docs/dod-status.md: ${CLOSING_HEADING}: ${problem}`);
+    }
+  }
+
+  for (const command of sequence) {
+    if (!documents.replaceFeed.includes(command)) {
+      problems.push(
+        `docs/dod-status.md: \`${command}\` is not in \`${REPLACE_FEED_PATH}\` — the status ` +
+          'page and the page a reader follows disagree about what to run',
+      );
+    }
+  }
+
+  const tokenHalf = blockerTokenHalf(documents.blockers);
+  if (tokenHalf.length === 0) {
+    problems.push('docs/blockers.md: 第 1 节 has no `### 有令牌的人` half to compare against');
+  }
+  for (const command of commandsIn(tokenHalf)) {
+    if (!sequence.includes(command)) {
+      problems.push(
+        `docs/blockers.md: \`${command}\` is not in the \`${CLOSING_HEADING}\` sequence in ` +
+          'docs/dod-status.md — the two pages disagree about what to run',
+      );
+    }
+  }
+
+  for (const line of commandLinesIn(section)) {
+    if (!/退出\s*\d+/u.test(line)) {
+      problems.push(
+        `docs/dod-status.md: \`${line}\` does not say what it exits with — "it worked" is the ` +
+          'exit code and nothing else',
+      );
+    }
+  }
+
+  for (const pointer of ['docs/blockers.md', REPLACE_FEED_PATH]) {
+    if (!section.includes(pointer)) {
+      problems.push(
+        `docs/dod-status.md: \`${CLOSING_HEADING}\` does not point at \`${pointer}\`, so a ` +
+          'reader cannot get from the sequence to the page that explains it',
+      );
+    }
+  }
+
+  return problems;
+}
+
+describe('the closing sequence is written once', () => {
+  const REPLACE_FEED = readFileSync(join(REPO_ROOT, REPLACE_FEED_PATH), 'utf8');
+
+  it('names the same commands as the blockers page and the execution page', () => {
+    const problems = closingSequenceProblems({
+      status: STATUS,
+      blockers: BLOCKERS,
+      replaceFeed: REPLACE_FEED,
+    });
+    expect(
+      problems,
+      `the three documents disagree about how 第 1 节 is closed:\n  ${problems.join('\n  ')}`,
+    ).toEqual([]);
+  });
+
+  it('is not vacuous: the sequence, the token half and the execution page are all read', () => {
+    const section = closingSubsection(STATUS);
+    expect(section.length, 'the sequence subsection is gone').toBeGreaterThan(0);
+    expect(commandsIn(section).length, 'the sequence names no command').toBeGreaterThanOrEqual(4);
+    expect(commandsIn(blockerTokenHalf(BLOCKERS)).length, 'the token half names no command')
+      .toBeGreaterThan(0);
+    // The execution page really is the page being compared against.
+    for (const command of commandsIn(section)) {
+      expect(REPLACE_FEED, `${command} is not in ${REPLACE_FEED_PATH}`).toContain(command);
+    }
+  });
+
+  it('reports a command the execution page does not carry', () => {
+    const section = closingSubsection(STATUS);
+    const broken = STATUS.replace(
+      section,
+      section.replace('node scripts/publish-feed.mjs --dry-run', 'node scripts/publish-feed.mjs --plan'),
+    );
+    expect(broken).not.toBe(STATUS);
+    const problems = closingSequenceProblems({
+      status: broken,
+      blockers: BLOCKERS,
+      replaceFeed: REPLACE_FEED,
+    }).join('\n');
+    expect(problems).toContain('`node scripts/publish-feed.mjs --plan` is not in');
+  });
+
+  it('reports a command the blockers page names and the sequence dropped', () => {
+    const section = closingSubsection(STATUS);
+    const line = section
+      .split('\n')
+      .find((entry) => entry.includes('node scripts/verify-release-feed.mjs'));
+    expect(line, 'the sequence no longer names verify-release-feed.mjs').toBeDefined();
+    const broken = STATUS.replace(section, section.replace(`${line!}\n`, ''));
+    expect(broken).not.toBe(STATUS);
+    const problems = closingSequenceProblems({
+      status: broken,
+      blockers: BLOCKERS,
+      replaceFeed: REPLACE_FEED,
+    }).join('\n');
+    expect(problems).toContain('`node scripts/verify-release-feed.mjs` is not in the');
+  });
+
+  it('reports a command that does not say what it exits with', () => {
+    const section = closingSubsection(STATUS);
+    const broken = STATUS.replace(
+      section,
+      section.replace(
+        'node scripts/publish-feed.mjs --dry-run                            # 退出 0 = 计划打印完，什么都没写',
+        'node scripts/publish-feed.mjs --dry-run',
+      ),
+    );
+    expect(broken).not.toBe(STATUS);
+    const problems = closingSequenceProblems({
+      status: broken,
+      blockers: BLOCKERS,
+      replaceFeed: REPLACE_FEED,
+    }).join('\n');
+    expect(problems).toContain('does not say what it exits with');
+  });
+
+  it('reports a status document that lost the sequence', () => {
+    const broken = STATUS.replace(closingSubsection(STATUS), '');
+    expect(broken).not.toBe(STATUS);
+    expect(
+      closingSequenceProblems({ status: broken, blockers: BLOCKERS, replaceFeed: REPLACE_FEED }),
+    ).toEqual([expect.stringContaining(`no \`${CLOSING_HEADING}\` subsection`)]);
+  });
+});
+
 describe('closing a blocker leaves a receipt', () => {
   it('accounts for every blocker section, as a receipt or as still open', () => {
     const problems = receiptProblems({ status: STATUS, blockers: BLOCKERS });

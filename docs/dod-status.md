@@ -86,6 +86,32 @@
 表里现在是空的，这是**如实**的空：三条阻塞一条都没关掉。关掉第一条时，把「未关闭」里那一行删掉、
 在表里加一行（日期、`第 1 节`、跑的命令、退出码、结果路径），两处一起动——只动一处会红。
 
+### 有令牌时：第 1 节的命令序列与期望退出码
+
+上面那张回执表是空的，因为三条阻塞一条都没关掉。但「关掉第 1 节要敲哪几条、每条退出码是多少」
+不该等到有人拿到令牌那天才第一次被写下来。它现在散在三处：`docs/blockers.md` 第 1 节写着
+「有令牌的人」该敲什么，`docs/release/REPLACE-FEED.md` 是照着敲的一页，`README.md` 的「当前局限」
+说这条还没关。三处各说一半，读者要自己拼。
+
+这一节把「有令牌时怎么做」收成**一条序列**，`tests/contract/dod-status.test.ts` 核对三处说的是
+同一组命令：这一节里的每一条命令都必须在 `docs/release/REPLACE-FEED.md` 里逐字出现；
+`docs/blockers.md` 第 1 节「有令牌的人」那一半里的每一条命令都必须在这一节里出现。
+少一条、改一个旗标、把退出码删掉，红的是这一节，并指名是哪一条。
+
+```bash
+node scripts/publish-feed.mjs --preflight                          # 退出 0 = 线上那份还是坏的（方向是反的）
+node scripts/publish-feed.mjs --dry-run                            # 退出 0 = 计划打印完，什么都没写
+GITHUB_TOKEN=… node scripts/publish-feed.mjs --apply --verify      # 退出 0 = 换好了，判据行是 PASS —
+node scripts/verify-release-feed.mjs                               # 退出 0 = 读的一方复核通过
+```
+
+四条命令的退出码都是 0，但 `--preflight` 的 0 与其余三条的 0 意思相反：它回答的是「线上那份
+**还是坏的**吗」，所以 0 是「还是坏的，接着往下走」，1 是「已经不是坏的了」。这条反向语义写在
+`docs/release/REPLACE-FEED.md` 第 0 步里，这里只重复结论，不重复理由。
+
+跑完之后，回执表加一行（日期、`第 1 节`、`GITHUB_TOKEN=… node scripts/publish-feed.mjs --apply --verify`、
+`0`、`docs/manual-verification.md`），并把「未关闭」里第 1 节那一行删掉——两处一起动，只动一处会红。
+
 ## 本轮 DoD 加载来源与未勾项（2026-11-05）
 
 **加载来源**：`/opt/agent-scheduler/docs/product-dod/jev-pi-agent-dod.md`（与 `/opt/agent-control/docs/product-dod/jev-pi-agent-dod.md`、

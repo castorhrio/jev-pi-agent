@@ -57,6 +57,155 @@ function families(name: string): string[] {
     .filter((family) => family.length > 0);
 }
 
+/**
+ * The two numbers the layout gate enforces, read out of the page script.
+ *
+ * They live in `scripts/layout-page-scripts.mjs` and nowhere else: the gate
+ * measures with them, and every block below compares the stylesheet against
+ * them. A second copy of `40` in this file would be a second fact, and the two
+ * would drift the first time somebody tuned the band.
+ */
+function proseCeiling(): number {
+  const match = /export const MAX_PROSE_LINE_CJK = (\d+);/.exec(pageScripts);
+  expect(match, 'layout-page-scripts.mjs no longer exports MAX_PROSE_LINE_CJK').not.toBeNull();
+  return Number(match![1]);
+}
+
+/** One of the two 禁则 sets, as the page script declares it. */
+function forbiddenSet(name: 'LINE_START_FORBIDDEN' | 'LINE_END_FORBIDDEN'): string {
+  const match = new RegExp(`export const ${name} = '([^']+)';`).exec(pageScripts);
+  expect(match, `layout-page-scripts.mjs no longer exports ${name}`).not.toBeNull();
+  return match![1]!;
+}
+
+/**
+ * The dictionary the app renders, read with the line each key is written on.
+ *
+ * ## Why the source is read at all
+ *
+ * The punctuation block below already reads the *values* through
+ * `dictionaryFor()`, which is the right way to see what the app renders. What
+ * it could not say was **where**: a failure that prints
+ * `zh-CN.providers.subtitle: …` sends the reader to a 1,600-line file and a
+ * search. The line number is the difference between a gate that reports a
+ * defect and one that reports a place to fix it.
+ *
+ * The values still come from `dictionaryFor()`, not from the source text: a
+ * value assembled at runtime (or a key the dictionary does not export) would be
+ * read wrong by a parser, and `i18n.test.ts` owns key parity. The source is
+ * read for one thing only — the line the key sits on.
+ */
+const I18N_PATH = path.join(REPO_ROOT, 'apps/desktop/src/shared/i18n.ts');
+const I18N_RELATIVE = 'apps/desktop/src/shared/i18n.ts';
+const i18nSource = fs.readFileSync(I18N_PATH, 'utf8');
+
+/** The Chinese dictionary, read once. */
+const ZH_DICTIONARY = dictionaryFor('zh-CN');
+
+/** One dictionary entry, with the line it is written on. */
+interface Entry {
+  readonly key: string;
+  readonly value: string;
+  /** 1-based line in `apps/desktop/src/shared/i18n.ts`. */
+  readonly line: number;
+}
+
+/**
+ * Every `zh-CN` entry, with its line.
+ *
+ * The block is delimited by `const zhCN: Dictionary = {` and the first `};` at
+ * column 0 after it, and a key is a line that *starts* with `'key':`. That is
+ * narrower than a JavaScript parser on purpose: a value may contain `//` (a
+ * URL) or a `'` (an apostrophe), and a regex that tried to understand the
+ * object would be wrong in a way that silently skips entries. The narrow rule
+ * is checked for coverage below — every key the dictionary exports has to be
+ * found — so a key written in another shape is a red run, not a silent skip.
+ */
+function zhEntries(): Entry[] {
+  const start = i18nSource.indexOf('const zhCN: Dictionary = {');
+  expect(start, `${I18N_RELATIVE} no longer declares \`const zhCN: Dictionary = {\``)
+    .toBeGreaterThanOrEqual(0);
+  const end = i18nSource.indexOf('\n};', start);
+  expect(end, 'the zhCN dictionary is not closed by a `};` at column 0').toBeGreaterThan(start);
+
+  // The 1-based line the `const zhCN` line sits on; index 0 of the block is it.
+  const firstLine = i18nSource.slice(0, start).split('\n').length;
+  const entries: Entry[] = [];
+  i18nSource
+    .slice(start, end)
+    .split('\n')
+    .forEach((text, index) => {
+      const match = /^\s*'([\w.-]+)':/u.exec(text);
+      if (match === null) return;
+      const key = match[1]!;
+      const value = ZH_DICTIONARY[key];
+      // A key the dictionary does not export is `i18n.test.ts`'s problem.
+      if (value === undefined) return;
+      entries.push({ key, value, line: firstLine + index });
+    });
+  return entries;
+}
+
+/** The line each `zh-CN` key is written on, built once. */
+let zhLineMap: Map<string, number> | undefined;
+function zhLines(): Map<string, number> {
+  zhLineMap ??= new Map(zhEntries().map((entry) => [entry.key, entry.line]));
+  return zhLineMap;
+}
+
+/**
+ * Every way a Chinese sentence would set badly *on screen*, with its line.
+ *
+ * ## Why this is not the same check as the punctuation block
+ *
+ * The punctuation block asks whether a value uses the right mark. This one asks
+ * whether the sentence can be **set**: a value that begins with `，` or ends
+ * with `「` is a sentence whose first or last line would carry a mark 行首禁则 /
+ * 行尾禁则 forbid, and the engine will do exactly that when the column wraps it.
+ * The layout gate measures the same two rules on rendered line boxes
+ * (`scripts/layout-page-scripts.mjs`, rule 8); this is the fast half, and it
+ * names the dictionary entry rather than a box on a page.
+ *
+ * A pure function of its input, so the red direction is driven on fixtures
+ * rather than argued about.
+ */
+function typesetProblems(entries: readonly Entry[]): string[] {
+  const startForbidden = forbiddenSet('LINE_START_FORBIDDEN');
+  const endForbidden = forbiddenSet('LINE_END_FORBIDDEN');
+  const problems: string[] = [];
+
+  for (const { key, value, line } of entries) {
+    const where = `${I18N_RELATIVE}:${line} (zh-CN.${key})`;
+
+    if (HALF_WIDTH_NEAR_HAN.test(value)) {
+      problems.push(
+        `${where}: "${value}" sets a half-width , . ; : against a Han character — the ` +
+          'full-width mark is the one that sets correctly in Chinese prose',
+      );
+    }
+
+    value.split('\n').forEach((segment, index) => {
+      const first = segment[0];
+      const last = segment[segment.length - 1];
+      const which = index === 0 ? 'the sentence' : `line ${index + 1} of the value`;
+      if (first !== undefined && startForbidden.includes(first)) {
+        problems.push(
+          `${where}: ${which} starts with '${first}', which 行首禁则 forbids — a wrapped ` +
+            'line would begin with a closing mark',
+        );
+      }
+      if (last !== undefined && endForbidden.includes(last)) {
+        problems.push(
+          `${where}: ${which} ends with '${last}', which 行尾禁则 forbids — a wrapped line ` +
+            'would end with an opening mark',
+        );
+      }
+    });
+  }
+
+  return problems;
+}
+
 describe('the Chinese type floor', () => {
   it('is declared once in the stylesheet and once in the measurement, and they agree', () => {
     // Read, not imported: the page script is ESM JavaScript outside the
@@ -226,11 +375,7 @@ describe('the type scale', () => {
  */
 describe('the prose measure', () => {
   /** The declared ceiling, read out of the page script. */
-  function ceiling(): number {
-    const match = /export const MAX_PROSE_LINE_CJK = (\d+);/.exec(pageScripts);
-    expect(match, 'layout-page-scripts.mjs no longer exports MAX_PROSE_LINE_CJK').not.toBeNull();
-    return Number(match![1]);
-  }
+  const ceiling = proseCeiling;
 
   it('declares a ceiling inside the band, and the measurement uses that number', () => {
     /*
@@ -257,20 +402,18 @@ describe('the prose measure', () => {
      * interpolated, and the gate would pass over the one character that
      * matters most.
      */
-    const start = /export const LINE_START_FORBIDDEN = '([^']+)';/.exec(pageScripts);
-    const end = /export const LINE_END_FORBIDDEN = '([^']+)';/.exec(pageScripts);
-    expect(start, 'layout-page-scripts.mjs no longer exports LINE_START_FORBIDDEN').not.toBeNull();
-    expect(end, 'layout-page-scripts.mjs no longer exports LINE_END_FORBIDDEN').not.toBeNull();
+    const start = forbiddenSet('LINE_START_FORBIDDEN');
+    const end = forbiddenSet('LINE_END_FORBIDDEN');
 
     for (const mark of ['。', '，', '、', '；', '：', '？', '！', '）', '」', '』', '】']) {
-      expect(start![1], `a line may start with '${mark}'`).toContain(mark);
+      expect(start, `a line may start with '${mark}'`).toContain(mark);
     }
     for (const mark of ['（', '「', '『', '【', '“']) {
-      expect(end![1], `a line may end with '${mark}'`).toContain(mark);
+      expect(end, `a line may end with '${mark}'`).toContain(mark);
     }
     // No character may be in both sets: a mark that may neither start nor end a
     // line could not be set at all.
-    const both = [...start![1]].filter((ch) => end![1]!.includes(ch));
+    const both = [...start].filter((ch) => end.includes(ch));
     expect(both, 'these characters are forbidden at both ends of a line').toEqual([]);
 
     expect(pageScripts).toContain(
@@ -301,6 +444,182 @@ describe('the prose measure', () => {
     // comment with a colon in it.
     expect(codeOnly(styles)).toMatch(/\.card > p \{[^}]*max-width: var\(--measure-prose\)/);
     expect(codeOnly(styles)).toMatch(/\.terminal-note \{[^}]*max-width: var\(--measure-prose\)/);
+  });
+});
+
+/**
+ * The prose column, in the unit the engine measures.
+ *
+ * ## Why the em measure is not enough on its own
+ *
+ * The block above pins `--measure-prose` in `em`, and one Han character is
+ * about one em, so the number in the stylesheet *is* a line length in
+ * characters. That is the right unit to declare and the wrong unit to stop at:
+ * the layout gate measures **pixels** in a real engine, and a stylesheet that
+ * changed `--fs-body` without touching the measure would keep the em number and
+ * move the column. So this block converts the measure into the px the engine
+ * reports and checks the band there too — the same band, in both units, from
+ * one declaration.
+ *
+ * ## And why the cap is checked by shape
+ *
+ * The measured defect this repository has fixed three times is a prose block
+ * that carried its own `max-width` — 720px on the steps, 860px on the handoff
+ * document, 640px on the empty state — so one page had two right edges. Each
+ * was removed by hand. The rule that keeps them from coming back is mechanical:
+ * a rule that sets prose type may cap its width with the measure, or with a
+ * viewport-relative cap (a toast has to fit the window, not a reading column),
+ * and with nothing else. A raw `720px` is the failure mode, and it is caught by
+ * name.
+ */
+describe('the prose column on screen', () => {
+  /** `--measure-prose` in em, and `--fs-body` in px, as numbers. */
+  function column(): { em: number; bodyPx: number; px: number } {
+    const em = Number(/^(\d+(?:\.\d+)?)em$/u.exec(token('measure-prose'))?.[1]);
+    const bodyPx = Number(/^(\d+(?:\.\d+)?)px$/u.exec(token('fs-body'))?.[1]);
+    expect(em, `--measure-prose is ${token('measure-prose')}, which is not a length in em`)
+      .toBeGreaterThan(0);
+    expect(bodyPx, `--fs-body is ${token('fs-body')}, which is not a length in px`)
+      .toBeGreaterThan(0);
+    return { em, bodyPx, px: em * bodyPx };
+  }
+
+  it('is a width the engine measures as 28–40 Han characters', () => {
+    const { em, bodyPx, px } = column();
+    // One Han character is about one em, so the em measure is the character
+    // count; the px conversion is what the layout gate reports.
+    expect(em, 'a prose column under 28 characters is a design choice, not this rule')
+      .toBeGreaterThanOrEqual(28);
+    expect(em, 'prose set wider than the ceiling the layout gate enforces')
+      .toBeLessThanOrEqual(proseCeiling());
+    // The same band, in px, so a change to --fs-body cannot move the column out
+    // of the band while the em number stays put.
+    expect(px, `the prose column is ${px}px at ${bodyPx}px body type, under the floor`)
+      .toBeGreaterThanOrEqual(28 * bodyPx);
+    expect(px, `the prose column is ${px}px at ${bodyPx}px body type, past the ceiling`)
+      .toBeLessThanOrEqual(proseCeiling() * bodyPx);
+  });
+
+  it('caps prose with the measure, never with a number of its own', () => {
+    const offenders: string[] = [];
+    let capped = 0;
+    for (const rule of codeOnly(styles).matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+      const body = rule[2]!;
+      if (!/font-size:\s*var\(--fs-(?:body|note)\)/.test(body)) continue;
+      const cap = /max-(?:width|inline-size):\s*([^;]+);/.exec(body);
+      if (cap === null) continue;
+      capped += 1;
+      const value = cap[1]!.trim();
+      if (value === 'var(--measure-prose)') continue;
+      // A viewport-relative cap is not a reading column: a toast has to fit the
+      // window, and `min(480px, calc(100vw - 24px))` says exactly that.
+      if (/100v[wh]/.test(value)) continue;
+      offenders.push(`${rule[1]!.trim().replace(/\s+/g, ' ')} { max-width: ${value} }`);
+    }
+    expect(
+      offenders,
+      'these prose rules cap their width with a number of their own — the measure is ' +
+        '--measure-prose, and a second cap is a second right edge on the same page',
+    ).toEqual([]);
+    // A rule that caps nothing is not a pass: the check above would be green
+    // over a stylesheet that stopped constraining prose at all.
+    expect(capped, 'no prose rule caps its width at all').toBeGreaterThan(0);
+  });
+});
+
+/**
+ * The screen-side typeset: the sentences the app renders, checked where they
+ * are written.
+ *
+ * ## Why the dictionary is the right place for this
+ *
+ * The layout gate measures line boxes in a real engine, which is the only way
+ * to know what a *rendered* paragraph looks like — and it costs a browser, a
+ * display and eight window widths. The other half of the same promise can be
+ * answered in a millisecond: the strings the app renders are in one file, and
+ * three of the four rules are properties of the string itself.
+ *
+ *  - **全角标点**: a half-width `,` next to a Han character sets a gap the
+ *    reader reads as a typo (the punctuation block below owns the rule; this
+ *    block reports it with the line it is on).
+ *  - **行首禁则 / 行尾禁则**: a sentence that begins with `，` or ends with `「`
+ *    is a sentence whose first or last line carries a mark the rule forbids —
+ *    the engine will do exactly that when the column wraps it, and no amount of
+ *    CSS fixes it. The sets are read from `scripts/layout-page-scripts.mjs`,
+ *    the one place they are declared, so the fast half and the measured half
+ *    cannot disagree about which characters are forbidden.
+ *  - **行长**: the column is 28–40 characters, asserted above in both units.
+ *
+ * ## What is not asserted
+ *
+ * Whether a sentence reads well, or how it wraps at a particular width. Those
+ * need a reader and a rendered page. What is asserted cannot be right in the
+ * other direction: there is no Chinese sentence whose first line should begin
+ * with `。`.
+ */
+describe('the screen-side typeset', () => {
+  it('sets every Chinese sentence so no line can start or end on a forbidden mark', () => {
+    const problems = typesetProblems(zhEntries());
+    expect(
+      problems,
+      `these dictionary entries would set badly on screen:\n  ${problems.join('\n  ')}`,
+    ).toEqual([]);
+  });
+
+  it('is not vacuous: every key the app renders is read, with the line it is on', () => {
+    const entries = zhEntries();
+    expect(entries.length, 'the Chinese dictionary is empty').toBeGreaterThan(600);
+    // Coverage, not a count: a key written in a shape the parser does not
+    // recognise would be skipped silently, and the gate would be green over a
+    // sentence nobody read.
+    expect(entries.map((entry) => entry.key).sort()).toEqual(Object.keys(ZH_DICTIONARY).sort());
+
+    const lines = i18nSource.split('\n');
+    for (const entry of entries) {
+      expect(entry.line, `${entry.key} is on line ${entry.line}, past the end of the file`)
+        .toBeLessThanOrEqual(lines.length);
+      // The line really is that key's line, so a failure sends the reader to the
+      // sentence and not to its neighbour.
+      expect(lines[entry.line - 1], `${entry.key} is not on line ${entry.line}`).toContain(
+        `'${entry.key}':`,
+      );
+    }
+  });
+
+  it('reports a half-width comma with the file and the line it is on', () => {
+    const problems = typesetProblems([
+      { key: 'demo.sentence', value: '先跑这条命令,然后看输出', line: 42 },
+    ]);
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toContain(`${I18N_RELATIVE}:42`);
+    expect(problems[0]).toContain('zh-CN.demo.sentence');
+    expect(problems[0]).toContain('half-width');
+  });
+
+  it('reports a sentence whose first line would start with a closing mark', () => {
+    const problems = typesetProblems([{ key: 'demo.start', value: '，先跑这条命令', line: 7 }]);
+    expect(problems.join('\n')).toContain('行首禁则');
+    expect(problems.join('\n')).toContain(`${I18N_RELATIVE}:7`);
+  });
+
+  it('reports a sentence whose last line would end with an opening mark', () => {
+    const problems = typesetProblems([{ key: 'demo.end', value: '先跑这条命令「', line: 8 }]);
+    expect(problems.join('\n')).toContain('行尾禁则');
+    expect(problems.join('\n')).toContain(`${I18N_RELATIVE}:8`);
+  });
+
+  it('reports a wrapped line that would start with a closing mark', () => {
+    const problems = typesetProblems([
+      { key: 'demo.wrap', value: '先跑这条命令\n，然后看输出', line: 9 },
+    ]);
+    expect(problems.join('\n')).toContain('line 2 of the value');
+    expect(problems.join('\n')).toContain('行首禁则');
+  });
+
+  it('accepts a sentence that sets the full-width marks', () => {
+    expect(
+      typesetProblems([{ key: 'demo.ok', value: '先跑这条命令，然后看输出。', line: 10 }]),
+    ).toEqual([]);
   });
 });
 
@@ -529,9 +848,11 @@ describe('the punctuation', () => {
   const EN = dictionaryFor('en-US');
 
   it('never sets a half-width mark against a Han character in Chinese', () => {
+    // The line number is the point: `zh-CN.providers.subtitle` is a search in a
+    // 1,600-line file, and `i18n.ts:71` is the sentence.
     const offenders = Object.entries(ZH)
       .filter(([, value]) => HALF_WIDTH_NEAR_HAN.test(value))
-      .map(([key, value]) => `zh-CN.${key}: ${value}`);
+      .map(([key, value]) => `${I18N_RELATIVE}:${zhLines().get(key) ?? '?'} (zh-CN.${key}): ${value}`);
     expect(
       offenders,
       'these Chinese sentences use a half-width , . ; : next to a Han character — the ' +
