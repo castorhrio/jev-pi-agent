@@ -123,9 +123,73 @@ const PACKS: readonly Pack[] = [
         script: 'scripts/verify-main-chain.mjs',
         text: 'the three screenshots a run carries home are evidence for a reader',
       },
+      // The red sample the pack now shows next to the green one. A reader who
+      // has never seen a red run has to be able to tell "the report is red"
+      // from "the command did not run", and the two lines that say which are
+      // the verdict and the note under it.
+      { script: 'scripts/verify-main-chain.mjs', text: 'thing(s) in this report keep the row open' },
+      { script: 'scripts/verify-main-chain.mjs', text: 'a red report is still evidence' },
     ],
   },
 ];
+
+/**
+ * The one command that turns a run into something a reader can open.
+ *
+ * The pack used to end at "carry the report home", which is a sentence, not a
+ * step: the person on the Windows machine has a report, three screenshots and a
+ * log file in three different places, and decides for themselves what to send.
+ * The next reader then gets a JSON with no screenshots, or a zip with a report
+ * filed under a name nobody looks for. So the pack carries one archiver command
+ * per platform, and this is what it has to put in the archive.
+ */
+const PACKAGING = {
+  path: 'docs/manual-verification/README.md',
+  /** The archiver a Windows reader has without installing anything. */
+  archiver: 'Compress-Archive',
+  /** The portable alternative, for a reader on git-bash, WSL or Linux. */
+  fallback: 'tar -czf',
+  /** What the archive has to contain: the report and the three screenshots. */
+  members: [
+    /win-\d{8}\.json/,
+    /win-\d{8}-dpapi\.png/,
+    /win-\d{8}-tray\.png/,
+    /win-\d{8}-nsis\.png/,
+  ],
+} as const;
+
+/**
+ * Every way the pack's packaging command fails to carry the run home.
+ *
+ * Checked per line rather than over the whole page: a page that names the
+ * screenshots in one paragraph and archives only the report in another reads as
+ * complete and produces a zip with one file in it.
+ */
+function packagingProblems(document: string, packaging: typeof PACKAGING): string[] {
+  const problems: string[] = [];
+  if (document.trim().length === 0) {
+    return [`${packaging.path}: is missing or empty, so there is no command to check`];
+  }
+  const lines = document
+    .split('\n')
+    .filter((line) => line.includes(packaging.archiver) || line.includes(packaging.fallback));
+  if (lines.length === 0) {
+    return [
+      `${packaging.path}: gives no \`${packaging.archiver}\` or \`${packaging.fallback}\` command, ` +
+        'so "carry it home" is a sentence rather than a step',
+    ];
+  }
+  for (const line of lines) {
+    for (const member of packaging.members) {
+      if (member.test(line)) continue;
+      problems.push(
+        `${packaging.path}: the packaging command does not include ${member.source}, so the ` +
+          'archive it produces is missing part of the run',
+      );
+    }
+  }
+  return problems;
+}
 
 /** The documents the convention check reads: every one that names a report file. */
 const CONVENTION_DOCUMENTS = [
@@ -287,6 +351,14 @@ describe('the two handoff packs', () => {
     );
   });
 
+  it('carry one command that puts the whole run in an archive', () => {
+    const problems = packagingProblems(read(PACKAGING.path), PACKAGING);
+    expect(
+      problems,
+      `the pack's packaging command does not carry the run home:\n  ${problems.join('\n  ')}`,
+    ).toEqual([]);
+  });
+
   it('is not vacuous: the packs really carry the quotes being compared', () => {
     // Without this, a refactor that emptied `PACKS` would leave every case above
     // passing over nothing at all.
@@ -361,6 +433,24 @@ describe('the checks above, when the repository has drifted', () => {
     );
     expect(problems).toHaveLength(1);
     expect(problems[0]).toContain(REPORT_NAME);
+  });
+
+  it('reports a packaging command that archives only the report', () => {
+    // The failure this check is for: the page still says "carry the report
+    // home", the command still runs, and the zip has one file in it — so the
+    // reader gets a verdict with none of the evidence behind it.
+    const problems = packagingProblems(
+      'Compress-Archive -Path win-20261105.json -DestinationPath win-20261105.zip',
+      PACKAGING,
+    );
+    expect(problems).toHaveLength(3);
+    expect(problems[0]).toContain('missing part of the run');
+  });
+
+  it('reports a pack that stopped giving a packaging command at all', () => {
+    const problems = packagingProblems('carry the report home', PACKAGING);
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toContain('is a sentence rather than a step');
   });
 
   it('reports a blocker page that leads to only one pack', () => {

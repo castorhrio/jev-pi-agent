@@ -69,7 +69,77 @@ node scripts\verify-packaged-adapters.mjs
 
 期望看到 `adapters resolved: universal, mock`，退出码 0。
 
-## 四、带回来之后怎么判（读的人跑这条，不必读 JSON）
+跑完先别关机器：报告、三张图与应用日志要一起打包带回，一条命令在第四节。
+
+## 四、把报告带回来（一条打包命令）
+
+跑完先别关机器。报告是一个文件，但「这台机器上真的发生了什么」还有两样东西跟着它：
+控制台那一整段输出（`[ok]` / `[FAIL]` / `[evidence]` 行），和应用自己写的日志
+（`%TEMP%\ucad-main-chain\AppData\Roaming\ucad\logs\app.log`；`--home` 改过就在那个目录下）。
+三样一起带回来，读的人才不必问你「当时屏幕上是什么」。
+
+在仓库根目录（Windows PowerShell）：
+
+```powershell
+# 1. 报告按约定改名：命令的默认输出名是 win-report.json，约定名带日期（第一节）
+Move-Item win-report.json win-20261105.json
+
+# 2. 一条命令打包：报告 + 三张旁证图 + 应用日志
+Compress-Archive -Path win-20261105.json, win-20261105-dpapi.png, win-20261105-tray.png, win-20261105-nsis.png, "$env:TEMP\ucad-main-chain\AppData\Roaming\ucad\logs\app.log" -DestinationPath win-20261105.zip
+```
+
+没有 PowerShell 的机器（git-bash、WSL，或在一台 Linux 上重跑）：
+
+```bash
+tar -czf win-20261105.tar.gz win-20261105.json win-20261105-dpapi.png win-20261105-tray.png win-20261105-nsis.png "$TMPDIR/ucad-main-chain/AppData/Roaming/ucad/logs/app.log"
+```
+
+控制台输出不在包里，因为它就在你眼前——跑的时候加一句重定向就留下了：
+
+```powershell
+node scripts\verify-main-chain.mjs --exec release\win-unpacked\UCAD.exe --report win-report.json *> win-20261105-console.txt
+```
+
+`*>` 连 stderr 一起收；写成 `>` 只收 stdout，而 `[FAIL]` 走的是 stderr，会丢。
+
+包里除了那份 JSON，其余**都不参与判定**：`--judge` 只读 `win-YYYYMMDD.json`（第二节那条边界）。
+图与日志是给读报告的人看的，不是给命令看的。
+
+### 带回来之后，先自己判一次
+
+```bash
+node scripts/verify-main-chain.mjs --judge docs/manual-verification/win-20261105.json
+```
+
+**判绿**（退出码 0）：五行 `step N: pass`，然后一行
+
+```
+PASS — the report covers steps 1, 2, 3, 4, 5 on win32 against build 1.0.0
+```
+
+后面还跟着四条 `[note]`，完整样子在下一节。
+
+**判红**（退出码 1）：红的那一步在行里就看得见，后面跟着它为什么红——
+
+```
+report: docs/manual-verification/win-20261105.json
+platform: win32 · build: 1.0.0 · ranAt: 2026-11-05T…
+  step 1: pass
+  step 2: fail
+  step 3: pass
+  step 4: pass
+  step 5: pass
+[FAIL] step 2 failed in that run — a red report is a result, and the row stays open
+FAIL — 1 thing(s) in this report keep the row open
+[note] a red report is still evidence: carry it home as it is rather than editing it
+```
+
+判红**不是**要你重跑一遍再交：一份红的报告是结果，把它改成绿才是错的（第七节）。
+重跑就新增一个文件，旧的那份留着——它记着当时那台机器上真的发生了什么。
+
+判绿之后改哪三处，见第八节。
+
+## 五、带回来之后怎么判（读的人跑这条，不必读 JSON）
 
 ```bash
 node scripts/verify-main-chain.mjs --judge docs/manual-verification/win-YYYYMMDD.json
@@ -103,7 +173,7 @@ PASS — the report covers steps 1, 2, 3, 4, 5 on win32 against build 1.0.0
 在报告自己的 `note` 字段里、也在这条命令的输出里。它也不能替 step 6 收口：
 五态是人眼走查（`docs/state-walkthrough.md`），任何报告都关不掉那一行。
 
-## 五、报告长什么样
+## 六、报告长什么样
 
 ```json
 {
@@ -160,7 +230,7 @@ PASS — the report covers steps 1, 2, 3, 4, 5 on win32 against build 1.0.0
 反过来说：如果哪天有人给 `evidence` 加一条 `pattern` 去限制键名，一份诚实的 Windows 报告就会
 因为「说了只有 Windows 能说的话」被判不过——那才是真缺陷，而上面那条用例会当场打红。
 
-## 六、不许做什么
+## 七、不许做什么
 
 - **不许手写一份报告。** 报告是文档，文档可以手写，所以手写出来的东西和真报告长得一样；
   `--judge` 只能拒掉「说 pass 却什么都没记」这一种。手写一份带证据行的假报告，骗过的是自己。
@@ -168,7 +238,7 @@ PASS — the report covers steps 1, 2, 3, 4, 5 on win32 against build 1.0.0
 - **不许把被阻塞的运行（退出码 2）当成报告。** 钥匙串不可用时应用在开窗之前就停下，
   那一段 `[BLOCKED] …` 的控制台原文就是证据，请连同它一起贴回来，报告不会写。
 
-## 七、判过之后改哪三处
+## 八、判过之后改哪三处
 
 1. **`docs/manual-verification.md`** 的记录表追加一行（日期 / 平台 / 构建 / 覆盖步骤 / 结果），
    证据写 `见 docs/manual-verification/win-YYYYMMDD.json`，再补一句结论。

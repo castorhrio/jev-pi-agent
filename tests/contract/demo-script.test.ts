@@ -24,6 +24,13 @@
  *  - the demo script exists and is not empty;
  *  - every `[ok] step N: …` line it quotes is still in the verifier's source —
  *    a reworded `pass()` message is a red run, not a stale page;
+ *  - and it is printed **under the step the demo attributes it to**. "In the
+ *    file" is not the same claim: a short quote like `the handoff lands` is in
+ *    the source once, under step 3, so a demo that printed it as step 1's line
+ *    used to pass — the gate looked strict and could not tell the two steps
+ *    apart. The attribution is computed from the source (see `stepRegions`),
+ *    and a quote that cannot be tied to any step is red rather than waved
+ *    through, because a quote the gate cannot place is a quote it cannot check;
  *  - the steps it quotes are **exactly** `DRIVEN_STEPS`, imported from the
  *    verifier rather than restated here. A demo that skips step 4 is a demo
  *    that never shows the update check; a demo that quotes a step the verifier
@@ -145,6 +152,87 @@ function pieces(text: string): string[] {
 }
 
 /**
+ * The verifier's source with its comments removed.
+ *
+ * The attribution below asks "which step's code prints this sentence", and a
+ * doc comment that merely *mentions* a helper (`two are compared by
+ * \`trayMenuVerdict()\``) would otherwise pull that helper's messages into a
+ * step that never calls it — a gate that is weaker than it reads, which is the
+ * defect this whole analysis is for. Block comments and whole-line `//`
+ * comments are dropped; a trailing `//` is left alone because `https://` lives
+ * in string literals and a naive strip would eat the rest of the line.
+ */
+function codeOnly(source: string): string {
+  return source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^[ \t]*\/\/.*$/gm, '');
+}
+
+/**
+ * The verifier's function definitions, each with the text that follows it.
+ *
+ * Sliced from one `function name(` to the next rather than brace-matched: the
+ * source is full of braces inside template literals and inside the page scripts
+ * it injects, and a brace counter that is off by one would attribute a message
+ * to the wrong step — silently, and in the direction that makes the gate green.
+ */
+function functionSlices(source: string): Map<string, string> {
+  const pattern = /(?:export\s+)?(?:async\s+)?function\s+([A-Za-z0-9_$]+)\s*\(/g;
+  const hits = [...source.matchAll(pattern)].map((match) => ({
+    name: match[1]!,
+    start: match.index,
+  }));
+  const slices = new Map<string, string>();
+  hits.forEach((hit, index) => {
+    const end = index + 1 < hits.length ? hits[index + 1]!.start : source.length;
+    slices.set(hit.name, source.slice(hit.start, end));
+  });
+  return slices;
+}
+
+/**
+ * The source text each driven step can print from.
+ *
+ * A step's `pass()` message is often built by a helper — `pass(5,
+ * menuVerdict.message)` where `menuVerdict` came from `trayMenuVerdict()` — so a
+ * region starts as the `stepN()` body and grows to include the body of every
+ * function that body calls, until it stops growing. That is one level of
+ * indirection more than the source happens to need today, on purpose: the
+ * alternative is a gate that goes red the first time a message is moved into a
+ * helper, which is how a gate gets deleted instead of fixed.
+ *
+ * A step with no `stepN()` function has no region, and a quote attributed to it
+ * is then red — the same answer as a quote nobody prints.
+ */
+function stepRegions(source: string): Map<number, string> {
+  const slices = functionSlices(codeOnly(source));
+  const regions = new Map<number, string>();
+  for (const step of DRIVEN_STEPS) {
+    const body = slices.get(`step${step}`);
+    if (body !== undefined) regions.set(step, body);
+  }
+  for (let round = 0; round < 8; round += 1) {
+    let grew = false;
+    for (const [step, text] of regions) {
+      for (const [name, body] of slices) {
+        if (text.includes(body)) continue;
+        if (!new RegExp(`\\b${name}\\s*\\(`).test(text)) continue;
+        regions.set(step, `${text}\n${body}`);
+        grew = true;
+      }
+    }
+    if (!grew) break;
+  }
+  return regions;
+}
+
+/** The steps whose code can print `piece`, in step order. */
+function stepsPrinting(piece: string, regions: Map<number, string>): number[] {
+  return [...regions]
+    .filter(([, text]) => text.includes(piece))
+    .map(([step]) => step)
+    .sort((a, b) => a - b);
+}
+
+/**
  * Every way the demo script and the verifier disagree about the steps.
  *
  * Empty means the mapping is intact. Pure in `(document, scriptSource)` so the
@@ -167,6 +255,8 @@ function demoProblems(document: string, scriptSource: string): string[] {
     ];
   }
 
+  const regions = stepRegions(scriptSource);
+
   for (const quote of quotes) {
     if (quote.step === MANUAL_STEP) {
       problems.push(
@@ -184,12 +274,35 @@ function demoProblems(document: string, scriptSource: string): string[] {
       continue;
     }
     for (const piece of literal) {
-      if (scriptSource.includes(piece)) continue;
-      problems.push(
-        `docs/demo-script.md: quotes "${piece}" from step ${quote.step}, and ` +
-          'scripts/verify-main-chain.mjs no longer prints it — the demo describes output ' +
-          'nobody will see',
-      );
+      if (!scriptSource.includes(piece)) {
+        problems.push(
+          `docs/demo-script.md: quotes "${piece}" from step ${quote.step}, and ` +
+            'scripts/verify-main-chain.mjs no longer prints it — the demo describes output ' +
+            'nobody will see',
+        );
+        continue;
+      }
+      // In the file is not the same claim as under this step. A short quote is
+      // often printed by exactly one step, so a demo that moved it to another
+      // step's row used to pass: the sentence was in the source, and nothing
+      // asked which step prints it.
+      const printedBy = stepsPrinting(piece, regions);
+      if (printedBy.length === 0) {
+        problems.push(
+          `docs/demo-script.md: quotes "${piece}" for step ${quote.step}, and it is in ` +
+            'scripts/verify-main-chain.mjs but not inside any step\'s code path — a quote the ' +
+            'gate cannot tie to a step cannot go red for the right reason; put the message ' +
+            'where the step prints it',
+        );
+        continue;
+      }
+      if (!printedBy.includes(quote.step)) {
+        problems.push(
+          `docs/demo-script.md: quotes "${piece}" for step ${quote.step}, and ` +
+            `scripts/verify-main-chain.mjs prints it under step ${printedBy.join(', ')} — the ` +
+            'demo attributes a line to a step that never prints it',
+        );
+      }
     }
   }
 
@@ -364,6 +477,97 @@ describe('the checks above, when the demo script has drifted', () => {
   it('reports a demo script that is missing altogether', () => {
     expect(demoProblems('', scriptSource)).toHaveLength(1);
     expect(demoProblems('', scriptSource)[0]).toContain('is missing or empty');
+  });
+});
+
+/**
+ * A verifier small enough to reason about, with one message per step.
+ *
+ * The real source is used for the green direction; this one is used for the red
+ * direction, because the failure being demonstrated — a quote that belongs to
+ * another step — cannot be produced by editing the real document without also
+ * breaking the "quotes every driven step" rule, and a case that reds for two
+ * reasons proves neither.
+ */
+const SYNTHETIC_SOURCE = [
+  "const ORPHAN = 'a line no step prints';",
+  'async function step1(cdp) { pass(1, `the same turn reads the same hash in both surfaces`); }',
+  'async function step2(cdp) { pass(2, `${n} decisions carry rationale + confidence + engine`); }',
+  'async function step3(cdp) { pass(3, `the handoff lands in the new session input`); }',
+  'async function step4(run) { pass(4, `the real feed answered over the network: ${state}`); }',
+  'async function step5() { pass(5, `the tray menu carries ${labels}`); }',
+].join('\n');
+
+/** One quote per driven step, each attributed to the step that prints it. */
+const SYNTHETIC_DOCUMENT = [
+  '`[ok] step 1: the same turn reads the same hash in both surfaces`',
+  '`[ok] step 2: … decisions carry rationale + confidence + engine`',
+  '`[ok] step 3: the handoff lands in the new session input`',
+  '`[ok] step 4: the real feed answered over the network: …`',
+  '`[ok] step 5: the tray menu carries …`',
+].join('\n');
+
+describe('a quote is tied to the step that prints it, not just to the file', () => {
+  it('attributes every quote in the demo script to its own step', () => {
+    // The green direction, on the real pair: every literal piece of every quote
+    // is printed by the step the demo attributes it to. Without this the cases
+    // below could be red because the analysis finds nothing at all.
+    const regions = stepRegions(scriptSource);
+    expect(regions.size, 'no step region was found in the verifier').toBe(DRIVEN_STEPS.length);
+    for (const quote of quotesIn(document)) {
+      for (const piece of pieces(quote.text)) {
+        expect(
+          stepsPrinting(piece, regions),
+          `"${piece}" is quoted for step ${quote.step} and is not printed by it`,
+        ).toContain(quote.step);
+      }
+    }
+    // And the helper indirection really is followed: step 5's tray line is
+    // built by `trayMenuVerdict()`, not written inside `step5()`.
+    expect(stepsPrinting('the tray menu carries', regions)).toContain(5);
+  });
+
+  it('accepts the synthetic pair, so the red cases below are red for one reason', () => {
+    expect(demoProblems(SYNTHETIC_DOCUMENT, SYNTHETIC_SOURCE)).toEqual([]);
+  });
+
+  it('reports a quote the verifier prints under a different step', () => {
+    // The ambiguity this block exists for: `the handoff lands in the new session
+    // input` is in the source, so the old check passed it — under step 1, where
+    // the run never prints it. The demo would read out a line the reviewer sees
+    // under a different heading, and nothing went red.
+    const misattributed = SYNTHETIC_DOCUMENT.replace(
+      '`[ok] step 1: the same turn reads the same hash in both surfaces`',
+      '`[ok] step 1: the handoff lands in the new session input`',
+    );
+    expect(misattributed, 'the quote this case rewrites is gone').not.toBe(SYNTHETIC_DOCUMENT);
+    const problems = demoProblems(misattributed, SYNTHETIC_SOURCE);
+    expect(problems.some((problem) => problem.includes('prints it under step 3'))).toBe(true);
+  });
+
+  it('reports a quote that is in the source but outside every step', () => {
+    // The other half of the same hole: a sentence that exists in the file and
+    // is printed by nothing. Waving it through would leave the gate unable to
+    // say which step it belongs to, which is the same as not checking it.
+    const problems = demoProblems(
+      `${SYNTHETIC_DOCUMENT}\n\`[ok] step 1: a line no step prints\``,
+      SYNTHETIC_SOURCE,
+    );
+    expect(problems.some((problem) => problem.includes("not inside any step's code path"))).toBe(
+      true,
+    );
+  });
+
+  it("does not read a step's messages out of a comment that mentions its helper", () => {
+    // The over-attribution that would make the gate weaker than it reads: a doc
+    // comment saying "compared by `trayMenuVerdict()`" inside step 4 must not
+    // pull step 5's tray line into step 4's region.
+    const withMention = SYNTHETIC_SOURCE.replace(
+      'async function step4(run) {',
+      '// the two are compared by trayMenuVerdict()\nasync function step4(run) {',
+    );
+    expect(withMention, 'the comment this case adds is gone').not.toBe(SYNTHETIC_SOURCE);
+    expect(stepsPrinting('the tray menu carries', stepRegions(withMention))).toEqual([5]);
   });
 });
 
