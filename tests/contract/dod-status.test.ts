@@ -1216,3 +1216,369 @@ describe('closing a blocker moves the total, not only the section', () => {
     expect(problems).toContain('### 解除时');
   });
 });
+
+// ---------------------------------------------------------------------------
+// Closing a blocker leaves a receipt
+// ---------------------------------------------------------------------------
+
+/**
+ * ## Why this block exists
+ *
+ * The mapping table above joins each blocker section to the DoD row it blocks,
+ * and the block after it makes the total move when a blocker closes. Neither
+ * answers the question a reader asks *after* the closing: who signed for it,
+ * which command was run, what did it exit with, and where did the result land.
+ * `docs/blockers.md` says how to close a blocker and who holds the key; nothing
+ * recorded that the closing happened.
+ *
+ * So the status document carries a receipt table — `日期 | 阻塞 id | 执行的命令 |
+ * 退出码 | 结果路径` — and a `### 未关闭` subsection under it. This block reads
+ * both, in both directions:
+ *
+ *  - every `## N.` section of the blockers page is either a row of the receipt
+ *    table or a bullet under `未关闭` — **silence is not allowed**, because a
+ *    blocker that is neither closed nor named as open is the one a reader
+ *    assumes away;
+ *  - no section is in both places, and none is named twice — a receipt next to
+ *    an "still open" bullet is a contradiction, not a nuance;
+ *  - a receipt row has five cells, a real date, a command this repository can
+ *    run, an exit code, and a result path that exists. A row that reads like
+ *    evidence and points at nothing is worse than no row.
+ *
+ * The table is empty today, and that is the honest state: none of the three
+ * blockers has been closed. The gate is written for the day one is, and the
+ * cases below drive that day on a mutated copy of the document.
+ */
+
+/** The heading of the receipt section. */
+const RECEIPT_HEADING = '## 阻塞关闭回执';
+
+/** The subsection that names the blockers nobody has closed yet. */
+const OPEN_HEADING = '### 未关闭';
+
+/** The columns every receipt row declares, in order. */
+const RECEIPT_COLUMNS = ['日期', '阻塞 id', '执行的命令', '退出码', '结果路径'];
+
+/** One receipt: a blocker that was closed, and the evidence of the closing. */
+interface Receipt {
+  readonly date: string;
+  readonly section: number;
+  readonly command: string;
+  readonly exitCode: string;
+  readonly result: string;
+}
+
+/** The receipt section, heading included; empty when it is gone. */
+function receiptSection(markdown: string): string {
+  const lines = markdown.split('\n');
+  const start = lines.findIndex((line) => line.trim().startsWith(RECEIPT_HEADING));
+  if (start === -1) return '';
+  const body: string[] = [lines[start]!];
+  for (let index = start + 1; index < lines.length; index += 1) {
+    if (/^## /.test(lines[index]!)) break;
+    body.push(lines[index]!);
+  }
+  return body.join('\n');
+}
+
+/** The `### 未关闭` subsection of the receipt section; empty when it is gone. */
+function openSubsection(section: string): string {
+  const lines = section.split('\n');
+  const start = lines.findIndex((line) => line.trim() === OPEN_HEADING);
+  if (start === -1) return '';
+  const body: string[] = [lines[start]!];
+  for (let index = start + 1; index < lines.length; index += 1) {
+    if (/^#{2,3} /.test(lines[index]!)) break;
+    body.push(lines[index]!);
+  }
+  return body.join('\n');
+}
+
+/** The receipt rows, header and rule rows dropped. */
+function receiptRows(section: string): string[][] {
+  const rows: string[][] = [];
+  for (const line of section.split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed.startsWith('|')) continue;
+    const cells = trimmed
+      .replace(/^\|/, '')
+      .replace(/\|$/, '')
+      .split('|')
+      .map((cell) => cell.trim());
+    if (cells.every((cell) => /^:?-{3,}:?$/u.test(cell))) continue;
+    if (cells[0] === RECEIPT_COLUMNS[0]) continue;
+    rows.push(cells);
+  }
+  return rows;
+}
+
+/**
+ * Whether a receipt's command is one this repository can actually run.
+ *
+ * `pointerProblem` above answers the same question for the evidence column, but
+ * it reads a token as a whole: `node scripts/x.mjs` resolves and
+ * `node scripts/x.mjs --apply --verify` does not, because the flags are part of
+ * the string. A receipt records the command *as it was typed*, flags included —
+ * that is the point of recording it — so the script path is taken out of the
+ * command and checked on its own.
+ */
+function commandProblem(token: string): string | undefined {
+  const nodeScript = /^node\s+(scripts\/[\w.-]+\.(?:mjs|cjs|js|ts))(?:\s|$)/u.exec(token);
+  if (nodeScript !== null) {
+    return existsSync(join(REPO_ROOT, nodeScript[1]!))
+      ? undefined
+      : `\`${token}\` names a script that is not in the tree`;
+  }
+  return pointerProblem(token);
+}
+
+/** The blocker sections named under `未关闭`, as numbers. */
+function openSections(subsection: string): number[] {
+  const found: number[] = [];
+  for (const line of subsection.split('\n')) {
+    if (!/^- /.test(line.trim())) continue;
+    const match = /第\s*(\d+)\s*节/u.exec(line);
+    if (match !== null) found.push(Number(match[1]));
+  }
+  return found;
+}
+
+/**
+ * Every way the receipt section and the blockers page disagree.
+ *
+ * Empty means the section exists, every blocker section is accounted for
+ * exactly once — as a receipt or as an open bullet — and every receipt row
+ * carries five cells whose command and result path resolve.
+ */
+function receiptProblems(documents: { status: string; blockers: string }): string[] {
+  const section = receiptSection(documents.status);
+  if (section.length === 0) {
+    return [
+      `docs/dod-status.md: no \`${RECEIPT_HEADING}\` section, so a blocker that was closed has ` +
+        'nowhere to record who signed for it, which command was run and what it exited with',
+    ];
+  }
+  const open = openSubsection(section);
+  if (open.length === 0) {
+    return [
+      `docs/dod-status.md: the receipt section has no \`${OPEN_HEADING}\` subsection, so a ` +
+        'blocker that is still open cannot be named and disappears from the page',
+    ];
+  }
+
+  const problems: string[] = [];
+  const blockerNumbers = [...documents.blockers.matchAll(/^## (\d+)\. /gm)].map((match) =>
+    Number(match[1]),
+  );
+  const receipts: Receipt[] = [];
+
+  for (const cells of receiptRows(section)) {
+    if (cells.length !== RECEIPT_COLUMNS.length) {
+      problems.push(
+        `docs/dod-status.md: a receipt row has ${cells.length} cell(s), not the ` +
+          `${RECEIPT_COLUMNS.length} the table declares (${RECEIPT_COLUMNS.join(' / ')})`,
+      );
+      continue;
+    }
+    const [date, id, command, exitCode, result] = cells as [string, string, string, string, string];
+    const head = /^第\s*(\d+)\s*节$/u.exec(id);
+    if (head === null) {
+      problems.push(
+        `docs/dod-status.md: the receipt row "${id}" does not name a blocker as \`第 N 节\`, ` +
+          'so it cannot be matched to a section of `docs/blockers.md`',
+      );
+      continue;
+    }
+    const number = Number(head[1]);
+    if (!/^\d{4}-\d{2}-\d{2}$/u.test(date)) {
+      problems.push(
+        `docs/dod-status.md: the receipt for 第 ${number} 节 is dated "${date}" — a receipt ` +
+          'without a date is a claim about "sometime"',
+      );
+    }
+    if (!blockerNumbers.includes(number)) {
+      problems.push(
+        `docs/dod-status.md: the receipt names 第 ${number} 节, and \`docs/blockers.md\` has no ` +
+          'such section — the receipt is for a blocker that is not on the page',
+      );
+    }
+    const commands = [...command.matchAll(/`([^`]+)`/gu)].map((match) => match[1]!.trim());
+    if (commands.length === 0) {
+      problems.push(
+        `docs/dod-status.md: the receipt for 第 ${number} 节 names no command — "it was closed" ` +
+          'without the command that closed it cannot be re-run by anybody',
+      );
+    }
+    for (const token of commands) {
+      const problem = commandProblem(token);
+      if (problem !== undefined) problems.push(`docs/dod-status.md: 第 ${number} 节 receipt: ${problem}`);
+    }
+    if (!/^\d+$/u.test(exitCode)) {
+      problems.push(
+        `docs/dod-status.md: the receipt for 第 ${number} 节 records exit code "${exitCode}" — ` +
+          'the number the command returned is the part that cannot be argued with',
+      );
+    }
+    const results = [...result.matchAll(/`([^`]+)`/gu)].map((match) => match[1]!.trim());
+    if (results.length === 0) {
+      problems.push(
+        `docs/dod-status.md: the receipt for 第 ${number} 节 names no result path, so the ` +
+          'evidence of the closing is not on disk anywhere',
+      );
+    }
+    for (const token of results) {
+      const problem = pointerProblem(token);
+      if (problem !== undefined) problems.push(`docs/dod-status.md: 第 ${number} 节 receipt: ${problem}`);
+    }
+    receipts.push({ date, section: number, command, exitCode, result });
+  }
+
+  const openNumbers = openSections(open);
+  if (openNumbers.length === 0) {
+    problems.push(
+      `docs/dod-status.md: \`${OPEN_HEADING}\` names no blocker — an empty list reads as "nothing ` +
+        'is blocked", which is a claim this page cannot make while `docs/blockers.md` has sections',
+    );
+  }
+
+  for (const number of blockerNumbers) {
+    const closed = receipts.filter((receipt) => receipt.section === number).length;
+    const stillOpen = openNumbers.filter((openNumber) => openNumber === number).length;
+    if (closed === 0 && stillOpen === 0) {
+      problems.push(
+        `docs/dod-status.md: \`docs/blockers.md\` 第 ${number} 节 is neither a receipt nor named ` +
+          `under \`${OPEN_HEADING}\` — a blocker that is silently absent is the one a reader ` +
+          'assumes away',
+      );
+    }
+    if (closed > 1) {
+      problems.push(`docs/dod-status.md: 第 ${number} 节 has ${closed} receipts — one closing, one row`);
+    }
+    if (stillOpen > 1) {
+      problems.push(`docs/dod-status.md: 第 ${number} 节 is named ${stillOpen} times under \`${OPEN_HEADING}\``);
+    }
+    if (closed > 0 && stillOpen > 0) {
+      problems.push(
+        `docs/dod-status.md: 第 ${number} 节 has a receipt and is also named under ` +
+          `\`${OPEN_HEADING}\` — closed and open at once is a contradiction, not a nuance`,
+      );
+    }
+  }
+
+  for (const number of openNumbers) {
+    if (!blockerNumbers.includes(number)) {
+      problems.push(
+        `docs/dod-status.md: \`${OPEN_HEADING}\` names 第 ${number} 节, and ` +
+          '`docs/blockers.md` has no such section',
+      );
+    }
+  }
+
+  return problems;
+}
+
+describe('closing a blocker leaves a receipt', () => {
+  it('accounts for every blocker section, as a receipt or as still open', () => {
+    const problems = receiptProblems({ status: STATUS, blockers: BLOCKERS });
+    expect(
+      problems,
+      `the receipt section and the blockers page disagree:\n  ${problems.join('\n  ')}`,
+    ).toEqual([]);
+  });
+
+  it('is not vacuous: the section, the open list and the blocker sections are all read', () => {
+    const section = receiptSection(STATUS);
+    expect(section.length, 'the receipt section is gone').toBeGreaterThan(0);
+    expect(openSections(openSubsection(section)).length, 'the open list names nothing').toBeGreaterThan(0);
+    expect([...BLOCKERS.matchAll(/^## \d+\. /gm)].length, 'the blockers page has no sections').toBeGreaterThan(0);
+    // The table is empty today because no blocker has been closed. That is the
+    // honest state, and it is asserted so the day it stops being true is a
+    // deliberate edit rather than a surprise.
+    expect(receiptRows(section).length, 'a receipt appeared without this case being updated').toBe(0);
+  });
+
+  it('reports a blocker that is neither closed nor named as open', () => {
+    // The defect this block exists for: the bullet is deleted and no receipt is
+    // added, so the blocker is simply absent from the page.
+    const section = receiptSection(STATUS);
+    const bullet = openSubsection(section)
+      .split('\n')
+      .find((line) => line.startsWith('- 第 2 节'));
+    expect(bullet, 'the 第 2 节 open bullet is gone').toBeDefined();
+    const broken = STATUS.replace(`${bullet!}\n`, '');
+    expect(broken).not.toBe(STATUS);
+    const problems = receiptProblems({ status: broken, blockers: BLOCKERS });
+    expect(problems.join('\n')).toContain('第 2 节 is neither a receipt nor named');
+  });
+
+  it('accepts a receipt that replaces the open bullet', () => {
+    // The edit that closes a blocker, done right: the bullet goes, the row
+    // arrives, and the gate stays green. Without this case the gate could be
+    // red on every possible closing and nobody would notice.
+    const section = receiptSection(STATUS);
+    const bullet = openSubsection(section)
+      .split('\n')
+      .find((line) => line.startsWith('- 第 1 节'));
+    expect(bullet, 'the 第 1 节 open bullet is gone').toBeDefined();
+    const row =
+      '| 2026-11-06 | 第 1 节 | `node scripts/publish-feed.mjs --apply --verify` | 0 | ' +
+      '`docs/release/update-feed-v1.0.0.json` |';
+    const closed = STATUS.replace(`${bullet!}\n`, '').replace(
+      '| 日期 | 阻塞 id | 执行的命令 | 退出码 | 结果路径 |\n|---|---|---|---|---|',
+      `| 日期 | 阻塞 id | 执行的命令 | 退出码 | 结果路径 |\n|---|---|---|---|---|\n${row}`,
+    );
+    expect(closed).not.toBe(STATUS);
+    expect(receiptProblems({ status: closed, blockers: BLOCKERS })).toEqual([]);
+  });
+
+  it('reports a blocker that is closed and still listed as open', () => {
+    const section = receiptSection(STATUS);
+    const bullet = openSubsection(section)
+      .split('\n')
+      .find((line) => line.startsWith('- 第 1 节'));
+    const row =
+      '| 2026-11-06 | 第 1 节 | `node scripts/publish-feed.mjs --apply --verify` | 0 | ' +
+      '`docs/release/update-feed-v1.0.0.json` |';
+    const both = STATUS.replace(
+      '| 日期 | 阻塞 id | 执行的命令 | 退出码 | 结果路径 |\n|---|---|---|---|---|',
+      `| 日期 | 阻塞 id | 执行的命令 | 退出码 | 结果路径 |\n|---|---|---|---|---|\n${row}`,
+    );
+    expect(both).not.toBe(STATUS);
+    expect(bullet).toBeDefined();
+    const problems = receiptProblems({ status: both, blockers: BLOCKERS });
+    expect(problems.join('\n')).toContain('closed and open at once');
+  });
+
+  it('reports a receipt whose command or result path points at nothing', () => {
+    const row =
+      '| 2026-11-06 | 第 1 节 | `node scripts/no-such-script.mjs` | 0 | `docs/no-such-file.json` |';
+    const broken = STATUS.replace(
+      '| 日期 | 阻塞 id | 执行的命令 | 退出码 | 结果路径 |\n|---|---|---|---|---|',
+      `| 日期 | 阻塞 id | 执行的命令 | 退出码 | 结果路径 |\n|---|---|---|---|---|\n${row}`,
+    );
+    expect(broken).not.toBe(STATUS);
+    const problems = receiptProblems({ status: broken, blockers: BLOCKERS }).join('\n');
+    expect(problems).toContain('`node scripts/no-such-script.mjs` names a script that is not in the tree');
+    expect(problems).toContain('`docs/no-such-file.json` does not exist');
+  });
+
+  it('reports a receipt with no date and no exit code', () => {
+    const row = '| 某天 | 第 1 节 | `node scripts/publish-feed.mjs --apply --verify` | 成功 | `docs/release/update-feed-v1.0.0.json` |';
+    const broken = STATUS.replace(
+      '| 日期 | 阻塞 id | 执行的命令 | 退出码 | 结果路径 |\n|---|---|---|---|---|',
+      `| 日期 | 阻塞 id | 执行的命令 | 退出码 | 结果路径 |\n|---|---|---|---|---|\n${row}`,
+    );
+    expect(broken).not.toBe(STATUS);
+    const problems = receiptProblems({ status: broken, blockers: BLOCKERS }).join('\n');
+    expect(problems).toContain('a receipt without a date is a claim about "sometime"');
+    expect(problems).toContain('records exit code "成功"');
+  });
+
+  it('reports a status document that lost the receipt section', () => {
+    const broken = STATUS.replace(receiptSection(STATUS), '');
+    expect(broken).not.toBe(STATUS);
+    expect(receiptProblems({ status: broken, blockers: BLOCKERS })).toEqual([
+      expect.stringContaining('no `## 阻塞关闭回执` section'),
+    ]);
+  });
+});

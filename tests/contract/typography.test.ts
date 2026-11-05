@@ -374,18 +374,28 @@ describe('the font stacks', () => {
  * source, so the check sees the values the app actually renders. A key that is
  * missing from one locale is `i18n.test.ts`'s problem, not this file's.
  */
+/**
+ * The two rules, declared once.
+ *
+ * They are module-level rather than local to the dictionary block below because
+ * the README block at the end of this file applies the *same* two rules to the
+ * document's two halves. Two spellings of "a half-width mark next to a Han
+ * character" would drift, and the reader would then have to work out whether
+ * the app and the README were being judged by the same rule.
+ */
+
+/** Han characters, the range both dictionaries write their prose in. */
+const HAN = '\u4e00-\u9fff';
+
+/** A half-width mark with a Han character on either side of it. */
+const HALF_WIDTH_NEAR_HAN = new RegExp(`(?:[,.;:](?=[${HAN}])|(?<=[${HAN}])[,.;:])`);
+
+/** A full-width mark, which English prose has no use for. */
+const FULL_WIDTH = /[，。；：、]/;
+
 describe('the punctuation', () => {
   const ZH = dictionaryFor('zh-CN');
   const EN = dictionaryFor('en-US');
-
-  /** Han characters, the range both dictionaries write their prose in. */
-  const HAN = '\u4e00-\u9fff';
-
-  /** A half-width mark with a Han character on either side of it. */
-  const HALF_WIDTH_NEAR_HAN = new RegExp(`(?:[,.;:](?=[${HAN}])|(?<=[${HAN}])[,.;:])`);
-
-  /** A full-width mark, which English prose has no use for. */
-  const FULL_WIDTH = /[，。；：、]/;
 
   it('never sets a half-width mark against a Han character in Chinese', () => {
     const offenders = Object.entries(ZH)
@@ -421,5 +431,182 @@ describe('the punctuation', () => {
     expect(HALF_WIDTH_NEAR_HAN.test('先跑这条命令，然后看输出')).toBe(false);
     expect(FULL_WIDTH.test('Run this command， then read the output')).toBe(true);
     expect(FULL_WIDTH.test('Run this command, then read the output')).toBe(false);
+  });
+});
+
+/**
+ * The same two rules, applied to the README's two halves.
+ *
+ * ## Why the document needs this and the dictionary gate does not cover it
+ *
+ * The block above reads the strings the app renders. `README.md` is the other
+ * place this repository writes Chinese prose, and it is the one a stranger
+ * reads first — but nothing compared its punctuation with anything. The two
+ * halves are written by hand, in two languages, in one file, and the failure is
+ * the same one the dictionary gate was built for: a Chinese sentence that ends
+ * in a half-width `,` sets a gap the reader reads as a typo, and an English
+ * sentence carrying `，` reads as a paste from the other half.
+ *
+ * ## What is asserted, and what is not
+ *
+ * The two rules above, unchanged, split at `## 中文`:
+ *
+ *  - in the Chinese half, no half-width `,` `.` `;` `:` sits next to a Han
+ *    character;
+ *  - in the English half, no full-width `，` `。` `；` `：` `、` appears at all.
+ *
+ * Fenced code blocks and inline code spans are removed first. A shell snippet
+ * is not prose: `node scripts/x.mjs --a,b` is correct ASCII, and a gate that
+ * read it as a Chinese sentence would be red over a command that has to be
+ * typed exactly as written. That is the same reason `paragraphs()` in
+ * `readme-parity.test.ts` skips fences.
+ *
+ * Not asserted: which half a paragraph belongs to beyond the `## 中文` split,
+ * line length, or spacing around Latin words. The README's structure is
+ * `readme-parity.test.ts`'s subject; this block only reads the characters
+ * between the words.
+ */
+
+const README_PATH = path.join(REPO_ROOT, 'README.md');
+const README = fs.readFileSync(README_PATH, 'utf8');
+
+/** The heading that starts the Chinese half. */
+const ZH_HALF_HEADING = '## 中文';
+
+/** One line of prose, with the line number it sits on in the file. */
+interface ProseLine {
+  /** 1-based line number in `README.md`, so a failure sends the reader there. */
+  readonly line: number;
+  readonly text: string;
+}
+
+/**
+ * The prose of a document, with fenced blocks and inline code spans removed.
+ *
+ * Line numbers are kept absolute: a failure that says "line 214" is a place to
+ * look, and one that says "the Chinese half" is a search.
+ */
+function proseLines(markdown: string): ProseLine[] {
+  const out: ProseLine[] = [];
+  let fenced = false;
+  markdown.split('\n').forEach((raw, index) => {
+    if (/^\s*```/u.test(raw)) {
+      fenced = !fenced;
+      return;
+    }
+    if (fenced) return;
+    out.push({ line: index + 1, text: raw.replace(/`[^`]*`/gu, '') });
+  });
+  return out;
+}
+
+/** The two halves of the README, split at `## 中文`; `null` when the split is gone. */
+function readmeHalves(markdown: string): { en: ProseLine[]; zh: ProseLine[] } | null {
+  const lines = markdown.split('\n');
+  const at = lines.findIndex((line) => line.trim() === ZH_HALF_HEADING);
+  if (at === -1) return null;
+  // The English half is re-numbered from 1 and then shifted back, so the line
+  // numbers a failure prints are the ones in the file.
+  const en = proseLines(lines.slice(0, at).join('\n'));
+  const zh = proseLines(lines.slice(at + 1).join('\n')).map((entry) => ({
+    line: entry.line + at + 1,
+    text: entry.text,
+  }));
+  return { en, zh };
+}
+
+/**
+ * Every way the README's punctuation disagrees with the language it is written
+ * in.
+ *
+ * A pure function of its input, so the red direction below is driven on a
+ * fixture rather than argued about.
+ */
+function readmePunctuationProblems(markdown: string): string[] {
+  const halves = readmeHalves(markdown);
+  if (halves === null) {
+    return [
+      `README.md has no "${ZH_HALF_HEADING}" heading, so the two halves cannot be told apart ` +
+        'and neither rule can be applied to the right one',
+    ];
+  }
+
+  const problems: string[] = [];
+  for (const { line, text } of halves.zh) {
+    if (!HALF_WIDTH_NEAR_HAN.test(text)) continue;
+    problems.push(
+      `line ${line} (中文): "${text.trim()}" uses a half-width , . ; : next to a Han ` +
+        'character — the full-width mark is the one that sets correctly in Chinese prose',
+    );
+  }
+  for (const { line, text } of halves.en) {
+    if (!FULL_WIDTH.test(text)) continue;
+    problems.push(
+      `line ${line} (English): "${text.trim()}" carries a full-width ，。；：、 — it is a ` +
+        'Chinese mark, and it sets a gap the reader reads as a typo',
+    );
+  }
+  return problems;
+}
+
+describe('the README punctuation', () => {
+  it('sets full-width marks in Chinese and half-width marks in English', () => {
+    const problems = readmePunctuationProblems(README);
+    expect(
+      problems,
+      `the README's two halves disagree with their own language:\n  ${problems.join('\n  ')}`,
+    ).toEqual([]);
+  });
+
+  it('is not vacuous: both halves are read, and both rules fire on a real sentence', () => {
+    const halves = readmeHalves(README);
+    expect(halves, `README.md has no "${ZH_HALF_HEADING}" heading`).not.toBeNull();
+    // Both halves have to carry prose, or one of the two loops above is a loop
+    // over nothing and the green means half of what it says.
+    expect(halves!.zh.length, 'the Chinese half has no prose lines').toBeGreaterThan(50);
+    expect(halves!.en.length, 'the English half has no prose lines').toBeGreaterThan(50);
+    // And the rules really do fire on the shapes they describe.
+    expect(HALF_WIDTH_NEAR_HAN.test('先跑这条命令,然后看输出')).toBe(true);
+    expect(FULL_WIDTH.test('Run this command， then read the output')).toBe(true);
+  });
+
+  it('reports a half-width mark in the Chinese half, with the line it is on', () => {
+    const broken = README.replace('## 中文', '## 中文\n\n这一句用的是半角逗号,所以它应该红。');
+    expect(broken, 'the Chinese half heading this case appends to is gone').not.toBe(README);
+    const problems = readmePunctuationProblems(broken);
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toContain('(中文)');
+    expect(problems[0]).toContain('半角逗号,所以它应该红');
+    // The line number is the one in the file, not the one in the half.
+    const at = broken.split('\n').findIndex((line) => line.includes('半角逗号')) + 1;
+    expect(problems[0]).toContain(`line ${at}`);
+  });
+
+  it('reports a full-width mark in the English half', () => {
+    const broken = README.replace('## English', '## English\n\nThis sentence carries a Chinese comma， and it should be red.');
+    expect(broken, 'the English half heading this case appends to is gone').not.toBe(README);
+    const problems = readmePunctuationProblems(broken);
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toContain('(English)');
+    expect(problems[0]).toContain('Chinese comma');
+  });
+
+  it('does not read a command inside a code block as a Chinese sentence', () => {
+    // The false positive that would get this gate switched off: a shell snippet
+    // is ASCII on purpose, and `--a,b` is not a punctuation mistake.
+    const withCommand = README.replace(
+      '## 中文',
+      '## 中文\n\n```bash\nnode scripts/x.mjs --a,b --c:d\n```\n\n行内命令 `node scripts/x.mjs --a,b` 也是 ASCII。',
+    );
+    expect(withCommand).not.toBe(README);
+    expect(readmePunctuationProblems(withCommand)).toEqual([]);
+  });
+
+  it('reports a README whose two halves can no longer be told apart', () => {
+    const broken = README.replace(ZH_HALF_HEADING, '## 中文版');
+    expect(broken).not.toBe(README);
+    expect(readmePunctuationProblems(broken)).toEqual([
+      expect.stringContaining(`no "${ZH_HALF_HEADING}" heading`),
+    ]);
   });
 });

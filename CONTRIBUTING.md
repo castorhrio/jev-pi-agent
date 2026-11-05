@@ -480,7 +480,16 @@ the commit.
 So the build says it first. `npm run build` — and therefore `npm run dev` and `npm run dist`,
 which both go through it — runs `scripts/screenshot-drift-hint.mjs` afterwards. It prints the
 same drift lines the gate prints, names the file that moved, and exits 0: it is a reminder, not
-a second gate, and it stays silent when the screenshots are current. When you see it:
+a second gate, and it stays silent when the screenshots are current.
+
+**The reminder is not the gate, and it does not cover every entry point.** If you change
+`renderer/src/**` and run only `npm test` without `npm run build`, you will not see this reminder;
+`node scripts/screenshot-sources.mjs --check` is the gate. `postbuild` is npm's own lifecycle hook,
+so it fires for `npm run build` and for nothing else — `npm test`, `npm run test:e2e` and
+`npm run typecheck` all go around it. The reminder exists to move the discovery earlier for the
+person who is building; it is not a claim that every path through this repository prints it.
+
+When you see it:
 
 1. retake the images the change affects — `npm run dev:web` for a look, and the layout gate
    above for the captures it writes to `.run-logs/layout/`; copy the ones the documents use

@@ -1326,3 +1326,148 @@ describe('the three states, in both halves', () => {
     expect(problems.some((problem) => problem.includes('shows 2 picture(s)'))).toBe(true);
   });
 });
+
+// ---------------------------------------------------------------------------
+// The fourth question: is every code block closed?
+// ---------------------------------------------------------------------------
+
+/**
+ * ## Why this block exists
+ *
+ * The block above asks whether the document *ends* on a finished sentence, and
+ * it answers that by walking paragraphs — and `paragraphs()` skips fenced code
+ * blocks, because a shell snippet's lines end however the code ends. That skip
+ * is right for the question it was written for and it leaves a hole exactly the
+ * size of a fence: an unclosed ` ``` ` turns the rest of the file into one code
+ * block, so every paragraph after it is skipped, `danglingProblems()` finds
+ * nothing to complain about, and the run is green over a document whose second
+ * half renders as a grey slab on GitHub.
+ *
+ * That is not hypothetical. The truncation this file was extended for arrived
+ * the same way a fence defect does — a tool cut the file mid-line — and the
+ * first thing a reader sees on the repository page is the rendered document,
+ * not the source. A fence that is never closed is the one defect that is
+ * invisible in the source and unmissable in the render.
+ *
+ * So two mechanical questions, both about the whole file:
+ *
+ *  - the number of fence lines is even, i.e. every block that opened was
+ *    closed — and when it is not, the failure names the line that opened the
+ *    block nobody closed;
+ *  - the last non-empty line is either a closing fence or a finished sentence,
+ *    so a file that stops inside a code block and a file that stops mid-sentence
+ *    are both red, and the message says which line it stopped on.
+ *
+ * Not asserted: that the fences are balanced "per section", or that a block is
+ * tagged with a language. Both are style, and a gate that pinned them would go
+ * red on a legitimate edit — which is how a document gate gets deleted.
+ */
+
+/** A line that opens or closes a fenced code block. */
+const FENCE_LINE = /^\s*```/u;
+
+/**
+ * Every way the document's code blocks can be left open.
+ *
+ * A pure function of its input, so the red direction below is driven on a
+ * fixture rather than argued about.
+ */
+function fenceProblems(markdown: string): string[] {
+  const problems: string[] = [];
+  const lines = markdown.split('\n');
+
+  // Toggling rather than counting: the line number that matters is the one that
+  // opened the block nobody closed, and a count cannot say which that was.
+  let openedAt = 0;
+  lines.forEach((line, index) => {
+    if (!FENCE_LINE.test(line)) return;
+    openedAt = openedAt === 0 ? index + 1 : 0;
+  });
+  if (openedAt !== 0) {
+    problems.push(
+      `line ${openedAt}: this code fence is never closed — GitHub renders everything after it ` +
+        'as code, so the rest of the document is one grey block and no paragraph in it is read',
+    );
+  }
+
+  const lastIndex = lines.reduce((found, line, index) => (line.trim() === '' ? found : index), -1);
+  if (lastIndex === -1) {
+    problems.push('the document has no non-empty line at all');
+    return problems;
+  }
+  const last = lines[lastIndex]!.trim();
+  if (FENCE_LINE.test(last)) return problems; // a closing fence is a finished document
+  const sentence = last.replace(/[*_]+$/u, '');
+  if (!FINISHED.test(sentence)) {
+    problems.push(
+      `line ${lastIndex + 1}: the document ends on "${tail(last)}", which is neither a finished ` +
+        'sentence nor a closing code fence — a file that stops here renders as a half-written page',
+    );
+  }
+  return problems;
+}
+
+describe('every code block in the README is closed', () => {
+  it('closes every fence, and ends on a finished line', () => {
+    const problems = fenceProblems(readme);
+    expect(
+      problems,
+      `the README has an unclosed code block or stops mid-line:\n  ${problems.join('\n  ')}`,
+    ).toEqual([]);
+  });
+
+  it('is not vacuous: the document really has fenced blocks to close', () => {
+    // A README with no code blocks would make the even-count check true for the
+    // wrong reason, and the last-line check would be the only one left.
+    const fences = readme.split('\n').filter((line) => FENCE_LINE.test(line));
+    expect(fences.length, 'the README has no fenced code block').toBeGreaterThan(3);
+    expect(fences.length % 2, 'the README has an odd number of fence lines').toBe(0);
+  });
+
+  it('reports a fence that was opened and never closed, with the line it opened on', () => {
+    // The shape of the defect: a block opens, the file ends inside it. Every
+    // paragraph after the opening fence is skipped by `paragraphs()`, so the
+    // block above this one stays green — which is why this case exists.
+    const unclosed = [
+      '## English',
+      '',
+      '### Installers',
+      '',
+      'The build produces one file:',
+      '',
+      '```bash',
+      'npm run dist',
+      '',
+      '## 中文',
+      '',
+      '### 安装包',
+      '',
+      '[MIT](LICENSE)',
+    ].join('\n');
+
+    const problems = fenceProblems(unclosed);
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toContain('line 7');
+    expect(problems[0]).toContain('never closed');
+    // And the paragraph gate really is blind to it: the same document passes
+    // `danglingProblems`, which is the hole this block fills.
+    expect(danglingProblems(unclosed)).toEqual([]);
+  });
+
+  it('reports a document that stops mid-line without a fence to explain it', () => {
+    const cut = ['## English', '', '### License', '', 'The licence is MIT and the repository matches this reposi'].join(
+      '\n',
+    );
+    const problems = fenceProblems(cut);
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toContain('line 5');
+    expect(problems[0]).toContain('matches this reposi');
+  });
+
+  it('accepts a document that ends on a closing fence', () => {
+    // The other legal ending: a README whose last block is a command. A gate
+    // that only accepted prose would be red over a perfectly finished file.
+    const endsOnFence = ['## English', '', '```bash', 'npm run dist', '```'].join('\n');
+    expect(fenceProblems(endsOnFence)).toEqual([]);
+  });
+});
