@@ -1518,3 +1518,45 @@ tests/contract/blocker-closing.test.ts tests/contract/doc-routing.test.ts tests/
 
 **这一轮没有做的事**：上传修正版 feed（无令牌）、Windows 桌面六步（无 Windows 机器）、
 步骤 6 的人眼观感签字（需要一个人）。三条仍是上表里的缺口，不假装完成。
+
+## 本轮（2026-11-05，第六刀）文档指向的每一张图都要能打开，表里写的尺寸要是那张图的尺寸
+
+上一轮末尾的三条「没做」一字未变：上传 feed（无令牌）、Windows 六步（无 Windows 机器）、
+五态人眼签字（需要一个人）。这一轮只做「文档对一张图说的每句话都要能被量」，产品代码一行未改。
+
+1. **反向门禁早就有了，正向没有。** `screenshots.test.ts` 问的是「每张入库的图有没有人点名」，
+   `state-walkthrough.test.ts` 问的是「走查那十张在不在」。**没有人问「文档里这条路径打不打得开」**——
+   而那是读者真正会撞上的那一问。缺口在没接线的两份文档里：`docs/demo-script.md` 用一个大括号
+   简写点名五张窄图，`docs/manual-verification.md` 用一张表点名十张，两处都没有任何东西去解析。
+   改一张图的名字、漏改其中一份文档，仓库是绿的：清单还记着那个文件，孤儿检查还能找到一处提及，
+   读者拿到的是 404。
+2. **`scripts/screenshot-sources.mjs` 新增三个纯函数**：`expandBraces()`（`{empty,error}.png` 展开成
+   两条路径，嵌套与未闭合都按「原样返回」处理——展不开的引用仍然是一条引用，丢掉它就等于藏起它点名的文件）、
+   `collectDocScreenshotRefs()`（一份 markdown 里每一处 `docs/screenshots/**.png`，带行号与
+   `inLog` 标记）、`markdownDocuments()`（README + CONTRIBUTING + `docs/**/*.md`，从
+   `screenshots.test.ts` 里搬过来，现在只有一份）。
+3. **「带日期的标题是日志，不带日期的是指令」**。`docs/dod-status.md` 与 `docs/manual-verification.md`
+   的带日期小节记的是每一轮做了什么，而一轮里做的事包括删掉一张没人点名的图——那两份文档点名
+   `states/empty.png`、`states/error.png` 正是因为它们被删了。把日志当指令读，日志就没法写；
+   为了让门禁变绿去改历史，是这个仓库在别处一律拒绝的事。所以规则是：只有指令必须打得开。
+   这条规则不是藏引用的许可——`screenshot-refs.test.ts` 的第二条是另一半：**只被日志点名的图没有读者**，
+   它是孤儿（日志说它被删了，而文件还在，就是一份没人维护的字节）。
+4. **走查表里那一列 `尺寸` 也是断言了。** `pictureProblems` 读的是**小节**（每态一张宽图一张窄图、
+   各自等于产品开窗/最小窗口），它一个字都没说表里那一列——而表才是走查人打开图之前读的东西。
+   一行写着 `1440×900` 而文件是 768×700，此前是绿的。现在 `sizeClaimProblems()` 逐行比对
+   IHDR，并断言十行都在（五态 × 两个尺寸，少一行就是有一行要读者自己猜）。
+
+**证明它会红**（两条都是本轮真实跑出来的原文，恢复后全绿）：
+
+| 当时的写法 | 打红的断言与原文 |
+|---|---|
+| 把 `docs/demo-script.md:144` 的 `states/partial.png` 改名成 `partial-moved.png` | `screenshot-refs.test.ts > resolves every screenshot a document sends a reader to` → `docs/demo-script.md:144 sends a reader to docs/screenshots/states/partial-moved.png, which is not in the repository` |
+| 把走查表第 7 行的 `1440×900` 改成 `768×700` | `state-walkthrough.test.ts > the size the script table claims for each picture is the picture` → `docs/state-walkthrough.md: the script table says \`docs/screenshots/states/partial.png\` is 768x700 and the picture is 1440x900 — a walker opening it is told the wrong size` |
+
+**这一轮没有做的事**：三条外部阻塞一条都没解除（无令牌、无 Windows 机器、无人眼签字），
+`docs/blockers.md` 上那三个 2026-11-05 的日期照旧；`postbuild` 只在 `npm run build` 走这条反馈回路缺口
+（审查缺陷 3）仍然登记不修——把 `postbuild` 挂到 `npm test` 会拖慢日常测试，是权衡不是缺陷。
+
+门禁：`npx vitest run tests/contract/screenshot-refs.test.ts tests/contract/screenshots.test.ts
+tests/contract/state-walkthrough.test.ts` → 9 + 17 + 33 全绿；`node scripts/screenshot-sources.mjs --check`
+→ `PASS — 34 renderer source(s) and 14 screenshot(s)`。

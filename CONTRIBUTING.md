@@ -501,6 +501,13 @@ When you see it:
 pictures. That part is yours, and the gate's job is only to make skipping it a decision rather
 than an accident.
 
+**A picture also has to be named by a document, and the name has to resolve.**
+`tests/contract/screenshot-refs.test.ts` reads every markdown document, expands the brace
+shorthand (`states/{empty,error}-768x700.png`), and fails when a path in an undated section
+points at a file that is not there — and when a committed picture is named only inside a dated
+section, because a log entry is an obituary, not a reader. So: add the image, then name it in
+the document that sends a reader to it. `npm test` tells you if you forgot.
+
 ### The layout language
 
 Three rules keep the interface legible; each is enforced by a gate, so a change that breaks

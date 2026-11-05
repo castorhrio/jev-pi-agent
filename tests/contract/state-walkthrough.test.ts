@@ -693,6 +693,48 @@ function pictureProblems(state: string, shots: string[], repository: Repository)
 }
 
 /**
+ * One row of the five-minute script's table: `| 1 | `path` | 1440×900 | … |`.
+ *
+ * The size is written the way a person writes it (`×`, or `x` in a hurry), and
+ * the row number is required so a prose line that happens to carry a path and a
+ * size is not read as a table row.
+ */
+const SIZE_ROW = /^\|\s*\d+\s*\|\s*`(docs\/screenshots\/[^`]+\.png)`\s*\|\s*(\d+)\s*[×x]\s*(\d+)\s*\|/;
+
+/**
+ * The size the script table claims for each picture, against the picture.
+ *
+ * `pictureProblems` reads the *sections* — "this state has a wide picture and a
+ * narrow one, and each is the size the product opens at". It says nothing about
+ * the table, which is the part a walker actually reads: a row that says
+ * `1440×900` next to a 768×700 file was green, and the person who opened the
+ * image expecting a wide window was told the wrong thing about the thing they
+ * were judging. The claim and the file are two facts; this compares them.
+ */
+function sizeClaimProblems(script: string, repository: Repository): string[] {
+  const problems: string[] = [];
+  for (const line of script.split('\n')) {
+    const row = SIZE_ROW.exec(line.trim());
+    if (row === null) continue;
+    const shot = row[1]!;
+    const claimed = { width: Number(row[2]), height: Number(row[3]) };
+    const actual = repository.pngSize(shot);
+    if (actual === null) {
+      problems.push(
+        `docs/state-walkthrough.md: the script table lists \`${shot}\`, which is not a PNG`,
+      );
+      continue;
+    }
+    if (actual.width === claimed.width && actual.height === claimed.height) continue;
+    problems.push(
+      `docs/state-walkthrough.md: the script table says \`${shot}\` is ${sizeLabel(claimed)} ` +
+        `and the picture is ${sizeLabel(actual)} — a walker opening it is told the wrong size`,
+    );
+  }
+  return problems;
+}
+
+/**
  * Every way the walkthrough document, the repository and the README disagree.
  *
  * Empty means the handover is intact. Pure in `(walkthrough, readme, repository)`
@@ -964,6 +1006,33 @@ describe('the five states have criteria a person can answer', () => {
     const script = scriptSection(walkthrough);
     expect(script, `no \`${SCRIPT_HEADING}\` section`).toBeDefined();
     expect(screenshotsIn(script!)).toHaveLength(STATE_SCENARIOS.length * 2);
+  });
+
+  it('the size the script table claims for each picture is the picture', () => {
+    // The table is what a walker reads before opening an image, so its `尺寸`
+    // column is a claim about a file, not a caption. Ten rows, because the walk
+    // is five states at two sizes — a table that declares a size for nine of
+    // them has one row a reader has to guess at.
+    const script = scriptSection(walkthrough);
+    expect(script, `no \`${SCRIPT_HEADING}\` section`).toBeDefined();
+    const rows = script!.split('\n').filter((line) => SIZE_ROW.test(line.trim()));
+    expect(rows, 'the script table declares a size for every picture').toHaveLength(
+      STATE_SCENARIOS.length * 2,
+    );
+    expect(sizeClaimProblems(script!, REPOSITORY)).toEqual([]);
+  });
+
+  it('names the picture whose declared size is not its size', () => {
+    // The red direction, driven on a repository that answers 1024x768 for
+    // everything: every row is wrong, and the sentence names the file and both
+    // numbers rather than saying "the table is stale".
+    const problems = sizeClaimProblems(
+      scriptSection(walkthrough)!,
+      fakeRepo({ pngSize: () => ({ width: 1024, height: 768 }) }),
+    );
+    expect(problems).toHaveLength(STATE_SCENARIOS.length * 2);
+    expect(problems[0]).toContain('docs/screenshots/empty.png');
+    expect(problems[0]).toContain('1024x768');
   });
 
   it('the narrow pictures are the smallest window the product allows', () => {

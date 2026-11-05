@@ -98,8 +98,8 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { existsSync, readdirSync, readFileSync } from 'node:fs';
-import { join, relative, sep } from 'node:path';
+import { existsSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import {
   MANIFEST_PATH,
   buildManifest,
@@ -109,6 +109,7 @@ import {
   isClean,
   readManifest,
   screenshotFiles,
+  markdownDocuments,
 } from '../../scripts/screenshot-sources.mjs';
 
 const REPO_ROOT = join(import.meta.dirname, '..', '..');
@@ -307,32 +308,6 @@ describe('the screenshots are in sync with the renderer', () => {
     );
   });
 });
-
-/**
- * Every markdown document a reader is sent to, as repo-relative posix paths.
- *
- * `README.md` and `CONTRIBUTING.md` plus everything under `docs/`. The whole
- * tree rather than a hand-written list, for the reason `screenshot-sources.mjs`
- * gives about the renderer: a list of "the files that matter" is a second fact,
- * and the first document somebody adds would be outside it.
- */
-function markdownDocuments(repoRoot = REPO_ROOT): string[] {
-  const files = ['README.md', 'CONTRIBUTING.md'].filter((file) =>
-    existsSync(join(repoRoot, file)),
-  );
-  const walk = (dir: string): string[] => {
-    const found: string[] = [];
-    for (const entry of readdirSync(dir, { withFileTypes: true })) {
-      const full = join(dir, entry.name);
-      if (entry.isDirectory()) found.push(...walk(full));
-      else if (entry.name.endsWith('.md')) {
-        found.push(relative(repoRoot, full).split(sep).join('/'));
-      }
-    }
-    return found;
-  };
-  return [...files, ...walk(join(repoRoot, 'docs'))].sort();
-}
 
 /**
  * The committed screenshots that no document names.

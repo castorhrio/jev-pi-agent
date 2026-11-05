@@ -74,6 +74,29 @@
  * the manifest — a handover that ships a picture no gate keeps honest is worse
  * than no handover.
  *
+ * Which documents point at which pictures
+ * ---------------------------------------
+ * The manifest answers "are these bytes still the current screen". It does not
+ * answer "does the document that sends a reader to this picture still resolve",
+ * and that is the other half of the same promise: a path in a table is a link,
+ * and a link to a file that is not there is the loudest way a document lies.
+ * `collectDocScreenshotRefs()` reads a markdown document and returns every
+ * `docs/screenshots/**.png` it names, with the line it sits on and whether that
+ * line is inside a dated section. Two shorthands a naive scan gets wrong are
+ * handled here rather than in each caller:
+ *
+ *  - **brace expansion.** `docs/screenshots/states/{empty,error}-768x700.png` is
+ *    how a document writes two files without writing two paths, and a scan that
+ *    does not expand it reports one missing file that is really two present
+ *    ones;
+ *  - **dated sections are a log.** A section whose heading carries a date says
+ *    what happened in that round, including what was deleted on purpose —
+ *    `docs/dod-status.md` names two screenshots it removed, and those names must
+ *    not be read as instructions. Undated sections are instructions, and an
+ *    instruction that points at a missing file is a 404. The flag is returned
+ *    rather than filtered out so the caller decides, and so a test can show the
+ *    rule working on a document it wrote itself.
+ *
  * The check path is the one that has to be *proved* red, not merely written:
  * `tests/contract/screenshot-sources.test.ts` runs this file as a subprocess
  * against a throwaway tree, touches a renderer source, and asserts exit 1 with
@@ -194,6 +217,133 @@ export function walkthroughScreenshots(repoRoot = REPO_ROOT) {
     }
   }
   return shots;
+}
+
+/**
+ * A screenshot path as a document spells it, braces included.
+ *
+ * Wider than `WALKTHROUGH_SHOT` on purpose: the walkthrough table writes one
+ * path per row, while prose elsewhere writes `{empty,error}.png`. Both are
+ * references a reader follows, so both are collected here.
+ */
+const SCREENSHOT_REF = /docs\/screenshots\/[\w./{},-]+\.png/g;
+
+/**
+ * A heading that carries a date is a log entry, not an instruction.
+ *
+ * `docs/dod-status.md` and the dated sections of `docs/manual-verification.md`
+ * record what each round did, and part of what a round does is delete a picture
+ * nobody pointed at. Those names are history; reading them as instructions
+ * would make the log un-writable, and rewriting history to keep a gate green is
+ * the failure mode this repository refuses everywhere else.
+ */
+const DATED_HEADING = /20\d\d-\d\d-\d\d/;
+
+/**
+ * `a/{b,c}d.png` → `['a/bd.png', 'a/cd.png']`, recursively.
+ *
+ * A document writes a brace group to say "these files" without writing each
+ * one; a scan that does not expand it reports a missing file whose name
+ * contains braces. Recursive so a nested group expands too, and total: a
+ * pattern with no group, or with an unclosed one, comes back as itself rather
+ * than as an empty list — a reference that cannot be expanded is still a
+ * reference, and dropping it would hide the file it names.
+ */
+export function expandBraces(pattern) {
+  const open = pattern.indexOf('{');
+  if (open === -1) return [pattern];
+  // The matching `}`, not the first one: `{b,{c,d}}` closes twice, and taking
+  // the first close would leave a stray brace in every path it produced.
+  let depth = 0;
+  let close = -1;
+  for (let index = open; index < pattern.length; index += 1) {
+    if (pattern[index] === '{') depth += 1;
+    else if (pattern[index] === '}') {
+      depth -= 1;
+      if (depth === 0) {
+        close = index;
+        break;
+      }
+    }
+  }
+  if (close === -1) return [pattern];
+  const head = pattern.slice(0, open);
+  const tail = pattern.slice(close + 1);
+  return splitTopLevel(pattern.slice(open + 1, close)).flatMap((option) =>
+    expandBraces(`${head}${option}${tail}`),
+  );
+}
+
+/**
+ * Split a brace group's body on the commas that separate its options.
+ *
+ * Only the top-level commas: `{b,{c,d}}` has two options, not three, and
+ * splitting on every comma would turn the inner group into two broken halves.
+ */
+function splitTopLevel(body) {
+  const options = [];
+  let depth = 0;
+  let start = 0;
+  for (let index = 0; index < body.length; index += 1) {
+    const character = body[index];
+    if (character === '{') depth += 1;
+    else if (character === '}') depth -= 1;
+    else if (character === ',' && depth === 0) {
+      options.push(body.slice(start, index));
+      start = index + 1;
+    }
+  }
+  options.push(body.slice(start));
+  return options;
+}
+
+/**
+ * Every screenshot a markdown document points at, in document order.
+ *
+ * One entry per occurrence, not one per path: a path named both in a log and in
+ * an instruction has to be judged as an instruction, and de-duplicating by path
+ * would let whichever came first decide. `inLog` is true when any enclosing
+ * heading carries a date — the nearest one is not enough, because
+ * `docs/manual-verification.md` puts `### 顺带量到的真缺陷` under a dated `##`.
+ */
+export function collectDocScreenshotRefs(markdown) {
+  const refs = [];
+  const headings = [];
+  const lines = markdown.split('\n');
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    const heading = /^(#{1,6})\s+(.*)$/.exec(line);
+    if (heading) {
+      const level = heading[1].length;
+      while (headings.length > 0 && headings[headings.length - 1].level >= level) headings.pop();
+      headings.push({ level, text: heading[2].trim() });
+    }
+    for (const match of line.matchAll(SCREENSHOT_REF)) {
+      for (const ref of expandBraces(match[0])) {
+        refs.push({
+          path: ref,
+          line: index + 1,
+          inLog: headings.some((entry) => DATED_HEADING.test(entry.text)),
+        });
+      }
+    }
+  }
+  return refs;
+}
+
+/**
+ * Every markdown document a reader is sent to, as repo-relative posix paths.
+ *
+ * `README.md` and `CONTRIBUTING.md` plus everything under `docs/`. The whole
+ * tree rather than a hand-written list, for the reason `RENDERER_DIR` gives: a
+ * list of "the documents that matter" is a second fact, and the first document
+ * somebody adds would be outside it.
+ */
+export function markdownDocuments(repoRoot = REPO_ROOT) {
+  const files = ['README.md', 'CONTRIBUTING.md'].filter((file) =>
+    fs.existsSync(path.join(repoRoot, file)),
+  );
+  return [...files, ...walk(repoRoot, 'docs').filter((file) => file.endsWith('.md'))].sort();
 }
 
 /** The sha256 of a file, as `sha256:<hex>`. */
