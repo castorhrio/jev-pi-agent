@@ -1555,3 +1555,235 @@ describe('the expected line is what the command prints, not what the source says
     );
   });
 });
+
+/**
+ * The defence-day checklist: the page somebody reads while standing up.
+ *
+ * ## Why this file checks it
+ *
+ * `docs/demo-script.md` is the script — what to say, in what order, and what the
+ * screen should show. It is not the page you read at 09:40 with the projector
+ * already on: that page has to be a list of things to run and things to look at,
+ * in the order the day happens, and every line of it has to be true *today*.
+ *
+ * A checklist rots differently from a script. A script that quotes a reworded
+ * `[ok]` line is caught by the cases above; a checklist that says `npm run dev`
+ * after the script was renamed, or points at a screenshot that was moved, is
+ * caught by nothing — the reader finds out on stage. So every command, every
+ * path and the one hash a reviewer is asked to verify are checked here.
+ *
+ * ## What is checked
+ *
+ *  - every `npm run <name>` the page names is a script in `package.json`;
+ *  - every `node scripts/…` it names is a file in the repository;
+ *  - every `docs/…` path it names exists (placeholders like `win-YYYYMMDD.json`
+ *    are skipped — they are a naming convention, not a file);
+ *  - the hash it tells the presenter to read out is the same literal
+ *    `docs/demo-script.md` prints, because two pages spelling two hashes is two
+ *    demonstrations that only one of them verified;
+ *  - and the five things the brief asked the page to cover are on it: the app
+ *    starts, the drawer's hash can be checked, the decision chain is visible,
+ *    the permission prompt can be demonstrated, and the ten screenshots can be
+ *    flipped through.
+ *
+ * Deliberately not asserted: wording, ordering, or that the demo would go well.
+ */
+
+const DEFENSE_PATH = join(REPO_ROOT, 'docs', 'defense-checklist.md');
+const PACKAGE_PATH = join(REPO_ROOT, 'package.json');
+
+/** A `npm run <name>` the page tells the presenter to type. */
+const NPM_SCRIPT = /npm run ([\w:.-]+)/g;
+
+/** A `node scripts/…` the page tells the presenter to type. */
+const NODE_SCRIPT = /node (scripts[\\/][\w.-]+\.(?:mjs|cjs|js|ts))/g;
+
+/** A repository path the page points at. */
+const DOC_PATH = /docs\/[\w./-]+\.(?:md|png|json)/g;
+
+/** The hash the presenter reads out, as both pages spell it. */
+const HASH_LITERAL = /renderedHash ([0-9a-f]{16})/;
+
+/** The five things the checklist has to cover, each with the literal that proves it. */
+const CHECKLIST_COVERS: readonly { readonly what: string; readonly literal: string }[] = [
+  { what: 'the app starts', literal: 'npm run dev' },
+  { what: 'the drawer hash can be checked', literal: 'renderedHash' },
+  { what: 'the decision chain is visible', literal: '引擎链' },
+  { what: 'the permission prompt can be demonstrated', literal: 'Agent 请求权限' },
+  { what: 'the ten screenshots can be flipped through', literal: '--walkthrough' },
+];
+
+/** What the checklist is compared against. */
+interface DefenceRepository {
+  /** The text of the checklist, or `''` when it is not there. */
+  readonly checklist: string;
+  /** The demo script, for the hash comparison. */
+  readonly demo: string;
+  /** The `scripts` block of `package.json`. */
+  readonly scripts: ReadonlySet<string>;
+  /** Whether a repository-relative path exists. */
+  readonly exists: (relativePath: string) => boolean;
+}
+
+/**
+ * Every way the checklist names something that is not there.
+ *
+ * Pure in `(checklist, repository)` so the red direction is driven with a
+ * mutated copy: a gate whose failure path has never run is a gate that might be
+ * reporting `[]` whatever it is handed.
+ */
+function checklistProblems(repository: DefenceRepository): string[] {
+  const { checklist } = repository;
+  if (checklist.trim().length === 0) {
+    return ['docs/defense-checklist.md: is missing or empty, so there is no page to read on the day'];
+  }
+
+  const problems: string[] = [];
+  for (const match of checklist.matchAll(NPM_SCRIPT)) {
+    const name = match[1]!;
+    if (repository.scripts.has(name)) continue;
+    problems.push(
+      `docs/defense-checklist.md: tells the presenter to run \`npm run ${name}\`, which is not a ` +
+        'script in package.json — the command on the page is not the command in the repository',
+    );
+  }
+  for (const match of checklist.matchAll(NODE_SCRIPT)) {
+    const path = match[1]!.replaceAll('\\', '/');
+    if (repository.exists(path)) continue;
+    problems.push(
+      `docs/defense-checklist.md: tells the presenter to run \`node ${path}\`, which is not in ` +
+        'the repository',
+    );
+  }
+  for (const match of checklist.matchAll(DOC_PATH)) {
+    const path = match[0];
+    // `win-YYYYMMDD.json` is a naming convention the reader fills in, not a file.
+    if (path.includes('YYYY')) continue;
+    if (repository.exists(path)) continue;
+    problems.push(
+      `docs/defense-checklist.md: points at \`${path}\`, which is not in the repository — the ` +
+        'presenter would open a 404 in front of a reviewer',
+    );
+  }
+
+  for (const { what, literal } of CHECKLIST_COVERS) {
+    if (checklist.includes(literal)) continue;
+    problems.push(
+      `docs/defense-checklist.md: does not cover ${what} (\`${literal}\`), so the page is a list ` +
+        'of commands rather than a rehearsal of the demonstration',
+    );
+  }
+
+  const mine = HASH_LITERAL.exec(checklist);
+  const theirs = HASH_LITERAL.exec(repository.demo);
+  if (mine === null) {
+    problems.push(
+      'docs/defense-checklist.md: names no `renderedHash …`, so the one number a reviewer can ' +
+        'verify on their own machine is not on the page',
+    );
+  } else if (theirs === null) {
+    problems.push(
+      'docs/demo-script.md: no longer prints a `renderedHash …`, so the checklist has nothing to ' +
+        'agree with',
+    );
+  } else if (mine[1] !== theirs[1]) {
+    problems.push(
+      `docs/defense-checklist.md: tells the presenter to read out \`${mine[1]}\` and ` +
+        `docs/demo-script.md prints \`${theirs[1]}\` — two pages, two hashes, one of them is wrong`,
+    );
+  }
+
+  return problems;
+}
+
+const DEFENCE: DefenceRepository = {
+  checklist: existsSync(DEFENSE_PATH) ? readFileSync(DEFENSE_PATH, 'utf8') : '',
+  demo: document,
+  scripts: new Set(
+    Object.keys(
+      (JSON.parse(readFileSync(PACKAGE_PATH, 'utf8')) as { scripts?: Record<string, string> })
+        .scripts ?? {},
+    ),
+  ),
+  exists: (relativePath) => existsSync(join(REPO_ROOT, relativePath)),
+};
+
+describe('the defence-day checklist only names things that exist', () => {
+  it('names commands, paths and a hash that are all real today', () => {
+    const problems = checklistProblems(DEFENCE);
+    expect(
+      problems,
+      `the checklist and the repository disagree:\n  ${problems.join('\n  ')}`,
+    ).toEqual([]);
+  });
+
+  it('is not vacuous: the page really carries the commands being compared', () => {
+    // Without this, a page that lost every command would pass the case above
+    // over an empty list of matches.
+    expect(DEFENCE.checklist.length, 'docs/defense-checklist.md is empty').toBeGreaterThan(500);
+    expect([...DEFENCE.checklist.matchAll(NPM_SCRIPT)].length).toBeGreaterThan(2);
+    expect([...DEFENCE.checklist.matchAll(NODE_SCRIPT)].length).toBeGreaterThan(1);
+    expect(DEFENCE.scripts.has('dev:web'), 'package.json lost `dev:web`').toBe(true);
+  });
+
+  it('reports a command the repository does not have', () => {
+    const problems = checklistProblems({
+      ...DEFENCE,
+      checklist: DEFENCE.checklist.replace('npm run dev:web', 'npm run dev:web2'),
+    });
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toContain('npm run dev:web2');
+    expect(problems[0]).toContain('not a script in package.json');
+  });
+
+  it('reports a script file that was renamed', () => {
+    const problems = checklistProblems({
+      ...DEFENCE,
+      checklist: DEFENCE.checklist.replace(
+        'node scripts/screenshot-sources.mjs --walkthrough',
+        'node scripts/screenshots.mjs --walkthrough',
+      ),
+    });
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toContain('scripts/screenshots.mjs');
+  });
+
+  it('reports a screenshot or document that is not there', () => {
+    const problems = checklistProblems({
+      ...DEFENCE,
+      checklist: DEFENCE.checklist.replace(
+        'docs/screenshots/empty.png',
+        'docs/screenshots/first-run.png',
+      ),
+    });
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toContain('docs/screenshots/first-run.png');
+  });
+
+  it('reports a hash that disagrees with the demo script', () => {
+    // The failure this case is for: the pack changed, the demo script was
+    // updated, and the checklist kept the old number — so the presenter reads
+    // out a hash the screen does not show.
+    const problems = checklistProblems({
+      ...DEFENCE,
+      checklist: DEFENCE.checklist.replace('8847aa57a7138fd5', '0000000000000000'),
+    });
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toContain('two pages, two hashes');
+  });
+
+  it('reports a page that dropped one of the five things to demonstrate', () => {
+    const problems = checklistProblems({
+      ...DEFENCE,
+      checklist: DEFENCE.checklist.replaceAll('引擎链', '决策面板'),
+    });
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toContain('the decision chain is visible');
+  });
+
+  it('reports a checklist that is missing altogether', () => {
+    const problems = checklistProblems({ ...DEFENCE, checklist: '' });
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toContain('is missing or empty');
+  });
+});

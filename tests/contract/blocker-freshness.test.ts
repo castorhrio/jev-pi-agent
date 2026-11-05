@@ -44,6 +44,25 @@
  * got newer while the output stayed the same means the blocker is still there —
  * which is information, not noise.
  *
+ * ## Who is on the hook, and by when
+ *
+ * A date says when the blocker was last measured. It says nothing about who is
+ * supposed to close it, and that was the hole: every section said "waiting on a
+ * token / a Windows machine / a person", which reads as three owners and is
+ * three roles. A role does not run a command on a Tuesday afternoon, and the
+ * sentence 「第一顺位是仓库所有者」 survived every round precisely because
+ * nobody could be asked whether they had done it.
+ *
+ * So each section now carries `- **责任人**：<name> ｜ **截止**：YYYY-MM-DD` as
+ * its first line, and this file refuses:
+ *
+ *  - a section with no owner line, or with two (one section, one owner);
+ *  - an owner that is empty, a placeholder (`—`, `TBD`, `待定`), or a role
+ *    rather than a name (`仓库所有者`, `the repo owner` — a name is one token);
+ *  - a deadline that is missing, is not a real calendar day, or falls **before**
+ *    the day the section was last re-checked — a deadline nobody could have met
+ *    is a deadline that was written to look like one.
+ *
  * The check is a pure function of `(document, today)`, so every red direction is
  * driven with a fixed date rather than by waiting for the calendar. The one
  * assertion that uses the real today is the one that matters to a contributor.
@@ -55,7 +74,9 @@ import { describe, expect, it } from 'vitest';
 import {
   blockerChecks,
   blockerSections,
+  isPlaceholderOwner,
   isRunnableCommand,
+  ownerLines,
   todayInUtcDays,
   utcDays,
 } from './blockers-doc.ts';
@@ -159,9 +180,95 @@ function freshnessProblems(markdown: string, today: number, maxAge: number): str
   return problems;
 }
 
+/**
+ * Every way a section stops naming who is on the hook.
+ *
+ * Separate from {@link freshnessProblems} because the two answer different
+ * questions and need different fixes: a stale date means "run the command
+ * again", a missing owner means "decide who owns this". Collapsing them into
+ * one list would leave the reader to work out which one moved.
+ */
+function ownerProblems(markdown: string, today: number): string[] {
+  const sections = blockerSections(markdown);
+  if (sections.length === 0) {
+    return ['docs/blockers.md: no `## <n>. …` blocker sections, so nobody is named on any of them'];
+  }
+
+  const problems: string[] = [];
+  for (const section of sections) {
+    const owners = ownerLines(section.body);
+    if (owners.length === 0) {
+      problems.push(
+        `docs/blockers.md: "${section.heading}" carries no **责任人** line, so the blocker has ` +
+          'an owner in the sense that everyone does — which is to say nobody',
+      );
+      continue;
+    }
+    if (owners.length > 1) {
+      problems.push(
+        `docs/blockers.md: "${section.heading}" carries ${owners.length} **责任人** lines; one ` +
+          'blocker has one owner, and two names mean neither is on the hook',
+      );
+      continue;
+    }
+    const [owner] = owners as [ReturnType<typeof ownerLines>[number]];
+    if (isPlaceholderOwner(owner.owner)) {
+      problems.push(
+        `docs/blockers.md: "${section.heading}" names \`${owner.owner}\` as its 责任人, which is ` +
+          'a role or a placeholder rather than a person — write the name of somebody who can be ' +
+          'asked whether they have run the command',
+      );
+      continue;
+    }
+    if (owner.deadline.length === 0) {
+      problems.push(
+        `docs/blockers.md: "${section.heading}" names ${owner.owner} without a **截止** date, so ` +
+          '"soon" is the only thing the reader can hold them to',
+      );
+      continue;
+    }
+    const deadline = utcDays(owner.deadline);
+    if (deadline === null) {
+      problems.push(
+        `docs/blockers.md: "${section.heading}" writes 截止 as \`${owner.deadline}\`, which is ` +
+          'not a real `YYYY-MM-DD` day on the calendar',
+      );
+      continue;
+    }
+    const [check] = blockerChecks(section) as ReturnType<typeof blockerChecks>;
+    const measured = check === undefined ? null : utcDays(check.written);
+    if (measured !== null && deadline < measured) {
+      problems.push(
+        `docs/blockers.md: "${section.heading}" has a 截止 of ${owner.deadline}, before the ` +
+          `${check!.written} it was last re-checked — a deadline that had already passed when ` +
+          'the page was written is not a deadline',
+      );
+      continue;
+    }
+    if (deadline < today) {
+      // Not a failure of the page: a deadline that has passed while the blocker
+      // is still open is information, and the page's own 交接记录 table is
+      // where it gets recorded. Reported so the reader is not left to notice.
+      problems.push(
+        `docs/blockers.md: "${section.heading}" was due on ${owner.deadline}, which has passed ` +
+          'and the blocker is still open — record what happened in 交接记录, or move the date ' +
+          'and say why',
+      );
+    }
+  }
+  return problems;
+}
+
 /** One of the page's real lines, with its date rewritten. */
 function dated(markdown: string, sectionNumber: string, date: string): string {
-  const pattern = new RegExp(`(## ${sectionNumber}\\. [^\\n]*\\n\\n- \\*\\*最近核对\\*\\*：)\\S+`, 'u');
+  // The owner line sits between the heading and the date, so the pattern allows
+  // it rather than pinning the date to the first line of the body: a section
+  // that gained a 责任人 line would otherwise make every driven case fail with
+  // "the line was not found", which is a red gate about the test, not the page.
+  const pattern = new RegExp(
+    `(## ${sectionNumber}\\. [^\\n]*\\n\\n(?:- \\*\\*责任人\\*\\*：[^\\n]*\\n)?- \\*\\*最近核对\\*\\*：)\\S+`,
+    'u',
+  );
   const replaced = markdown.replace(pattern, `$1${date}`);
   expect(replaced, `the 最近核对 line of section ${sectionNumber} was not found`).not.toBe(markdown);
   return replaced;
@@ -273,6 +380,84 @@ describe('a blocker says when it was last measured', () => {
     expect(
       freshnessProblems('# blockers\n\nnothing here\n', todayInUtcDays(), MAX_AGE_DAYS),
     ).toEqual([expect.stringContaining('no `## <n>. …` blocker sections')]);
+  });
+
+  it('names a person and a deadline on every blocker', () => {
+    // The half a date cannot carry: a date says when the blocker was measured,
+    // not who is supposed to close it. Every section has to name somebody a
+    // reader could go and ask, and a day they committed to.
+    expect(ownerProblems(BLOCKERS, TODAY)).toEqual([]);
+    for (const section of blockerSections(BLOCKERS)) {
+      const [owner] = ownerLines(section.body) as ReturnType<typeof ownerLines>;
+      expect(owner, `"${section.heading}" has no 责任人 line`).toBeDefined();
+      expect(isPlaceholderOwner(owner.owner), `"${section.heading}" names a role`).toBe(false);
+      expect(utcDays(owner.deadline), `"${section.heading}" has no real 截止`).not.toBeNull();
+    }
+  });
+
+  it('refuses a role where a name belongs, and says which section', () => {
+    // The sentence this round replaced: 「第一顺位是仓库所有者」. It reads as an
+    // owner and is not one — nobody can be asked whether they have done it.
+    for (const role of ['仓库所有者', '—', 'TBD', '待定', 'the repo owner']) {
+      const problems = ownerProblems(
+        BLOCKERS.replace('- **责任人**：castorhrio ｜', `- **责任人**：${role} ｜`),
+        TODAY,
+      );
+      expect(problems, `\`${role}\` was accepted as a name`).toHaveLength(1);
+      expect(problems[0]).toContain('is a role or a placeholder rather than a person');
+      expect(problems[0]).toContain('1. 已发布');
+    }
+  });
+
+  it('refuses a deadline that is missing, impossible, or already past when written', () => {
+    const withoutDeadline = BLOCKERS.replace(
+      '- **责任人**：castorhrio ｜ **截止**：2026-11-19',
+      '- **责任人**：castorhrio',
+    );
+    expect(withoutDeadline).not.toBe(BLOCKERS);
+    expect(ownerProblems(withoutDeadline, TODAY)).toEqual([
+      expect.stringContaining('without a **截止** date'),
+    ]);
+
+    const impossible = BLOCKERS.replace('**截止**：2026-11-19', '**截止**：2026-02-30');
+    expect(ownerProblems(impossible, TODAY)).toEqual([
+      expect.stringContaining('writes 截止 as `2026-02-30`'),
+    ]);
+
+    // A deadline earlier than the day the section was last re-checked is a
+    // deadline that had already passed when it was written down.
+    const backwards = BLOCKERS.replace('**截止**：2026-11-19', '**截止**：2026-10-01');
+    expect(ownerProblems(backwards, TODAY)).toEqual([
+      expect.stringContaining('before the 2026-11-05 it was last re-checked'),
+    ]);
+  });
+
+  it('reports a deadline that passed while the blocker stayed open', () => {
+    // The pressure a deadline is for. Driven with a fixed "today" so the case
+    // means the same on any machine: on 2026-11-20 the page above is red, and
+    // the fix is a line in 交接记录 or a new date with a reason — not silence.
+    const later = utcDays('2026-11-20')!;
+    const problems = ownerProblems(BLOCKERS, later);
+    expect(problems).toHaveLength(3);
+    expect(problems[0]).toContain('was due on 2026-11-19');
+    expect(problems[0]).toContain('交接记录');
+    // And the day before, the same page is green: the boundary is measured.
+    expect(ownerProblems(BLOCKERS, utcDays('2026-11-19')!)).toEqual([]);
+  });
+
+  it('reports a section whose owner line was deleted, and one that grew a second', () => {
+    const second = blockerSections(BLOCKERS)[1]!;
+    const [owner] = ownerLines(second.body) as ReturnType<typeof ownerLines>;
+    const removed = BLOCKERS.replace(`${owner.line}\n`, '');
+    expect(removed).not.toBe(BLOCKERS);
+    expect(ownerProblems(removed, TODAY)).toEqual([
+      expect.stringContaining('carries no **责任人** line'),
+    ]);
+
+    const doubled = BLOCKERS.replace(owner.line, `${owner.line}\n${owner.line}`);
+    expect(ownerProblems(doubled, TODAY)).toEqual([
+      expect.stringContaining('carries 2 **责任人** lines'),
+    ]);
   });
 
   it('cannot tell a re-check from an edit, and says so in a failing case', () => {

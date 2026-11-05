@@ -68,6 +68,55 @@
 `tests/contract/state-walkthrough.test.ts` 钉住三件事：每一态的两张图都在仓库里、窄窗口那张的像素尺寸
 等于 `bootstrap.ts` 声明的 `minWidth`/`minHeight`、以及上面这张表按顺序列全了十张图。
 
+## 10 分钟速查表：十张图 × 三问
+
+上面那张表说「这一张要回答哪三条判据」，这一张是**答题纸**：三十行，一行一问，答完就是一次走查。
+判据原文在下面 `## 判据` 一节——判据是**十五条**（五态 × 三条），而每一条要在**两张图**上各答一遍
+（宽窗口一张、最小窗口一张），所以答题纸是**三十行**。这里的每一问都是它标的那条判据里的原话，
+`tests/contract/state-walkthrough.test.ts` 逐行核对「这一问确实出自它标的那条判据」：
+判据改了而这张表没改，会当场指名是哪一行，而不是让下一个人照着答一份对不上的题。
+
+**只许答三个字：`是` / `否` / `说不清`。** 答「说不清」按**未过**算——说不清就是这一屏没让人看懂，
+和「否」一样要记进记录表，区别只是记的时候写清「哪一句说不清」。不许写「还行」「基本可以」：
+那不是答案，是把判断推给下一个人。
+
+| # | 图 | 问（判据原话） | 答 |
+|---|---|---|---|
+| 1 | `docs/screenshots/empty.png` | 引导语在折叠线以上，且比周围文字更醒目 | 是 / 否 / 说不清 |
+| 2 | `docs/screenshots/empty.png` | 一眼能数出三步，读完知道第一步要做什么 | 是 / 否 / 说不清 |
+| 3 | `docs/screenshots/empty.png` | 屏幕上没有 `加载中…` | 是 / 否 / 说不清 |
+| 4 | `docs/screenshots/states/empty-768x700.png` | 引导语在折叠线以上，且比周围文字更醒目 | 是 / 否 / 说不清 |
+| 5 | `docs/screenshots/states/empty-768x700.png` | 一眼能数出三步，读完知道第一步要做什么 | 是 / 否 / 说不清 |
+| 6 | `docs/screenshots/states/empty-768x700.png` | 屏幕上没有 `加载中…` | 是 / 否 / 说不清 |
+| 7 | `docs/screenshots/states/loading.png` | 会话列与对话区都在说 `加载中…`，两处一致 | 是 / 否 / 说不清 |
+| 8 | `docs/screenshots/states/loading.png` | 屏幕上没有 `还没有对话` | 是 / 否 / 说不清 |
+| 9 | `docs/screenshots/states/loading.png` | 加载态看起来是在等，不是坏了 | 是 / 否 / 说不清 |
+| 10 | `docs/screenshots/states/loading-768x700.png` | 会话列与对话区都在说 `加载中…`，两处一致 | 是 / 否 / 说不清 |
+| 11 | `docs/screenshots/states/loading-768x700.png` | 屏幕上没有 `还没有对话` | 是 / 否 / 说不清 |
+| 12 | `docs/screenshots/states/loading-768x700.png` | 加载态看起来是在等，不是坏了 | 是 / 否 / 说不清 |
+| 13 | `docs/screenshots/error.png` | 标题 `出错了` 之后紧接着是原始失败文本 | 是 / 否 / 说不清 |
+| 14 | `docs/screenshots/error.png` | `重试` 按钮是这一屏上最显眼的动作，不需要滚动就能看到 | 是 / 否 / 说不清 |
+| 15 | `docs/screenshots/error.png` | 失败信息没有压过它要解释的东西 | 是 / 否 / 说不清 |
+| 16 | `docs/screenshots/states/error-768x700.png` | 标题 `出错了` 之后紧接着是原始失败文本 | 是 / 否 / 说不清 |
+| 17 | `docs/screenshots/states/error-768x700.png` | `重试` 按钮是这一屏上最显眼的动作，不需要滚动就能看到 | 是 / 否 / 说不清 |
+| 18 | `docs/screenshots/states/error-768x700.png` | 失败信息没有压过它要解释的东西 | 是 / 否 / 说不清 |
+| 19 | `docs/screenshots/states/partial.png` | 项目名 `jev-pi-agent` 还在屏上 | 是 / 否 / 说不清 |
+| 20 | `docs/screenshots/states/partial.png` | 会话列说的是 `会话列表没读出来（不是没有会话）` 并带原因 | 是 / 否 / 说不清 |
+| 21 | `docs/screenshots/states/partial.png` | 读起来像一次局部故障，不像整页错误 | 是 / 否 / 说不清 |
+| 22 | `docs/screenshots/states/partial-768x700.png` | 项目名 `jev-pi-agent` 还在屏上 | 是 / 否 / 说不清 |
+| 23 | `docs/screenshots/states/partial-768x700.png` | 会话列说的是 `会话列表没读出来（不是没有会话）` 并带原因 | 是 / 否 / 说不清 |
+| 24 | `docs/screenshots/states/partial-768x700.png` | 读起来像一次局部故障，不像整页错误 | 是 / 否 / 说不清 |
+| 25 | `docs/screenshots/states/permission.png` | 弹窗标题 `Agent 请求权限` 之后，五件东西都能读 | 是 / 否 / 说不清 |
+| 26 | `docs/screenshots/states/permission.png` | 四个回答都在且分得清 | 是 / 否 / 说不清 |
+| 27 | `docs/screenshots/states/permission.png` | 以 `Agent 请求权限` 为标题的弹窗盖住了背后的对话而不是挤在旁边 | 是 / 否 / 说不清 |
+| 28 | `docs/screenshots/states/permission-768x700.png` | 弹窗标题 `Agent 请求权限` 之后，五件东西都能读 | 是 / 否 / 说不清 |
+| 29 | `docs/screenshots/states/permission-768x700.png` | 四个回答都在且分得清 | 是 / 否 / 说不清 |
+| 30 | `docs/screenshots/states/permission-768x700.png` | 以 `Agent 请求权限` 为标题的弹窗盖住了背后的对话而不是挤在旁边 | 是 / 否 / 说不清 |
+
+三十行答完，把结论写进文末记录表的一行：`五态判据` 一列写「30 条全满足」或「第 N 条不满足」，
+`看了哪几张` 一列写实际打开了几张（十张全看就是「10 张（五态 × 两个尺寸）」）。
+**少答一条就是少看了一张图**——这一列存在的理由就是让「签了字」和「看了多少」对得上。
+
 ## 怎么走（两条路，选一条）
 
 1. **有应用**：`npm run dev:web`，按下面五节给的 URL 依次打开，并把窗口拖到 768×700 再看一遍。
@@ -104,7 +153,8 @@ tar -czf walkthrough.tar.gz $(node scripts/screenshot-sources.mjs --walkthrough)
 发出去的是三样东西，缺一样对方就答不完：
 
 1. **`walkthrough.tar.gz`**：十张图，五态 × 两个尺寸，顺序就是上面那张表的顺序；
-2. **这一页的 `## 判据` 一节**：十五问，每条只有是 / 否，判据里反引号包住的字就是屏幕上要找的字；
+2. **这一页的 `## 判据` 一节**：十五问，每条只有是 / 否，判据里反引号包住的字就是屏幕上要找的字
+   （每问在两张图上各答一遍，所以答题纸是 `## 10 分钟速查表` 那三十行）；
 3. **下面这个回执模板**：他答完照着填，把这两行发回来。第一行是列头，与文末记录表的列头
    **逐字相同**——不是「差不多」，是同一串字（`tests/contract/state-walkthrough.test.ts` 逐格比对，
    改一处不改另一处会当场红）；第二行是占位，`YYYY-MM-DD` 换成当天日期。
@@ -112,7 +162,7 @@ tar -czf walkthrough.tar.gz $(node scripts/screenshot-sources.mjs --walkthrough)
 ```
 | 日期 | 走查人 | 看了哪几张 | 五态判据 | 不合格项 | 结论 |
 |---|---|---|---|---|---|
-| YYYY-MM-DD | 你的名字 | 10 张（五态 × 两个尺寸） | 15 条全满足 / 第 N 条不满足 | 无 / <屏幕上看到什么> | 五态判据全满足 / 第 N 条不满足：<屏幕上看到什么> |
+| YYYY-MM-DD | 你的名字 | 10 张（五态 × 两个尺寸） | 30 条全满足 / 第 N 条不满足 | 无 / <屏幕上看到什么> | 五态判据全满足 / 第 N 条不满足：<屏幕上看到什么> |
 ```
 
 对方不需要装应用、不需要令牌、不需要 Windows 机器、不需要联网——他只需要打开十张图，逐条回答是 / 否。
@@ -218,10 +268,11 @@ README 改了而表里没日期、以及**两处日期不是同一个字面量**
 可以派的人，所以这里不写「尚未走查」——那句话在这份文件开头已经挂了好几轮，它没有下一步——
 而把下一步写成三个答得出来的问题。
 
+- **责任人**：castorhrio ｜ **截止**：2026-11-19
 - **等谁**：愿意看十张 PNG 的人就够了。这一条不需要装应用、不需要 `contents: write` 令牌、不需要
   Windows 机器；把上面十张图发给任何人，他就能答。第一顺位是仓库所有者 `castorhrio`，因为初审答辩
   时那句「这一屏我看过」必须由站在评审面前的人自己说。
-- **什么时候**：初审答辩之前，**一次答完十五问**。分两天各答一半，那张表读不出到底发生了什么，
+- **什么时候**：初审答辩之前，**一次答完三十问**（十张图 × 三问）。分两天各答一半，那张表读不出到底发生了什么，
   而「读不出」正是这一页要替换掉的东西。
 - **看哪十张**：就是上面 `## 5 分钟走查脚本` 那张表按顺序列的十张，五态各两个尺寸——宽的那张是
   产品开窗的尺寸，窄的那张是产品允许的最小窗口。少看一态，那一态就不算走过。

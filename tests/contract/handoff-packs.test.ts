@@ -51,7 +51,9 @@
  * whatever it is handed.
  */
 
-import { existsSync, readFileSync, statSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
@@ -376,6 +378,91 @@ describe('the two handoff packs', () => {
     // green because nothing matched.
     expect(read('docs/release/REPLACE-FEED.md')).toContain('node scripts/publish-feed.mjs');
     expect(read(`${RETURN_DIR}/README.md`)).toContain('node scripts/verify-main-chain.mjs');
+  });
+});
+
+/**
+ * The archive the pack's command actually produces.
+ *
+ * `packagingProblems` reads the command as text: it can say "this line names the
+ * report and the three screenshots", and it cannot say "running it produces an
+ * archive with those five files in it". Those are different claims, and the
+ * second one is the one the reader depends on — a `tar` invocation with a typo
+ * in a filename still contains every member name the text check looks for, and
+ * fails at the moment somebody is standing over a Windows machine that is about
+ * to be shut down.
+ *
+ * So this case runs the documented command for real, against a fixture report
+ * and three placeholder images, and lists the archive it produced. The
+ * PowerShell line is checked as text only — there is no PowerShell on this
+ * machine, and pretending otherwise would be the kind of green this repository
+ * keeps removing.
+ */
+const FIXTURE_REPORT = 'tests/fixtures/judge/green.json';
+
+/** A 1x1 PNG: enough for `tar` to carry a file named `*.png`, and nothing more. */
+const TINY_PNG = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+  'base64',
+);
+
+/** The date the pack's examples use, so the fixture files carry the same names. */
+const PACK_DATE = '20261105';
+
+/** The log file the command carries, at the path the pack says the app writes it. */
+const LOG_PATH = 'ucad-main-chain/AppData/Roaming/ucad/logs/app.log';
+
+describe('the packaging command really puts the run in an archive', () => {
+  it('produces an archive containing the report, the three screenshots and the log', () => {
+    const document = read(PACKAGING.path);
+    const line = document
+      .split('\n')
+      .map((candidate) => candidate.trim())
+      .find((candidate) => candidate.startsWith(PACKAGING.fallback));
+    expect(line, `${PACKAGING.path} no longer carries a \`${PACKAGING.fallback}\` command`).toBeDefined();
+
+    const dir = mkdtempSync(join(tmpdir(), 'ucad-pack-'));
+    try {
+      copyFileSync(join(REPO_ROOT, FIXTURE_REPORT), join(dir, `win-${PACK_DATE}.json`));
+      for (const suffix of ['dpapi', 'tray', 'nsis']) {
+        writeFileSync(join(dir, `win-${PACK_DATE}-${suffix}.png`), TINY_PNG);
+      }
+      mkdirSync(join(dir, 'ucad-main-chain', 'AppData', 'Roaming', 'ucad', 'logs'), { recursive: true });
+      writeFileSync(join(dir, LOG_PATH), 'tray menu built\n');
+
+      // The command is run as written, with `$TMPDIR` pointed at the scratch
+      // directory: the pack's line is the thing under test, not a copy of it.
+      const packed = spawnSync('bash', ['-c', line!], {
+        cwd: dir,
+        env: { ...process.env, TMPDIR: dir },
+        encoding: 'utf8',
+      });
+      expect(packed.status, `the pack's command failed:\n${packed.stderr}`).toBe(0);
+
+      const listed = spawnSync('tar', ['-tzf', `win-${PACK_DATE}.tar.gz`], {
+        cwd: dir,
+        encoding: 'utf8',
+      });
+      expect(listed.status, `the archive could not be listed:\n${listed.stderr}`).toBe(0);
+      const members = listed.stdout.split('\n').filter((member) => member.length > 0);
+
+      for (const member of PACKAGING.members) {
+        expect(
+          members.some((name) => member.test(name)),
+          `the archive has no member matching ${member.source}: ${members.join(', ')}`,
+        ).toBe(true);
+      }
+      expect(
+        members.some((name) => name.endsWith('app.log')),
+        `the archive carries no application log: ${members.join(', ')}`,
+      ).toBe(true);
+      // Five files, not "at least the ones we looked for": a command that
+      // archives the whole directory would pass the checks above and ship a
+      // scratch tree to the next reader.
+      expect(members, `the archive carries ${members.length} member(s)`).toHaveLength(5);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 

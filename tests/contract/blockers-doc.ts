@@ -41,6 +41,99 @@ export interface BlockerCheck {
   readonly line: string;
 }
 
+/**
+ * The line that names who owns a blocker and by when.
+ *
+ * A blocker page that says "waiting on a person" is a page where every row has
+ * an owner and no row has a name: a role does not run a command on a Tuesday
+ * afternoon. The owner is kept as written so a failure can quote it, and the
+ * deadline is kept as a literal for the same reason the 最近核对 date is — a
+ * placeholder has to be reported as the text the document carries, not as
+ * `NaN`.
+ */
+export interface OwnerLine {
+  /** The person's name or handle, as written. */
+  readonly owner: string;
+  /** The `YYYY-MM-DD` the owner committed to, as written. */
+  readonly deadline: string;
+  /** The whole line, so a failure can point at it. */
+  readonly line: string;
+}
+
+/** The marker an owner line starts from. */
+const OWNER_MARKER = '**责任人**：';
+
+/** The marker the deadline half of that line starts from. */
+const DEADLINE_MARKER = '**截止**：';
+
+/**
+ * Words that name a role rather than a person.
+ *
+ * The page used to say "第一顺位是仓库所有者", which reads as an owner and is
+ * not one: nobody is on the hook, and the sentence survives every round. These
+ * are the shapes a placeholder takes in this repository's documents, plus the
+ * em dash the record tables use for "nobody yet".
+ */
+const PLACEHOLDER_OWNERS = new Set([
+  '—',
+  '-',
+  '–',
+  'TBD',
+  'TODO',
+  'tbd',
+  'todo',
+  '待定',
+  '某人',
+  '负责人',
+  '仓库所有者',
+  'n/a',
+  'N/A',
+]);
+
+/**
+ * Every owner line in a section body, in the order they appear.
+ *
+ * Read from the body rather than from the whole page so the same parser serves
+ * `docs/blockers.md` and the walkthrough's "nobody has signed" section: both
+ * ask "who is on the hook, and by when", and two parsers would let one document
+ * drift into a shape the other gate cannot read.
+ */
+export function ownerLines(text: string): OwnerLine[] {
+  const lines: OwnerLine[] = [];
+  for (const line of text.split('\n')) {
+    const at = line.indexOf(OWNER_MARKER);
+    if (at === -1) continue;
+    const after = line.slice(at + OWNER_MARKER.length);
+    const owner = (after.split('｜')[0] ?? '').trim();
+    const deadlineAt = line.indexOf(DEADLINE_MARKER);
+    const deadline =
+      deadlineAt === -1
+        ? ''
+        : (/^\S+/u.exec(line.slice(deadlineAt + DEADLINE_MARKER.length))?.[0] ?? '').replace(
+            /[）)。，,]+$/u,
+            '',
+          );
+    lines.push({ owner, deadline, line });
+  }
+  return lines;
+}
+
+/**
+ * Whether an owner cell names a role, a placeholder, or nobody at all.
+ *
+ * A name is one token: `castorhrio` and `张三` pass, `仓库所有者 castorhrio` and
+ * `the repo owner` do not. That is the whole rule, and it is deliberately about
+ * shape rather than about a list of people — the gate cannot know who is
+ * available, only that the page named someone a reader could go and ask.
+ */
+export function isPlaceholderOwner(owner: string): boolean {
+  const trimmed = owner.trim();
+  if (trimmed.length === 0) return true;
+  if (PLACEHOLDER_OWNERS.has(trimmed)) return true;
+  // A role is a phrase; a name is a word. Whitespace is what separates them.
+  return /\s/u.test(trimmed);
+}
+
 /** The heading of each external blocker: `## <number>. <title>`. */
 const BLOCKER_HEADING = /^## \d+\. /;
 

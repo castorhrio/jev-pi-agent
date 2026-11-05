@@ -83,6 +83,10 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { STATE_SCENARIOS } from '../../apps/desktop/src/renderer/src/dev/scenarios';
 import { walkthroughScreenshots } from '../../scripts/screenshot-sources.mjs';
+// The owner/deadline parser is shared with `blocker-freshness.test.ts`: both
+// documents ask "who is on the hook, and by when", and two parsers would let one
+// of them drift into a shape the other gate cannot read.
+import { isPlaceholderOwner, ownerLines, utcDays } from './blockers-doc.ts';
 
 const REPO_ROOT = join(import.meta.dirname, '..', '..');
 const WALKTHROUGH_PATH = join(REPO_ROOT, 'docs', 'state-walkthrough.md');
@@ -1305,6 +1309,339 @@ describe('the five states have criteria a person can answer', () => {
   });
 });
 
+/** The heading of the answer sheet: ten images, three questions each. */
+const QUICK_HEADING = '## 10 分钟速查表：十张图 × 三问';
+
+/** The heading of the section that says who is supposed to sign. */
+const UNSIGNED_HEADING = '## 还没有人签';
+
+/** One row of the answer sheet: `| 7 | `path` | question | 是 / 否 / 说不清 |`. */
+const QUICK_ROW = /^\|\s*(\d+)\s*\|\s*`(docs\/screenshots\/[^`]+\.png)`\s*\|\s*(.+?)\s*\|\s*(.+?)\s*\|$/;
+
+/** The only three answers the sheet accepts. */
+const QUICK_ANSWER = '是 / 否 / 说不清';
+
+/** The sentence that makes 「说不清」 a failure rather than a shrug. */
+const UNSURE_RULE = '答「说不清」按**未过**算';
+
+/** The shortest question that can still be a question rather than a word. */
+const MIN_QUESTION = 6;
+
+/**
+ * Prose with the markdown emphasis removed and the wrapping collapsed.
+ *
+ * The criteria are written with `**…**` around the load-bearing half and are
+ * wrapped across lines; the answer sheet quotes them as plain sentences. Both
+ * sides are normalised the same way, so the comparison is about the words and
+ * not about where a line happened to break.
+ */
+function normalizeProse(text: string): string {
+  return text.replace(/\*\*/g, '').replace(/\s+/g, ' ').trim();
+}
+
+/** One row of the answer sheet, as read. */
+interface QuickRow {
+  readonly number: number;
+  readonly shot: string;
+  readonly question: string;
+  readonly answer: string;
+}
+
+/** The answer sheet's rows, in document order. */
+function quickRows(section: string): QuickRow[] {
+  const rows: QuickRow[] = [];
+  for (const line of section.split('\n')) {
+    const match = QUICK_ROW.exec(line.trim());
+    if (match === null) continue;
+    rows.push({
+      number: Number(match[1]),
+      shot: match[2]!,
+      question: match[3]!,
+      answer: match[4]!,
+    });
+  }
+  return rows;
+}
+
+/**
+ * Every way the answer sheet stops being the criteria, asked of the images.
+ *
+ * The walkthrough has had fifteen criteria and a ten-image script for several
+ * rounds, and the two were only ever joined by a sentence: "每张图回答它那一态
+ * 的三条判据". A signer therefore had to hold three criteria in their head while
+ * looking at an image, and a criterion that changed left the sheet saying
+ * something the criteria no longer said — with nothing to notice it.
+ *
+ * The sheet is the join, written down: thirty rows, one question each, and every
+ * question has to be a phrase from the criterion it claims to be asking. That is
+ * what makes "the table and the criteria are one source" a red run instead of a
+ * promise, and it is why the questions are quoted rather than paraphrased.
+ */
+function quickProblems(markdown: string, repository: Repository): string[] {
+  const problems: string[] = [];
+  const body = sectionBody(markdown, QUICK_HEADING);
+  if (body === undefined) {
+    return [
+      `docs/state-walkthrough.md: no \`${QUICK_HEADING}\` section, so a signer is back to ` +
+        'holding three criteria in their head while looking at an image',
+    ];
+  }
+  if (!body.includes(UNSURE_RULE)) {
+    problems.push(
+      `docs/state-walkthrough.md: the answer sheet no longer says ${UNSURE_RULE} — without it ` +
+        '「说不清」 reads as a third kind of answer instead of a failure',
+    );
+  }
+
+  // The order the sheet has to follow: state by state, wide image then narrow,
+  // three questions each. Read from the state sections rather than restated, so
+  // a state that gains a picture moves the sheet with it.
+  const found = sections(markdown);
+  const expected: Array<{ state: string; shot: string; criterion: string }> = [];
+  for (const state of STATE_SCENARIOS) {
+    const section = found.get(state);
+    if (section === undefined) continue;
+    const shots = [...new Set(screenshotsIn(section))];
+    const wide = shots.find((shot) => !TIGHT_NAME.test(shot));
+    const tight = shots.find((shot) => TIGHT_NAME.test(shot));
+    const items = checklistItems(section);
+    for (const shot of [wide, tight]) {
+      if (shot === undefined) continue;
+      for (const criterion of items) expected.push({ state, shot, criterion });
+    }
+  }
+
+  const rows = quickRows(body);
+  if (rows.length !== expected.length) {
+    problems.push(
+      `docs/state-walkthrough.md: the answer sheet has ${rows.length} row(s) and the walk is ` +
+        `${expected.length} (${STATE_SCENARIOS.length} states × 2 sizes × 3 criteria) — a sheet ` +
+        'with a row missing is a question nobody answers',
+    );
+  }
+
+  for (const [index, row] of rows.entries()) {
+    const want = expected[index];
+    if (want === undefined) {
+      problems.push(
+        `docs/state-walkthrough.md: the answer sheet has a row ${row.number} beyond the walk ` +
+          `(${row.shot}), so it asks about an image the script does not send anyone to`,
+      );
+      continue;
+    }
+    if (row.shot !== want.shot) {
+      problems.push(
+        `docs/state-walkthrough.md: answer sheet row ${row.number} is about \`${row.shot}\` and ` +
+          `the walk order says \`${want.shot}\` — the sheet and the five-minute script ` +
+          'disagree about which image comes next',
+      );
+      continue;
+    }
+    if (row.answer !== QUICK_ANSWER) {
+      problems.push(
+        `docs/state-walkthrough.md: answer sheet row ${row.number} offers \`${row.answer}\` as ` +
+          `its answers; the only three are \`${QUICK_ANSWER}\``,
+      );
+    }
+    if (row.question.length < MIN_QUESTION) {
+      problems.push(
+        `docs/state-walkthrough.md: answer sheet row ${row.number} asks ` +
+          `\`${row.question}\`, which is too short to be the criterion it claims to be`,
+      );
+      continue;
+    }
+    if (!normalizeProse(want.criterion).includes(normalizeProse(row.question))) {
+      problems.push(
+        `docs/state-walkthrough.md: answer sheet row ${row.number} asks ` +
+          `\`${row.question}\`, which is not a phrase from the \`${want.state}\` criterion it ` +
+          'is supposed to be asking — the criteria moved and the sheet did not',
+      );
+    }
+    if (!repository.fileExists(row.shot)) {
+      problems.push(
+        `docs/state-walkthrough.md: answer sheet row ${row.number} points at \`${row.shot}\`, ` +
+          'which is not in the repository',
+      );
+    }
+  }
+  return problems;
+}
+
+/**
+ * Every way the walkthrough stops naming who is supposed to sign it.
+ *
+ * The page has said "等一个人" for several rounds, which is a role: nobody can be
+ * asked whether they have done it. The owner line is the same shape the blockers
+ * page uses, parsed by the same function, so the two documents cannot drift into
+ * two spellings of "who is on the hook".
+ */
+function signerProblems(markdown: string): string[] {
+  const body = sectionBody(markdown, UNSIGNED_HEADING);
+  if (body === undefined) {
+    return [
+      `docs/state-walkthrough.md: no \`${UNSIGNED_HEADING}\` section, so the page says nobody ` +
+        'has signed without saying who is supposed to',
+    ];
+  }
+  const owners = ownerLines(body);
+  if (owners.length === 0) {
+    return [
+      'docs/state-walkthrough.md: the unsigned section carries no **责任人** line, so "等一个人" ' +
+        'is still a role rather than a person',
+    ];
+  }
+  if (owners.length > 1) {
+    return [
+      `docs/state-walkthrough.md: the unsigned section carries ${owners.length} **责任人** lines; ` +
+        'one walkthrough has one signer',
+    ];
+  }
+  const [owner] = owners as [ReturnType<typeof ownerLines>[number]];
+  const problems: string[] = [];
+  if (isPlaceholderOwner(owner.owner)) {
+    problems.push(
+      `docs/state-walkthrough.md: the unsigned section names \`${owner.owner}\` as its 责任人, ` +
+        'which is a role or a placeholder rather than a person',
+    );
+  }
+  if (owner.deadline.length === 0) {
+    problems.push(
+      'docs/state-walkthrough.md: the unsigned section names a 责任人 without a **截止** date, ' +
+        'so "before the defence" is the only thing the reader can hold them to',
+    );
+  } else if (utcDays(owner.deadline) === null) {
+    problems.push(
+      `docs/state-walkthrough.md: the unsigned section writes 截止 as \`${owner.deadline}\`, ` +
+        'which is not a real `YYYY-MM-DD` day on the calendar',
+    );
+  }
+  return problems;
+}
+
+describe('the walkthrough is a form somebody can fill in ten minutes', () => {
+  it('the answer sheet asks the criteria, of the ten images, in walk order', () => {
+    // Thirty rows: five states, two sizes, three criteria. The questions are
+    // quoted from the criteria rather than paraphrased, so this case is what
+    // makes "the table and the criteria are one source" a red run.
+    const problems = quickProblems(walkthrough, REPOSITORY);
+    expect(
+      problems,
+      `the answer sheet and the criteria disagree:\n  ${problems.join('\n  ')}`,
+    ).toEqual([]);
+    const body = sectionBody(walkthrough, QUICK_HEADING);
+    expect(body, `no \`${QUICK_HEADING}\` section`).toBeDefined();
+    expect(quickRows(body!)).toHaveLength(STATE_SCENARIOS.length * 2 * 3);
+  });
+
+  it('reports a question the criteria no longer say', () => {
+    // The drift this sheet exists to catch: a criterion is reworded, the sheet
+    // keeps asking the old question, and the signer answers a question the
+    // document no longer asks.
+    const drifted = walkthrough.replace(
+      '| 1 | `docs/screenshots/empty.png` | 引导语在折叠线以上，且比周围文字更醒目 |',
+      '| 1 | `docs/screenshots/empty.png` | 引导语要够醒目 |',
+    );
+    expect(drifted, 'the answer sheet row this case edits is gone').not.toBe(walkthrough);
+    const problems = quickProblems(drifted, REPOSITORY);
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toContain('is not a phrase from the `empty` criterion');
+  });
+
+  it('reports a sheet that skips a row, and one that walks the images out of order', () => {
+    const skipped = walkthrough.replace(
+      '| 4 | `docs/screenshots/states/empty-768x700.png` | 引导语在折叠线以上，且比周围文字更醒目 | 是 / 否 / 说不清 |\n',
+      '',
+    );
+    expect(skipped, 'the answer sheet row this case removes is gone').not.toBe(walkthrough);
+    // The count is reported first, and every row after the gap is then off by
+    // one — which is the point: a missing row is not one unanswered question,
+    // it is every question below it answered about the wrong image.
+    const missing = quickProblems(skipped, REPOSITORY);
+    expect(missing[0]).toContain('the answer sheet has 29 row(s)');
+    expect(missing.length).toBeGreaterThan(1);
+
+    // Same rows, two of them swapped: the count is right and the order is not,
+    // which is the failure a count alone cannot see.
+    const swapped = walkthrough
+      .replace(
+        '| 1 | `docs/screenshots/empty.png` | 引导语在折叠线以上，且比周围文字更醒目 | 是 / 否 / 说不清 |',
+        '| 1 | `docs/screenshots/states/empty-768x700.png` | 引导语在折叠线以上，且比周围文字更醒目 | 是 / 否 / 说不清 |',
+      )
+      .replace(
+        '| 4 | `docs/screenshots/states/empty-768x700.png` | 引导语在折叠线以上，且比周围文字更醒目 | 是 / 否 / 说不清 |',
+        '| 4 | `docs/screenshots/empty.png` | 引导语在折叠线以上，且比周围文字更醒目 | 是 / 否 / 说不清 |',
+      );
+    expect(swapped, 'the answer sheet rows this case swaps are gone').not.toBe(walkthrough);
+    const outOfOrder = quickProblems(swapped, REPOSITORY);
+    expect(outOfOrder.some((problem) => problem.includes('the walk order says'))).toBe(true);
+  });
+
+  it('reports a fourth answer, and a sheet that dropped the 说不清 rule', () => {
+    // 「说不清」 is the answer that has to count as a failure. A sheet that
+    // offers 「还行」 instead is a sheet that lets a shrug be filed as a pass.
+    const fourth = walkthrough.replace(
+      '| 2 | `docs/screenshots/empty.png` | 一眼能数出三步，读完知道第一步要做什么 | 是 / 否 / 说不清 |',
+      '| 2 | `docs/screenshots/empty.png` | 一眼能数出三步，读完知道第一步要做什么 | 是 / 否 / 还行 |',
+    );
+    expect(fourth, 'the answer sheet row this case edits is gone').not.toBe(walkthrough);
+    expect(quickProblems(fourth, REPOSITORY)).toEqual([
+      expect.stringContaining('the only three are'),
+    ]);
+
+    const shrug = walkthrough.replace(UNSURE_RULE, '答「说不清」也算看过');
+    expect(shrug, 'the 说不清 rule this case edits is gone').not.toBe(walkthrough);
+    expect(quickProblems(shrug, REPOSITORY)).toEqual([
+      expect.stringContaining('no longer says'),
+    ]);
+  });
+
+  it('reports a sheet that is gone altogether', () => {
+    const problems = quickProblems(
+      walkthrough.replace(QUICK_HEADING, '## 走查表'),
+      REPOSITORY,
+    );
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toContain(QUICK_HEADING);
+  });
+
+  it('names the person who is supposed to sign, and the day they committed to', () => {
+    // The page said "等一个人" for several rounds. A role cannot be asked
+    // whether it has looked, so the section names a person and a date — the
+    // same shape the blockers page uses, parsed by the same function.
+    expect(signerProblems(walkthrough)).toEqual([]);
+    const body = sectionBody(walkthrough, UNSIGNED_HEADING);
+    expect(body, `no \`${UNSIGNED_HEADING}\` section`).toBeDefined();
+    const [owner] = ownerLines(body!) as ReturnType<typeof ownerLines>;
+    expect(owner, 'the unsigned section has no 责任人 line').toBeDefined();
+    expect(isPlaceholderOwner(owner.owner)).toBe(false);
+    expect(utcDays(owner.deadline)).not.toBeNull();
+  });
+
+  it('reports a role where a name belongs, and a deadline that is not a day', () => {
+    const role = walkthrough.replace(
+      '- **责任人**：castorhrio ｜ **截止**：2026-11-19',
+      '- **责任人**：仓库所有者 ｜ **截止**：2026-11-19',
+    );
+    expect(role, 'the owner line this case edits is gone').not.toBe(walkthrough);
+    expect(signerProblems(role)).toEqual([
+      expect.stringContaining('is a role or a placeholder rather than a person'),
+    ]);
+
+    const undated = walkthrough.replace(
+      '- **责任人**：castorhrio ｜ **截止**：2026-11-19',
+      '- **责任人**：castorhrio',
+    );
+    expect(signerProblems(undated)).toEqual([
+      expect.stringContaining('without a **截止** date'),
+    ]);
+
+    const impossible = walkthrough.replace('**截止**：2026-11-19', '**截止**：2026-02-30');
+    expect(signerProblems(impossible)).toEqual([
+      expect.stringContaining('writes 截止 as `2026-02-30`'),
+    ]);
+  });
+});
+
 /**
  * The handover: the ten images, the fifteen questions, and the row that comes back.
  *
@@ -1440,8 +1777,8 @@ describe('the ten images can be handed to somebody who has not installed the app
     // under a six-column header is a row that silently shifts every answer one
     // column to the left.
     const short = walkthrough.replace(
-      '| YYYY-MM-DD | 你的名字 | 10 张（五态 × 两个尺寸） | 15 条全满足 / 第 N 条不满足 | 无 / <屏幕上看到什么> | 五态判据全满足 / 第 N 条不满足：<屏幕上看到什么> |',
-      '| YYYY-MM-DD | 你的名字 | 10 张（五态 × 两个尺寸） | 15 条全满足 / 第 N 条不满足 | 无 / <屏幕上看到什么> |',
+      '| YYYY-MM-DD | 你的名字 | 10 张（五态 × 两个尺寸） | 30 条全满足 / 第 N 条不满足 | 无 / <屏幕上看到什么> | 五态判据全满足 / 第 N 条不满足：<屏幕上看到什么> |',
+      '| YYYY-MM-DD | 你的名字 | 10 张（五态 × 两个尺寸） | 30 条全满足 / 第 N 条不满足 | 无 / <屏幕上看到什么> |',
     );
     expect(short, 'the receipt template row this case edits is gone').not.toBe(walkthrough);
     const problems = handoffProblems(short, REPOSITORY, walkthroughScreenshots());
