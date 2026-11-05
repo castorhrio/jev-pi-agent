@@ -946,6 +946,81 @@ export const MEASURE = `(() => {
           listStyle: getComputedStyle(list).listStyleType,
         };
       })(),
+      /*
+       * The self-check card on Diagnostics, measured rather than eyeballed.
+       *
+       * That card carries three commands and the line each one prints. The
+       * expected lines are the scripts' own output, so their length is not
+       * something this repository decides - the feed one is a 250-character
+       * sentence - and a card that lets one of them push the pane sideways, or
+       * a code block that overflows its own card, is the same defect class as
+       * the 70-character prose line: fine in the source, unreadable on screen.
+       *
+       * The line count is per character, for the reason the prose measurement
+       * gives: an element's own client rects are not a line count once inline
+       * boxes are involved. Here it answers one question - how many lines did
+       * this expected sentence wrap to - so a card that turned three lines into
+       * nine is a number rather than an opinion.
+       *
+       * null when the card is not on screen, so a surface that lost it cannot
+       * be read as one that has an empty card.
+       */
+      selfCheck: (() => {
+        const card = document.querySelector('.env-check');
+        if (card === null) return null;
+        const cardRect = card.getBoundingClientRect();
+        const lineCount = (el) => {
+          const tops = [];
+          const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+          let node = walker.nextNode();
+          while (node !== null) {
+            const value = node.textContent || '';
+            for (let i = 0; i < value.length; i += 1) {
+              if (/\\s/.test(value[i])) continue;
+              const range = document.createRange();
+              range.setStart(node, i);
+              range.setEnd(node, i + 1);
+              const box = range.getBoundingClientRect();
+              if (box.width === 0 && box.height === 0) continue;
+              if (!tops.some((top) => Math.abs(top - box.top) <= 2)) tops.push(box.top);
+            }
+            node = walker.nextNode();
+          }
+          return tops.length;
+        };
+        const codes = Array.from(card.querySelectorAll('.code'));
+        const expected = Array.from(card.querySelectorAll('.env-check-expected'));
+        return {
+          items: card.querySelectorAll('.env-check-item').length,
+          codes: codes.length,
+          expected: expected.length,
+          codeOverflow: codes
+            .filter((el) => el.scrollWidth > el.clientWidth + 1)
+            .map((el) => ({
+              element: describe(el),
+              scrollWidth: el.scrollWidth,
+              clientWidth: el.clientWidth,
+            })),
+          codeOutsideCard: codes
+            .filter((el) => {
+              const rect = el.getBoundingClientRect();
+              return rect.right > cardRect.right + 1 || rect.left < cardRect.left - 1;
+            })
+            .map((el) => ({
+              element: describe(el),
+              outRight: round(el.getBoundingClientRect().right - cardRect.right),
+            })),
+          expectedLines: expected.map((el) => lineCount(el)),
+          expectedOverflow: expected
+            .filter((el) => el.scrollWidth > el.clientWidth + 1)
+            .map((el) => ({
+              element: describe(el),
+              scrollWidth: el.scrollWidth,
+              clientWidth: el.clientWidth,
+            })),
+          cardOverflow: round(card.scrollWidth - card.clientWidth),
+        };
+      })(),
     },
     horizontalOverflow: round(horizontalOverflow),
     escaping: escaping.slice(0, 12),

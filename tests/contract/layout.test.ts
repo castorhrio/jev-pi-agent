@@ -206,6 +206,24 @@ interface Measurement {
       stepMarkers: number;
       listStyle: string;
     } | null;
+    /**
+     * The self-check card on Diagnostics, when that surface is on screen.
+     *
+     * The three expected lines are the scripts' own output — the feed one is a
+     * 250-character sentence — so their length is not something this repository
+     * decides. `null` when the card is not on screen, so a surface that lost it
+     * cannot be read as one that has an empty card.
+     */
+    selfCheck: {
+      items: number;
+      codes: number;
+      expected: number;
+      codeOverflow: Array<{ element: string; scrollWidth: number; clientWidth: number }>;
+      codeOutsideCard: Array<{ element: string; outRight: number }>;
+      expectedLines: number[];
+      expectedOverflow: Array<{ element: string; scrollWidth: number; clientWidth: number }>;
+      cardOverflow: number;
+    } | null;
   };
   horizontalOverflow: number;
   escaping: Array<{ element: string; overflowRight: number; overflowLeft: number; text: string }>;
@@ -1292,6 +1310,81 @@ describe('layout in a real browser engine', () => {
     // check, so the sweep also has to prove it measured something.
     const empty = panels.filter((m) => m.textBoxes < 5).map((m) => `${m.surface} (${m.textBoxes})`);
     expect(empty, 'these surfaces had almost no text to measure').toEqual([]);
+  });
+
+  it('keeps the self-check card inside its own card, on both windows', () => {
+    /*
+     * The three external blockers used to be a card on Help, phrased as an
+     * account of what we had not done. They are now a section of Diagnostics —
+     * "here is a command you can run" — and this is the half of that move a
+     * person cannot check by reading the diff: the expected lines are the
+     * scripts' own output, and the feed one is a 250-character sentence. A card
+     * that lets one of them push the pane sideways, or a code block that
+     * overflows its own card, is the same defect class as the 70-character
+     * prose line — fine in the source, unreadable on screen.
+     *
+     * Measured at both windows the sweep visits, because the tight one is where
+     * a long unbroken sentence actually gives out.
+     */
+    const diagnostics = measurements.filter((m) => m.surface === 'diagnostics' && m.mounted);
+    expect(diagnostics.length, 'the sweep never visited the diagnostics surface').toBeGreaterThan(0);
+
+    for (const m of diagnostics) {
+      const card = m.content.selfCheck;
+      expect(card, `${m.label}: the self-check card is not on the diagnostics surface`).not.toBeNull();
+      if (card === null) continue;
+
+      // Not vacuous: three blockers, three commands, three expected lines.
+      expect(card.items, `${m.label}: the card shows ${card.items} block(s)`).toBe(3);
+      expect(card.codes, `${m.label}: the card shows ${card.codes} command block(s)`).toBe(3);
+      expect(card.expected, `${m.label}: the card shows ${card.expected} expected line(s)`).toBe(3);
+
+      expect(
+        card.codeOverflow,
+        `${m.label}: a command block is wider than its own box\n${lines(card.codeOverflow)}`,
+      ).toEqual([]);
+      expect(
+        card.codeOutsideCard,
+        `${m.label}: a command block sits outside the card\n${lines(card.codeOutsideCard)}`,
+      ).toEqual([]);
+      expect(
+        card.expectedOverflow,
+        `${m.label}: an expected line is clipped by its box\n${lines(card.expectedOverflow)}`,
+      ).toEqual([]);
+      expect(
+        card.cardOverflow,
+        `${m.label}: the card scrolls sideways by ${card.cardOverflow}px`,
+      ).toBeLessThanOrEqual(0);
+
+      /*
+       * Four lines is the ceiling, not a measurement: the longest expected line
+       * is a 250-character sentence, and a card that turns it into nine lines
+       * has stopped being a line you can read off the screen. The number is
+       * asserted rather than recorded so a stylesheet change that halves the
+       * card's width fails here instead of shipping.
+       */
+      for (const [index, count] of card.expectedLines.entries()) {
+        expect(
+          count,
+          `${m.label}: expected line ${index + 1} wrapped to ${count} lines`,
+        ).toBeLessThanOrEqual(4);
+      }
+    }
+
+    /*
+     * And it is not on Help any more. The move is the point of the change, and
+     * a copy left behind would be the second copy of one fact this repository
+     * keeps removing — with the extra twist that the two copies would be on two
+     * pages, so nobody would ever see them disagree.
+     */
+    const help = measurements.filter((m) => m.surface === 'help' && m.mounted);
+    expect(help.length, 'the sweep never visited the help surface').toBeGreaterThan(0);
+    for (const m of help) {
+      expect(
+        m.content.selfCheck,
+        `${m.label}: the self-check card is still on the help surface`,
+      ).toBeNull();
+    }
   });
 
   it('says it is loading instead of flashing an empty frame', () => {

@@ -1,5 +1,5 @@
 /**
- * The three external blockers, as the Help panel shows them.
+ * The three external blockers, as the Diagnostics panel shows them.
  *
  * ## Why this is a module and not three paragraphs in a component
  *
@@ -11,7 +11,7 @@
  *
  * On stage, nobody reads the page: the app is open, the reviewer asks the
  * question, and the answer has to be **on screen**. So the same three blocks
- * are rendered in Help → 本次演示的边界, and the risk is the obvious one — two
+ * are rendered in Diagnostics → 本机环境自检, and the risk is the obvious one — two
  * copies of one fact, drifting. The page keeps quoting a command that was
  * renamed, the panel keeps showing the old one, and the person on stage points
  * at a line that will never appear.
@@ -26,11 +26,11 @@
  * ## What is deliberately not here
  *
  * The one-sentence claim above each command. It is prose, so it lives in
- * `i18n.ts` (`help.boundary.<id>`) in both locales — the panel is bilingual and
- * the page is Chinese, and a Chinese sentence hardcoded in a shared module
- * would be an English UI showing Chinese. The gate pins the Chinese half to the
- * page's heading word for word; the English half is a translation and is
- * checked only for existing.
+ * `i18n.ts` (`diag.env.<id>`) in both locales — the panel is bilingual and the
+ * page is Chinese, and a Chinese sentence hardcoded in a shared module would be
+ * an English UI showing Chinese. The gate pins the Chinese half to the page's
+ * heading word for word; the English half is a hand-proofread sentence and is
+ * checked only for existing, because the page it mirrors is Chinese.
  *
  * Nor is the *reason* each blocker is still open. That is `docs/blockers.md`,
  * and a panel that restated it would be a third copy of a fact that already has

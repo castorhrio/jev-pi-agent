@@ -766,14 +766,28 @@ const zhCN: Dictionary = {
   'help.whatIsDecisionBody':
     '路由、风险、要不要继续这类判断，交给可替换的决策引擎完成：它只读状态摘要，返回带理由和置信度的结果。你能看到它为什么这么选，也能随时换成别的引擎。',
 
-  'help.boundary.title': '本次演示的边界',
-  'help.boundary.intro':
-    '这三条外部阻塞还没解除。每条下面是一条本机离线可跑的命令，和它打印的那一行——被问到「那你怎么证明」时，指着屏幕念，不要背计划。',
-  'help.boundary.feed': '一、feed 缺 sha256：让发布闸门自己说「不许发」。',
-  'help.boundary.windows': '二、Windows 未跑：一份手写报告为什么不算数。',
-  'help.boundary.states': '三、五态未签：先量「图还对着源码」。',
-  'help.boundary.footnote':
-    '这一块是只读的：它说明边界，不声称阻塞已经解除。解除之后，这三条会从 docs/demo-script.md 和这里一起消失。',
+  /*
+   * 本机环境自检：三条命令，用户自己跑。
+   *
+   * 这一块原来在帮助页，标题是「本次演示的边界」，语气是「我们还没做」。
+   * 帮助页回答的是「我该从哪开始」，而这三条回答的是「这台机器上现在是什么
+   * 状态」——那是诊断页的问题。搬过来之后语气也跟着换：不是交代欠账，是给出
+   * 一条你现在就能跑的命令和它该打印的那一行。
+   *
+   * 三条的句子仍是 docs/demo-script.md 那三个粗体标题的原文（逐字），
+   * tests/contract/demo-boundaries.test.ts 两个方向都核对；改这里就要改那一页。
+   */
+  'diag.env.title': '本机环境自检',
+  'diag.env.intro':
+    '下面三条命令都在本机离线可跑：不需要令牌，也不联网。每条给出命令和它打印的那一行——自己跑一遍，比读一段说明可靠。',
+  'diag.env.feed': '一、feed 缺 sha256：让发布闸门自己说「不许发」。',
+  'diag.env.windows': '二、Windows 未跑：一份手写报告为什么不算数。',
+  'diag.env.states': '三、五态未签：先量「图还对着源码」。',
+  'diag.env.footnote':
+    '这三条对应 docs/blockers.md 里还没解除的外部阻塞：它们说明边界，不声称已经解除。解除之后，这三条会从 docs/demo-script.md 和这里一起消失。',
+  'diag.env.copy': '复制命令',
+  'diag.env.copied': '已复制',
+  'diag.env.copyFailed': '复制失败',
 
   'error.title': '出错了',
   'error.bridge': 'UCAD 桥接不可用：preload 未加载，请重启应用。',
@@ -1534,14 +1548,26 @@ const enUS: Dictionary = {
   'help.whatIsDecisionBody':
     'Routing, risk, and "should we keep going" live in an independent plane, handled by replaceable decision engines. An engine only reads a state summary and returns a result with a rationale and a confidence, so you can always see why it chose what it chose — and swap in a different engine.',
 
-  'help.boundary.title': 'What this demo does not cover',
-  'help.boundary.intro':
-    'Three external blockers are still open. Each one below is a command that runs offline on this machine, plus the line it prints — when someone asks how you can prove it, read that line off the screen instead of describing a plan.',
-  'help.boundary.feed': '1. The feed has no sha256: let the release gate refuse to publish.',
-  'help.boundary.windows': '2. Windows has not been run: why a hand-written report does not count.',
-  'help.boundary.states': '3. The five states are unsigned: first check the images still match the source.',
-  'help.boundary.footnote':
-    'This block is read-only: it states the boundary, it does not claim the blockers are closed. When one closes, it disappears from docs/demo-script.md and from here together.',
+  /*
+   * The English half of the self-check, proofread by hand rather than
+   * translated clause by clause: the three headings used to read like a
+   * translation of the Chinese ("why a hand-written report does not count"),
+   * which is a sentence about our paperwork, not about the machine in front of
+   * the reader. `tests/contract/demo-boundaries.test.ts` only requires these to
+   * exist — the page they mirror is Chinese — so nothing but a reader keeps
+   * them honest, and this comment is the record that a reader did.
+   */
+  'diag.env.title': 'Check this machine yourself',
+  'diag.env.intro':
+    'These three commands run offline on this machine — no token, no network. Each one comes with the line it prints, so you can run it and read the answer instead of taking a description on trust.',
+  'diag.env.feed': '1. The feed has no sha256 — the release gate says so itself, and refuses to publish.',
+  'diag.env.windows': '2. Windows has not been run — and a hand-written report does not count as a run.',
+  'diag.env.states': '3. The five states are unsigned — first check the screenshots still match the source.',
+  'diag.env.footnote':
+    'These are the external blockers still open in docs/blockers.md. This block states the boundary; it does not claim they are closed. When one closes, it leaves docs/demo-script.md and this page together.',
+  'diag.env.copy': 'Copy command',
+  'diag.env.copied': 'Copied',
+  'diag.env.copyFailed': 'Copy failed',
 
   'error.title': 'Something went wrong',
   'error.bridge': 'UCAD bridge unavailable — the preload did not load. Please restart the app.',

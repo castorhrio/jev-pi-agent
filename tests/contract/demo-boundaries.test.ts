@@ -9,7 +9,7 @@
  *
  * On stage nobody reads the page. The app is open, the reviewer asks the
  * question, and the answer has to be on screen — so the same three blocks are
- * rendered in Help → 本次演示的边界. Two copies of one fact is exactly the shape
+ * rendered in Diagnostics → 本机环境自检. Two copies of one fact is exactly the shape
  * this repository keeps finding and removing: the page gets a reworded command,
  * the panel keeps showing the old one, and the person on stage points at a line
  * that will never appear. Every gate stays green, because each copy is
@@ -35,6 +35,13 @@
  *    list nobody renders is a list that cannot go stale — and cannot help
  *    anyone either.
  *
+ * The panel moved from Help to Diagnostics (the card was an account of our own
+ * release paperwork on the page that answers "where do I start"), and the
+ * dictionary keys moved with it: `help.boundary.*` → `diag.env.*`. The
+ * comparison is unchanged — the Chinese sentence above each command is still
+ * the page's bold heading, word for word — because the move was about which
+ * page carries the block, not about what it says.
+ *
  * ## What is deliberately not asserted
  *
  * Layout, wording of the English translation, or that the three commands still
@@ -56,14 +63,23 @@ import { DEGRADED_COMMANDS, DEGRADED_SECTION_HEADING, degradedBlocks, degradedSe
 
 const REPO_ROOT = join(import.meta.dirname, '..', '..');
 const DEMO_PATH = join(REPO_ROOT, 'docs', 'demo-script.md');
-const HELP_PATH = join(REPO_ROOT, 'apps', 'desktop', 'src', 'renderer', 'src', 'components', 'Help.tsx');
+const PANEL_PATH = join(
+  REPO_ROOT,
+  'apps',
+  'desktop',
+  'src',
+  'renderer',
+  'src',
+  'components',
+  'EnvSelfCheck.tsx',
+);
 
 /** The dictionary the panel reads its sentences from. */
 const ZH = dictionaryFor('zh-CN');
 const EN = dictionaryFor('en-US');
 
 /** The key a boundary's sentence lives under. */
-const claimKey = (id: string): string => `help.boundary.${id}`;
+const claimKey = (id: string): string => `diag.env.${id}`;
 
 /**
  * The page's bold heading for a block, with the markdown markers removed.
@@ -188,18 +204,18 @@ function boundaryProblems(
     ['the shared list', 'DEMO_BOUNDARIES'],
     ['the command', 'boundary.command'],
     ['the expected line', 'boundary.expected'],
-    ['the per-block sentence', 'help.boundary.${boundary.id}'],
+    ['the per-block sentence', 'diag.env.${boundary.id}'],
   ] as const) {
     if (!panelSource.includes(marker)) {
       problems.push(
-        `apps/desktop/src/renderer/src/components/Help.tsx: does not render ${what} ` +
+        `apps/desktop/src/renderer/src/components/EnvSelfCheck.tsx: does not render ${what} ` +
           `(\`${marker}\`), so the three blocks are on the page and not on the screen`,
       );
     }
   }
   if (!/DEMO_BOUNDARIES\s*\.\s*map\s*\(/.test(panelSource)) {
     problems.push(
-      'apps/desktop/src/renderer/src/components/Help.tsx: does not map over ' +
+      'apps/desktop/src/renderer/src/components/EnvSelfCheck.tsx: does not map over ' +
         '`DEMO_BOUNDARIES`, so the card cannot show one block per blocker',
     );
   }
@@ -208,7 +224,7 @@ function boundaryProblems(
 }
 
 const page = existsSync(DEMO_PATH) ? readFileSync(DEMO_PATH, 'utf8') : '';
-const panel = existsSync(HELP_PATH) ? readFileSync(HELP_PATH, 'utf8') : '';
+const panel = existsSync(PANEL_PATH) ? readFileSync(PANEL_PATH, 'utf8') : '';
 
 describe('the three blockers are on the page and on the screen', () => {
   it('the page and the panel agree about every block', () => {
@@ -269,7 +285,7 @@ describe('the three blockers are on the page and on the screen', () => {
     // The panel's sentence is the page's heading. Renaming one and not the
     // other is a one-word edit that leaves the person on stage reading a
     // sentence the page does not carry.
-    const drifted = { ...ZH, 'help.boundary.windows': '二、Windows 未跑：报告是文档。' };
+    const drifted = { ...ZH, 'diag.env.windows': '二、Windows 未跑：报告是文档。' };
     const problems = boundaryProblems(page, DEMO_BOUNDARIES, drifted, panel);
     expect(problems.some((problem) => problem.includes("has to be the page's sentence"))).toBe(
       true,
@@ -278,7 +294,7 @@ describe('the three blockers are on the page and on the screen', () => {
 
   it('reports a dictionary that lost a sentence', () => {
     const missing = { ...ZH };
-    delete missing['help.boundary.states'];
+    delete missing['diag.env.states'];
     const problems = boundaryProblems(page, DEMO_BOUNDARIES, missing, panel);
     expect(problems.some((problem) => problem.includes('renders the raw key'))).toBe(true);
   });
@@ -286,7 +302,11 @@ describe('the three blockers are on the page and on the screen', () => {
   it('reports a panel that stopped rendering the commands', () => {
     // The card can keep its title and its footnote and lose the list, and every
     // comparison above would still be green — about a list nobody reads.
-    const stripped = panel.replace('{boundary.command}', '');
+    // Every occurrence, not just the rendered one: the panel also passes the
+    // command to the copy button and to its accessible name, and a case that
+    // removed one of the three would leave the marker present and the check
+    // green about a card that no longer shows the command.
+    const stripped = panel.replaceAll('boundary.command', '');
     expect(stripped, 'the panel no longer renders `boundary.command`').not.toBe(panel);
     const problems = boundaryProblems(page, DEMO_BOUNDARIES, ZH, stripped);
     expect(problems.some((problem) => problem.includes('does not render the command'))).toBe(true);

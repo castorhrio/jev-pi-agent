@@ -12,6 +12,7 @@ import type { Locale } from '../../../shared/i18n';
 import type { AppData } from '../state/hooks';
 import type { SessionViewState } from '../state/session-reducer';
 import { ReadFailure } from './ReadFailure';
+import { EnvSelfCheck } from './EnvSelfCheck';
 import { describeError } from '../error-message';
 import { useUpdateController } from '../update-controller';
 
@@ -1041,6 +1042,19 @@ export function DiagnosticsPanel({ data }: { data: AppData }): JSX.Element {
       </div>
         </>
       )}
+
+      {/*
+       * The self-check sits *outside* the `d === null` branch on purpose.
+       *
+       * Everything above is a statement about the runtime, and a failed
+       * `diagnostics.info` makes all of it unknown — which is why that branch
+       * renders a failure instead of four cards of dashes. These three commands
+       * are not a statement about the runtime: they are commands the user runs
+       * in a terminal, and they work whether or not this app could read its own
+       * database. Hiding them behind a successful read would take the one
+       * section that still helps away at exactly the moment the user needs it.
+       */}
+      <EnvSelfCheck />
     </div>
   );
 }

@@ -7,6 +7,7 @@
     "apps/desktop/src/renderer/src/components/Composer.tsx": "sha256:62908f43f2893dc7dd5f2b38f438e5b1f3ab86d6ccf49163a9b70c1dcc179e8a",
     "apps/desktop/src/renderer/src/components/ContextDrawer.tsx": "sha256:28c7afbd318ffd8f9bad7a6b3d03abec89df56b8292e144aa7883ee526c1d81b",
     "apps/desktop/src/renderer/src/components/DecisionPanel.tsx": "sha256:eee9cb79d42e66a02da59e9c3ef6ae8768c40b0ca1e21903ab5efa43de15f8a1",
+    "apps/desktop/src/renderer/src/components/EnvSelfCheck.tsx": "sha256:6eaf6442fba47b5c5f7d8bc328d37f1fcfd4b282df6bb3907964083785ee15f4",
     "apps/desktop/src/renderer/src/components/FileEditor.tsx": "sha256:009458a56a8897601b39bcf3ef47e2becfb2fc1a0ca46e4c3b60d9b7352a0920",
     "apps/desktop/src/renderer/src/components/HandoffPanel.tsx": "sha256:ed45779d5be4f9e08d5040276e466acb07787d3ca6945033ff4a674f2fb0035d",
     "apps/desktop/src/renderer/src/components/Help.tsx": "sha256:3e478ff3bb31b660add18a3850f5ffd960661ed6a22d3c84c0c246ed5a5de32f",
@@ -19,7 +20,7 @@
     "apps/desktop/src/renderer/src/components/PreviewPane.tsx": "sha256:b7b83d61f07eab8bc2d4d0a816fe866c3eaa344e0aa090f41541c1a0729e99b4",
     "apps/desktop/src/renderer/src/components/ReadFailure.tsx": "sha256:3f5add988ba69404ecad52048b6082a45cf9200c6025962ecff4d52d480a5e31",
     "apps/desktop/src/renderer/src/components/RecentProjects.tsx": "sha256:c64823ea1ee7c8b48ebcb45c4e25260172e9471193b19a825da3c917eaedea83",
-    "apps/desktop/src/renderer/src/components/Settings.tsx": "sha256:7c23b0df779a964355f579a044879ee7f6814207540c3ef161bbd361691ed95f",
+    "apps/desktop/src/renderer/src/components/Settings.tsx": "sha256:1eb4f89a706f0ef7ecda659a5994a55c47c13dc10d103fead3d4bed58e17e8c5",
     "apps/desktop/src/renderer/src/components/StatusBar.tsx": "sha256:75daeb7a03648c3ba1156c52abc19769fe75309a0e9704c4b1a03c7abf706673",
     "apps/desktop/src/renderer/src/components/StoragePanel.tsx": "sha256:f800147e7d9fc847c01abf59656261a59e7bf096fe7491559dea0d9a49f3ae77",
     "apps/desktop/src/renderer/src/components/TerminalPanel.tsx": "sha256:e0327ce7daae71144768f46eea5b88725082e03c82ee4171d539348f2d5135b4",
@@ -33,7 +34,7 @@
     "apps/desktop/src/renderer/src/state/session-reducer.ts": "sha256:e82390a35ca33d11b22652ddbc6a22e7bec5024d1430c6d85ca280c69ed01410",
     "apps/desktop/src/renderer/src/styles.css": "sha256:f0c9f162589ac1952d8fad71833c48d2daa7d38428e5bcecc0813b24d144255f",
     "apps/desktop/src/renderer/src/update-controller.tsx": "sha256:a7f96869b392804ee90a67877732d3ccf63ebbc33969ec7dea195830981586ab",
-    "apps/desktop/src/shared/i18n.ts": "sha256:5920621d015c43e0a25ff24e97ba195f564230fb990e1141bf3312d7165a4d7b"
+    "apps/desktop/src/shared/i18n.ts": "sha256:3d6e82278a95e0f804afbbea8daf92ba1287e8f157312e6f37fca61ee53d83fe"
   },
   "screenshots": {
     "docs/screenshots/chat.png": "sha256:d9490b3da03231833ce39d0ffec6e6c8a9085065f9315c1082360c3dc1122624",

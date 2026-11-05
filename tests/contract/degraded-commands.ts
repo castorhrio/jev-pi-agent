@@ -43,8 +43,9 @@ export const DEGRADED_SECTION_HEADING = '### 三条阻塞的现场降级路径';
  *
  * Derived from `apps/desktop/src/shared/demo-boundaries.ts` rather than
  * restated, because the same three commands are now also **on screen**: the
- * Help panel renders them so the person on stage can point at one instead of
- * reciting the page. A second copy here would let the panel and the count gate
+ * Diagnostics panel renders them so the person on stage can point at one
+ * instead of reciting the page. A second copy here would let the panel and the
+ * count gate
  * disagree about how many blockers there are — the panel showing three while
  * this list counts two, and every assertion in both gates staying green.
  * `tests/contract/demo-boundaries.test.ts` compares the list against the page's
