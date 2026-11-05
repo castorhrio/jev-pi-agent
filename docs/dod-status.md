@@ -99,15 +99,21 @@
 少一条、改一个旗标、把退出码删掉，红的是这一节，并指名是哪一条。
 
 ```bash
+node scripts/publish-feed.mjs --rehearse                           # 退出 0 = 四条命令与期望输出都打印出来，什么都没写
 node scripts/publish-feed.mjs --preflight                          # 退出 0 = 线上那份还是坏的（方向是反的）
 node scripts/publish-feed.mjs --dry-run                            # 退出 0 = 计划打印完，什么都没写
 GITHUB_TOKEN=… node scripts/publish-feed.mjs --apply --verify      # 退出 0 = 换好了，判据行是 PASS —
 node scripts/verify-release-feed.mjs                               # 退出 0 = 读的一方复核通过
 ```
 
-四条命令的退出码都是 0，但 `--preflight` 的 0 与其余三条的 0 意思相反：它回答的是「线上那份
+五条命令的退出码都是 0，但 `--preflight` 的 0 与其余四条的意思相反：它回答的是「线上那份
 **还是坏的**吗」，所以 0 是「还是坏的，接着往下走」，1 是「已经不是坏的了」。这条反向语义写在
 `docs/release/REPLACE-FEED.md` 第 0 步里，这里只重复结论，不重复理由。
+
+第一条 `--rehearse` 是这一轮补的：它把下面四条命令与各自的期望输出一次打印出来，**不联网、
+不需要令牌、不写任何文件**，所以「有令牌那天照着敲会看到什么」在拿到令牌之前就能读一遍、也能被
+门禁比对（`tests/contract/publish-rehearsal.test.ts`）。它证明的是**运行手册完整**，不是线上那份
+已经被换掉——那两行 `PASS —` 在预演里自己写着 `a promise, not a measurement`。
 
 跑完之后，回执表加一行（日期、`第 1 节`、`GITHUB_TOKEN=… node scripts/publish-feed.mjs --apply --verify`、
 `0`、`docs/manual-verification.md`），并把「未关闭」里第 1 节那一行删掉——两处一起动，只动一处会红。

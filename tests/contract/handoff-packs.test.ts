@@ -103,6 +103,11 @@ const PACKS: readonly Pack[] = [
       { script: 'scripts/publish-feed.mjs', text: 'the published feed is still the broken one' },
       { script: 'scripts/publish-feed.mjs', text: 'writes: none — this run only read the published document' },
       { script: 'scripts/verify-release-feed.mjs', text: 'warning(s), nothing the app would refuse' },
+      // The rehearsal section: the two lines that say what the block is. A page
+      // that quoted a rehearsal without saying it touches nothing would read as
+      // a run that had already happened, which is the one thing it is not.
+      { script: 'scripts/publish-feed.mjs', text: 'this run touches nothing' },
+      { script: 'scripts/publish-feed.mjs', text: 'verdict: the runbook is complete' },
     ],
   },
   {

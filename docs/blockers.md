@@ -40,7 +40,16 @@
 
 **解除命令**
 
-先看——不联网、不写文件、不上传，把第二步要做的事按顺序打印出来：
+先离线预演——四条命令与各自的期望输出一次打印出来，不联网、不需要令牌、不写任何文件：
+
+```bash
+node scripts/publish-feed.mjs --rehearse
+```
+
+它退出 0 说的是「运行手册完整」，不是「线上那份已经换掉」：预演里那两行 `PASS —` 自己写着
+`a promise, not a measurement`。逐字输出在 `docs/release/REPLACE-FEED.md` 的「离线预演」一节。
+
+再看——不联网、不写文件、不上传，把第二步要做的事按顺序打印出来：
 
 ```bash
 node scripts/publish-feed.mjs --dry-run

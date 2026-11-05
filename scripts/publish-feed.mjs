@@ -73,9 +73,35 @@
  *    is nothing to replace and running `--apply` would be a change nobody
  *    needed.
  *
+ * ## `--rehearse`: the runbook, read before the day it is used
+ *
+ * The sequence that closes 第 1 节 is four commands, and it is written in three
+ * documents (`docs/dod-status.md` `### 有令牌时`, `docs/release/REPLACE-FEED.md`,
+ * `docs/blockers.md` 第 1 节). None of them could be *run* on this machine: the
+ * first needs the host, the third needs a token. So the person who one day holds
+ * the token would read three pages, reconcile them, and type four commands for
+ * the first time on the machine that matters — which is how the feed that is
+ * broken today was published in the first place.
+ *
+ * `--rehearse` prints the four commands and what each one is expected to print,
+ * offline: no network, no token, no file written, no asset replaced. Two of the
+ * four blocks are computed here — the dry run's plan comes from the committed
+ * document through the same `planLines()` the real run uses — and two are quoted
+ * from the constants the real runs print (`PREFLIGHT_VERDICT`, `uploadPassLine()`,
+ * `summaryLine()`). The lines say which is which, because a rehearsal that
+ * printed a `PASS —` line without saying it is a promise would be a transcript
+ * that reads like a measurement.
+ *
+ * It exits 0 when it printed the whole runbook, and 1 when the committed
+ * document is not one the app would install from — the same judgement, before
+ * the same token lookup, as every other run. `--rehearse` is its own run: asking
+ * for it together with `--apply`, `--dry-run` or `--preflight` is refused rather
+ * than resolved by argument order.
+ *
  * ## Usage
  *
  * ```bash
+ * node scripts/publish-feed.mjs --rehearse           # print the four commands and their expected output, touch nothing
  * node scripts/publish-feed.mjs --preflight          # read the published feed, judge both, write nothing
  * node scripts/publish-feed.mjs --dry-run            # print the plan, touch nothing
  * GITHUB_TOKEN=… node scripts/publish-feed.mjs --apply --verify
@@ -107,6 +133,7 @@ import {
   hasFailure,
   judgeFeedDocument,
   loadAppRules,
+  summaryLine,
 } from './verify-release-feed.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -131,7 +158,7 @@ export const UPLOAD_BASE = 'https://uploads.github.com';
 export const TOKEN_VARS = ['GITHUB_TOKEN', 'GH_TOKEN'];
 
 /** The options this command understands. Anything else is a typo, not a default. */
-export const KNOWN_FLAGS = ['feed-file', 'preflight', 'dry-run', 'apply', 'verify'];
+export const KNOWN_FLAGS = ['feed-file', 'preflight', 'dry-run', 'apply', 'verify', 'rehearse'];
 
 /** Reads `--flag value` pairs out of argv, the way its two sibling scripts do. */
 export function parseArgs(argv) {
@@ -390,6 +417,89 @@ export const PREFLIGHT_VERDICT = {
 };
 
 /**
+ * The last line a dry run prints, and the line a real upload prints.
+ *
+ * Both are exported because `--rehearse` prints them too, and a rehearsal that
+ * quoted its own copy of a sentence would be a second printer of the same fact:
+ * reword the real line and the rehearsal would keep promising the old one, in
+ * the one command whose whole job is to say what the real run will print.
+ */
+export const DRY_RUN_TAIL =
+  'dry run — nothing was fetched and nothing was uploaded. Add --apply to replace the asset.';
+
+/** The line that decides a real upload: the asset now carries this digest. */
+export function uploadPassLine({ repo, tag, sha256 }) {
+  return `PASS — ${ASSET_NAME} on ${repo} ${tag} now carries sha256=${sha256}`;
+}
+
+/**
+ * The four commands a token holder types, in the order they type them.
+ *
+ * One list, because three documents already spell this sequence
+ * (`docs/dod-status.md` `### 有令牌时`, `docs/release/REPLACE-FEED.md`,
+ * `docs/blockers.md` 第 1 节) and `tests/contract/dod-status.test.ts` compares
+ * them. The rehearsal prints these strings, and
+ * `tests/contract/publish-rehearsal.test.ts` asserts they are the ones the
+ * documents carry — so a rehearsal that printed a command nobody documents is a
+ * red run rather than a helpful-looking page.
+ */
+export const REHEARSAL_COMMANDS = [
+  'node scripts/publish-feed.mjs --preflight',
+  'node scripts/publish-feed.mjs --dry-run',
+  'GITHUB_TOKEN=… node scripts/publish-feed.mjs --apply --verify',
+  'node scripts/verify-release-feed.mjs',
+];
+
+/**
+ * The rehearsal, as the lines it prints. Pure, so it can be asserted.
+ *
+ * `--rehearse` exists because the sequence that closes 第 1 节 was written in
+ * three documents and rehearsed in none: the person who one day holds the token
+ * would read three pages, reconcile them, and type four commands for the first
+ * time on the machine that matters. This prints the four commands and what each
+ * one is expected to print, offline, so the runbook can be read — and checked —
+ * before the day it is used.
+ *
+ * Two of the four blocks are *computed* here (the dry run's plan comes from the
+ * committed document through the same `planLines()` the real run uses) and two
+ * are *quoted* from the constants the real runs print. The lines say which is
+ * which: a rehearsal that printed a `PASS —` line without saying it is a
+ * promise would be the exact defect this repository keeps naming — a transcript
+ * that reads like a measurement.
+ */
+export function rehearsalLines({ feedFile, bytes, document, tag, repo, plan }) {
+  const indent = (line) => `[rehearse]   ${line}`;
+  return [
+    `[rehearse] feed: ${feedFile} (${bytes} bytes) — judged clean by the app’s own rules, offline`,
+    '[rehearse] this run touches nothing: no network, no token, no file written, no asset replaced',
+    '[rehearse] the four commands below are the ones in `docs/dod-status.md` `### 有令牌时` and `docs/release/REPLACE-FEED.md`',
+    '[rehearse]',
+    `[rehearse] 1/4 ${REHEARSAL_COMMANDS[0]}`,
+    '[rehearse]   exit 0 = the published feed is still the broken one — the direction is reversed on purpose',
+    `[rehearse]   last line: ${PREFLIGHT_VERDICT.broken}`,
+    '[rehearse]   the finding lines above it come from the host, so this rehearsal cannot print them',
+    '[rehearse]',
+    `[rehearse] 2/4 ${REHEARSAL_COMMANDS[1]}`,
+    '[rehearse]   exit 0 = the plan printed and nothing was written',
+    '[rehearse]   expected output, computed here from the committed document:',
+    ...plan.map(indent),
+    indent(DRY_RUN_TAIL),
+    '[rehearse]',
+    `[rehearse] 3/4 ${REHEARSAL_COMMANDS[2]}`,
+    '[rehearse]   exit 0 = the asset was replaced and the published bytes were judged again',
+    `[rehearse]   the line that decides it: ${uploadPassLine({ repo, tag, sha256: document?.sha256 })}`,
+    '[rehearse]   that line is a promise, not a measurement: only a real upload prints it',
+    '[rehearse]',
+    `[rehearse] 4/4 ${REHEARSAL_COMMANDS[3]}`,
+    '[rehearse]   exit 0 = the published bytes pass the app’s own rules',
+    `[rehearse]   the line that decides it: ${summaryLine([], [])}`,
+    '[rehearse]   that line is a promise too: it reads the host, and this rehearsal does not',
+    '[rehearse]',
+    '[rehearse] verdict: the runbook is complete — 4 command(s), 1 printed from the committed document, 3 quoted from the scripts that print them',
+  ];
+}
+
+/**
  * The preflight report, as the lines it prints. Pure, so it can be asserted.
  *
  * Both judgements are printed in full, with the same `findingLine()` the
@@ -546,6 +656,17 @@ export async function publishFeed({
     );
     return 1;
   }
+  if (args.rehearse === true && (args.apply === true || dryRun || args.preflight === true)) {
+    // `--rehearse` prints the whole runbook and touches nothing. Asking for it
+    // together with a run that fetches, writes or uploads means the caller is
+    // not sure which one they want, and the difference is "read the runbook"
+    // versus "replace a release asset".
+    err(
+      'refused: --rehearse is its own run — it prints the four commands and their expected output ' +
+        'and touches nothing. Run it alone.',
+    );
+    return 1;
+  }
   const feedFile = typeof args['feed-file'] === 'string' ? args['feed-file'] : DEFAULT_FEED_FILE;
   const absolute = resolve(root, feedFile);
 
@@ -586,6 +707,36 @@ export async function publishFeed({
     return 1;
   }
 
+  if (args.rehearse === true) {
+    // Before the token is even read: the rehearsal is the one run that must be
+    // possible on a machine with no credentials, because that is the machine
+    // the person reading the runbook is on today.
+    // The plan of the command this block is about — `--dry-run` alone, not
+    // `--apply --verify`: a rehearsal that printed the plan of a different run
+    // would be showing the reader output no command in the sequence produces.
+    const plan = planLines({
+      feedFile,
+      document,
+      tag,
+      repo,
+      token: null,
+      bytes: Buffer.byteLength(bytes, 'utf8'),
+      verify: false,
+      apply: false,
+    });
+    for (const line of rehearsalLines({
+      feedFile,
+      bytes: Buffer.byteLength(bytes, 'utf8'),
+      document,
+      tag,
+      repo,
+      plan,
+    })) {
+      out(line);
+    }
+    return 0;
+  }
+
   const token = tokenFromEnv(env);
 
   if (args.preflight === true) {
@@ -618,7 +769,7 @@ export async function publishFeed({
 
   if (args.apply !== true) {
     out('');
-    out('dry run — nothing was fetched and nothing was uploaded. Add --apply to replace the asset.');
+    out(DRY_RUN_TAIL);
     return 0;
   }
 
@@ -681,7 +832,7 @@ export async function publishFeed({
   }
   const asset = await uploaded.json();
   out(`uploaded: ${ASSET_NAME} (asset ${asset?.id ?? '?'}, ${document.size ?? '?'} bytes of installer named)`);
-  out(`PASS — ${ASSET_NAME} on ${repo} ${tag} now carries sha256=${document.sha256}`);
+  out(uploadPassLine({ repo, tag, sha256: document.sha256 }));
 
   if (args.verify === true) {
     out('');

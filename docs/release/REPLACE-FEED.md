@@ -31,6 +31,75 @@
 npm run build
 ```
 
+## 离线预演：一条命令看四条命令的期望输出
+
+上面四条命令里有两条在这台机器上跑不了：第 0 步要连 `github.com`，第 2 步要一个写权限令牌。
+所以「这四条命令到底会打印什么」在拿到令牌之前只能靠读三份文档拼——而拼出来的东西没人跑过。
+这一条命令把四条命令与它们的期望输出一次打印出来，**不联网、不需要令牌、不写任何文件、
+不替换任何资产**：
+
+```bash
+node scripts/publish-feed.mjs --rehearse
+```
+
+**期望输出**（本机 2026-11-05 实跑，逐字；退出码 0）：
+
+```text
+[rehearse] feed: docs/release/update-feed-v1.0.0.json (431 bytes) — judged clean by the app’s own rules, offline
+[rehearse] this run touches nothing: no network, no token, no file written, no asset replaced
+[rehearse] the four commands below are the ones in `docs/dod-status.md` `### 有令牌时` and `docs/release/REPLACE-FEED.md`
+[rehearse]
+[rehearse] 1/4 node scripts/publish-feed.mjs --preflight
+[rehearse]   exit 0 = the published feed is still the broken one — the direction is reversed on purpose
+[rehearse]   last line: [preflight] verdict: the published feed is still the broken one — exit 0 means "still broken, run --apply --verify"
+[rehearse]   the finding lines above it come from the host, so this rehearsal cannot print them
+[rehearse]
+[rehearse] 2/4 node scripts/publish-feed.mjs --dry-run
+[rehearse]   exit 0 = the plan printed and nothing was written
+[rehearse]   expected output, computed here from the committed document:
+[rehearse]   feed: docs/release/update-feed-v1.0.0.json (431 bytes)
+[rehearse]   version: 1.0.0
+[rehearse]   installer: UCAD-Setup-1.0.0.exe (76bbe0c612ac67575ac40a543929a7691ba9f9e185343297cbc3badda9ea5a48, 122806279 bytes)
+[rehearse]   target: update-feed.json on castorhrio/jev-pi-agent v1.0.0
+[rehearse]   [plan] check 1 (already ran, before any token was read): the app’s own feed rules — docs/release/update-feed-v1.0.0.json produced no failure
+[rehearse]   [plan] check 2: the host’s digest for UCAD-Setup-1.0.0.exe equals the feed’s sha256/size, before anything is deleted
+[rehearse]   [plan] check 3 is not requested: add --verify to judge the published bytes after uploading
+[rehearse]   [plan] GET https://api.github.com/repos/castorhrio/jev-pi-agent/releases/tags/v1.0.0
+[rehearse]   [plan] compare the feed’s sha256/size with the host’s digest for UCAD-Setup-1.0.0.exe
+[rehearse]   [plan] DELETE https://api.github.com/repos/castorhrio/jev-pi-agent/releases/assets/<existing update-feed.json id> (if present)
+[rehearse]   [plan] POST https://uploads.github.com/repos/castorhrio/jev-pi-agent/releases/<release id>/assets?name=update-feed.json
+[rehearse]   [plan] token: none — --apply needs GITHUB_TOKEN or GH_TOKEN
+[rehearse]   dry run — nothing was fetched and nothing was uploaded. Add --apply to replace the asset.
+[rehearse]
+[rehearse] 3/4 GITHUB_TOKEN=… node scripts/publish-feed.mjs --apply --verify
+[rehearse]   exit 0 = the asset was replaced and the published bytes were judged again
+[rehearse]   the line that decides it: PASS — update-feed.json on castorhrio/jev-pi-agent v1.0.0 now carries sha256=76bbe0c612ac67575ac40a543929a7691ba9f9e185343297cbc3badda9ea5a48
+[rehearse]   that line is a promise, not a measurement: only a real upload prints it
+[rehearse]
+[rehearse] 4/4 node scripts/verify-release-feed.mjs
+[rehearse]   exit 0 = the published bytes pass the app’s own rules
+[rehearse]   the line that decides it: PASS — 0 warning(s), nothing the app would refuse
+[rehearse]   that line is a promise too: it reads the host, and this rehearsal does not
+[rehearse]
+[rehearse] verdict: the runbook is complete — 4 command(s), 1 printed from the committed document, 3 quoted from the scripts that print them
+```
+
+三件要读的东西：
+
+- **第 2 段是算出来的**：它走的是 `--dry-run` 用的同一个 `planLines()`，输入是仓库里这份文档，
+  所以这一段与真的 `--dry-run` 逐行相同——`tests/contract/publish-rehearsal.test.ts` 把两段
+  逐行比对，改了 `--dry-run` 的措辞而没改预演（或反过来）会打红。
+- **第 1、3、4 段是引用的**：`[preflight] verdict:` 那一行、`PASS — … now carries sha256=` 那一行、
+  `PASS — 0 warning(s), nothing the app would refuse` 那一行，都取自真正打印它们的常量
+  （`PREFLIGHT_VERDICT` / `uploadPassLine()` / `summaryLine()`），不是这一页抄的。
+- **第 3、4 段自己写着「that line is a promise, not a measurement」**：预演**不**证明线上那份
+  已经被换掉，也不证明安装包 URL 应答；它证明的是「照着敲会看到什么」。把预演的输出当成一次
+  测量，正是这一页整页在防的事。
+
+它退出 1 只有一种情形：仓库里这份文档本身被应用自己的规则拒了（那时它连预演都不打印，
+与 `--apply` 在找令牌之前就拒绝是同一条判定）。`--rehearse` 是它自己的一次运行——
+和 `--apply` / `--dry-run` / `--preflight` 写在同一条命令上会被拒绝，而不是按参数顺序挑一个。
+
 ## 第 0 步：先确认线上那份还是坏的（只读，一次 GET，不写任何东西）
 
 ```bash
