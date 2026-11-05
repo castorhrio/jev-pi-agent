@@ -63,10 +63,17 @@ The rest of this page shows how each of those checks works.
 |---|---|
 | ![Chat](docs/screenshots/chat.png) | ![Decision](docs/screenshots/decision.png) |
 | The conversation surface, with the session list and workspace tree. | The decision plane: engines, what they may decide, and the audit trail. |
-| ![Handoff](docs/screenshots/handoff.png) | ![Empty](docs/screenshots/empty.png) |
-| The handoff chain: every record with its claim state, newest first — the entry a next agent resumes from. | First run: no project open yet, and the three steps that start one. |
-| ![Error](docs/screenshots/error.png) | |
-| A load that failed outright: what broke, in the words the failure used, and the retry. | |
+| ![Handoff](docs/screenshots/handoff.png) | |
+| The handoff chain: every record with its claim state, newest first — the entry a next agent resumes from. | |
+
+### States
+
+The three states a screen can be in, and what each one tells you:
+
+| | | |
+|---|---|---|
+| ![Empty](docs/screenshots/empty.png) | ![Error](docs/screenshots/error.png) | ![Loading](docs/screenshots/states/loading.png) |
+| First run: it tells you where to start — open a project, pick an agent, send a turn — instead of handing you an empty input box. | A load that failed: what broke, in the words the failure used, and the retry — not a blank panel. | A read still in flight: the screen says it is waiting, so a slow disk never looks like an empty project. |
 
 ### Installers
 
@@ -297,10 +304,17 @@ UCAD 补的就是这个缺口，并把两个问题的答案做成**可核对**�
 |---|---|
 | ![对话](docs/screenshots/chat.png) | ![决策](docs/screenshots/decision.png) |
 | 对话界面，左侧会话列表与工作区文件树。 | 决策平面：可用引擎、各自的决策类型、审计记录。 |
-| ![交接](docs/screenshots/handoff.png) | ![空态](docs/screenshots/empty.png) |
-| 交接链：每一份记录及其认领状态，最新在前——下一个 Agent 从那一条继续。 | 首次启动：还没有打开项目，以及开始的三步。 |
-| ![失败态](docs/screenshots/error.png) | |
-| 一次彻底失败的加载：坏在哪、失败原文怎么说的、以及重试。 | |
+| ![交接](docs/screenshots/handoff.png) | |
+| 交接链：每一份记录及其认领状态，最新在前——下一个 Agent 从那一条继续。 | |
+
+### 状态
+
+屏幕可能处在的三种状态，以及每一种在告诉你什么：
+
+| | | |
+|---|---|---|
+| ![空态](docs/screenshots/empty.png) | ![失败态](docs/screenshots/error.png) | ![加载态](docs/screenshots/states/loading.png) |
+| 首次启动：它告诉你从哪开始——打开项目、选智能体、发一轮——而不是丢给你一个空输入框。 | 一次彻底失败的加载：坏在哪、失败原文怎么说的、以及重试——不是一个空白面板，也不是一句「出错了」。 | 读取还没返回：屏幕明说它在等，所以一块慢磁盘不会被看成空项目，也不会被当成没有内容。 |
 
 ### 安装包
 

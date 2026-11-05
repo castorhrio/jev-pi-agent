@@ -12,6 +12,35 @@
 现场不接网络、不填 key，是为了让不确定性可控：演示要能一次跑完、每次一样。真实厂商路由不在这次演示里，
 也不假装在——被问到就照这句说。
 
+## 30 秒主链路（离线可跑）
+
+上面「五个演示动作」是**真机**上跑的五步。这一节是同一件事的**离线版**：不需要令牌、不需要 Windows、
+不需要联网、不启动 Electron，一条命令把「可证明注入 + 可解释路由 + 权限门」三件事在屏幕上走一遍。
+
+```bash
+npm run demo          # 或 node scripts/demo-walkthrough.mjs
+```
+
+它跑的是产品自己的代码（`InjectionRenderer.render()`、`DecisionChain`、`assessRisk()` / `defaultPolicy()`），
+不是一段写死的台词：包是固定的、`render()` 是纯函数，所以下面这个 hash 在任何机器上都一样。
+`tests/contract/demo-script.test.ts` 把这张表和脚本的输出**双向**钉住——脚本改了而这里没改会红，
+这里删了一步而脚本还在跑也会红。
+
+| 步骤 | 做什么 | 这一步在证明什么 | 屏幕上应看到 |
+|---|---|---|---|
+| 1 | 开项目 `jev-pi-agent`，智能体选 `mock`，发一句「修复登录失败并补测试」 | 这一轮真的发生了，并且留下一个能读回来的 pack | `项目 jev-pi-agent` · `智能体 mock` · `本轮 turn-demo` · `Pack cp_demo_0000000000000000000000 · 2 条 · 180 tokens` |
+| 2 | 打开「上下文」抽屉 | 可证明注入：屏幕上的 hash 就是屏幕上那段字节的 sha256 | `注入的原文 <ucad-context pack="cp_demo_0000000000000000000000"` · `renderedHash 8847aa57a7138fd5` · `估算来源 heuristic_chars_div_4` |
+| 3 | 打开「决策」面板 | 可解释路由：引擎、理由、置信度在同一屏 | `引擎链 jev > rule` · `由谁给出 jev · 0.1.0` · `置信度 72%` · `理由 route -> 'mock' (default runtime)` |
+| 4 | 触发权限弹窗，点「拒绝」 | 权限门不可绕：拒绝被记成一条 `permission.resolved` | `Agent 请求权限 SHELL · 风险 high · rm -rf build` · `原因 清理构建产物` · `permission.resolved {"requestId":"req-demo","decision":"deny","decider":"user"}` |
+
+**念的时候怎么说**：第 2 步念「这段原文你可以自己算一遍 sha256，和上面这 16 位对得上」；
+第 3 步念「它答了，而且说了为什么、有多确定」；第 4 步念「我拒绝，它记下来了——不是弹窗消失就算完」。
+四步走完，屏幕上留下的是**字节、理由、记录**三样东西，不是三句形容词。
+
+**这一节不替代什么**：它不打开窗口，所以证明不了抽屉**渲染**了这些字节，只证明抽屉会显示的那段字节与
+那个 hash 就是这里打印的；交接、更新检查、托盘仍然要真机（`scripts/verify-main-chain.mjs` 步骤 3–5），
+五个界面状态仍然要人眼（`docs/state-walkthrough.md`）。
+
 ## 目标用户
 
 已经在用两个以上编码 Agent 的工程师与团队：Cursor 一类编辑器 + 裸 CLI agent + 自研 host。

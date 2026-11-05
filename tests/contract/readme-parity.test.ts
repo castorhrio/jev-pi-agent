@@ -1051,3 +1051,271 @@ describe('the README is two halves, and both of them are finished', () => {
     expect(problems[0]).toContain('"## English" then "## 中文"');
   });
 });
+
+// ---------------------------------------------------------------------------
+// The three states, in both halves
+// ---------------------------------------------------------------------------
+
+/**
+ * The README shows the happy path, and the happy path is the one screen a
+ * reader can already picture.
+ *
+ * ## The defect this block is written for
+ *
+ * "This product is honest about empty, failed and loading screens" is the
+ * strongest thing the front page can say about a control plane, and for several
+ * rounds it was said nowhere a reader would meet it: the Screenshots table
+ * showed the populated conversation, the decision plane and the handoff chain,
+ * and the three states lived in `docs/state-walkthrough.md` — a page a reader
+ * opens *after* deciding the product is worth their time. A reader who never
+ * scrolled that far had no way to know the app says "no project open yet, here
+ * are the three steps" instead of handing them an empty input box.
+ *
+ * So the two halves now carry a row of three state pictures under the
+ * Screenshots table, each with one sentence saying what that screen proves. The
+ * sentences are the claim; the pictures are the evidence. Both are pinned here,
+ * per language, because the failure this replaces is one half being updated and
+ * the other left describing a screen that no longer exists.
+ *
+ * ## What is asserted
+ *
+ *  - both halves have the states section, and it lists exactly the three
+ *    pictures `STATE_SHOTS` names, in that order — a half that dropped one, or
+ *    added a fourth nobody wrote a sentence for, is red;
+ *  - each picture's caption is **verbatim** the sentence in `STATE_SHOTS` for
+ *    that language. Verbatim rather than keyword-matched, because the caption
+ *    is one sentence: there is no second half of it to keep, and a keyword
+ *    match would let the sentence be replaced by three words that happen to
+ *    contain the keyword — which is exactly the "空态" caption this block
+ *    exists to forbid;
+ *  - the caption is a sentence, not a label: it has to be longer than the state
+ *    name and longer than `MIN_CAPTION` characters. A caption that says "空态"
+ *    is a caption that proves nothing, and the brief for this row was
+ *    explicitly "not the two characters 空态";
+ *  - the two halves list the same pictures in the same order, so a translator
+ *    cannot quietly swap the loading picture for the error one.
+ *
+ * ## What is deliberately not asserted
+ *
+ * That the pictures show what the captions say — that is a person's judgement,
+ * recorded in `docs/state-walkthrough.md`, and `screenshots.test.ts` already
+ * holds the files to the window size and to the renderer's bytes. Nor that the
+ * English and Chinese sentences are translations of each other: they are two
+ * sentences, and the table below is the one place that says which two.
+ */
+
+/** The heading of the states section in each half. */
+const STATES_HEADING: Record<Lang, string> = {
+  en: '### States',
+  zh: '### 状态',
+};
+
+/** One state picture, and the one sentence each half says about it. */
+interface StateShot {
+  /** The state's name, for failure messages only. */
+  readonly id: string;
+  /** The committed picture, as both halves spell it. */
+  readonly path: string;
+  /** The caption, verbatim, in each language. */
+  readonly caption: Record<Lang, string>;
+}
+
+/**
+ * The three states, in the order both halves show them.
+ *
+ * Empty, failed, loading — the three screens a reader cannot picture from the
+ * happy path, and the three the product is most likely to get wrong quietly.
+ */
+const STATE_SHOTS: readonly StateShot[] = [
+  {
+    id: 'empty',
+    path: 'docs/screenshots/empty.png',
+    caption: {
+      en:
+        'First run: it tells you where to start — open a project, pick an agent, send a turn — ' +
+        'instead of handing you an empty input box.',
+      zh: '首次启动：它告诉你从哪开始——打开项目、选智能体、发一轮——而不是丢给你一个空输入框。',
+    },
+  },
+  {
+    id: 'error',
+    path: 'docs/screenshots/error.png',
+    caption: {
+      en:
+        'A load that failed: what broke, in the words the failure used, and the retry — not a ' +
+        'blank panel.',
+      zh: '一次彻底失败的加载：坏在哪、失败原文怎么说的、以及重试——不是一个空白面板，也不是一句「出错了」。',
+    },
+  },
+  {
+    id: 'loading',
+    path: 'docs/screenshots/states/loading.png',
+    caption: {
+      en:
+        'A read still in flight: the screen says it is waiting, so a slow disk never looks like ' +
+        'an empty project.',
+      zh: '读取还没返回：屏幕明说它在等，所以一块慢磁盘不会被看成空项目，也不会被当成没有内容。',
+    },
+  },
+];
+
+/**
+ * The shortest caption that can be a sentence rather than a label.
+ *
+ * The row exists because "空态" is not an explanation; a caption shorter than
+ * this is the label coming back.
+ */
+const MIN_CAPTION = 40;
+
+/** The cells of one markdown table row, trimmed, without the outer pipes. */
+function tableCells(line: string): string[] {
+  const trimmed = line.trim();
+  if (!trimmed.startsWith('|')) return [];
+  return trimmed
+    .replace(/^\|/u, '')
+    .replace(/\|$/u, '')
+    .split('|')
+    .map((cell) => cell.trim());
+}
+
+/** The image path in a cell, if the cell is an image. */
+function imagePath(cell: string): string | undefined {
+  return cell.match(/!\[[^\]]*\]\((docs\/screenshots\/[^)\s]+)\)/u)?.[1];
+}
+
+/**
+ * The pictures a states section shows, each with the caption under it.
+ *
+ * The table is read as pairs of rows: a row of images, then the row of captions
+ * beneath it, matched by column. A row with no image in it (the header, the
+ * `|---|` rule) is skipped rather than misread, and a caption row that is
+ * missing leaves the caption empty — which the comparison below reports as a
+ * caption that is not the sentence.
+ */
+function stateTable(body: string): Array<{ path: string; caption: string }> {
+  const rows = body.split('\n').filter((line) => line.trim().startsWith('|'));
+  const out: Array<{ path: string; caption: string }> = [];
+  for (let index = 0; index < rows.length; index += 1) {
+    const cells = tableCells(rows[index]!);
+    const images = cells.map(imagePath);
+    if (images.every((path) => path === undefined)) continue;
+    const captions = tableCells(rows[index + 1] ?? '');
+    images.forEach((path, column) => {
+      if (path !== undefined) out.push({ path, caption: captions[column] ?? '' });
+    });
+  }
+  return out;
+}
+
+/**
+ * Every way a half's states section and `STATE_SHOTS` disagree.
+ *
+ * Pure in `(markdown, shots)` so the red directions below are driven with
+ * mutated copies instead of argued about — the rule the rest of this file
+ * follows.
+ */
+function stateProblems(markdown: string, shots: readonly StateShot[]): string[] {
+  const problems: string[] = [];
+
+  for (const lang of LANGS) {
+    const body = sectionBody(markdown, STATES_HEADING[lang]);
+    if (body === undefined) {
+      problems.push(
+        `${lang}: the README has no "${STATES_HEADING[lang]}" section, so the three states are ` +
+          'shown to one language only',
+      );
+      continue;
+    }
+    const rows = stateTable(body);
+    if (rows.length !== shots.length) {
+      problems.push(
+        `${lang}: the states section shows ${rows.length} picture(s) and STATE_SHOTS names ` +
+          `${shots.length} — a state a reader cannot see is a state the page does not claim`,
+      );
+    }
+    shots.forEach((shot, index) => {
+      const row = rows[index];
+      if (row === undefined) return; // already reported as a count mismatch
+      if (row.path !== shot.path) {
+        problems.push(
+          `${lang}: state ${index + 1} is ${row.path} and STATE_SHOTS names ${shot.path} — the ` +
+            'two halves are showing different screens',
+        );
+        return;
+      }
+      const wanted = shot.caption[lang];
+      if (row.caption !== wanted) {
+        problems.push(
+          `${lang}: the caption under ${shot.path} is "${row.caption}" and STATE_SHOTS says ` +
+            `"${wanted}" — the sentence a reader is given is not the one this file pins`,
+        );
+      }
+      if (wanted.length < MIN_CAPTION) {
+        problems.push(
+          `${lang}: the caption for ${shot.id} is ${wanted.length} characters — a caption that ` +
+            'short is a label ("空态"), not a sentence saying what the screen proves',
+        );
+      }
+    });
+  }
+
+  return problems;
+}
+
+describe('the three states, in both halves', () => {
+  it('names three states, so the checks below are not vacuous', () => {
+    expect(STATE_SHOTS.length).toBe(3);
+    for (const shot of STATE_SHOTS) {
+      expect(shot.path, `${shot.id} names no picture`).toMatch(/^docs\/screenshots\/.+\.png$/u);
+      for (const lang of LANGS) {
+        expect(shot.caption[lang].length, `${shot.id} has no ${lang} caption`).toBeGreaterThan(
+          MIN_CAPTION,
+        );
+      }
+    }
+  });
+
+  it('shows the same three pictures, with the same sentences, in both halves', () => {
+    const problems = stateProblems(readme, STATE_SHOTS);
+    expect(
+      problems,
+      `the two halves disagree about the states:\n  ${problems.join('\n  ')}`,
+    ).toEqual([]);
+  });
+
+  it('reports a half that dropped the states section', () => {
+    const problems = stateProblems(readme.replace(STATES_HEADING.zh, '### 别的标题'), STATE_SHOTS);
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toContain('zh: the README has no "### 状态" section');
+  });
+
+  it('reports a caption that was replaced by a label', () => {
+    // The exact regression this row was written against: the sentence is
+    // shortened to the state's name, which still "describes" the picture and
+    // proves nothing.
+    const shortened = readme.replace(STATE_SHOTS[0]!.caption.en, 'Empty state.');
+    expect(shortened, 'the caption this case rewrites is gone').not.toBe(readme);
+    const problems = stateProblems(shortened, STATE_SHOTS);
+    expect(problems.some((problem) => problem.includes('is not the one this file pins'))).toBe(true);
+  });
+
+  it('reports a half that shows the pictures in a different order', () => {
+    const swapped = readme.replace(
+      `| ![空态](${STATE_SHOTS[0]!.path}) | ![失败态](${STATE_SHOTS[1]!.path})`,
+      `| ![失败态](${STATE_SHOTS[1]!.path}) | ![空态](${STATE_SHOTS[0]!.path})`,
+    );
+    expect(swapped, 'the image row this case swaps is gone').not.toBe(readme);
+    const problems = stateProblems(swapped, STATE_SHOTS);
+    expect(problems.some((problem) => problem.includes('showing different screens'))).toBe(true);
+  });
+
+  it('reports a half that shows two states instead of three', () => {
+    const dropped = readme.replace(
+      ` | ![加载态](${STATE_SHOTS[2]!.path}) |`,
+      ' | |',
+    );
+    expect(dropped, 'the loading picture this case removes is gone').not.toBe(readme);
+    const problems = stateProblems(dropped, STATE_SHOTS);
+    expect(problems.some((problem) => problem.includes('shows 2 picture(s)'))).toBe(true);
+  });
+});

@@ -23,6 +23,7 @@
     "lint:fix": "eslint . --fix",
     "knip": "knip",
     "dev:web": "vite --config apps/desktop/vite.config.ts",
+    "demo": "node scripts/demo-walkthrough.mjs",
     "pretest": "npm run build:packages",
     "test": "vitest run",
     "test:watch": "vitest",

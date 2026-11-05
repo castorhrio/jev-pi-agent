@@ -631,3 +631,219 @@ describe('the demo script answers "did you run it on Windows?" where it is asked
     expect(problems.some((problem) => problem.includes('two different commands'))).toBe(true);
   });
 });
+
+// ---------------------------------------------------------------------------
+// The 30-second main chain, offline
+// ---------------------------------------------------------------------------
+
+/**
+ * The section a reviewer reads out loud when there is no Windows machine, no
+ * token and no network in the room.
+ *
+ * `docs/demo-script.md` used to describe the main chain only as five actions
+ * driven by `scripts/verify-main-chain.mjs`, which needs a packaged Electron
+ * app, a display and an OS key store. That is the right instrument for "did it
+ * work on a real machine" and the wrong one for "is the page I am about to read
+ * out loud still describing this build": nobody can re-run it on a laptop.
+ *
+ * `scripts/demo-walkthrough.mjs` runs the same three claims through the same
+ * code the app runs — `InjectionRenderer.render()`, `DecisionChain`,
+ * `assessRisk()` / `defaultPolicy()` — with no window, no network and no token.
+ * The pack is fixed and `render()` is pure, so the hash it prints is the same on
+ * every machine, which is what lets the document quote it verbatim.
+ *
+ * This block keeps the two halves from drifting, in both directions:
+ *
+ *  - every literal the document quotes for a step is printed by that step's run
+ *    — so a reworded label, a changed engine id or a renderer change that moves
+ *    the hash is a red run rather than a stale page;
+ *  - every step the script runs is shown in the document — so a step added to
+ *    the script and forgotten in the page is red too;
+ *  - and the script really is a run, not a transcript: it imports the product's
+ *    packages and does not contain the hash it prints.
+ */
+
+const DEMO_CHAIN_SECTION = '## 30 秒主链路（离线可跑）';
+const WALKTHROUGH_PATH = join(REPO_ROOT, 'scripts', 'demo-walkthrough.mjs');
+
+/** One step of the offline run, as the script reports it. */
+interface ChainStep {
+  readonly step: number;
+  readonly title: string;
+  readonly proves: string;
+  readonly screen: readonly string[];
+}
+
+/** The run, as `runDemo()` returns it. */
+interface ChainRun {
+  readonly steps: readonly ChainStep[];
+  readonly facts: { readonly shortHash: string; readonly engineId: string };
+}
+
+/** Whitespace is not the claim: the document writes one space, the screen two. */
+function normalize(text: string): string {
+  return text.replace(/\s+/g, ' ').trim();
+}
+
+/**
+ * The step rows of the section: `| 1 | … | … | … |`.
+ *
+ * The step number is the first cell and the quoted screen text is the fourth;
+ * a row whose first cell is not a bare integer (`| 1. 注入原文与哈希 | …`) is a
+ * different table and is skipped rather than misread.
+ */
+function chainRows(section: string): Array<{ step: number; literals: string[] }> {
+  const rows: Array<{ step: number; literals: string[] }> = [];
+  for (const line of section.split('\n')) {
+    const cells = line.split('|').map((cell) => cell.trim());
+    if (cells.length < 6) continue;
+    const step = Number(cells[1]);
+    if (!Number.isInteger(step) || step <= 0) continue;
+    const literals = [...cells[4]!.matchAll(/`([^`\n]+)`/g)].map((match) => match[1]!.trim());
+    rows.push({ step, literals });
+  }
+  return rows;
+}
+
+/**
+ * Every way the page and the offline run disagree.
+ *
+ * Empty means the document quotes only what the run prints, and the run prints
+ * every step the document shows. Pure in `(document, run)` so the red direction
+ * is driven with mutated copies instead of argued about.
+ */
+function chainProblems(document: string, run: ChainRun): string[] {
+  const section = sectionOf(document, DEMO_CHAIN_SECTION);
+  if (section === undefined) {
+    return [
+      `docs/demo-script.md: has no \`${DEMO_CHAIN_SECTION}\` section, so the offline run has ` +
+        'nowhere to be read out loud',
+    ];
+  }
+  const rows = chainRows(section);
+  if (rows.length === 0) {
+    return [
+      `docs/demo-script.md: the \`${DEMO_CHAIN_SECTION}\` section lists no step row, so nothing ` +
+        'ties the page to the run',
+    ];
+  }
+
+  const problems: string[] = [];
+  const byStep = new Map(run.steps.map((step) => [step.step, step]));
+
+  for (const row of rows) {
+    const step = byStep.get(row.step);
+    if (step === undefined) {
+      problems.push(
+        `docs/demo-script.md: shows step ${row.step}, and scripts/demo-walkthrough.mjs does not ` +
+          `run it (it runs ${run.steps.map((s) => s.step).join(', ')})`,
+      );
+      continue;
+    }
+    if (row.literals.length === 0) {
+      problems.push(
+        `docs/demo-script.md: step ${row.step} quotes no screen text, so a reader has nothing to ` +
+          'compare the screen against',
+      );
+      continue;
+    }
+    const screen = step.screen.map(normalize);
+    for (const literal of row.literals) {
+      const wanted = normalize(literal);
+      if (!screen.some((line) => line.includes(wanted))) {
+        problems.push(
+          `docs/demo-script.md: step ${row.step} says the screen shows "${literal}", and ` +
+            'scripts/demo-walkthrough.mjs does not print it — the page describes a screen ' +
+            'nobody will see',
+        );
+      }
+    }
+  }
+
+  for (const step of run.steps) {
+    if (!rows.some((row) => row.step === step.step)) {
+      problems.push(
+        `docs/demo-script.md: scripts/demo-walkthrough.mjs runs step ${step.step} ` +
+          `(${step.title}), and the \`${DEMO_CHAIN_SECTION}\` section never shows it`,
+      );
+    }
+  }
+
+  return problems;
+}
+
+const walkthroughSource = existsSync(WALKTHROUGH_PATH) ? readFileSync(WALKTHROUGH_PATH, 'utf8') : '';
+const { runDemo } = await import('../../scripts/demo-walkthrough.mjs');
+const chainRun = (await runDemo()) as ChainRun;
+
+describe('the 30-second main chain is a run, and the page quotes it', () => {
+  it('the script is present and is a run rather than a transcript', () => {
+    expect(existsSync(WALKTHROUGH_PATH), 'scripts/demo-walkthrough.mjs is missing').toBe(true);
+    // The three claims come from the product's own packages. A script that
+    // printed a hand-written transcript would pass every comparison below and
+    // prove nothing, so the imports are the assertion.
+    expect(walkthroughSource).toContain("from '@ucad/context'");
+    expect(walkthroughSource).toContain("from '@ucad/decision'");
+    expect(walkthroughSource).toContain("from '@ucad/permissions'");
+    // And the hash it prints is computed, not pasted: the literal in the source
+    // would make the document agree with a constant.
+    expect(
+      walkthroughSource.includes(chainRun.facts.shortHash),
+      'scripts/demo-walkthrough.mjs contains the hash it prints, so the hash is a constant ' +
+        'rather than the sha256 of the bytes it rendered',
+    ).toBe(false);
+  });
+
+  it('runs the four steps the page walks', () => {
+    expect(chainRun.steps.map((step) => step.step)).toEqual([1, 2, 3, 4]);
+    for (const step of chainRun.steps) {
+      expect(step.screen.length, `step ${step.step} prints nothing`).toBeGreaterThan(0);
+    }
+  });
+
+  it('quotes only what the run prints, and shows every step the run prints', () => {
+    const problems = chainProblems(document, chainRun);
+    expect(problems, `the page and the offline run disagree:\n  ${problems.join('\n  ')}`).toEqual([]);
+  });
+
+  it('quotes the hash the run actually computed', () => {
+    const section = sectionOf(document, DEMO_CHAIN_SECTION) ?? '';
+    expect(
+      section.includes(chainRun.facts.shortHash),
+      `the page does not quote the hash this build renders (${chainRun.facts.shortHash}) — ` +
+        'a renderer change moved the bytes and the page still shows the old digest',
+    ).toBe(true);
+  });
+});
+
+describe('the checks above, when the page or the run has drifted', () => {
+  it('reports a step the run prints and the page never shows', () => {
+    const withoutStep4 = document.replace(/^\| 4 \|.*$/m, '');
+    expect(withoutStep4, 'the step 4 row this case removes is gone').not.toBe(document);
+    const problems = chainProblems(withoutStep4, chainRun);
+    expect(problems.some((problem) => problem.includes('never shows it'))).toBe(true);
+  });
+
+  it('reports a screen line the page quotes and the run no longer prints', () => {
+    const reworded = document.replace('`置信度 72%`', '`置信度 99%`');
+    expect(reworded, 'the confidence quote this case rewrites is gone').not.toBe(document);
+    const problems = chainProblems(reworded, chainRun);
+    expect(problems.some((problem) => problem.includes('does not print it'))).toBe(true);
+  });
+
+  it('reports a step the page shows and the run does not drive', () => {
+    const extra = document.replace(
+      '| 4 | 触发权限弹窗',
+      '| 9 | 打开一个不存在的面板 | 什么也不证明 | `面板 不存在` |\n| 4 | 触发权限弹窗',
+    );
+    expect(extra, 'the step 9 row this case adds is gone').not.toBe(document);
+    const problems = chainProblems(extra, chainRun);
+    expect(problems.some((problem) => problem.includes('does not run it'))).toBe(true);
+  });
+
+  it('reports a section that is missing altogether', () => {
+    const problems = chainProblems(document.replace(DEMO_CHAIN_SECTION, '## 别的标题'), chainRun);
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toContain('has no');
+  });
+});
