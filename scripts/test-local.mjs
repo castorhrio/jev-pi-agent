@@ -40,6 +40,19 @@
  *
  * `--dry-run` exists for the contract gate: it is how a test can assert where
  * the temp directory would be without paying for a full suite.
+ *
+ * One fact, not two
+ * -----------------
+ * The directory name is exported as {@link TEMP_DIR_ENTRY} and printed by
+ * `--dry-run`, because the same string has to appear in `.gitignore` — a
+ * scratch tree the checkout would commit is the failure this script would
+ * otherwise introduce. Two copies of `.tmp/` (one here, one in the ignore file)
+ * can each be right and still name different directories, and both would look
+ * green. `tests/contract/local-test-env.test.ts` imports this constant and
+ * compares it with the ignore file, so the two cannot drift apart quietly.
+ *
+ * The module therefore only runs when it is the entry point: importing it for
+ * the constant must not start a test run.
  */
 
 import { spawnSync } from 'node:child_process';
@@ -50,8 +63,11 @@ import { fileURLToPath } from 'node:url';
 const here = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(here, '..');
 
+/** The scratch directory, as `.gitignore` spells it. Exported: one fact, two readers. */
+export const TEMP_DIR_ENTRY = '.tmp/';
+
 /** Where the suite's scratch files go: inside the checkout, never `/tmp`. */
-const TEMP_DIR = path.join(REPO_ROOT, '.tmp');
+const TEMP_DIR = path.join(REPO_ROOT, TEMP_DIR_ENTRY);
 
 /** The vitest CLI this repository installs, run through the current Node. */
 const VITEST_CLI = path.join(REPO_ROOT, 'node_modules', 'vitest', 'vitest.mjs');
@@ -114,6 +130,7 @@ function main() {
 
   if (options.dryRun) {
     console.log(`temp dir: ${TEMP_DIR}`);
+    console.log(`temp-dir-entry: ${TEMP_DIR_ENTRY}`);
     for (const name of TEMP_VARS) console.log(`${name}=${env[name]}`);
     console.log(`vitest: run ${options.vitestArgs.join(' ')}`.trimEnd());
     return 0;
@@ -143,4 +160,8 @@ function main() {
   return result.status ?? 1;
 }
 
-process.exit(main());
+// Only when this file is the entry point: the contract gate imports
+// `TEMP_DIR_ENTRY` from here, and an import must not start a suite.
+const invokedDirectly =
+  process.argv[1] !== undefined && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+if (invokedDirectly) process.exit(main());

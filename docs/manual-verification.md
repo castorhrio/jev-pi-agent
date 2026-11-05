@@ -833,3 +833,81 @@ ELECTRON_DISABLE_SANDBOX=1 DISPLAY=:140 npx vitest run tests/contract/layout.tes
 它只证明「在这台机器、这一个 socket 上，布局门禁跑得动，而且现在是绿的」。CI 仍然是另一台机器；
 `/tmp` 配额那条限制没有解除，下一个人在同一台机器上照 `xvfb-run` 那一行敲仍然会撞到同一句话——
 区别是这一回 `CONTRIBUTING.md` 写了第二种原因，以及能用的那一条。
+
+## 本机全量门禁的一次跑，五条命令都留了退出码（2026-11-05，`VM-0-5-ubuntu`）
+
+这一节补的是一个**留档缺口**，不是一次新功能：`f5f4ce7` 的 commit message 自报「7 个相关文件 141 项全绿、
+eslint 无新增问题」，而 `typecheck` / `knip` / `test:e2e` 那三条**没有跑过**；`aa1180f` 之前还承认过
+「全量 vitest 因 `/tmp` 不可写大面积失败」。`npm run test:local` 出现之后这三条应该可跑，
+但**没有任何一次记录**说明它跑过——审查清单里「验证跑仓库已有检查」这一条，缺的正是这份记录。
+
+机器：`VM-0-5-ubuntu`，`node v22.23.4`，`/tmp` 是带用户配额的 tmpfs（`df -h /tmp` 报 `82%` 使用、
+`348M` 可用，写一个字节仍可能 `EDQUOT`，见 `docs/blockers.md`「本机全量测试的已知环境约束」）。
+所以下面每一条都走 `npm run test:local`（把 `TMPDIR` / `TEMP` / `TMP` 指到仓库内 `.tmp/`），
+而不是裸的 `npm test` / `npm run test:e2e`。
+
+### 五条命令与退出码
+
+```console
+$ npm run typecheck
+> tsc --build tsconfig.build.json && tsc --build apps/desktop/tsconfig.main.json && tsc --project apps/desktop/tsconfig.renderer.json --noEmit
+（无输出，退出码 0）
+
+$ npm run lint
+> eslint .
+（无输出，退出码 0）
+
+$ npm run knip
+> knip
+（无输出，退出码 0）
+
+$ DISPLAY=:140 ELECTRON_DISABLE_SANDBOX=1 npm run test:local
+ Test Files  109 passed (109)
+      Tests  1805 passed | 1 skipped (1806)
+   Duration  91.12s
+（退出码 0）
+
+$ DISPLAY=:140 ELECTRON_DISABLE_SANDBOX=1 npm run test:local -- --config vitest.e2e.config.ts
+ Test Files  20 passed (20)
+      Tests  154 passed (154)
+   Duration  31.88s
+（退出码 0）
+```
+
+`DISPLAY=:140` 指着这台机器上已经在应答的那个 `Xvfb`（`1920x1080x24`，`ls /tmp/.X11-unix` 看得见
+`X140`）：`tests/contract/layout.test.ts` 要一个真布局引擎，没有 `$DISPLAY` 时它自己会红并说明原因。
+这一跑里它是 **48 项全绿**，约 90 秒，是上面 91 秒里的大头。
+
+### 量到的一件事：`npm run test:e2e` 在本机红，而 `test:local` 原来只覆盖了单测
+
+先跑的是裸的 `npm run test:e2e`，结果是 **20 个文件里 18 个红**，而且一条断言都没跑到：
+
+```console
+$ DISPLAY=:140 ELECTRON_DISABLE_SANDBOX=1 npm run test:e2e
+ FAIL  tests/e2e/accessibility.e2e.test.tsx [ tests/e2e/accessibility.e2e.test.tsx ]
+Error: ENOENT: no such file or directory, open '/tmp/FCyOE8FHuJPtamwdeenYz/client/77bddb312e58752426b5efd5e5ace5a6635eaa3f'
+ Test Files  18 failed | 2 passed (20)
+```
+
+红在 `import` 那一行，不在任何一条用例里：`vite` 的依赖缓存也写在 `os.tmpdir()` 下，
+`/tmp` 的配额把它挡在写之前。这与 `npm test` 是**同一个根因**，只是入口不同——所以替代命令
+带上 e2e 的配置即可，`--config` 后面那个文件名与 `package.json` 的 `test:e2e` 是同一个字符串：
+
+```bash
+DISPLAY=:140 ELECTRON_DISABLE_SANDBOX=1 npm run test:local -- --config vitest.e2e.config.ts
+```
+
+这一条已经写进 `docs/blockers.md` 的「本机全量测试的已知环境约束」一节，并由
+`tests/contract/local-test-env.test.ts` 钉住（这一节必须点名那条命令，且命令里的配置文件名必须等于
+`package.json#scripts['test:e2e']` 里的那一个）——否则下一个人会在这台机器上重新发现一次
+「e2e 全红」，然后把它当成一次与本改动无关的失败。
+
+### 这一次跑证明了什么，不证明什么
+
+**证明**：`typecheck` / `lint` / `knip` / 单测全量 / e2e 全量，在这台机器上、用仓库自己的命令，
+退出码都是 0；单测 109 个文件 1805 项、e2e 20 个文件 154 项，`layout.test.ts` 在真 Chromium 里
+48 项全绿。任何人可以按上面五条命令重跑得到同一份结论。
+
+**不证明**：一次 GitHub 托管 runner 上的运行（`npm test` 在 CI 上仍是权威，`test:local` 是这台机器的
+绕法）；也不证明 `DOD-4.1`（Windows 真机）与 `DOD-4.2`（feed 上传）——那两条仍是外部阻塞，
+本节一个字都没有动它们。

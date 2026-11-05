@@ -22,7 +22,11 @@
  *  - that script exists, and it points `TMPDIR` at a directory inside the
  *    checkout rather than at `/tmp`;
  *  - `.gitignore` covers that directory, so a run cannot leave a committed
- *    scratch tree behind;
+ *    scratch tree behind — and it covers **the same string the script uses**:
+ *    the constant is imported from `scripts/test-local.mjs` rather than written
+ *    here a second time, because two copies of `.tmp/` can each be right and
+ *    still name different directories (the script writes `.tmp-scratch/`, the
+ *    ignore file covers `.tmp/`), and both checks would be green;
  *  - the section names the error a reader will search for (`Unknown system error
  *    -122`) and both `df` commands, because a section that describes the symptom
  *    in its own words is a section a reader cannot match against their terminal;
@@ -36,7 +40,17 @@
  *    repository, for **all three** variables it sets — the one assertion here
  *    that runs the thing instead of reading it. Checking only `TMPDIR` would
  *    leave `TEMP` and `TMP` free to point at `/tmp`, which is the failure the
- *    script exists to end.
+ *    script exists to end;
+ *  - and the directory name `--dry-run` prints is the imported constant, which
+ *    is the line `.gitignore` carries — so "the script relocates temp" and "the
+ *    checkout ignores temp" are one fact read twice, not two facts that happen
+ *    to agree today;
+ *  - and the section names the **e2e** invocation too, with the config file
+ *    `package.json#scripts['test:e2e']` really runs. `npm run test:e2e` fails on
+ *    this machine for the same reason `npm test` does — vite's dependency cache
+ *    lives under `os.tmpdir()` as well, so 18 of 20 e2e files die at import with
+ *    `ENOENT … /tmp/<hash>/client/<hash>` before a single assertion runs. A page
+ *    that only relocates the unit suite leaves the reader to rediscover that.
  *
  * The checks are a pure function of `(documents, package.json, script source)`
  * so the red direction is driven on a mutated copy rather than argued about.
@@ -50,6 +64,8 @@ import { spawnSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+// The script's own constant, not a copy: see "One fact, not two" in its header.
+import { TEMP_DIR_ENTRY } from '../../scripts/test-local.mjs';
 
 const REPO_ROOT = join(import.meta.dirname, '..', '..');
 const BLOCKERS_PATH = join(REPO_ROOT, 'docs', 'blockers.md');
@@ -72,9 +88,6 @@ const LOCAL_COMMAND = 'npm run test:local';
 /** The script that command has to reach. */
 const LOCAL_SCRIPT = 'scripts/test-local.mjs';
 
-/** The scratch directory the script uses, as `.gitignore` spells it. */
-const TEMP_DIR_ENTRY = '.tmp/';
-
 /**
  * The two sentences that say which command is authoritative where.
  *
@@ -86,6 +99,12 @@ const TEMP_DIR_ENTRY = '.tmp/';
  */
 const CI_AUTHORITY = 'CI 上 `npm test` 是权威';
 const LOCAL_RED_MEANING = '本机 `npm test` 红不构成信号';
+
+/** The e2e run under the same workaround, as the section spells it. */
+const E2E_COMMAND = 'npm run test:local -- --config vitest.e2e.config.ts';
+
+/** The config that command names, which `test:e2e` has to be running too. */
+const E2E_CONFIG = 'vitest.e2e.config.ts';
 
 /** The three variables the script relocates, and the `--dry-run` line for each. */
 const TEMP_VARS = ['TMPDIR', 'TEMP', 'TMP'] as const;
@@ -157,10 +176,15 @@ function localTestEnvProblems(facts: Facts): string[] {
           'the section says is full',
       );
     }
-    if (!facts.scriptSource.includes(TEMP_DIR_ENTRY.replace('/', ''))) {
+    // The literal, quoted, and the same one `.gitignore` carries: a script that
+    // writes `.tmp-scratch/` while the ignore file covers `.tmp/` leaves a
+    // scratch tree the next `git add -A` commits, and both halves would read as
+    // correct on their own.
+    if (!facts.scriptSource.includes(`'${TEMP_DIR_ENTRY}'`)) {
       problems.push(
-        `${LOCAL_SCRIPT}: does not use a \`${TEMP_DIR_ENTRY}\` directory inside the checkout, so ` +
-          'the scratch files land wherever the machine puts them',
+        `${LOCAL_SCRIPT}: does not declare \`'${TEMP_DIR_ENTRY}'\` as its scratch directory, so ` +
+          `the directory it writes and the \`${TEMP_DIR_ENTRY}\` line in .gitignore are two ` +
+          'facts that can drift apart while both look right',
       );
     }
   }
@@ -181,6 +205,29 @@ function localTestEnvProblems(facts: Facts): string[] {
           'just ran the red command is left to guess whether it means anything',
       );
     }
+  }
+
+  // The e2e half. `npm run test:e2e` is red on this machine for the same reason
+  // `npm test` is, and the section has to say so with the command that works —
+  // and that command has to name the config the real script runs, or the
+  // workaround would be measuring a different suite.
+  if (!body.includes(E2E_COMMAND)) {
+    problems.push(
+      `docs/blockers.md: the local-test section does not name \`${E2E_COMMAND}\`, so a reader ` +
+        'who runs `npm run test:e2e` here gets 18 red files and no alternative',
+    );
+  }
+  const e2eScript = facts.scripts['test:e2e'];
+  if (e2eScript === undefined) {
+    problems.push(
+      'package.json: declares no `test:e2e` script, so the config the section names is not the ' +
+        'config anything runs',
+    );
+  } else if (!e2eScript.includes(E2E_CONFIG)) {
+    problems.push(
+      `package.json: \`test:e2e\` runs \`${e2eScript}\` and not \`${E2E_CONFIG}\`, so the ` +
+        'workaround in the section and the real e2e command are two different suites',
+    );
   }
 
   // The two readings and the error string, because a reader matches their own
@@ -240,6 +287,21 @@ describe('the local-test constraint is a command, not a disclaimer', () => {
     expect(problems.some((problem) => problem.includes('never sets `TMPDIR`'))).toBe(true);
   });
 
+  it('reports a script whose scratch directory is not the one .gitignore covers', () => {
+    // The shape this round closes: the script and the ignore file each name a
+    // directory, and nothing compared the two strings. Here the script writes
+    // `.tmp-scratch/` while `.gitignore` still covers `.tmp/` — every other
+    // check in this file stays green, and a run leaves a committable tree.
+    const problems = localTestEnvProblems({
+      ...facts,
+      scriptSource: SCRIPT.replaceAll(`'${TEMP_DIR_ENTRY}'`, "'.tmp-scratch/'"),
+    });
+    expect(problems.join('\n')).toContain(
+      `does not declare \`'${TEMP_DIR_ENTRY}'\` as its scratch directory`,
+    );
+    expect(problems.join('\n')).toContain('.gitignore');
+  });
+
   it('reports a scratch directory the checkout would commit', () => {
     const problems = localTestEnvProblems({
       ...facts,
@@ -249,6 +311,25 @@ describe('the local-test constraint is a command, not a disclaimer', () => {
       '.gitignore: does not ignore `.tmp/`, so a run leaves a scratch tree that the next ' +
         '`git add -A` commits',
     );
+  });
+
+  it('reports a section that relocates the unit suite and forgets the e2e one', () => {
+    // The measured shape: `npm run test:e2e` dies at import on this machine for
+    // the same `/tmp` reason, so a page that only names `npm run test:local`
+    // sends the reader back to a red run with no alternative.
+    const problems = localTestEnvProblems({
+      ...facts,
+      blockers: BLOCKERS.replace(E2E_COMMAND, '`npm run test:e2e`'),
+    });
+    expect(problems.some((problem) => problem.includes(E2E_COMMAND))).toBe(true);
+  });
+
+  it('reports an e2e script that runs a different config than the section names', () => {
+    const problems = localTestEnvProblems({
+      ...facts,
+      scripts: { ...facts.scripts, 'test:e2e': 'vitest run --config vitest.other.config.ts' },
+    });
+    expect(problems.some((problem) => problem.includes(E2E_CONFIG))).toBe(true);
   });
 
   it('reports a section that stopped saying which command is authoritative', () => {
@@ -305,5 +386,14 @@ describe('the local-test constraint is a command, not a disclaimer', () => {
       (name) => new RegExp(`^${name}=(.+)$`, 'mu').exec(run.stdout)?.[1]?.trim(),
     );
     expect(new Set(dirs).size, `--dry-run reports ${dirs.join(' / ')}`).toBe(1);
+    // The name it reports is the imported constant, and that constant is the
+    // line `.gitignore` carries — the two halves of "temp lives in the
+    // checkout" are one string, read from the script and from the ignore file.
+    const entry = /^temp-dir-entry: (.+)$/mu.exec(run.stdout)?.[1]?.trim();
+    expect(entry, `--dry-run printed no temp-dir-entry line:\n${run.stdout}`).toBe(TEMP_DIR_ENTRY);
+    expect(
+      GITIGNORE.split('\n').map((line) => line.trim()),
+      `.gitignore does not carry the \`${TEMP_DIR_ENTRY}\` the script reports`,
+    ).toContain(entry);
   });
 });

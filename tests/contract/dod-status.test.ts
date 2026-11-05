@@ -1001,3 +1001,218 @@ describe('the blockers page and the four-state table are joined', () => {
     ]);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Closing a blocker moves the total, not only the section
+// ---------------------------------------------------------------------------
+
+/**
+ * ## Why this block exists
+ *
+ * The mapping table above joins each blocker section to the DoD row it blocks,
+ * and it is read in both directions. What it does **not** read is the number at
+ * the top of the four-state section: `未过 1 / 外部阻塞 1`. That number is a
+ * sentence a person wrote, and the only thing comparing it with the table is
+ * the table's own row count — so the day a blocker is closed, three edits have
+ * to happen together and only two of them are gated:
+ *
+ *  1. the blocker section is deleted from `docs/blockers.md` (gated: the
+ *     mapping table names a section that no longer exists);
+ *  2. the DoD row moves from 未过 to 通过 (gated: the mapping table's reverse
+ *     direction wants a blocked row to be mapped from);
+ *  3. the total at the top of the section is rewritten (gated by nothing).
+ *
+ * Edit 1 and 2 without 3 leaves a page that says `未过 1` above a table with no
+ * 未过 row, and every existing assertion stays green. That is the same shape as
+ * the defects this repository has been closing for three rounds: a number that
+ * is only ever compared with itself.
+ *
+ * So the identity is asserted across the two documents:
+ *
+ *     未过 + 外部阻塞  ==  blockers 节数 − 映射到「无对应 DoD 句子」的节数
+ *
+ * The right-hand side is what the blockers page claims is blocked; the left is
+ * what the table says is blocked. Closing a blocker moves both, and moving one
+ * is a red run that names the row and the section.
+ *
+ * The second half is the sentence in the page itself. Each `### 解除时` section
+ * ends by saying the total moves with it, because the reader who closes a
+ * blocker is reading that section and not this test file. A gate that only
+ * lives in the test is a gate the person doing the edit never sees.
+ */
+
+/** The sentence every `### 解除时` section has to carry. */
+const TOTAL_SENTENCE = '四态合计也要一起改';
+
+/** Each `### 解除时` section of the blockers page, heading line included. */
+function closingSections(markdown: string): string[] {
+  const lines = markdown.split('\n');
+  const sections: string[] = [];
+  for (let index = 0; index < lines.length; index += 1) {
+    if (!lines[index]!.startsWith('### 解除时')) continue;
+    const body: string[] = [lines[index]!];
+    for (let next = index + 1; next < lines.length; next += 1) {
+      if (/^#{2,3} /.test(lines[next]!)) break;
+      body.push(lines[next]!);
+    }
+    sections.push(body.join('\n'));
+  }
+  return sections;
+}
+
+/** Every way the four-state total and the blockers page can disagree. */
+function blockerTotalProblems(documents: { status: string; blockers: string }): string[] {
+  const section = mappingSection(documents.status);
+  if (section.length === 0) {
+    return [
+      `docs/dod-status.md: no \`${MAPPING_HEADING}\` section, so nothing joins the four-state ` +
+        'table to the blockers page and the total cannot be checked against it',
+    ];
+  }
+  const rows = mappingRows(section);
+  const blockerNumbers = [...documents.blockers.matchAll(/^## (\d+)\. /gm)].map((match) =>
+    Number(match[1]),
+  );
+  const dodTable = dodRows(statusSection(documents.status));
+  const blocked = dodTable.filter((row) => row.state === '未过' || row.state === '外部阻塞');
+  const noDod = rows.filter((row) => row.target === NO_DOD_ROW);
+  const problems: string[] = [];
+
+  const expected = blockerNumbers.length - noDod.length;
+  if (blocked.length !== expected) {
+    problems.push(
+      `docs/dod-status.md: 未过 + 外部阻塞 = ${blocked.length} row(s) ` +
+        `(${blocked.map((row) => row.id).join(', ') || 'none'}), but \`docs/blockers.md\` has ` +
+        `${blockerNumbers.length} section(s) and ${noDod.length} of them map to ` +
+        `"${NO_DOD_ROW}", so ${expected} DoD row(s) should be blocked — closing a blocker ` +
+        'moves the total, not only the section',
+    );
+  }
+
+  // The named half: a row that is still blocked while the section that said how
+  // to close it is gone. The count above catches the arithmetic; this catches
+  // the reader who is sent to a section number that no longer exists.
+  for (const row of blocked) {
+    const targets = rows.filter((mapping) => mapping.target === row.id);
+    if (targets.length === 0) continue; // `mappingProblems` names this one
+    if (targets.some((mapping) => blockerNumbers.includes(mapping.section))) continue;
+    problems.push(
+      `docs/dod-status.md: ${row.id} is still "${row.state}", but \`docs/blockers.md\` no ` +
+        `longer has 第 ${targets.map((mapping) => mapping.section).join(' / ')} 节 — the row ` +
+        'says something is missing and the page that said how to close it is gone',
+    );
+  }
+
+  return problems;
+}
+
+/** Every `### 解除时` section that stopped saying the total moves with it. */
+function closingSentenceProblems(blockers: string): string[] {
+  const sections = closingSections(blockers);
+  if (sections.length === 0) {
+    return [
+      'docs/blockers.md: no `### 解除时` section, so nothing tells the reader who closes a ' +
+        'blocker that the four-state total moves with it',
+    ];
+  }
+  return sections
+    .filter((section) => !section.includes(TOTAL_SENTENCE))
+    .map((section) => {
+      const heading = section.split('\n')[0]!.trim();
+      return (
+        `docs/blockers.md: \`${heading}\` does not say \`${TOTAL_SENTENCE}\`, so the reader who ` +
+        'closes this blocker edits the section and leaves the total behind — the two documents ' +
+        'then disagree and only the count gate notices'
+      );
+    });
+}
+
+describe('closing a blocker moves the total, not only the section', () => {
+  it('reads both documents, so the identity is not computed over nothing', () => {
+    const rows = mappingRows(mappingSection(STATUS));
+    const sections = [...BLOCKERS.matchAll(/^## \d+\. /gm)].length;
+    const blocked = dodRows(statusSection(STATUS)).filter(
+      (row) => row.state === '未过' || row.state === '外部阻塞',
+    );
+    expect(sections, 'docs/blockers.md lists no blocker section').toBeGreaterThan(0);
+    expect(blocked.length, 'the four-state table has no blocked row').toBeGreaterThan(0);
+    expect(
+      rows.filter((row) => row.target === NO_DOD_ROW).length,
+      'no blocker is mapped to "no DoD sentence", so the subtraction is untested',
+    ).toBeGreaterThan(0);
+  });
+
+  it('keeps 未过 + 外部阻塞 equal to the blocker sections that have a DoD sentence', () => {
+    const problems = blockerTotalProblems({ status: STATUS, blockers: BLOCKERS });
+    expect(
+      problems,
+      `the four-state total and the blockers page disagree:\n  ${problems.join('\n  ')}`,
+    ).toEqual([]);
+  });
+
+  it('reports a blocker section deleted while its DoD row is still blocked', () => {
+    // The edit that closes a blocker, half done: the section is gone and the
+    // row still says 未过. Nothing else in this file names DOD-4.2 here.
+    const lines = BLOCKERS.split('\n');
+    const start = lines.findIndex((line) => line.startsWith('## 1. '));
+    expect(start, 'docs/blockers.md has no 第 1 节').toBeGreaterThanOrEqual(0);
+    let end = lines.length;
+    for (let index = start + 1; index < lines.length; index += 1) {
+      if (lines[index]!.startsWith('## ')) {
+        end = index;
+        break;
+      }
+    }
+    const broken = [...lines.slice(0, start), ...lines.slice(end)].join('\n');
+    expect(broken).not.toBe(BLOCKERS);
+    const problems = blockerTotalProblems({ status: STATUS, blockers: broken }).join('\n');
+    expect(problems).toContain('DOD-4.2 is still "未过"');
+    expect(problems).toContain('no longer has 第 1 节');
+  });
+
+  it('reports a total that was moved without deleting the section', () => {
+    // The other half: the row is closed in the table and the total is rewritten,
+    // and the blockers page still carries the recipe. The mapping table alone
+    // stays green here — it only asks that blocked rows are mapped from.
+    const line = STATUS.split('\n').find((row) => row.startsWith('| DOD-4.2 '));
+    expect(line, 'DOD-4.2 is not in the table any more').toBeDefined();
+    const cells = line!
+      .trim()
+      .replace(/^\|/, '')
+      .replace(/\|$/, '')
+      .split('|')
+      .map((cell) => cell.trim());
+    cells[2] = '通过';
+    cells[4] = '—';
+    const closed = `| ${cells.join(' | ')} |`;
+    const declared = /四态合计：通过 (\d+) \/ 未过 (\d+) \/ 外部阻塞 (\d+) \/ 不适用 (\d+)/u.exec(
+      statusSection(STATUS),
+    );
+    expect(declared, 'the section states no 四态合计').not.toBeNull();
+    const [, pass, fail, blockedCount, notApplicable] = declared!;
+    const moved =
+      `四态合计：通过 ${Number(pass) + 1} / 未过 ${Number(fail) - 1} / ` +
+      `外部阻塞 ${blockedCount} / 不适用 ${notApplicable}`;
+    const broken = STATUS.replace(line!, closed).replace(declared![0], moved);
+    expect(broken).not.toBe(STATUS);
+    const problems = blockerTotalProblems({ status: broken, blockers: BLOCKERS }).join('\n');
+    expect(problems).toContain('closing a blocker moves the total, not only the section');
+  });
+
+  it('says in every closing section that the total moves with it', () => {
+    expect(closingSentenceProblems(BLOCKERS)).toEqual([]);
+  });
+
+  it('reports a closing section that stopped saying the total moves with it', () => {
+    const sections = closingSections(BLOCKERS);
+    expect(sections.length, 'docs/blockers.md has no `### 解除时` section').toBeGreaterThan(0);
+    const broken = BLOCKERS.replace(
+      sections[0]!,
+      sections[0]!.replace(TOTAL_SENTENCE, '记得改文档'),
+    );
+    expect(broken).not.toBe(BLOCKERS);
+    const problems = closingSentenceProblems(broken).join('\n');
+    expect(problems).toContain(TOTAL_SENTENCE);
+    expect(problems).toContain('### 解除时');
+  });
+});

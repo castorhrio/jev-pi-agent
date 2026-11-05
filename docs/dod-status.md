@@ -1444,3 +1444,53 @@ source(s) and 16 screenshot(s) match`。
 
 门禁：`npm run typecheck`、`npm run lint`、`npm run knip` 退出码 0；`npx vitest run tests/contract/judge-samples.test.ts
 tests/contract/handoff-packs.test.ts tests/contract/manual-check-docs.test.ts` → 39 passed。
+
+## 本轮（2026-11-05，第五刀）解除一条阻塞时「总数也要跟着动」变成会红的断言，本机全量门禁第一次留档
+
+上一轮末尾的三条「没做」一字未变：上传 feed（无令牌）、Windows 六步（无 Windows 机器）、
+五态人眼签字（需要一个人）。这一轮只做审查给的三个 P0，产品代码一行未改。
+
+1. **解除一条阻塞时，`docs/dod-status.md` 顶部那句四态合计也要一起改——现在有断言了。**
+   此前 `blocker-closing.test.ts` 钉住「`blockers.md` 节数 = 演示页块数 = `DEGRADED_COMMANDS` 长度」，
+   `dod-status.test.ts` 钉住「四态合计 = 表里的行数」，但**没有**任何东西把这两件事连起来：
+   删掉第 1 节、把 DOD-4.2 改成「通过」、把合计从「未过 1」改成「未过 0」，这三处只有前两处会红。
+   现在 `dod-status.test.ts` 新增 `describe('closing a blocker moves the total, not only the section')`（6 项），
+   断言一条跨文档的恒等式：
+
+   ```
+   未过 + 外部阻塞  ==  blockers 节数 − 映射到「无对应 DoD 句子」的节数
+   ```
+
+   左边是四态表说「还缺什么」，右边是阻塞页说「有几条要解除」。两个方向各驱动一次：
+   删掉第 1 节而 DOD-4.2 仍是「未过」→ 指名 `DOD-4.2 is still "未过", but docs/blockers.md no longer has 第 1 节`；
+   把 DOD-4.2 改成「通过」并同步合计、却留着那一节 → 指名
+   `closing a blocker moves the total, not only the section` 并给出两边的数。
+   同一句话也写进了 `docs/blockers.md` 三处 `### 解除时` 的末尾——**改文档的人读的是那一节，不是测试文件**，
+   而那句话本身也被断言钉住（三节里少一句就红）。
+2. **`scripts/test-local.mjs` 的 scratch 目录与 `.gitignore` 的那一行，从「两处各自正确」变成「同一个常量」。**
+   脚本导出 `TEMP_DIR_ENTRY = '.tmp/'`，`--dry-run` 多打一行 `temp-dir-entry: .tmp/`，
+   `tests/contract/local-test-env.test.ts` 从脚本**导入**这个常量（不再自己写一份 `.tmp/`），
+   断言 `.gitignore` 的那一行逐字等于它、`--dry-run` 报出来的名字也等于它。
+   红方向：把脚本里的 `.tmp/` 改成 `.tmp-scratch/`（内存变异）→ 指名「脚本写的目录与 `.gitignore` 挡的目录
+   是两个会各自正确却指向不同地方的事实」。脚本同时加了「只有作为入口点才跑」的判断，
+   否则测试 import 它拿常量会启动一次全量套件。
+3. **本机全量门禁第一次留档**（`docs/manual-verification.md`「本机全量门禁的一次跑」一节）：
+   `typecheck` / `lint` / `knip` / `test:local`（109 文件 1805 项）/ e2e（20 文件 154 项）退出码全 0，
+   `layout.test.ts` 在真 Chromium 里 48 项全绿。**顺带量到一件事**：裸的 `npm run test:e2e` 在本机
+   20 个文件里 18 个红在 `import` 那一行（`ENOENT … /tmp/<hash>/client/<hash>`）——`vite` 的依赖缓存
+   也写在 `os.tmpdir()` 下，与 `npm test` 同一个根因，而 `test:local` 原来只覆盖了单测。
+   替代命令 `npm run test:local -- --config vitest.e2e.config.ts` 已写进 `docs/blockers.md`，
+   并由 `local-test-env.test.ts` 钉住「这一节点名的配置文件名 = `package.json#scripts['test:e2e']` 里的那一个」。
+
+**证明它会红**（各演示一次，恢复后全绿）：把 `docs/dod-status.md` 的 DOD-4.2 改成「通过」并同步合计 →
+`未过 + 外部阻塞 = 1 row(s) (DOD-4.1), but docs/blockers.md has 3 section(s) and 1 of them map to
+"无对应 DoD 句子", so 2 DoD row(s) should be blocked — closing a blocker moves the total, not only the section`；
+删掉 `docs/blockers.md` 第 1 节 → `DOD-4.2 is still "未过", but docs/blockers.md no longer has 第 1 节`；
+把脚本的 `.tmp/` 改成 `.tmp-scratch/` → `does not declare '.tmp/' as its scratch directory`。
+
+门禁：`npm run test:local -- tests/contract/dod-status.test.ts tests/contract/local-test-env.test.ts
+tests/contract/blocker-closing.test.ts tests/contract/doc-routing.test.ts tests/contract/blocker-freshness.test.ts`
+76 项全绿；`typecheck` / `lint` / `knip` 无输出。
+
+**这一轮没有做的事**：上传修正版 feed（无令牌）、Windows 桌面六步（无 Windows 机器）、
+步骤 6 的人眼观感签字（需要一个人）。三条仍是上表里的缺口，不假装完成。

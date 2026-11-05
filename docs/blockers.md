@@ -160,6 +160,8 @@ PASS — update-feed.json on castorhrio/jev-pi-agent v1.0.0 now carries sha256=�
 `--simulate-missing-sha` 今天的输出；`tests/contract/demo-script.test.ts` 的
 `describe('each external blocker has a command and a line on screen')` 钉住演示页里那条命令与它的首行。
 
+**跑完这条命令之后，`docs/dod-status.md` 顶部那句四态合计也要一起改**：`tests/contract/dod-status.test.ts` 在两个方向上都打红——节删了而合计没改、合计改了而节还在。这一句不是提醒，是那两条断言的名字。
+
 ## 2. Windows 桌面六步（需要一台 Windows 机器）
 
 - **最近核对**：2026-11-05 ｜ **重跑这一条**：`node scripts/verify-main-chain.mjs --judge docs/manual-verification/win-YYYYMMDD.json`
@@ -238,6 +240,8 @@ PASS — the report covers steps 1, 2, 3, 4, 5 on win32 against build 1.0.0
 两份报告喂给 `--judge` 的完整输出；`tests/contract/demo-script.test.ts` 的
 `describe('each external blocker has a command and a line on screen')` 钉住演示页里那条命令与它的首行。
 
+**跑完这条命令之后，`docs/dod-status.md` 顶部那句四态合计也要一起改**：`tests/contract/dod-status.test.ts` 在两个方向上都打红——节删了而合计没改、合计改了而节还在。这一句不是提醒，是那两条断言的名字。
+
 ## 3. 五个界面状态的人眼走查（需要一个人）
 
 - **最近核对**：2026-11-05 ｜ **重跑这一条**：`node scripts/screenshot-sources.mjs --check`
@@ -308,6 +312,8 @@ npx vitest run tests/contract/state-walkthrough.test.ts
 「那十张图还对着当前渲染层源码」；`tests/contract/demo-script.test.ts` 的
 `describe('each external blocker has a command and a line on screen')` 钉住演示页里那条命令与它的首行。
 
+**跑完这条命令之后，`docs/dod-status.md` 顶部那句四态合计也要一起改**：`tests/contract/dod-status.test.ts` 在两个方向上都打红——节删了而合计没改、合计改了而节还在。这一句不是提醒，是那两条断言的名字。
+
 ## 本机全量测试的已知环境约束（不是外部阻塞）
 
 - **最近核对**：2026-11-05 ｜ **重跑这一条**：`npm run test:local`
@@ -349,6 +355,19 @@ xvfb-run --auto-servernum --server-args="-screen 0 1920x1080x24" npm run test:lo
 是第二条约束——`tests/contract/layout.test.ts` 要一个真布局引擎，没有 `$DISPLAY` 时它自己
 会红并说明原因。这一条在本机跑出来是 **107 个文件绿、1 个红**（`layout.test.ts`，见下）。
 
+**`test:e2e` 也要走同一条命令**（2026-11-05 量到）：`npm run test:e2e` 在本机同样红，但红在另一处——
+`vite` 的依赖缓存也写在 `os.tmpdir()` 下，20 个 e2e 文件里 18 个在 import 阶段就
+`ENOENT: no such file or directory, open '/tmp/<hash>/client/<hash>'`，一条断言都没跑到。
+同一条替代命令带上 e2e 的配置即可：
+
+```bash
+DISPLAY=:140 ELECTRON_DISABLE_SANDBOX=1 npm run test:local -- --config vitest.e2e.config.ts
+```
+
+`--config` 后面那个文件名不是这一页抄的：`package.json` 的 `test:e2e` 就是
+`vitest run --config vitest.e2e.config.ts`，`tests/contract/local-test-env.test.ts` 断言这一节写的配置
+与那条脚本里的配置是同一个字符串——两处各写一份，改一处另一处不红。
+
 **该跑哪一条**：**CI 上 `npm test` 是权威**；本机 `npm test` 红不构成信号，请用 `npm run test:local`。
 这两句是这一节唯一要记住的东西，`tests/contract/local-test-env.test.ts` 逐字钉住它们——删掉任何一句，
 红的是这一页，不是那条命令。
@@ -358,10 +377,13 @@ runner 的 `/tmp` 不是这台机器的 `/tmp`，一条只在挪走临时目录�
 `test:local` 是给需要它的机器用的，它每次运行都打印自己用的目录，所以一段 transcript 不会被
 误读成一次普通的 `npm test`。
 
-**这一节的断言在哪**：`tests/contract/local-test-env.test.ts` 钉住四件事——这一节点名的
+**这一节的断言在哪**：`tests/contract/local-test-env.test.ts` 钉住六件事——这一节点名的
 `npm run test:local` 真的在 `package.json` 的 `scripts` 里（写一条没人跑的替代命令是这一页
 最坏的形态）、`scripts/test-local.mjs` 真的把 `TMPDIR` 指到仓库内、`.tmp/` 真的被 `.gitignore`
-挡住、以及上面那两句「该跑哪一条」真的在这一节里；它还跑一次 `--dry-run`，断言脚本自己报出来的
+挡住、上面那两句「该跑哪一条」真的在这一节里、e2e 那条命令里的配置文件名与 `package.json` 的
+`test:e2e` 是同一个字符串、以及脚本用的目录名与 `.gitignore` 那一行是**同一个常量**
+（测试从 `scripts/test-local.mjs` 导入 `TEMP_DIR_ENTRY`，不在这里再写一份 `.tmp/`——两份各自正确
+却指向不同目录时，两条断言都会绿）。它还跑一次 `--dry-run`，断言脚本自己报出来的
 三个临时目录变量（`TMPDIR` / `TEMP` / `TMP`）都指向仓库里——只查一个的话，另外两个仍可能把
 临时文件放回 `/tmp`，而这一节说的正是「三个一起挪」。
 
