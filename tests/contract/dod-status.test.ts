@@ -55,9 +55,14 @@
  * driven with mutated copies of the real text rather than argued about.
  */
 
+import { spawnSync } from 'node:child_process';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+// A day is a day here and in the blockers gates: `2026-02-30` has to be refused by
+// both, and two implementations of that arithmetic drift into one of them
+// accepting a date the calendar does not have.
+import { utcDays } from './blockers-doc.ts';
 
 const REPO_ROOT = join(import.meta.dirname, '..', '..');
 const DOD_PATH = join(REPO_ROOT, 'docs', 'PRODUCT-DOD.md');
@@ -1845,5 +1850,288 @@ describe('closing a blocker leaves a receipt', () => {
     expect(receiptProblems({ status: broken, blockers: BLOCKERS })).toEqual([
       expect.stringContaining('no `## 阻塞关闭回执` section'),
     ]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The page is dated the round it describes
+// ---------------------------------------------------------------------------
+
+/**
+ * ## Why this block exists
+ *
+ * Two headings in this document carry a date: the H1 (`# DoD 现状对照（…）`) and
+ * the provenance section (`## 本轮 DoD 加载来源与未勾项（…）`). Both were prose.
+ * Nothing read either one, so they drifted the way unmeasured copies drift: the
+ * H1 stayed on 2026-11-03, the loading section moved to 2026-11-05, and the
+ * repository's last commit landed on 2026-11-06. The question this page exists to
+ * answer is 「现在到哪一步」, and the first line of a document is the line a
+ * reader trusts — a page that says it is current as of a Wednesday is describing
+ * a Thursday it has not read.
+ *
+ * Two rules, asserted in the direction that is easy to lose:
+ *
+ *  - the H1 and the provenance section name **the same day**. One page, one
+ *    currency date; the failure prints both, because the useful half of this
+ *    red is knowing which of the two moved;
+ *  - that day is **not older than the last commit**. `git log -1 --format=%cs`
+ *    answers that, and a tree with no git directory — a release pack, a tarball
+ *    handoff — is **skipped rather than reported**: the gate is about a document
+ *    keeping up with a repository, and a repository that cannot be asked about
+ *    its own history is not a stale page. The same-day rule still applies there,
+ *    which is its own case below rather than a comment.
+ *
+ * The commit day is an **argument**, not a global: every red direction is driven
+ * with a fixed literal, so a case cannot go green by running in a checkout whose
+ * history happens to match. That is also what makes the skip branch checkable —
+ * `null` is passed on purpose, not caught by accident.
+ */
+
+/** The heading the page's currency date lives in, without its date. */
+const STATUS_TITLE_MARKER = '# DoD 现状对照';
+
+/** The heading the round's DoD provenance lives in, without its date. */
+const LOADED_TITLE_MARKER = '## 本轮 DoD 加载来源与未勾项';
+
+/** One dated heading: the line as written, and whatever it puts in parentheses. */
+interface DatedHeading {
+  /** The heading line, or undefined when the page has no such heading. */
+  readonly line: string | undefined;
+  /** The literal inside `（…）`, or undefined when the heading carries none. */
+  readonly written: string | undefined;
+}
+
+/**
+ * The heading that starts with `marker`, and the day it names.
+ *
+ * The parenthesised literal is returned **as written** rather than parsed: a
+ * heading dated `（YYYY-MM-DD）` or `（2026-02-30）` has to be reported as the text
+ * the page carries, not as `NaN`.
+ */
+function readDatedHeading(markdown: string, marker: string): DatedHeading {
+  const line = markdown.split('\n').find((candidate) => candidate.startsWith(marker));
+  if (line === undefined) return { line: undefined, written: undefined };
+  return { line, written: /（([^（）]*)）/u.exec(line)?.[1] };
+}
+
+/**
+ * The day the last commit landed, as git writes it — or null when there is no
+ * history to ask.
+ *
+ * `%cs` is the **commit** date, not `%cI`: this page is dated by day, and a
+ * comparison that needed the time zone would be a comparison about the clock.
+ */
+function lastCommitDay(): string | null {
+  const run = spawnSync('git', ['log', '-1', '--format=%cs'], {
+    cwd: REPO_ROOT,
+    encoding: 'utf8',
+  });
+  if (run.error !== undefined || run.status !== 0) return null;
+  const written = run.stdout.trim();
+  return utcDays(written) === null ? null : written;
+}
+
+const HEAD_DAY = lastCommitDay();
+
+/**
+ * Every way this page has stopped being a current statement.
+ *
+ * Empty means both dated headings exist, both name a real calendar day, they name
+ * the **same** day, and that day is not behind `headDay` (when the tree has a
+ * history to compare against).
+ */
+function dateProblems(status: string, headDay: string | null): string[] {
+  const problems: string[] = [];
+  const title = readDatedHeading(status, STATUS_TITLE_MARKER);
+  const loaded = readDatedHeading(status, LOADED_TITLE_MARKER);
+
+  if (title.line === undefined) {
+    problems.push(
+      `docs/dod-status.md: no \`${STATUS_TITLE_MARKER}（…）\` heading, so nothing states which ` +
+        'day this page is current as of',
+    );
+  }
+  if (loaded.line === undefined) {
+    problems.push(
+      `docs/dod-status.md: no \`${LOADED_TITLE_MARKER}（…）\` heading, so nothing records which ` +
+        'round loaded `docs/PRODUCT-DOD.md`',
+    );
+  }
+  if (problems.length > 0) return problems;
+
+  // Where each date belongs, in the order the page prints them: a failure has to
+  // name the heading that moved, not just say two numbers disagree.
+  const headings: ReadonlyArray<readonly [string, string | undefined]> = [
+    ['the H1', title.written],
+    [`\`${LOADED_TITLE_MARKER}\``, loaded.written],
+  ];
+
+  const days: number[] = [];
+  for (const [where, written] of headings) {
+    if (written === undefined) {
+      problems.push(
+        `docs/dod-status.md: ${where} carries no \`（YYYY-MM-DD）\` day, so the page does not say ` +
+          'what it is current as of',
+      );
+      days.push(Number.NaN);
+      continue;
+    }
+    const day = utcDays(written);
+    if (day === null) {
+      problems.push(
+        `docs/dod-status.md: ${where} is dated \`${written}\`, which is not a real \`YYYY-MM-DD\` ` +
+          'day on the calendar',
+      );
+      days.push(Number.NaN);
+      continue;
+    }
+    days.push(day);
+  }
+
+  const [titleDay, loadedDay] = days as [number, number];
+  if (!Number.isNaN(titleDay) && !Number.isNaN(loadedDay) && titleDay !== loadedDay) {
+    problems.push(
+      `docs/dod-status.md: the H1 says the page is current as of \`${title.written}\` and ` +
+        `\`${LOADED_TITLE_MARKER}\` says \`${loaded.written}\` — one page, two dates, and a ` +
+        'reader cannot tell which round the tables below were written under',
+    );
+  }
+
+  if (headDay !== null) {
+    const head = utcDays(headDay)!;
+    headings.forEach(([where, written], position) => {
+      const day = days[position]!;
+      if (Number.isNaN(day) || day >= head) return;
+      problems.push(
+        `docs/dod-status.md: ${where} is dated \`${written}\` and the last commit landed on ` +
+          `\`${headDay}\` — a status page older than the code it describes is describing a ` +
+          'state that no longer exists; move that date to the round this edit belongs to',
+      );
+    });
+  }
+
+  return problems;
+}
+
+/** The page with both currency headings rewritten to one literal day. */
+function retitled(markdown: string, day: string): string {
+  let out = markdown;
+  for (const marker of [STATUS_TITLE_MARKER, LOADED_TITLE_MARKER] as const) {
+    const heading = readDatedHeading(out, marker);
+    expect(heading.line, `docs/dod-status.md has no \`${marker}\` heading to rewrite`).toBeDefined();
+    const before = out;
+    out = out.replace(`${marker}（${heading.written}）`, `${marker}（${day}）`);
+    expect(
+      out,
+      `the \`${marker}\` heading does not read as \`${marker}（${heading.written}）\`, so this ` +
+        'mutation describes nothing',
+    ).not.toBe(before);
+  }
+  return out;
+}
+
+describe('the status page is dated the round it describes', () => {
+  it('carries one currency date, and it is not behind the repository', () => {
+    expect(dateProblems(STATUS, HEAD_DAY)).toEqual([]);
+  });
+
+  it('is not vacuous: both headings are read and agree on a real day', () => {
+    // Without this, `dateProblems` returning `[]` could mean two headings that
+    // stopped matching and returned early — and the early return above is exactly
+    // the empty-set green this repository keeps having to name.
+    const title = readDatedHeading(STATUS, STATUS_TITLE_MARKER);
+    const loaded = readDatedHeading(STATUS, LOADED_TITLE_MARKER);
+    expect(title.line, 'the H1 is gone').toBeDefined();
+    expect(loaded.line, 'the provenance heading is gone').toBeDefined();
+    expect(title.written, 'the H1 carries no date').toBeDefined();
+    expect(loaded.written, 'the provenance heading carries no date').toBeDefined();
+    expect(utcDays(title.written!), `the page is dated \`${title.written}\``).not.toBeNull();
+  });
+
+  it('reports an H1 the round left behind, naming both dates', () => {
+    // The exact drift this block was written for: the section moved, the title did
+    // not. `headDay` is null here so the failure can only be the disagreement.
+    const loaded = readDatedHeading(STATUS, LOADED_TITLE_MARKER).written!;
+    const title = readDatedHeading(STATUS, STATUS_TITLE_MARKER).line!;
+    const stale = STATUS.replace(title, `${STATUS_TITLE_MARKER}（2026-11-03）`);
+    expect(stale, 'the H1 this case rewrites is gone').not.toBe(STATUS);
+    const problems = dateProblems(stale, null);
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toContain('one page, two dates');
+    expect(problems[0]).toContain('2026-11-03');
+    expect(problems[0]).toContain(loaded);
+  });
+
+  it('refuses a page older than the last commit, with both headings agreeing', () => {
+    // The other half, and the reason the commit day is an argument: both dates
+    // match, so only the repository can say the page is behind.
+    const stale = retitled(STATUS, '2026-11-04');
+    const problems = dateProblems(stale, '2026-11-06');
+    expect(problems).toHaveLength(2);
+    for (const problem of problems) {
+      expect(problem).toContain('the last commit landed on `2026-11-06`');
+      expect(problem).toContain('2026-11-04');
+    }
+    expect(problems[0]).toContain('the H1');
+    expect(problems[1]).toContain(LOADED_TITLE_MARKER);
+  });
+
+  it('takes the boundary exactly: the commit day is current, one day behind is not', () => {
+    // Both sides of the line on fixed literals, so the case reads the same next
+    // week: dated *the* day the commit landed is the promise, dated the day before
+    // is the failure. A page dated ahead of HEAD is not this gate's complaint —
+    // `blocker-freshness.test.ts` already refuses a date that has not happened yet.
+    const dated = retitled(STATUS, '2026-12-01');
+    expect(dateProblems(dated, '2026-12-01')).toEqual([]);
+    const problems = dateProblems(dated, '2026-12-02');
+    expect(problems).toHaveLength(2);
+    expect(problems[0]).toContain('the H1 is dated `2026-12-01`');
+    expect(problems[1]).toContain(LOADED_TITLE_MARKER);
+  });
+
+  it('skips only the commit comparison when the tree has no history', () => {
+    // `null` is the pack-without-git case, and it must not silence the gate: the
+    // same document, same argument, still red on a disagreement — and still green
+    // when the two dates agree. That is the difference between one branch and a
+    // gate that stopped looking.
+    expect(dateProblems(STATUS, HEAD_DAY)).toEqual([]);
+    expect(dateProblems(STATUS, null)).toEqual([]);
+    const title = readDatedHeading(STATUS, STATUS_TITLE_MARKER).line!;
+    const disagreeing = STATUS.replace(title, `${STATUS_TITLE_MARKER}（2026-01-01）`);
+    expect(dateProblems(disagreeing, null)).toEqual([expect.stringContaining('one page, two dates')]);
+  });
+
+  it('refuses a placeholder, an impossible day, and a heading that lost its date', () => {
+    // The three edits that would make the date un-assertable without looking wrong:
+    // the template a contributor copies, the day the calendar rolls into March, and
+    // the parentheses that quietly disappear.
+    expect(dateProblems(retitled(STATUS, 'YYYY-MM-DD'), '2026-11-06')).toEqual([
+      expect.stringContaining('is dated `YYYY-MM-DD`, which is not a real'),
+      expect.stringContaining('is dated `YYYY-MM-DD`, which is not a real'),
+    ]);
+    expect(dateProblems(retitled(STATUS, '2026-02-30'), '2026-11-06')).toEqual([
+      expect.stringContaining('is dated `2026-02-30`, which is not a real'),
+      expect.stringContaining('is dated `2026-02-30`, which is not a real'),
+    ]);
+    const undated = STATUS.replace(
+      `${STATUS_TITLE_MARKER}（${readDatedHeading(STATUS, STATUS_TITLE_MARKER).written}）`,
+      STATUS_TITLE_MARKER,
+    );
+    expect(undated, 'the H1 date this case strips is gone').not.toBe(STATUS);
+    expect(dateProblems(undated, '2026-11-06')).toEqual([
+      expect.stringContaining('the H1 carries no `（YYYY-MM-DD）` day'),
+    ]);
+  });
+
+  it('reports a page that lost either dated heading', () => {
+    for (const marker of [STATUS_TITLE_MARKER, LOADED_TITLE_MARKER] as const) {
+      const heading = readDatedHeading(STATUS, marker);
+      expect(heading.line, `\`${marker}\` is not in the page any more`).toBeDefined();
+      const broken = STATUS.replace(`${heading.line}\n`, '');
+      expect(broken, `the \`${marker}\` heading this case deletes is gone`).not.toBe(STATUS);
+      expect(dateProblems(broken, HEAD_DAY)).toEqual([
+        expect.stringContaining(`no \`${marker}（…）\` heading`),
+      ]);
+    }
   });
 });

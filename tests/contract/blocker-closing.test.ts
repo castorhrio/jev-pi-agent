@@ -61,10 +61,18 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-// The same reader the other two blockers gates use: a second definition of "what
-// a `## 1. …` section is" would drift, and the drift would show up as one gate
-// quietly reading nothing while the others stayed green.
-import { blockerSections } from './blockers-doc.ts';
+// The same reader the other blockers gates use: a second definition of "what a
+// `## 1. …` section is", or of "what the first line under this marker is", would
+// drift, and the drift would show up as one gate quietly reading nothing while
+// the others stayed green.
+import {
+  CLOSING_HEADING,
+  FIRST_LINE_MARKER,
+  RUN_MARKER,
+  blockAfter,
+  blockerSections,
+  closingRecipe,
+} from './blockers-doc.ts';
 // The demo page's three blocks and the command list they are checked against,
 // from the module both gates read: a copy of the list in each file would let one
 // gate be edited while the other kept counting the old length.
@@ -79,12 +87,7 @@ const read = (path: string): string => (existsSync(path) ? readFileSync(path, 'u
 const BLOCKERS = read(BLOCKERS_PATH);
 const DEMO = read(DEMO_PATH);
 
-/** The heading a closing recipe starts at. */
-const CLOSING_HEADING = '### 解除时';
-
-/** The three markers a closing recipe is built from, in the order they appear. */
-const RUN_MARKER = '**跑这一条**';
-const FIRST_LINE_MARKER = '**屏幕上第一行**';
+/** The marker the count of documents-to-edit is read from. */
 const COUNT_MARKER = /^\*\*解除后要改的([一二三四五六七八九十]|\d+)处\*\*/u;
 
 /** Chinese numerals as used in these headings, so `四处` can be compared with 4. */
@@ -100,50 +103,6 @@ const NUMERALS: Readonly<Record<string, number>> = {
   九: 9,
   十: 10,
 };
-
-/** One blocker's closing recipe, as the page writes it. */
-interface Closing {
-  /** The blocker section it belongs to, for failure messages. */
-  readonly blocker: string;
-  /** The subsection text, from `### 解除时` to the next heading. */
-  readonly body: string;
-}
-
-/** The `### 解除时` subsection of a blocker section, or undefined when it has none. */
-function closingOf(section: { heading: string; body: string }): Closing | undefined {
-  const lines = section.body.split('\n');
-  const start = lines.findIndex((line) => line.startsWith(CLOSING_HEADING));
-  if (start === -1) return undefined;
-  const body: string[] = [];
-  for (let index = start + 1; index < lines.length; index += 1) {
-    const line = lines[index]!;
-    if (line.startsWith('## ') || line.startsWith('### ')) break;
-    body.push(line);
-  }
-  return { blocker: section.heading, body: body.join('\n') };
-}
-
-/** The first non-empty line of the first fenced block after `marker`. */
-function blockAfter(body: string, marker: string): string | undefined {
-  const at = body.indexOf(marker);
-  if (at === -1) return undefined;
-  const rest = body.slice(at + marker.length);
-  const fence = rest.indexOf('```');
-  if (fence === -1) return undefined;
-  // The opening fence carries a language tag on the same line (` ```bash `), so
-  // the block starts after that line rather than after the three backticks —
-  // otherwise `bash` reads as the command and every recipe fails the same way.
-  const afterFence = rest.slice(fence + 3);
-  const firstBreak = afterFence.indexOf('\n');
-  if (firstBreak === -1) return undefined;
-  const fenced = afterFence.slice(firstBreak + 1);
-  const close = fenced.indexOf('```');
-  const block = close === -1 ? fenced : fenced.slice(0, close);
-  return block
-    .split('\n')
-    .map((line) => line.trim())
-    .find((line) => line.length > 0);
-}
 
 /**
  * Whether a closing command is something this repository can actually run.
@@ -245,7 +204,7 @@ function closingProblems(
   }
   const problems: string[] = [];
   for (const section of sections) {
-    const closing = closingOf(section);
+    const closing = closingRecipe(section);
     if (closing === undefined) {
       problems.push(
         `docs/blockers.md: "${section.heading}" has no \`${CLOSING_HEADING}\` subsection, so the ` +
@@ -350,7 +309,7 @@ describe('every blocker says what to do the moment it lifts', () => {
     // green over an empty list — the shape of a gate that stopped looking.
     const sections = blockerSections(BLOCKERS);
     expect(sections.length).toBe(3);
-    const closings = sections.map((section) => closingOf(section));
+    const closings = sections.map((section) => closingRecipe(section));
     for (const closing of closings) {
       expect(closing, 'a blocker section has no closing recipe').toBeDefined();
       const command = blockAfter(closing!.body, RUN_MARKER);

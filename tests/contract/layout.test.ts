@@ -192,6 +192,21 @@ interface Measurement {
      */
     failure: { chars: number; head: string } | null;
     /**
+     * The failed-load screen's next step, measured against the fold.
+     *
+     * `docs/state-walkthrough.md` asks whether that screen says what to do next,
+     * and the E2E suite pins the order the sentence is written in. This is the
+     * same claim on the axis the DOM cannot see: whether the line and the retry
+     * button are inside the window a person is looking at, or three lines below
+     * it. `null` when no fatal pane is on screen.
+     */
+    fatalFold: {
+      viewportHeight: number;
+      next: { top: number; bottom: number };
+      retry: { top: number; bottom: number };
+      columnHeight: number;
+    } | null;
+    /**
      * The first-run block's hierarchy, as the engine computed it.
      *
      * `null` when the block is not on screen — a state without a first run is
@@ -1026,6 +1041,61 @@ describe('the interface states are measured, not assumed', () => {
     for (const m of shellStates) {
       expect(m.content.errorPane, `?scenario=${m.state} painted the failed-load pane`).toBe(false);
     }
+  });
+
+  it('keeps the failed-load screen above the fold, not merely above the buttons', () => {
+    /*
+     * The fourth `error` criterion in `docs/state-walkthrough.md` is 「这一屏说得出
+     * 下一步」, and last round made it measurable: `tests/e2e/scenarios.e2e.test.tsx`
+     * asserts `error.fatalNext` comes *before* `error.retry`. That is the whole
+     * claim on one axis and nothing on the other — a next step printed below the
+     * visible area is a next step for somebody who has already scrolled, and a
+     * first-run failure is the screen nobody scrolls on. Ordered correctly and
+     * invisible is the same defect wearing a green badge, so this measures the
+     * bottom edges against `window.innerHeight` in the real layout engine.
+     *
+     * Every `error` frame counts, at both window sizes and both reason lengths:
+     * the promise is not size-specific, and 200 characters of Windows path is
+     * precisely the moment a layout has to keep it. `columnHeight` rides along in
+     * the failure so the reader can tell "the column overflowed its window" from
+     * "one box sat too low" — two defects with one symptom.
+     */
+    const failed = measurements.filter((m) => m.state === 'error');
+    expect(
+      failed.length,
+      'the failed-load screen was never measured, so the fold check below is vacuous',
+    ).toBeGreaterThanOrEqual(3);
+
+    const outside: string[] = [];
+    for (const m of failed) {
+      const fold = m.content.fatalFold;
+      if (fold === null) {
+        outside.push(
+          `${m.name}: no next-step line or retry button was found to place — the failed-load ` +
+            'pane lost one of them',
+        );
+        continue;
+      }
+      for (const [label, box] of [
+        ['the next-step line', fold.next],
+        ['the retry button', fold.retry],
+      ] as const) {
+        if (box.bottom > fold.viewportHeight) {
+          outside.push(
+            `${m.name}: ${label} ends at ${box.bottom}px in a ${fold.viewportHeight}px window ` +
+              `(the column is ${fold.columnHeight}px tall) — it is below the fold, so the ` +
+              'screen says what to do next somewhere the reader cannot see',
+          );
+        }
+        if (box.top < 0) {
+          outside.push(
+            `${m.name}: ${label} starts at ${box.top}px — pushed above the window, reachable ` +
+              'only by scrolling backwards',
+          );
+        }
+      }
+    }
+    expect(outside, 'the failed-load screen promises below the fold').toEqual([]);
   });
 
   it('the permission state really has a prompt on screen', () => {

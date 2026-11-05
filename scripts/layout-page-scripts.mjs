@@ -1248,6 +1248,43 @@ export const MEASURE = `(() => {
         return { chars: full.length, head: full.slice(0, 120) };
       })(),
       /*
+       * The failed-load screen's promise, measured against the fold.
+       *
+       * docs/state-walkthrough.md asks whether that screen '说得出下一步'. The
+       * round before this one made that measurable in the DOM: the E2E suite
+       * asserts the sentence exists and sits BEFORE the buttons. Order is not
+       * enough on its own - a next step three lines below the visible area is
+       * said to somebody who has already scrolled, and a first-run failure is
+       * exactly the screen nobody scrolls on. So this is the same claim on the
+       * vertical axis, at the window the product forces you into: the bottom
+       * edge of the next-step line and of the retry button, against
+       * window.innerHeight.
+       *
+       * columnHeight is here so a failure can say whether the whole column
+       * overflowed its window or one box merely sat too low - two different
+       * defects with one visible symptom.
+       *
+       * null when either box is missing, which is a fact about the frame: the
+       * shell states have no fatal pane. The gate reads this only on the
+       * 'error' state, and a null there is red rather than skipped.
+       */
+      fatalFold: (() => {
+        const next = document.querySelector('.pane.fatal .fatal-next');
+        const retry = document.querySelector('.pane.fatal .row-gap button.primary');
+        const column = document.querySelector('.pane.fatal');
+        if (next === null || retry === null || column === null) return null;
+        const box = (el) => {
+          const rect = el.getBoundingClientRect();
+          return { top: round(rect.top), bottom: round(rect.bottom) };
+        };
+        return {
+          viewportHeight: round(window.innerHeight),
+          next: box(next),
+          retry: box(retry),
+          columnHeight: round(column.scrollHeight),
+        };
+      })(),
+      /*
        * The first-run block's hierarchy, as computed rather than as declared.
        *
        * 'docs/state-walkthrough.md' asks a walker whether the eye lands on the

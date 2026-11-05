@@ -3,19 +3,25 @@
  *
  * ## Why this is a module and not two functions
  *
- * `docs/blockers.md` is now judged by two gates that ask different questions
+ * `docs/blockers.md` is now judged by four gates that ask different questions
  * about the same document shape:
  *
  *  - `doc-routing.test.ts` asks whether every blocker still carries its three
  *    parts (the command, the expected output, where the result goes);
  *  - `blocker-freshness.test.ts` asks whether every blocker says **when** it was
- *    last re-checked, and how long ago that was.
+ *    last re-checked, and how long ago that was;
+ *  - `blocker-closing.test.ts` asks whether every blocker says what to do the
+ *    moment it lifts — the command, the line it prints, the documents to edit;
+ *  - `blocker-parity.test.ts` asks whether the two other copies of each blocker
+ *    (`README.md` and `docs/dod-status.md`) say the **same** command, the same
+ *    「需要…」 and the same expected first line.
  *
- * Both need "what a `## 1. …` section is". Written twice, the two definitions
- * can drift — and the drift is invisible in the worst direction: a gate whose
- * section regex stops matching reads an empty list and reports nothing, so one
- * gate goes quiet while the other keeps printing green beside it. This repository
- * has removed that shape before (`findingLine()` shared between two commands,
+ * All four need "what a `## 1. …` section is", and the last two need "what the
+ * first line under this marker is". Written twice, the two definitions can drift
+ * — and the drift is invisible in the worst direction: a gate whose section regex
+ * stops matching reads an empty list and reports nothing, so one gate goes quiet
+ * while the other keeps printing green beside it. This repository has removed
+ * that shape before (`findingLine()` shared between two commands,
  * `app-rules-build.ts` shared between four tests); a shared reader is the same
  * move one level down.
  */
@@ -236,4 +242,65 @@ export function todayInUtcDays(now: Date = new Date()): number {
 /** Whether a re-check line names something this repository can actually run. */
 export function isRunnableCommand(command: string): boolean {
   return /^(node\s+scripts[\\/][\w.-]+\.(?:mjs|cjs|js|ts)\b|npm run [\w:.-]+\b)/u.test(command.trim());
+}
+
+/** The heading a closing recipe starts at. */
+export const CLOSING_HEADING = '### 解除时';
+
+/** One blocker's closing recipe: which section it belongs to, and its text. */
+export interface ClosingRecipe {
+  readonly heading: string;
+  /** From the line after `### 解除时` to the next heading of either level. */
+  readonly body: string;
+}
+
+/**
+ * The `### 解除时` subsection of a blocker section, or undefined when it has none.
+ *
+ * Read from a section body rather than the whole page, so a recipe cannot be
+ * matched to the wrong blocker when one section loses its subsection and the
+ * next one keeps its own.
+ */
+export function closingRecipe(section: BlockerSection): ClosingRecipe | undefined {
+  const lines = section.body.split('\n');
+  const start = lines.findIndex((line) => line.startsWith(CLOSING_HEADING));
+  if (start === -1) return undefined;
+  const body: string[] = [];
+  for (let index = start + 1; index < lines.length; index += 1) {
+    const line = lines[index]!;
+    if (line.startsWith('## ') || line.startsWith('### ')) break;
+    body.push(line);
+  }
+  return { heading: section.heading, body: body.join('\n') };
+}
+
+/** The marker a closing recipe's command sits under. */
+export const RUN_MARKER = '**跑这一条**';
+
+/** The marker a closing recipe's expected first line sits under. */
+export const FIRST_LINE_MARKER = '**屏幕上第一行**';
+
+/**
+ * The first non-empty line of the first fenced block after `marker`.
+ *
+ * The opening fence carries a language tag on the same line (```bash), so the
+ * block starts after that line rather than after the three backticks — otherwise
+ * `bash` reads as the command and every recipe fails the same way.
+ */
+export function blockAfter(body: string, marker: string): string | undefined {
+  const at = body.indexOf(marker);
+  if (at === -1) return undefined;
+  const rest = body.slice(at + marker.length);
+  const fence = rest.indexOf('```');
+  if (fence === -1) return undefined;
+  const afterFence = rest.slice(fence + 3);
+  const firstBreak = afterFence.indexOf('\n');
+  if (firstBreak === -1) return undefined;
+  const fenced = afterFence.slice(firstBreak + 1);
+  const close = fenced.indexOf('```');
+  const block = close === -1 ? fenced : fenced.slice(0, close);
+  return block
+    .split('\n')
+    .map((line) => line.trim())
+    .find((line) => line.length > 0);
 }

@@ -245,10 +245,13 @@ or it cannot tell a gap from a finished item.
   asserted, measured and photographed: `npm run test:e2e` checks what each one
   paints, the layout gate measures all five in a real Chromium at 1440×900 and
   at the tightest window, and the images in `docs/screenshots/` are taken by
-  that gate. What has not happened is a person looking at them and saying they
-  read as a first run, a failure, a permission prompt. `docs/manual-verification.md`
-  step 6 records this as not done, and it is the one thing a screenshot cannot
-  answer for itself. The questions to answer are written down in
+  that gate — `node scripts/screenshot-sources.mjs --check` is what says those
+  images still match the renderer they were taken from, and it cannot say
+  anybody looked at them. What has not happened is a person looking at them
+  and saying they read as a first run, a failure, a permission prompt.
+  `docs/manual-verification.md` step 6 records this as not done, and it is the
+  one thing a screenshot cannot answer for itself. The questions to answer are
+  written down in
   `docs/state-walkthrough.md` — yes/no criteria per state (three each, four for the
   failed-load screen), anchored to text that is actually on screen, plus the record
   table a walkthrough signs. Until
@@ -457,7 +460,9 @@ npm run package  # 免安装目录，不出安装包
   把报告带回来，本机不是 Windows。
 - **五个界面状态还没有被人眼走查过。** 它们被断言、被测量、被拍照：
   `npm run test:e2e` 检查每一态画了什么，布局门禁在真实 Chromium 里把五态在 1440×900
-  与最小窗口各量一次，`docs/screenshots/` 里的图就是那道门禁拍的。没发生的是**有人看过它们**
+  与最小窗口各量一次，`docs/screenshots/` 里的图就是那道门禁拍的——
+  `node scripts/screenshot-sources.mjs --check` 量的是这些图还对着拍下它们的那一版渲染层，
+  它说不了有没有人看过。没发生的是**有人看过它们**
   并说「这看起来像首启 / 像失败 / 像权限请求」。`docs/manual-verification.md` 步骤 6
   记着这件事没做——这是截图自己回答不了的那一问。要回答的问题写在
   `docs/state-walkthrough.md`：每态能用「是 / 否」回答的判据（各三条，失败那一屏四条），

@@ -1,4 +1,4 @@
-# DoD 现状对照（2026-11-03）
+# DoD 现状对照（2026-11-06）
 
 **审查与下一轮必须先读 `docs/PRODUCT-DOD.md`**（锁定稿，不改它）；这一页只回答「现在到哪一步、
 证据在哪、还差什么」，不替代它——不先读 DoD，就会把「没人记的一条」当成「没有这一条」，
@@ -78,10 +78,17 @@
 
 ### 未关闭
 
-- 第 1 节 · 已发布的 v1.0.0 feed 缺 `sha256`：本机没有 `contents: write` 令牌，
-  `node scripts/publish-feed.mjs --apply --verify` 会直接拒绝执行，所以没有回执可签。
-- 第 2 节 · Windows 桌面六步：本机不是 Windows，`node scripts/verify-main-chain.mjs` 只在 Linux 桌面会话里跑通过。
-- 第 3 节 · 五个界面状态的人眼走查：需要一个人看过五态并签字，机器答不了这一问。
+- 第 1 节 · 已发布的 v1.0.0 feed 缺 `sha256`：**需要写权限令牌**。本机没有 `contents: write`
+  令牌，`node scripts/publish-feed.mjs --apply --verify` 会直接拒绝执行，所以没有回执可签。
+  拿到令牌那天，那条命令屏幕上第一行是
+  `PASS — update-feed.json on castorhrio/jev-pi-agent v1.0.0 now carries sha256=…`。
+- 第 2 节 · Windows 桌面六步：**需要一台 Windows 机器**。本机不是 Windows，
+  `node scripts/verify-main-chain.mjs` 只在 Linux 桌面会话里跑通过。报告带回后跑
+  `node scripts/verify-main-chain.mjs --judge docs/manual-verification/win-YYYYMMDD.json`，
+  屏幕上第一行是 `PASS — the report covers steps 1, 2, 3, 4, 5 on win32 against build 1.0.0`。
+- 第 3 节 · 五个界面状态的人眼走查：**需要一个人**看过五态并签字，机器答不了这一问。签字之后
+  `npx vitest run tests/contract/state-walkthrough.test.ts` 才转绿，屏幕上第一行是
+  `✓ tests/contract/state-walkthrough.test.ts`。
 
 表里现在是空的，这是**如实**的空：三条阻塞一条都没关掉。关掉第一条时，把「未关闭」里那一行删掉、
 在表里加一行（日期、`第 1 节`、跑的命令、退出码、结果路径），两处一起动——只动一处会红。
@@ -118,7 +125,7 @@ node scripts/verify-release-feed.mjs                               # 退出 0 = 
 跑完之后，回执表加一行（日期、`第 1 节`、`GITHUB_TOKEN=… node scripts/publish-feed.mjs --apply --verify`、
 `0`、`docs/manual-verification.md`），并把「未关闭」里第 1 节那一行删掉——两处一起动，只动一处会红。
 
-## 本轮 DoD 加载来源与未勾项（2026-11-05）
+## 本轮 DoD 加载来源与未勾项（2026-11-06）
 
 **加载来源**：`/opt/agent-scheduler/docs/product-dod/jev-pi-agent-dod.md`（与 `/opt/agent-control/docs/product-dod/jev-pi-agent-dod.md`、
 本仓 `docs/PRODUCT-DOD.md` 逐字相同，`diff` 为空）。控制面 `projects/jev_pi_agent.json` **没有** `dod_passed_at`，
@@ -132,7 +139,7 @@ node scripts/verify-release-feed.mjs                               # 退出 0 = 
 | DOD-4.2 更新 feed `https` + `sha256` 校验 | 未过 | `node scripts/verify-release-feed.mjs` | 退出 0；今天退出 1，`no-sha256` + `installer-latest-url` |
 | DOD-4.2（离线演示） | 未过 | `node scripts/release-gate.mjs --simulate-missing-sha` | 退出 1，打印与真实 `npm run dist` 被挡时同一份 `REFUSED` 文案；不需要令牌、不联网 |
 
-第三条是本轮新增的：它把「已发布的 feed 缺 `sha256`」从三份文档里的描述，变成任何一台没有令牌的机器上
+第三条是 2026-11-05 那一轮新增的：它把「已发布的 feed 缺 `sha256`」从三份文档里的描述，变成任何一台没有令牌的机器上
 都能**看见**的一次拒绝。它不改变判定——判定仍是 `judgeFeedDocument()`，模拟只是把同一份判定离线跑一遍，
 并在 `source:` 与 `[skipped]` 两行里说清「这是模拟、没有联网」。
 
@@ -1783,3 +1790,111 @@ same write: TMPDIR=/var/tmp node scripts/gate-local.mjs
 画面没有变化——同一份 DOM 两次编码的字节差，正是本仓不做像素 diff 的那条已知限度
 （`screenshot-sources.mjs` 文件头写明它量的是渲染层源码哈希，不是像素）。其余 10 张与上一轮提交的
 逐字节相同，所以这个 diff 里只动了四张图。
+
+## 本轮（2026-11-06）日期、抄本、折叠线：三处「说了，但没有任何东西读它」
+
+产品代码一行未改：`App.tsx`、`styles.css`、`i18n.ts` 一字未动，所以 14 张截图不需要重拍，
+`node scripts/screenshot-sources.mjs --check` 从头到尾都是
+`PASS — 34 renderer source(s) and 14 screenshot(s)`。本轮改的是三处看守，加上为了让看守成立
+而必须收敛的两处措辞——这三件事是同一个形状的三个方向：**文档说了，没人量**。
+
+1. **这一页的日期不再各说各的。** 标题写着 `（2026-11-03）`，`## 本轮 DoD 加载来源与未勾项`
+   写着 `（2026-11-05）`，而 HEAD 是 `2026-11-06`——三个日期都在这一页上，没有任何一条门禁读过
+   它们。两处日期都收到 `2026-11-06`；同时把那一节里「第三条是本轮新增的」改成
+   「第三条是 2026-11-05 那一轮新增的」：**把日期改新不能顺手把别人的「本轮」抢过来**，那一句
+   记录的是一轮的产出，不是一个字段。
+   `tests/contract/dod-status.test.ts` 新增 `describe('the status page is dated the round it
+   describes')`（8 项）：两处标题的日期必须相等、必须是日历上真实的一天（`YYYY-MM-DD` 占位符与
+   `2026-02-30` 各一条），且不得早于 `git log -1 --format=%cs`。**取不到 git 时只跳过与提交日比较
+   的那一半**——这一条被写成用例而不是注释：`dateProblems(status, null)` 在两份日期不一致时
+   仍然要红，否则「没有 git」就成了让整条门禁闭嘴的开关。日期的算术用 `blockers-doc.ts` 里
+   `utcDays()`，不在这里再写一份「什么算一天」。
+   **红（本轮真跑）**：把标题 sed 回 `（2026-11-03）` 之后，同一节 3 failed / 5 passed，打出来的是
+   ```
+   docs/dod-status.md: the H1 says the page is current as of `2026-11-03` and `## 本轮 DoD 加载来源与未勾项` says `2026-11-06` — one page, two dates, and a reader cannot tell which round the tables below were written under
+   docs/dod-status.md: the H1 is dated `2026-11-03` and the last commit landed on `2026-11-06` — a status page older than the code it describes is describing a state that no longer exists; move that date to the round this edit belongs to
+   ```
+   恢复后 `tests/contract/dod-status.test.ts` 57 项全绿。「加载来源」那一句（三份 DoD 逐字相同）
+   本轮重测了一次：三个文件的 sha256 前缀都是 `ae8737a27a793adb`，`diff` 为空。
+
+2. **三条阻塞在四份抄本里说的是同一句话——现在有人比了。** 新增
+   `tests/contract/blocker-parity.test.ts`（10 项）。三样字面量**从 `docs/blockers.md` 读出来**
+   （节标题括号里的「需要…」、`**重跑这一条**` 命令、`### 解除时` 的 `**屏幕上第一行**`），
+   再比对四个抄本：`blockers.md` 自己、`docs/dod-status.md`、README 中文半、README 英文半。
+   两半**分开读**是这条门禁的关键：不分开时，英文半丢了 `--judge` 那条命令也会被中文半顶上去——
+   那是「两个读者算作一个人」，和上一轮那个只查一遍全文的 `describe` 是同一种错。
+   - 为了让两个门禁共用一份读法，`blockAfter()`、`closingRecipe()` 和那两个 marker 从
+     `blocker-closing.test.ts` 搬进 `blockers-doc.ts`：现在四个门禁（routing / freshness /
+     closing / parity）共一份「什么算一节、什么算这个 marker 下的第一行」。两处各写一份时，
+     一处失配就变成「一个门禁读不到东西却照旧绿，另一个还在报它那一份」。
+   - README 不承诺「屏幕上第一行」，这件事被写成**数据**而不是循环里的一次跳过：
+     `README_EXEMPTION` 带着范围、字面量与理由，另一条用例钉住「两个操作页不许自己豁免」。
+     理由是：README 是前门，`PASS —` 那种运行手册里的行放在这里是噪声；前门必须说的是
+     缺什么、跑哪条——而它**不许**再用自己的话复述那行，复述正是这次漂移的来源。
+   - 文档侧收敛（把同一句话说成同一句，不是新增事实）：`docs/dod-status.md` 三条「未关闭」
+     bullet 现在各带「需要…」／判定命令／关掉那天屏幕上第一行是什么；README 中英两半的
+     五态那条各补一句 `node scripts/screenshot-sources.mjs --check`，并写明它量的是「图还对着
+     拍下它们的那一版渲染层」，量不到「有没有人看过」。
+   **红（本轮真跑，改的是真实文档）**：把 dod-status 那三条 bullet 里的「需要写权限令牌」抹掉 →
+   ```
+   docs/dod-status.md: 第 1 节 says the gap as "需要写权限令牌" in docs/blockers.md, and that string is not in this copy — three copies of one blocker now describe different things, and a reader has to guess which page is stale
+   ```
+   反方向也驱动过：把 `blockers.md` 第 3 节标题改成一句别处不可能出现的新措辞，红的是**另外两处**
+   （README 中文半 + dod-status），各指名新措辞——权威页改了，抄本要跟；不是抄本守住旧说法。
+   - 这两条用例本轮**先写错过一次，在全量门禁上当场打红**：第一版把标题改成
+     「（需要一位评审人）」，期望 2 条 problem，实跑只有 1 条；另一条期望 1 条，实跑 0 条。
+     原因不是门禁错，是**本节上面那段话自己引用了那两个字面量**——「未关闭」bullet 里的措辞被
+     抹掉之后，历史小节里的引用又把那个字符串补回来了，于是那份抄本「带着」这句话，而带的方式
+     是引用。改成 `replaceAll`（真的让这个词在整页消失）与哨兵措辞之后，两条都按预期红。
+   - 由此留下这条门禁证明不了的事，写在文件头而不藏：**引用不算承载**，但要把「自己那句陈述」和
+     「别处引用这句话」分开，需要给每份文档再建一层小节模型，而这几份文档已经有四道门禁在读了。
+     所以这条门禁令牌上写的是「三处用词一致」，不是「三处各自陈述过一次」。
+   `blocker-closing` / `blocker-freshness` / `doc-routing` / `dod-status` 在重构后 101 项全绿。
+
+3. **`error` 那一屏的「下一步」现在在窄窗口也被看得见。** 上一轮断言的是顺序
+   （`error.fatalNext` 必须出现在 `error.retry` 之前），本轮补上另一根轴：**顺序对而看不见，
+   等于没说**。`scripts/layout-page-scripts.mjs` 的量测多带一个 `content.fatalFold`——
+   `.fatal-next` 与 `.row-gap button.primary` 的 `getBoundingClientRect()` 上下缘、
+   `window.innerHeight`、以及 `.pane.fatal` 自己的 `scrollHeight`（带上它是为了红的时候能分清
+   「整列溢出了窗口」和「只有一格太低」，这两种是不同的缺陷）；三个框任缺其一记 `null`，
+   而门禁在 error 态把 `null` 判成**红**，不是跳过。
+   `tests/contract/layout.test.ts` 新增 `keeps the failed-load screen above the fold, not merely
+   above the buttons`（该文件 53 项，本轮 +1），对**所有** error 帧生效：1440×900、768×700，
+   以及 768×700 配 200 字符无断点 reason 那一格。
+   **红（两条方向都是本轮真跑出来的）**：
+   - 把 `.fatal-next` 的 class 改名（那一屏失去「下一步」那句话）→ 三个 error 帧各一句
+     `no next-step line or retry button was found to place — the failed-load pane lost one of them`，
+     1 failed / 52 skipped。
+   - 第一次试图用一个 `height: 300px` 的空 div 把内容顶下去，**门禁照绿**；换成 600px 仍然绿——
+     flex 列里的子项默认可以收缩，那个 div 被压回去了。换成 `marginTop: 600` 才真的把两行推到
+     折叠线以下，红的是：
+     ```
+     state-error-tight: the next-step line ends at 820.4px in a 700px window (the column is 861px tall) — it is below the fold, so the screen says what to do next somewhere the reader cannot see
+     state-error-tight: the retry button ends at 865.2px in a 700px window (the column is 861px tall) — …
+     state-error-tight-long-reason: the next-step line ends at 897.1px in a 700px window (the column is 938px tall) — …
+     state-error-tight-long-reason: the retry button ends at 941.9px in a 700px window (the column is 938px tall) — …
+     ```
+     同一次跑里 1440×900 那一帧是绿的（820 < 900）——这条断言按窗口判，不是一句「应该看得见」。
+     **这里量到的是自己**：「我加了 600px，所以它一定会红」不是证据，跑出来的绿才是；
+     如果没有那一次绿跑，这条断言会带着一个从没被走到的失败分支进仓库。
+
+**这一轮没有做的事**：
+
+- 三条外部阻塞一条没解——已发布 feed 仍缺 `sha256`（本机无令牌）、Windows 六步仍无机器、
+  五态走查仍没有那个人。本轮动的是这三条**在别人的文档里怎么说**，不是它们本身；
+  `docs/blockers.md` 上那三个 `2026-11-05` 的日期本轮**没有**改新，因为本轮没有重跑那三条命令，
+  就没有资格让它们变新（`blocker-freshness` 自己承认的盲点，不是可以顺手填的格子）。
+- P1 的两件没做。答题纸判据上限（每态 ≤ 5、总数 ≤ 40）与本轮的折叠线不是同一件事，留着；
+  `scripts/temp-dir-probe.mjs` 的已知限度登记**不是纯文档动作**——「已知残留」那张表要求被点名的
+  文件里真的有 `KNOWN RESIDUAL` 标记，本轮既不打算为了填表去改那个脚本，也不打算只改表让门禁去红。
+  那一行留给下一刀，连标记一起。
+- shell 的 stdout 这一轮仍然被 `/tmp` 配额吃掉（每条命令的捕获文件都写不进去，`echo` 也一样），
+  所以本轮每一句「跑过 / 绿 / 退出码」都来自重定向进被 `.gitignore` 挡住的 `.run-logs/`
+  再读回来的输出，与上一轮记的是同一个绕法；上面的红原文就是这么抄下来的。
+
+**门禁（本轮各跑一次，数字是这几跑打印的）**：`npm run typecheck`、`npx eslint .`、`npx knip`、
+`node scripts/screenshot-sources.mjs --check` 退出码都是 0；
+`TMPDIR=$PWD/.run-logs/tmp DISPLAY=:140 ELECTRON_DISABLE_SANDBOX=1 npm test` →
+`Test Files 115 passed (115)`、`Tests 1970 passed | 1 skipped (1971)`；`npm run test:e2e` →
+21 个文件 163 项全绿。三个数对得上，不需要读者猜：上一轮 1951 + 8（日期）+ 10（抄本）
++ 1（折叠线）= 1970；`layout.test.ts` 自己从 52 项变成 53 项。
