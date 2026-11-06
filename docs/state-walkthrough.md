@@ -53,11 +53,13 @@
 上面十张是从那里挑出来提交的，所以**任何人重跑一次都能得到同一批图**。
 
 这十张也都在 `docs/screenshots/sources.json` 里记着哈希，所以
-`node scripts/screenshot-sources.mjs --check` 说 PASS 时，它量的是**这十张**（连同另外四张）
-还对着当前的渲染层源码——不是「某个目录里的图还行」。这句话以前只是巧合：清单和记账是两份
-列表，谁也没核对它们是不是同一份。现在 `tests/contract/state-walkthrough.test.ts` 逐张核对
-「上面这张表点名的每个文件都在 `sources.json` 的 `screenshots` 键里」，所以往走查清单里加一张
-没被记账的图会当场打红，而不是让 `--check` 继续对另一批文件说 PASS。
+`node scripts/screenshot-sources.mjs --check` 打出一行 `PASS — …`（`…` 处是计数与清单路径）时，
+它量的是**这十张**（连同另外四张）还对着当前的渲染层源码——不是「某个目录里的图还行」。
+这句话以前只是巧合：清单和记账是两份列表，谁也没核对它们是不是同一份。现在
+`tests/contract/state-walkthrough.test.ts` 逐张核对「上面这张表点名的每个文件都在 `sources.json`
+的 `screenshots` 键里」，所以往走查清单里加一张没被记账的图会当场打红，而不是让 `--check`
+继续对另一批文件说 PASS。**先量图、后签字**：`PASS` 量的是「图还对着源码」，说不了「有人看过」；
+量完之后剩下的那一步仍是人眼，签了字之后 README 里「还没被人眼走查过」那句才该改（记录表在文末）。
 
 `loading` 那两张挑的是**读取还没返回的那一帧**（`.run-logs/layout/loading-frame.png` 与
 `loading-frame-tight.png`），不是 `state-loading*` 那两张。原因写在 `dev/scenarios.ts` 里：

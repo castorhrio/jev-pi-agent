@@ -1647,6 +1647,33 @@ const CHECKLIST_FALLBACKS: readonly {
   },
 ];
 
+/**
+ * The two literals the sign-off tail is made of.
+ *
+ * `--check` answers "do the images still match the renderer sources?" — and it
+ * cannot answer "did anybody look at them?". What closes the walkthrough is a
+ * person signing the record table, and only *after* that signature does the
+ * README's "not walked through by eye" sentence get to change. That ordering —
+ * measure first, sign second, README last — is the answer a reviewer asks for
+ * right after seeing a green `PASS — …` line, so it is written on both pages
+ * the day is run from (`docs/demo-script.md`'s degraded path and
+ * `docs/defense-checklist.md` step 6, both quoting the same tail: 「签了字之后
+ * README 里『还没被人眼走查过』那句才该改」). The two literals are the halves
+ * a deletion loses first: the trigger (签了字之后) and the thing it releases
+ * (还没被人眼走查过). A page that keeps the measurement but drops the tail
+ * leaves the presenter holding a green line with no next step — which on stage
+ * reads as "measured, therefore done", the exact quiet overclaim the
+ * walkthrough page exists to prevent.
+ */
+const SIGN_OFF_LITERALS: readonly string[] = ['签了字之后', '还没被人眼走查过'];
+
+/**
+ * The pages the sign-off tail has to be on: the checklist the day is run from
+ * and the demo script it degrades from. Both already sit in
+ * {@link checklistProblems}'s inputs, so one loop checks them both.
+ */
+const SIGN_OFF_PAGES: readonly string[] = ['docs/defense-checklist.md', 'docs/demo-script.md'];
+
 /** What the checklist is compared against. */
 interface DefenceRepository {
   /** The text of the checklist, or `''` when it is not there. */
@@ -1740,6 +1767,24 @@ function checklistProblems(repository: DefenceRepository): string[] {
       `docs/defense-checklist.md: tells the presenter to read out \`${mine[1]}\` and ` +
         `docs/demo-script.md prints \`${theirs[1]}\` — two pages, two hashes, one of them is wrong`,
     );
+  }
+
+  // The sign-off tail, on both pages the day is run from. The pairing lives
+  // here rather than in a table beside `SIGN_OFF_PAGES` because both strings
+  // are already in scope: the checklist above, the demo script in `repository`.
+  const sources = { 'docs/defense-checklist.md': checklist, 'docs/demo-script.md': repository.demo };
+  for (const page of SIGN_OFF_PAGES) {
+    const text = sources[page as keyof typeof sources] ?? '';
+    for (const literal of SIGN_OFF_LITERALS) {
+      if (text.includes(literal)) continue;
+      problems.push(
+        `${page}: no longer carries the sign-off tail ("${literal}") — ` +
+          '`node scripts/screenshot-sources.mjs --check` measures whether the images still match ' +
+          'the sources and cannot say anybody looked at them; the sentence that says what closes ' +
+          'the walkthrough — sign it, then change the README — has to be on the page the day is ' +
+          'run from, or a green `PASS — …` reads as "measured, therefore done"',
+      );
+    }
   }
 
   return problems;
@@ -1850,6 +1895,37 @@ describe('the defence-day checklist only names things that exist', () => {
     expect(problems).toHaveLength(1);
     expect(problems[0]).toContain('the ten screenshots');
     expect(problems[0]).toContain('no fallback');
+  });
+
+  it('reports a page that dropped the sign-off tail', () => {
+    // The failure this case is for: `PASS — …` is a green line about files, and
+    // a tidy-up that keeps the measurement but deletes the sentence about what
+    // closes the walkthrough leaves the presenter with no answer to "then
+    // what?" — the question that comes right after a green line.
+    for (const page of SIGN_OFF_PAGES) {
+      const isChecklist = page === 'docs/defense-checklist.md';
+      const text = isChecklist ? DEFENCE.checklist : DEFENCE.demo;
+      const dropped = text.replaceAll('签了字之后', '');
+      expect(dropped, `${page}: the case did not drop the tail`).not.toBe(text);
+      const problems = checklistProblems(
+        isChecklist ? { ...DEFENCE, checklist: dropped } : { ...DEFENCE, demo: dropped },
+      );
+      expect(problems).toHaveLength(1);
+      expect(problems[0]).toContain(page);
+      expect(problems[0]).toContain('签了字之后');
+    }
+  });
+
+  it('reports the tail that lost the sentence it releases', () => {
+    // The tail's other half: without 「还没被人眼走查过」 the sentence points
+    // at a change nobody can name — the README line it refers to is the thing
+    // the signature releases, so the page no longer says what changes.
+    const dropped = DEFENCE.checklist.replaceAll('还没被人眼走查过', '');
+    expect(dropped, 'the case did not drop the tail').not.toBe(DEFENCE.checklist);
+    const problems = checklistProblems({ ...DEFENCE, checklist: dropped });
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toContain('docs/defense-checklist.md');
+    expect(problems[0]).toContain('还没被人眼走查过');
   });
 
   it('reports a fallback written before the command it rescues', () => {

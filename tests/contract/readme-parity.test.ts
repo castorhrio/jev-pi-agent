@@ -160,17 +160,27 @@ const LIMITATIONS: readonly Limitation[] = [
   // the app into a handoff prompt, an issue or a log gets the same characters
   // with no air between them, and nothing in this repository can change that.
   //
-  // Three keywords per language, and they are the three facts that make it
-  // checkable rather than a disclaimer: the mechanism that draws the gap, the
-  // three places it does not survive, and the verdict — this one does not close
-  // here. A bullet that drifted back to "we handle 中英混排" would drop the
-  // middle one and go red here; `typography.test.ts` reads the same bullet for
-  // the mechanism and the destinations, so the two gates fail on different
-  // halves of the same sentence.
+  // Four keywords per language, and they are the four facts that make it
+  // checkable rather than a disclaimer: the mechanism that draws the gap
+  // (`text-autospace`), the three places it does not survive, the verdict —
+  // this one does not close here — and the mechanism's constructive half: the
+  // dictionary writes the space into the strings this repository writes, which
+  // is why the repository's own prose reads right on screen. A bullet that
+  // drifted back to "we handle 中英混排" would drop the middle one and
+  // go red here; `typography.test.ts` reads the same bullet for the mechanism
+  // and the destinations, so the two gates fail on different halves of the
+  // same sentence.
+  //
+  // Note what these keywords do *not* catch: a cut of the bullet's closing
+  // clause ("…which is what the dictionary does for the strings this
+  // repository writes") leaves `dictionary` standing, because the dictionary
+  // is named mid-bullet too. That trim ends on a period and keeps every
+  // keyword — the length floor in the describe block below is what says red,
+  // which is why it exists next to this table instead of trusting it.
   {
     id: 'the Chinese/Latin gap exists only on screen',
-    en: ['text-autospace', 'handoff prompt', 'plain-text log', 'does not close here'],
-    zh: ['text-autospace', 'handoff 提示词', '纯文本日志', '关不掉'],
+    en: ['text-autospace', 'handoff prompt', 'plain-text log', 'does not close here', 'dictionary'],
+    zh: ['text-autospace', 'handoff 提示词', '纯文本日志', '关不掉', '词典'],
   },
   // The defect that is in a *shipped* release, not in the code: the v1.0.0
   // asset on the Releases page predates the feed check and carries no digest.
@@ -281,6 +291,21 @@ function claims(bullet: string, keywords: readonly string[]): boolean {
 function excerpt(bullet: string | undefined): string {
   if (bullet === undefined) return 'nothing (the section is shorter than the table)';
   return `"${bullet.slice(0, 80)}${bullet.length > 80 ? '…' : ''}"`;
+}
+
+/** A line that ends a paragraph without ending a sentence: the lead-in colon. */
+const LEAD_IN = /[:：]$/u;
+
+/**
+ * Terminal punctuation in both languages, plus the delimiters a finished line
+ * can end on: a closing bracket (`[MIT](LICENSE)`), a closing backtick, a
+ * closing quote.
+ */
+const FINISHED = /[.!?。！？)\]`”’]$/u;
+
+/** The end of a line, for a failure message: the reader needs the tail, not the head. */
+function tail(line: string): string {
+  return line.length > 60 ? `…${line.slice(-60)}` : line;
 }
 
 /**
@@ -478,6 +503,217 @@ describe('README limitations, English and Chinese', () => {
     expect(problems[0]).toContain('zh: limitation 1 does not state "the installer is unsigned"');
     expect(problems[0]).toContain('交互式终端依赖 `node-pty`'); // the bullet it found instead
     expect(problems[1]).toContain('zh: limitation 2 does not state "the terminal needs `node-pty`"');
+  });
+});
+
+/**
+ * The tail of a limitation bullet, checked per bullet rather than per document.
+ *
+ * ## Why this exists
+ *
+ * The document-level gate at the bottom of this file refuses any paragraph that
+ * stops without finishing, and the keyword table above refuses a bullet that
+ * lost a fact — but a cut can slip between them. A bullet trimmed **at a full
+ * stop** keeps its terminal punctuation, and a cut that stops short of the
+ * next keyword keeps every keyword that came before it: the reader sees a
+ * finished sentence where a fact used to be. The Chinese/Latin-gap bullet is
+ * the one this happened to — a review tool cut it at "…write the space into
+ * the s", a shape every earlier check here would have read as complete — and
+ * it is the bullet whose last clause does the most work: "the dictionary
+ * already does this for the strings this repository writes" is the difference
+ * between "the product is broken" and "the product is honest about an engine
+ * property".
+ *
+ * ## What is asserted
+ *
+ *  - every limitation bullet, in both languages, ends on a finished sentence
+ *    or a lead-in — the same rule the document-level gate applies to
+ *    paragraphs, pulled down to the list so the message names the limitation
+ *    instead of a line number;
+ *  - and the gap bullet keeps a length floor per language, set just above the
+ *    largest cut that keeps every keyword and ends on a period: the bullet
+ *    minus its closing clause. A floor cannot say *which* clause went (the
+ *    keyword table does that); it says that a chunk of prose disappeared while
+ *    every keyword survived — the one direction a keyword table is blind in.
+ *
+ * Deliberately not asserted: the length of the other bullets. Their content is
+ * already pinned keyword by keyword, and a floor on each would be nine more
+ * numbers to maintain for catches the table already makes.
+ */
+
+/**
+ * The fewest characters the Chinese/Latin-gap bullet may carry and still be
+ * the bullet it promises, per language.
+ *
+ * The floor sits just above the bullet minus its closing clause — the largest
+ * cut that keeps every keyword ("dictionary" / "词典" is named mid-bullet, so
+ * it survives the cut) and still ends on a period — and below the bullet as it
+ * stands. The not-vacuous case below recomputes that cut from the real
+ * README, so a rewrite of the bullet moves the shape and this floor either
+ * follows it or goes red; tightening the bullet past the floor is a content
+ * change — move the floor with it and say so here, rather than lowering the
+ * number to make a red run green.
+ */
+const GAP_BULLET_MIN: Record<Lang, number> = { en: 700, zh: 272 };
+
+/** The floor's row in the table, looked up by `id` so an inserted row cannot retarget it. */
+const GAP_BULLET_ID = 'the Chinese/Latin gap exists only on screen';
+
+/**
+ * The gap bullet minus its closing clause, per language — the trim shape the
+ * floor exists to catch, read back out of the real README so the floor cannot
+ * drift away from the bullet it guards.
+ *
+ * English cuts before ", which is what the dictionary does…"; Chinese cuts
+ * before "，而词典对…". Both results end on a full stop, which is what makes
+ * the shape dangerous: the ending check above and the document-level paragraph
+ * gate both read it as finished.
+ */
+function gapBulletTrimmed(bullet: string, lang: Lang): string {
+  const cutAt =
+    lang === 'en' ? ', which is what the dictionary' : '，而词典';
+  const at = bullet.indexOf(cutAt);
+  if (at === -1) return bullet; // the closing clause is gone; the floor speaks for itself
+  return bullet.slice(0, at) + '.';
+}
+
+/**
+ * Every limitation bullet that stops without finishing, with the limitation it
+ * belongs to.
+ *
+ * Pure in its inputs so the fixtures below can show it answering something
+ * other than `[]` — the same rule `parityProblems` follows.
+ */
+function unfinishedBulletProblems(
+  sections: Record<Lang, readonly string[]>,
+  limitations: readonly Limitation[],
+): string[] {
+  const problems: string[] = [];
+  for (const lang of LANGS) {
+    for (let index = 0; index < limitations.length; index += 1) {
+      const bullet = sections[lang][index];
+      if (bullet === undefined) continue; // already reported as a count mismatch
+      // A closing emphasis marker is not part of the sentence, mirroring the
+      // document-level gate: `…against their hash.**` is a finished sentence.
+      const sentence = bullet.replace(/[*_]+$/u, '');
+      if (FINISHED.test(sentence) || LEAD_IN.test(sentence)) continue;
+      problems.push(
+        `${lang}: limitation ${index + 1} ("${limitations[index]!.id}") stops on ` +
+          `"${tail(bullet)}" — a bullet cut mid-sentence reads as complete, and the ` +
+          'keywords it kept cannot say what it lost',
+      );
+    }
+  }
+  return problems;
+}
+
+/**
+ * The gap bullet that fell under its floor, per language.
+ *
+ * Same purity rule; the length is compared against {@link GAP_BULLET_MIN} so
+ * the fixtures below can drive the red direction without touching the README.
+ */
+function gapBulletFloorProblems(
+  sections: Record<Lang, readonly string[]>,
+  limitations: readonly Limitation[],
+): string[] {
+  const problems: string[] = [];
+  const index = limitations.findIndex((limitation) => limitation.id === GAP_BULLET_ID);
+  if (index === -1) {
+    return ['LIMITATIONS no longer names the Chinese/Latin-gap bullet, so its floor has no subject'];
+  }
+  for (const lang of LANGS) {
+    const bullet = sections[lang][index];
+    if (bullet === undefined) continue; // already reported as a count mismatch
+    const floor = GAP_BULLET_MIN[lang];
+    if (bullet.length >= floor) continue;
+    problems.push(
+      `${lang}: limitation ${index + 1} ("${GAP_BULLET_ID}") is ${bullet.length} characters, ` +
+        `under the ${floor} this gate requires — it lost a chunk of prose that no keyword ` +
+        'lives in, so the keyword table has nothing to report and this floor is what says so',
+    );
+  }
+  return problems;
+}
+
+describe('a limitation bullet cannot lose its tail silently', () => {
+  it('ends on a finished sentence, in both languages', () => {
+    const problems = unfinishedBulletProblems(sections, LIMITATIONS);
+    expect(
+      problems,
+      `a limitations bullet stops mid-sentence:\n  ${problems.join('\n  ')}`,
+    ).toEqual([]);
+  });
+
+  it('keeps the gap bullet above its length floor, in both languages', () => {
+    const problems = gapBulletFloorProblems(sections, LIMITATIONS);
+    expect(
+      problems,
+      `the Chinese/Latin-gap bullet lost prose no keyword covers:\n  ${problems.join('\n  ')}`,
+    ).toEqual([]);
+  });
+
+  it('is not vacuous: the floor sits between the bullet and the trim it must catch', () => {
+    // A floor at the bullet's current length would go red over a translation
+    // that tightened one sentence — the defect this gate must not have. A
+    // floor below the trimmed shape would never catch the cut it exists for.
+    // Both have to hold, per language, against the shape read from the real
+    // README — so a rewrite of the bullet drags the floor into the open
+    // instead of leaving it pointing at prose that no longer exists.
+    const index = LIMITATIONS.findIndex((limitation) => limitation.id === GAP_BULLET_ID);
+    expect(index, 'the gap bullet is not in the LIMITATIONS table').toBeGreaterThanOrEqual(0);
+    for (const lang of LANGS) {
+      const bullet = sections[lang][index];
+      expect(bullet, `${lang}: the gap bullet is missing`).toBeDefined();
+      const trimmed = gapBulletTrimmed(bullet!, lang);
+      expect(
+        trimmed.length,
+        `${lang}: the trimmed shape is not shorter than the bullet — the closing clause moved`,
+      ).toBeLessThan(bullet!.length);
+      expect(
+        GAP_BULLET_MIN[lang],
+        `${lang}: the floor must sit above the trimmed shape or the cut it exists for stays green`,
+      ).toBeGreaterThan(trimmed.length);
+      expect(
+        GAP_BULLET_MIN[lang],
+        `${lang}: the floor must sit below the bullet or every tightening goes red`,
+      ).toBeLessThan(bullet!.length);
+    }
+  });
+
+  it('reports a bullet cut mid-word', () => {
+    // The shape the historical cut left: the sentence stops inside a word, the
+    // keywords before the cut all survive, and nothing else in this file has a
+    // message that names the bullet. The cut bullet sits at the gap bullet's
+    // position, so the message names limitation 6, not a line number.
+    const cut = sections.en[5]!.slice(0, sections.en[5]!.indexOf('into the string') + 'into the s'.length);
+    const problems = unfinishedBulletProblems(
+      { en: [...sections.en.slice(0, 5), cut], zh: sections.zh },
+      LIMITATIONS,
+    );
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toContain('en: limitation 6');
+    expect(problems[0]).toContain('"the Chinese/Latin gap exists only on screen"');
+    expect(problems[0]).toContain('into the s');
+  });
+
+  it('catches the closing-clause trim that every other check reads as finished', () => {
+    // The bullet minus its closing clause: terminal punctuation intact, every
+    // keyword intact — the dictionary is named mid-bullet, long before the
+    // clause the cut removes — so the ending check and the keyword table both
+    // have nothing to say. The floor is the one check that goes red, and it
+    // names the limitation.
+    const trimmed = gapBulletTrimmed(sections.en[5]!, 'en');
+    expect(trimmed.endsWith('string itself.')).toBe(true);
+    const enWithTrim = [...sections.en.slice(0, 5), trimmed, ...sections.en.slice(6)];
+    expect(
+      unfinishedBulletProblems({ en: enWithTrim, zh: sections.zh }, LIMITATIONS),
+    ).toEqual([]);
+    expect(parityProblems({ en: enWithTrim, zh: sections.zh }, LIMITATIONS)).toEqual([]);
+    const problems = gapBulletFloorProblems({ en: enWithTrim, zh: sections.zh }, LIMITATIONS);
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toContain('en: limitation 6');
+    expect(problems[0]).toContain('under the 700');
   });
 });
 
@@ -766,16 +1002,6 @@ const ZH_HALF = '## 中文';
  */
 const MIN_HALF_LINES = 80;
 
-/** A line that ends a paragraph without ending a sentence: the lead-in colon. */
-const LEAD_IN = /[:：]$/u;
-
-/**
- * Terminal punctuation in both languages, plus the delimiters a finished line
- * can end on: a closing bracket (`[MIT](LICENSE)`), a closing backtick, a
- * closing quote.
- */
-const FINISHED = /[.!?。！？)\]`”’]$/u;
-
 /** One paragraph: where it starts, and the line it ends on. */
 interface Paragraph {
   /** 1-based line number of the paragraph's first line. */
@@ -816,11 +1042,6 @@ function paragraphs(markdown: string): Paragraph[] {
   });
   flush();
   return out;
-}
-
-/** The end of a line, for a failure message: the reader needs the tail, not the head. */
-function tail(line: string): string {
-  return line.length > 60 ? `…${line.slice(-60)}` : line;
 }
 
 /**

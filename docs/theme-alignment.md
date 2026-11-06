@@ -2,7 +2,10 @@
 
 > 给初审答辩主讲人。90 秒读完，读完能复述出两条黑线与主题的对应。
 > 这一页的引文由 `tests/contract/theme-alignment.test.ts` 钉住，叙事本身不进任何门禁：
-> 它是叙事，不是承诺。判据在 `docs/PRODUCT-DOD.md`，逐条现状在
+> 它是叙事，不是承诺。哪类引文归哪个文件：屏幕上打出来的步骤输出归 `demo-script.test.ts`，
+> 这一页叙事里可指点的字段（hash、引擎链、置信度、回落文案、字段名）归
+> `theme-alignment.test.ts`——引文漂移时先认它出自哪一页，断言加进对应文件。
+> 判据在 `docs/PRODUCT-DOD.md`，逐条现状在
 > `docs/dod-status.md`，现场动作在 `docs/demo-script.md`。
 
 ## 两条黑线，各一句话
