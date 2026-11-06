@@ -7,6 +7,10 @@
 东西（起得来、哈希可核对、决策链可见、权限弹窗可演示、五态截图能翻），按时间顺序排好。
 这一页是**讲什么**，那一页是**上台前确认什么**。
 
+**被问到「这跟主题有什么关系」**：`docs/theme-alignment.md` 是一页叙事稿——两条黑线各一句话、
+它们与「与 AI 共生」的对应、一段 30 秒演示脚本、以及没有这一层会退化成什么。那一页不进任何门禁，
+它只负责让主讲人在 90 秒内复述出对应关系。
+
 ## 一句话主张
 
 同时跑多个编码 Agent 时，UCAD 是唯一能让你**核对**「上一轮到底注入了哪些字节」（内容哈希）
@@ -34,7 +38,7 @@ npm run demo          # 或 node scripts/demo-walkthrough.mjs
 |---|---|---|---|
 | 1 | 开项目 `jev-pi-agent`，智能体选 `mock`，发一句「修复登录失败并补测试」 | 这一轮真的发生了，并且留下一个能读回来的 pack | `项目 jev-pi-agent` · `智能体 mock` · `本轮 turn-demo` · `Pack cp_demo_0000000000000000000000 · 2 条 · 180 tokens` |
 | 2 | 打开「上下文」抽屉 | 可证明注入：屏幕上的 hash 就是屏幕上那段字节的 sha256 | `注入的原文 <ucad-context pack="cp_demo_0000000000000000000000"` · `renderedHash 8847aa57a7138fd5` · `估算来源 heuristic_chars_div_4` |
-| 3 | 打开「决策」面板（这句 objective 是故意挑的模糊输入，为的是让 jev 引擎 abstain、让 rule 引擎给出答案——换一句就会换一条链路） | 可解释路由：引擎、理由、置信度在同一屏 | `引擎链 jev > rule` · `由谁给出 jev · 0.1.0` · `置信度 72%` · `理由 route -> 'mock' (default runtime)` |
+| 3 | 打开「决策」面板（这句 objective 是故意挑的模糊输入，为的是让屏幕上的「理由」那一栏亲口写明它匹配了模糊措辞——演示的是它对一句弱输入也把「为什么、多确定」摊开；换一句更具体的，置信度与理由都会跟着换） | 可解释路由：引擎、理由、置信度在同一屏 | `引擎链 jev > rule` · `由谁给出 jev · 0.1.0` · `置信度 72%` · `理由 route -> 'mock' (default runtime)` |
 | 4 | 触发权限弹窗，点「拒绝」 | 权限门不可绕：拒绝被记成一条 `permission.resolved` | `Agent 请求权限 SHELL · 风险 high · rm -rf build` · `原因 清理构建产物` · `permission.resolved {"requestId":"req-demo","decision":"deny","decider":"user"}` |
 
 **念的时候怎么说**：第 2 步念「这段原文你可以自己算一遍 sha256，和上面这 16 位对得上」；

@@ -39,7 +39,10 @@
 ## 1. 已发布的 v1.0.0 feed 缺 `sha256`（需要写权限令牌）
 
 - **责任人**：castorhrio ｜ **截止**：2026-11-19
-- **最近核对**：2026-11-05 ｜ **重跑这一条**：`node scripts/release-gate.mjs --simulate-missing-sha`
+- **最近核对**：2026-11-06 ｜ **重跑这一条**：`node scripts/release-gate.mjs --simulate-missing-sha`
+- **本轮（2026-11-06）**：不可动 ｜ **原因**：这台机器没有 `GITHUB_TOKEN` / `GH_TOKEN`，也没有 `gh`，`node scripts/publish-feed.mjs --apply` 在读到令牌之前就退出 ｜ **下一次可动的条件**：把 `castorhrio/jev-pi-agent` 的 `contents: write` 令牌放进 `GITHUB_TOKEN`，再跑 `GITHUB_TOKEN=… node scripts/publish-feed.mjs --apply --verify`
+
+**本轮复核**：`node scripts/release-gate.mjs --simulate-missing-sha` 今天重跑，退出码非零，八行输出与下面「没有令牌的人」那一节逐字相同——线上那份 feed 还是应用会拒绝安装的那一份。
 
 这一条有两个人要分开照顾。**有令牌的人**能把线上那份换掉，他要的是「敲哪两条、按哪个判据算成、
 结果贴回哪里」；**没有令牌的人**换不了，他要的是看懂「现在发布会被挡在哪一句上」，
@@ -185,6 +188,15 @@ PASS — update-feed.json on castorhrio/jev-pi-agent v1.0.0 now carries sha256=�
 
 - **责任人**：castorhrio ｜ **截止**：2026-11-19
 - **最近核对**：2026-11-06 ｜ **重跑这一条**：`node scripts/verify-main-chain.mjs --judge docs/manual-verification/win-YYYYMMDD.json`
+- **本轮（2026-11-06）**：不可动 ｜ **原因**：这台机器是 Linux（`VM-0-5-ubuntu`），没有 Windows 桌面会话，也没有一份带回的报告文件 ｜ **下一次可动的条件**：在一台 Windows 机器上跑 `node scripts\verify-main-chain.mjs --exec release\win-unpacked\UCAD.exe --report win-report.json`，把报告放进 `docs/manual-verification/win-YYYYMMDD.json`
+
+**本轮复核**：`node scripts/verify-main-chain.mjs --judge docs/manual-verification/win-YYYYMMDD.json` 今天重跑，退出码 1，屏幕上只有一行：
+
+```text
+[FAIL] report-unreadable: /opt/jev-pi-agent/docs/manual-verification/win-YYYYMMDD.json: ENOENT: no such file or directory, open '/opt/jev-pi-agent/docs/manual-verification/win-YYYYMMDD.json'
+```
+
+这一行说的是「没有报告可判」，不是「报告判红了」——两者在屏幕上长得像，差别是前者连文件都没有。
 
 **解除命令**
 
@@ -299,7 +311,10 @@ PASS — the report covers steps 1, 2, 3, 4, 5 on win32 against build 1.0.0
 ## 3. 五个界面状态的人眼走查（需要一个人）
 
 - **责任人**：castorhrio ｜ **截止**：2026-11-19
-- **最近核对**：2026-11-05 ｜ **重跑这一条**：`node scripts/screenshot-sources.mjs --check`
+- **最近核对**：2026-11-06 ｜ **重跑这一条**：`node scripts/screenshot-sources.mjs --check`
+- **本轮（2026-11-06）**：不可动 ｜ **原因**：这一条要的是一个人签字，这台机器上没有可派的人，而签字不能代 ｜ **下一次可动的条件**：由 `castorhrio` 按 `docs/state-walkthrough.md` 的 5 分钟脚本看完十张图，在记录表里写一行带日期的结论
+
+**本轮复核**：`node scripts/screenshot-sources.mjs --check` 今天重跑，退出码 0，屏幕上是一行 `PASS — 34 renderer source(s) and 14 screenshot(s) match docs/screenshots/sources.json`。它量到的是「那十四张图还对着当前的渲染层源码」，量不到「有人看过它们」——这一条仍然阻塞的原因没有变。
 
 这一条的「重跑」只能量到一半：`--check` 说 PASS，说的是**那十张图（连同另外四张）还对着当前的
 渲染层源码**，签字的人看的确实还是现在这一屏；它说不了任何人有没有看过它们。后一半只有人能回答——
@@ -374,7 +389,7 @@ npx vitest run tests/contract/state-walkthrough.test.ts
 
 ## 本机全量测试的已知环境约束（不是外部阻塞）
 
-- **最近核对**：2026-11-05 ｜ **重跑这一条**：`npm run test:local`
+- **最近核对**：2026-11-06 ｜ **重跑这一条**：`npm run test:local`
 
 这一节不是第四条外部阻塞：它不需要令牌、不需要 Windows、不需要人，**换一台机器就不存在**。
 写在这里是因为它连续三轮以「本机 vitest 因 /tmp 不可写大面积失败，与本改动无关」的形式出现在
@@ -450,6 +465,7 @@ runner 的 `/tmp` 不是这台机器的 `/tmp`，一条只在挪走临时目录�
 | 阻塞 | 日期 | 做的人 | 结果落在哪 | 判定 |
 |---|---|---|---|---|
 | — | — | — | — | **三条均未解除**：等一个写权限令牌、一台 Windows 机器、一个人 |
+| 三条 | 2026-11-06 | 编码代理（离线复核） | 各节「本轮」一行 + 本节 | **三条均未解除**：本轮环境没有令牌、没有 Windows 机器、没有人；三条的重跑命令都跑了，输出见各节「本轮复核」 |
 
 三条都**不阻塞**本仓库的门禁：`npm run typecheck`、`npm run lint`、`npm run knip`、
 `npm test`、`npm run test:e2e` 都不需要令牌、Windows 机器或人眼。这五步连同 build 与 clean build

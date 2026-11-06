@@ -297,10 +297,42 @@ function dated(markdown: string, sectionNumber: string, date: string): string {
  * A fixed "today" for every driven case.
  *
  * Built with {@link utcDays} rather than `new Date(Date.UTC(…))` so the case
- * means the same on a UTC+8 box and a UTC−8 one: the document is dated
- * `2026-11-05`, and the arithmetic is day indices either way.
+ * means the same on a UTC+8 box and a UTC−8 one: the arithmetic is day indices
+ * either way.
  */
 const TODAY = utcDays('2026-11-05')!;
+
+/**
+ * A day index back to the `YYYY-MM-DD` literal the page writes.
+ *
+ * The inverse of {@link utcDays}. The driven cases below pin dates **relative
+ * to** the fixed "today" — one day ahead, thirty days back — and the page's
+ * shape is a literal, not a number, so the offset has to be spelled back out.
+ */
+function dayString(day: number): string {
+  return new Date(day * 86_400_000).toISOString().slice(0, 10);
+}
+
+/**
+ * The live page with every 最近核对 date pinned exactly onto the fixed "today".
+ *
+ * This file used to spell the page's date beside the fixed "today" in four
+ * places, and that made the honest act the page asks for — re-run a blocker's
+ * command, move its date — turn the driven cases red for a reason that had
+ * nothing to do with the rule: each case rewrites one section's date and leaves
+ * the others alone, so once the live page moved past the day after "today",
+ * every untouched section sat days in the future and read as a date written
+ * forward. A gate that punishes the action it demands is a gate people learn
+ * to route around.
+ *
+ * So every driven case runs on this copy: all three dates sit on `today`, the
+ * literals below hold their offsets from it (thirty days stale, fifteen, one
+ * ahead) for as long as the rule does, and the live page is exercised only
+ * where the calendar is real — the first case — or where no date arithmetic
+ * happens at all.
+ */
+const PINNED_DATE = dayString(TODAY);
+const PINNED = BLOCKERS.replaceAll(/\*\*最近核对\*\*：\S+/gu, `**最近核对**：${PINNED_DATE}`);
 
 describe('a blocker says when it was last measured', () => {
   it('finds every blocker freshly re-checked, by a command it names', () => {
@@ -323,7 +355,7 @@ describe('a blocker says when it was last measured', () => {
     // 2026-10-06 against a "today" of 2026-11-05: exactly thirty days. Both
     // dates are held fixed, so the window is measured rather than assumed from
     // whenever this file happens to run.
-    const problems = freshnessProblems(dated(BLOCKERS, '1', '2026-10-06'), TODAY, MAX_AGE_DAYS);
+    const problems = freshnessProblems(dated(PINNED, '1', '2026-10-06'), TODAY, MAX_AGE_DAYS);
     expect(problems).toHaveLength(1);
     expect(problems[0]).toContain('was last re-checked 30 days ago, over the 14');
     expect(problems[0]).toContain('node scripts/release-gate.mjs --simulate-missing-sha');
@@ -333,63 +365,71 @@ describe('a blocker says when it was last measured', () => {
   it('takes the boundary exactly, because a window nobody measured is a vibe', () => {
     // Both sides of the line, on the same document: 14 days old is the promise,
     // 15 is the failure. One-sided boundaries are where these windows rot.
-    expect(freshnessProblems(dated(BLOCKERS, '2', '2026-10-22'), TODAY, MAX_AGE_DAYS)).toEqual([]);
-    const problems = freshnessProblems(dated(BLOCKERS, '2', '2026-10-21'), TODAY, MAX_AGE_DAYS);
+    expect(freshnessProblems(dated(PINNED, '2', '2026-10-22'), TODAY, MAX_AGE_DAYS)).toEqual([]);
+    const problems = freshnessProblems(dated(PINNED, '2', '2026-10-21'), TODAY, MAX_AGE_DAYS);
     expect(problems).toHaveLength(1);
     expect(problems[0]).toContain('last re-checked 15 days ago');
     expect(problems[0]).toContain('verify-main-chain.mjs --judge');
   });
 
   it('refuses a date in the future, which is the edit that would silence this gate', () => {
-    const problems = freshnessProblems(dated(BLOCKERS, '1', '2026-11-12'), TODAY, MAX_AGE_DAYS);
+    const problems = freshnessProblems(dated(PINNED, '1', '2026-11-12'), TODAY, MAX_AGE_DAYS);
     expect(problems).toHaveLength(1);
     expect(problems[0]).toContain('7 day(s) from now');
     expect(problems[0]).toContain('not a re-check');
 
     // The slack, measured rather than asserted at zero: a page dated one day
-    // ahead is two honest time zones, not a date written forward.
-    expect(freshnessProblems(dated(BLOCKERS, '1', '2026-11-06'), TODAY, MAX_AGE_DAYS)).toEqual([]);
+    // ahead of the fixed "today" is two honest time zones, not a date written
+    // forward. Computed from "today" rather than spelled, so the case keeps
+    // meaning that for as long as the rule does.
+    expect(
+      freshnessProblems(dated(PINNED, '1', dayString(TODAY + 1)), TODAY, MAX_AGE_DAYS),
+    ).toEqual([]);
   });
 
   it('refuses a placeholder and a day the calendar does not have', () => {
     // The template a contributor copies, and the date that quietly rolls into
     // March when `Date.UTC` is trusted instead of read back.
-    expect(freshnessProblems(dated(BLOCKERS, '3', 'YYYY-MM-DD'), TODAY, MAX_AGE_DAYS)).toEqual([
+    expect(freshnessProblems(dated(PINNED, '3', 'YYYY-MM-DD'), TODAY, MAX_AGE_DAYS)).toEqual([
       expect.stringContaining('writes 最近核对 as `YYYY-MM-DD`, which is not a real'),
     ]);
-    expect(freshnessProblems(dated(BLOCKERS, '3', '2026-02-30'), TODAY, MAX_AGE_DAYS)).toEqual([
+    expect(freshnessProblems(dated(PINNED, '3', '2026-02-30'), TODAY, MAX_AGE_DAYS)).toEqual([
       expect.stringContaining('writes 最近核对 as `2026-02-30`, which is not a real'),
     ]);
   });
 
   it('reports a section whose line was deleted, and one that grew a second', () => {
-    const second = blockerSections(BLOCKERS)[1]!;
+    const second = blockerSections(PINNED)[1]!;
     const check = blockerChecks(second)[0]!;
-    const removed = BLOCKERS.replace(`${check.line}\n\n`, '\n');
-    expect(removed).not.toBe(BLOCKERS);
+    // The line and its own newline, not "the line and the blank line after it":
+    // the page is free to put another bullet directly under this one, and a
+    // mutation tied to the blank line would then fail to apply and report a red
+    // gate about the test instead of about the page.
+    const removed = PINNED.replace(`${check.line}\n`, '');
+    expect(removed).not.toBe(PINNED);
     expect(freshnessProblems(removed, TODAY, MAX_AGE_DAYS)).toEqual([
       expect.stringContaining('carries no **最近核对** line'),
     ]);
 
-    const doubled = BLOCKERS.replace(check.line, `${check.line}\n${check.line}`);
+    const doubled = PINNED.replace(check.line, `${check.line}\n${check.line}`);
     expect(freshnessProblems(doubled, TODAY, MAX_AGE_DAYS)).toEqual([
       expect.stringContaining('carries 2 **最近核对** lines'),
     ]);
   });
 
   it('insists the date travels with a command it can run', () => {
-    const withoutCommand = BLOCKERS.replace(
-      /(\*\*最近核对\*\*：2026-11-05) ｜ \*\*重跑这一条\*\*：`[^`]+`/u,
+    const withoutCommand = PINNED.replace(
+      new RegExp(`(\\*\\*最近核对\\*\\*：${PINNED_DATE}) ｜ \\*\\*重跑这一条\\*\\*：\`[^\`]+\``, 'u'),
       '$1',
     );
-    expect(withoutCommand).not.toBe(BLOCKERS);
+    expect(withoutCommand).not.toBe(PINNED);
     expect(freshnessProblems(withoutCommand, TODAY, MAX_AGE_DAYS)).toEqual([
       expect.stringContaining('gives a date without a **重跑这一条** command'),
     ]);
 
     // A section that names something this repository cannot run is the same
     // defect one word over: the reader cannot act on the failure.
-    const prose = BLOCKERS.replace('`node scripts/screenshot-sources.mjs --check`', '`请人看一眼`');
+    const prose = PINNED.replace('`node scripts/screenshot-sources.mjs --check`', '`请人看一眼`');
     expect(freshnessProblems(prose, TODAY, MAX_AGE_DAYS)).toEqual([
       expect.stringContaining('is neither `node scripts/…` nor `npm run …`'),
     ]);
@@ -404,8 +444,10 @@ describe('a blocker says when it was last measured', () => {
   it('names a person and a deadline on every blocker', () => {
     // The half a date cannot carry: a date says when the blocker was measured,
     // not who is supposed to close it. Every section has to name somebody a
-    // reader could go and ask, and a day they committed to.
-    expect(ownerProblems(BLOCKERS, TODAY)).toEqual([]);
+    // reader could go and ask, and a day they committed to. The verdict runs on
+    // the pinned copy — it reads the 最近核对 date — while the structure loop
+    // below reads the live page.
+    expect(ownerProblems(PINNED, TODAY)).toEqual([]);
     for (const section of blockerSections(BLOCKERS)) {
       const [owner] = ownerLines(section.body) as ReturnType<typeof ownerLines>;
       expect(owner, `"${section.heading}" has no 责任人 line`).toBeDefined();
@@ -419,7 +461,7 @@ describe('a blocker says when it was last measured', () => {
     // owner and is not one — nobody can be asked whether they have done it.
     for (const role of ['仓库所有者', '—', 'TBD', '待定', 'the repo owner']) {
       const problems = ownerProblems(
-        BLOCKERS.replace('- **责任人**：castorhrio ｜', `- **责任人**：${role} ｜`),
+        PINNED.replace('- **责任人**：castorhrio ｜', `- **责任人**：${role} ｜`),
         TODAY,
       );
       expect(problems, `\`${role}\` was accepted as a name`).toHaveLength(1);
@@ -429,25 +471,25 @@ describe('a blocker says when it was last measured', () => {
   });
 
   it('refuses a deadline that is missing, impossible, or already past when written', () => {
-    const withoutDeadline = BLOCKERS.replace(
+    const withoutDeadline = PINNED.replace(
       '- **责任人**：castorhrio ｜ **截止**：2026-11-19',
       '- **责任人**：castorhrio',
     );
-    expect(withoutDeadline).not.toBe(BLOCKERS);
+    expect(withoutDeadline).not.toBe(PINNED);
     expect(ownerProblems(withoutDeadline, TODAY)).toEqual([
       expect.stringContaining('without a **截止** date'),
     ]);
 
-    const impossible = BLOCKERS.replace('**截止**：2026-11-19', '**截止**：2026-02-30');
+    const impossible = PINNED.replace('**截止**：2026-11-19', '**截止**：2026-02-30');
     expect(ownerProblems(impossible, TODAY)).toEqual([
       expect.stringContaining('writes 截止 as `2026-02-30`'),
     ]);
 
     // A deadline earlier than the day the section was last re-checked is a
     // deadline that had already passed when it was written down.
-    const backwards = BLOCKERS.replace('**截止**：2026-11-19', '**截止**：2026-10-01');
+    const backwards = PINNED.replace('**截止**：2026-11-19', '**截止**：2026-10-01');
     expect(ownerProblems(backwards, TODAY)).toEqual([
-      expect.stringContaining('before the 2026-11-05 it was last re-checked'),
+      expect.stringContaining(`before the ${PINNED_DATE} it was last re-checked`),
     ]);
   });
 
@@ -456,24 +498,24 @@ describe('a blocker says when it was last measured', () => {
     // means the same on any machine: on 2026-11-20 the page above is red, and
     // the fix is a line in 交接记录 or a new date with a reason — not silence.
     const later = utcDays('2026-11-20')!;
-    const problems = ownerProblems(BLOCKERS, later);
+    const problems = ownerProblems(PINNED, later);
     expect(problems).toHaveLength(3);
     expect(problems[0]).toContain('was due on 2026-11-19');
     expect(problems[0]).toContain('交接记录');
     // And the day before, the same page is green: the boundary is measured.
-    expect(ownerProblems(BLOCKERS, utcDays('2026-11-19')!)).toEqual([]);
+    expect(ownerProblems(PINNED, utcDays('2026-11-19')!)).toEqual([]);
   });
 
   it('reports a section whose owner line was deleted, and one that grew a second', () => {
-    const second = blockerSections(BLOCKERS)[1]!;
+    const second = blockerSections(PINNED)[1]!;
     const [owner] = ownerLines(second.body) as ReturnType<typeof ownerLines>;
-    const removed = BLOCKERS.replace(`${owner.line}\n`, '');
-    expect(removed).not.toBe(BLOCKERS);
+    const removed = PINNED.replace(`${owner.line}\n`, '');
+    expect(removed).not.toBe(PINNED);
     expect(ownerProblems(removed, TODAY)).toEqual([
       expect.stringContaining('carries no **责任人** line'),
     ]);
 
-    const doubled = BLOCKERS.replace(owner.line, `${owner.line}\n${owner.line}`);
+    const doubled = PINNED.replace(owner.line, `${owner.line}\n${owner.line}`);
     expect(ownerProblems(doubled, TODAY)).toEqual([
       expect.stringContaining('carries 2 **责任人** lines'),
     ]);
@@ -485,9 +527,9 @@ describe('a blocker says when it was last measured', () => {
     // the moment that cell was edited — with nothing run in between. This gate
     // measures the age of a date; the command printed beside the failure is the
     // part that can actually be wrong.
-    const stale = dated(BLOCKERS, '1', '2026-10-06');
+    const stale = dated(PINNED, '1', '2026-10-06');
     expect(freshnessProblems(stale, TODAY, MAX_AGE_DAYS)).toHaveLength(1);
-    expect(freshnessProblems(dated(stale, '1', '2026-11-05'), TODAY, MAX_AGE_DAYS)).toEqual([]);
+    expect(freshnessProblems(dated(stale, '1', PINNED_DATE), TODAY, MAX_AGE_DAYS)).toEqual([]);
   });
 });
 

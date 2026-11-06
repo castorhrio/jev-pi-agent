@@ -234,13 +234,18 @@ function step2() {
 }
 
 /**
- * Step 3 — the decision panel's four lines.
+ * Step 3 — the decision panel's lines.
  *
- * The chain is `[jev, rule]` and the objective is deliberately vague, so the
- * probabilistic engine abstains and the rule engine answers: the panel then has
- * to say *both* things — who answered, and that the chain fell back. A demo that
- * only ever showed a confident first-engine answer would not be showing the
- * fallback the product claims to record.
+ * The chain is `[jev, rule]` and the objective is deliberately vague: the
+ * probabilistic engine answers, and the rationale it prints names the vague
+ * phrasing, so the panel demonstrates "why, and how certain" on a weak input —
+ * the screen explains itself hardest exactly when the input gives it least. The
+ * fallback row (`发生了回落：…`) prints only when the chain actually falls
+ * back; this run's facts (one registered default agent, a clean session) keep
+ * jev's score above its abstain floor, so no fallback happens here. The
+ * fallback semantics themselves — reserved rule engine, traced reason, a
+ * stamped `fallback` on the result — are pinned by
+ * `tests/contract/decision-chain.test.ts`.
  */
 async function step3() {
   const chain = new DecisionChain({

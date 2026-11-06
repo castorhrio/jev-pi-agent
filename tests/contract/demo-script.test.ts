@@ -1265,19 +1265,19 @@ describe('each external blocker has a command and a line on screen', () => {
 /**
  * ## Why this block exists
  *
- * `step3()` of `scripts/demo-walkthrough.mjs` sends `objective: '继续'` and
- * `signals.turnIndex: 1` so that the jev engine abstains and the rule engine
- * answers — which is what makes the panel show a **fallback** rather than a
- * confident first-engine answer. The script says so in a comment; the page did
- * not, so the one line a reviewer is most likely to question ("why did jev not
- * answer?") had no answer on the page, and the person on stage would have had
- * to open the source to find one.
+ * `step3()` of `scripts/demo-walkthrough.mjs` sends `objective: '继续'` — one of
+ * the engine's vague-phrasing patterns — so the rationale printed on screen
+ * names the vagueness: the panel demonstrates "why, and how certain" on a weak
+ * input, which is a harder promise than explaining an easy one. The script says
+ * so in a comment; the page did not, so the one line a reviewer is most likely
+ * to question ("why this input?") had no answer on the page, and the person on
+ * stage would have had to open the source to find one.
  *
  * So the 30-second table's step 3 row now says the objective is deliberately
  * vague, and this block pins both halves: the script still sends that objective,
  * and the page still says why. Change the objective to something specific and
- * the demo silently stops demonstrating the fallback — that is a red run here,
- * not a discovery on stage.
+ * the screen stops naming the vagueness the page promises — that is a red run
+ * here, not a discovery on stage.
  */
 
 /** The objective the demo sends on purpose. */
@@ -1312,8 +1312,9 @@ function vagueInputProblems(markdown: string, scriptSource: string): string[] {
   const problems: string[] = [];
   if (!step3Body(scriptSource).includes(VAGUE_OBJECTIVE)) {
     problems.push(
-      `scripts/demo-walkthrough.mjs: step3() no longer sends \`${VAGUE_OBJECTIVE}\`, so the jev ` +
-        'engine may answer and the demo stops showing a fallback — the page still says it does',
+      `scripts/demo-walkthrough.mjs: step3() no longer sends \`${VAGUE_OBJECTIVE}\`, so the ` +
+        'rationale on screen stops naming the vague phrasing the page explains — the note ' +
+        'describes a screen that no longer exists',
     );
   }
   const row = step3Row(markdown);
@@ -1353,7 +1354,7 @@ describe('the demo says which input it picked on purpose', () => {
     const broken = walkthroughSource.replace(VAGUE_OBJECTIVE, "objective: '修复登录失败并补测试'");
     expect(broken, 'the objective this case rewrites is gone').not.toBe(walkthroughSource);
     const problems = vagueInputProblems(document, broken);
-    expect(problems.some((problem) => problem.includes('stops showing a fallback'))).toBe(true);
+    expect(problems.some((problem) => problem.includes('describes a screen that no longer exists'))).toBe(true);
   });
 });
 

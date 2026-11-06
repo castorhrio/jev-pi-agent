@@ -326,13 +326,26 @@ const OFFLINE_HEADING = '### 没有令牌的人：同一次拒绝，离线也看
 /** The command the page tells that reader to run. */
 const OFFLINE_COMMAND = 'node scripts/release-gate.mjs --simulate-missing-sha';
 
-/** The fenced `text` block under the no-token heading, as its lines. */
-function quotedOfflineBlock(markdown: string): string[] | null {
+/**
+ * The offline half: from 「没有令牌的人」 to the next numbered section.
+ *
+ * Its claims live here and only here. A whole-page containment would let the
+ * same string satisfy the check from somewhere else — the re-check prose of
+ * section 2 also says 「退出码 1」, about an entirely different command — so
+ * both prose checks below read this slice rather than the page.
+ */
+function offlineSection(markdown: string): string | null {
   const start = markdown.indexOf(OFFLINE_HEADING);
   if (start === -1) return null;
   const rest = markdown.slice(start + OFFLINE_HEADING.length);
   const nextSection = rest.indexOf('\n## ');
-  const section = nextSection === -1 ? rest : rest.slice(0, nextSection);
+  return nextSection === -1 ? rest : rest.slice(0, nextSection);
+}
+
+/** The fenced `text` block under the no-token heading, as its lines. */
+function quotedOfflineBlock(markdown: string): string[] | null {
+  const section = offlineSection(markdown);
+  if (section === null) return null;
   const open = section.indexOf('```text\n');
   if (open === -1) return null;
   const body = section.slice(open + '```text\n'.length);
@@ -380,14 +393,18 @@ function blockersPageProblems(markdown: string, quoted: string[] | null, live: s
     }
   }
 
-  // The two sentences that stop the paste being read as a fix.
-  if (!markdown.includes('退出码 1')) {
+  // The two sentences that stop the paste being read as a fix. Both are read
+  // out of the offline half, not the whole page: another section's re-check
+  // prose says 「退出码 1」 about its own command, and a claim about this half
+  // satisfied by a different section's sentence is a claim nothing holds.
+  const offline = offlineSection(markdown);
+  if (offline === null || !offline.includes('退出码 1')) {
     problems.push(
       `${BLOCKERS_PATH}: the offline half does not say the command exits 1, so the refusal ` +
         'reads like a demo that can be ignored',
     );
   }
-  if (!markdown.includes('不是真替换')) {
+  if (offline === null || !offline.includes('不是真替换')) {
     problems.push(
       `${BLOCKERS_PATH}: the offline half does not say it demonstrates rather than replaces, ` +
         'so a reader could conclude the published feed has been fixed',
