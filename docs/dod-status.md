@@ -2095,3 +2095,25 @@ tests/contract/blocker-closing.test.ts tests/contract/dod-status.test.ts` 全绿
 **没有做的事**：没有改屏幕上的一个字（理由见上）；没有新增第六种形状（两轮结论要可比）；
 没有解三条外部阻塞（令牌 / Windows 机器 / 人，一条都不在这台机器上）；没有碰
 `docs/PRODUCT-DOD.md`。四态合计不变：通过 14 / 未过 1 / 外部阻塞 1 / 不适用 0。
+
+## 本轮（2026-11-06 夜）打包清单的完整性从「事后发现」变成一条不变量
+
+`db9b379` 修的是**症状**：根 `package.json` 少了 `@ucad/usage` / `@ucad/providers` / `@ucad/files`，
+`electron-builder` 按根清单的依赖图往 `app.asar` 里拷，于是打包产物在第一个 `require` 上就死了。
+修完之后没有任何东西拦着同一个缺陷换个包名再来一次——`verify-main-chain.mjs` 只能**打包之后**发现它。
+
+`tests/contract/package-manifest.test.ts` 把那条根因写成七条不变量，全部对着 `db9b379` 的 diff 就能读出来：
+工作区任一清单依赖的 `@ucad/*` 必须在根清单里（`db9b379` 的形状）、根清单的每个 `@ucad/*` 必须指向
+真的存在的 `packages/*` 目录、版本钉必须等于应用版本、`build.files` 必须带着 `packages/*/dist/**/*`
+与 `packages/*/package.json` 两个 glob、被发运的包必须被 `tsconfig.build.json` 构建、每个包的 `main`
+必须落在 `dist/` 下、目录名必须与包名一致。`@ucad/bench` 是唯一**故意不发运**的包，两个方向都断言：
+它不在根清单里，且没有任何清单依赖它——哪天有人依赖了，第一条不变量会先红。
+
+七条各有一个用真实快照的副本驱动的红方向（删掉 `@ucad/usage`、加一个 `@ucad/ghost`、把钉改成 `0.9.0`、
+摘掉 dist glob、从 solution build 里摘掉 `packages/usage`、把 `main` 改成 `index.js`、改包名），
+所以「它会红」是量出来的，不是声称的。`npx vitest run tests/contract/package-manifest.test.ts` 11 项全绿。
+
+**这一轮没做的**：`docs/defense-checklist.md` 第 7.1 节（`--judge` 的拒绝）与第 8 节（三个倒计时）
+的交叉断言还没写——`demo-script.test.ts` 只核对这一页点名的命令与路径存在，不核对那两节说的数。
+下一轮补。Windows 主链路仍是外部阻塞（本机没有 Windows 机器），本轮在 Linux 上跑了一次
+`--report` + `--judge` 的双命令链路，拒绝原文与第 7.1 节写的一致。
