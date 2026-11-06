@@ -207,7 +207,10 @@ Six gaps sit in this repository. Five close here; the last one cannot, and says 
   `universal`. On Windows run that from a terminal: a double-clicked build has
   no console attached, so the line has nowhere to appear. The check has been run
   on Linux x64 (Ubuntu 26.04, unpacked build, 2026-11-02): it passed and left no
-  child process behind.
+  child process behind. The Windows re-run is scheduled with the rest of the
+  Windows checklist rather than left as a wish — `docs/blockers.md` §2, owner
+  `castorhrio`, by 2026-11-19 — because a Linux pass proves the archive path
+  works, not that it works on the platform the installer ships for.
 
 - **The gap between Chinese and Latin exists only on screen.** Where a Han
   character meets a Latin letter or digit, the air between them is drawn by the
@@ -453,7 +456,9 @@ npm run package  # 免安装目录，不出安装包
   它会启动产物、抓取输出，`adapters resolved:` 那一行不含 `universal` 就判失败。
   Windows 上请从命令行运行 `UCAD.exe`：双击启动的进程没有控制台，这一行没有地方可打印。
   该脚本已在 Linux x64（Ubuntu 26.04、未打包目录构建、2026-11-02）实测通过：
-  退出后无残留子进程；Windows 上仍需从命令行跑一次。
+  退出后无残留子进程；Windows 上仍需从命令行跑一次。Windows 那一次不是一句愿望，
+  它和六步清单排在一起：`docs/blockers.md` 第 2 节，责任人 `castorhrio`，截止 2026-11-19——
+  Linux 上通过证明的是「归档内解析这条路走得通」，不是「安装包要发的那个平台上走得通」。
 
 - **中英之间的空隙只存在于屏幕上。** 汉字与拉丁字母或数字相接的地方，那点空隙由引擎画出来
   （`styles.css` 的 `--text-autospace`，即 `text-autospace: normal`），不是文字自带的：

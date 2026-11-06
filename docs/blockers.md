@@ -184,7 +184,7 @@ PASS — update-feed.json on castorhrio/jev-pi-agent v1.0.0 now carries sha256=�
 ## 2. Windows 桌面六步（需要一台 Windows 机器）
 
 - **责任人**：castorhrio ｜ **截止**：2026-11-19
-- **最近核对**：2026-11-05 ｜ **重跑这一条**：`node scripts/verify-main-chain.mjs --judge docs/manual-verification/win-YYYYMMDD.json`
+- **最近核对**：2026-11-06 ｜ **重跑这一条**：`node scripts/verify-main-chain.mjs --judge docs/manual-verification/win-YYYYMMDD.json`
 
 **解除命令**
 
@@ -226,6 +226,40 @@ PASS — the report covers steps 1, 2, 3, 4, 5 on win32 against build 1.0.0
 
 **做不到时不要做什么**：不许手写一份报告，也不许把「跑过 Linux」写成「Windows 通过」——
 `--judge` 只判文件说了什么，而文件可以手写，这句话写在报告自己的 `note` 字段里。
+
+### 打包后的 asar 检查：同一台 Windows 机器上的第二步
+
+六步脚本不驱动这一步，但它要的是**同一台机器、同一个责任人、同一个截止**（见本节第一行），
+所以它写在这里，而不是另开一节。从真实 `.asar` 归档内部读一个适配器，需要 Electron 打过补丁的
+`fs`，只有打包后的启动才有；契约门禁只覆盖到「asar 形状的应用根目录」（Node 的目录语义），
+这条边界写在 `tests/contract/adapter-resolution.test.ts` 的头部。
+
+**跑这一条**（在 Windows 上，`npm run package` 之后）：
+
+```bash
+node scripts\verify-packaged-adapters.mjs
+```
+
+**屏幕上第一行**（判据是退出码 0）：
+
+```text
+[ucad] packaged adapter check: OK
+  executable: release\win-unpacked\UCAD.exe
+  adapters resolved: universal
+```
+
+判据行是第三行 `adapters resolved: universal`：脚本默认要求 `universal`，
+`(none)` 或少了它都退出 1，并把应用自己的输出尾巴打出来。
+
+**结果放到哪个路径**
+
+1. 完整输出追加进 `docs/manual-verification.md`（含 `adapters resolved:` 那一行，不要转述）；
+2. `README.md` 中英两半那句「Windows 上仍需从命令行跑一次」改成带日期的记录；
+3. `docs/dod-status.md` 的 DOD-4.1 行「还差什么」里补一句「asar 检查已在 Windows 上跑过」。
+
+**做不到时不要做什么**：不许把 2026-11-02 那次 Linux 运行写成 Windows 通过——
+`adapters resolved: universal, mock` 在 Linux 上已经打印过一次，它证明的是「归档内解析这条路
+走得通」，不是「Windows 上走得通」。这一条与上面六步共用同一个截止：`2026-11-19`。
 
 ### 解除时：报告带回之后，一条命令、一行输出、五处要改的文档
 
