@@ -1691,10 +1691,9 @@ function readmePunctuationProblems(markdown: string): string[] {
  *
  * That is a limitation of the product, not of the gate, and until this round it
  * was written only in a comment beside `LATIN_CLASS` in
- * `scripts/layout-page-scripts.mjs` — a place no reader of the product goes. A
- * tool that hides its edges is harder to trust than one that does not, which is
- * the sentence the README's limitations section opens with, so the limit is
- * stated there now, in both languages.
+ * `scripts/layout-page-scripts.mjs` — a place no reader of the product goes. The
+ * README's limitations section is where a reader goes to find out what this
+ * build does not do, so the limit is stated there now, in both languages.
  *
  * This block is what keeps it stated. It reads the README's two halves for the
  * mechanism, the three destinations and the verdict, and it fails when either

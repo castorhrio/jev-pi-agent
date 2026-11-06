@@ -913,3 +913,66 @@ DISPLAY=:140 ELECTRON_DISABLE_SANDBOX=1 npm run test:local -- --config vitest.e2
 **不证明**：一次 GitHub 托管 runner 上的运行（`npm test` 在 CI 上仍是权威，`test:local` 是这台机器的
 绕法）；也不证明 `DOD-4.1`（Windows 真机）与 `DOD-4.2`（feed 上传）——那两条仍是外部阻塞，
 本节一个字都没有动它们。
+
+## 三条阻塞今天各重跑一次，退出码是这一跑打印的（2026-11-06）
+
+这一节不是「又记了一遍三条阻塞还在」。它是下面这三条命令今天在这台机器上真的跑过的一次记录，
+退出码是下面写的这三个数。`tests/contract/blocker-freshness.test.ts` 只看日期新不新，看不出日期是
+怎么变新的——所以依据写在这里，而不是留在某个终端窗口里。
+
+**`docs/blockers.md` 上那三个「最近核对」日期这一轮没有动**，仍然是 `2026-11-05` / `2026-11-06` /
+`2026-11-05`：那条门禁把「今天」钉成一个字面量（`TODAY = utcDays('2026-11-05')`），并把第 1、3 节的
+那一行逐字比对，所以改日期要连门禁一起改，那是另一件事。这一节记的是「今天量到它们还在原地」，
+日期那一栏留给下一轮连同门禁一起动。
+
+三条命令都不需要令牌、不需要 Windows 机器、不需要人，所以它们今天能跑；三条阻塞本身一条都没解除。
+
+### 第 1 节：已发布的 v1.0.0 feed 缺 `sha256`
+
+```console
+$ node scripts/release-gate.mjs --simulate-missing-sha
+source: SIMULATED — the v1.0.0 feed as published, judged by the app’s own rules; nothing was fetched
+version: this build is 1.0.0
+[FAIL] no-sha256: the feed publishes no sha256, so the app refuses to install what it downloads — null
+[warn] no-size: the feed publishes no size, so a truncated download is only caught after hashing — absent
+[FAIL] installer-latest-url: the installer URL uses releases/latest, which 404s once a newer release exists — https://github.com/castorhrio/jev-pi-agent/releases/latest/download/UCAD-Setup-1.0.0.exe
+[skipped] the installer URL: not fetched (--simulate-missing-sha never touches the network)
+verify-release-feed: FAIL — 2 failure(s), 1 warning(s); 1 check(s) did not run
+REFUSED — the published feed is one the app refuses to install from, so a release published now would not reach anyone through it: no version may ship until the feed is fixed (node scripts/publish-feed.mjs --dry-run, then --apply --verify)
+（退出码 1）
+```
+
+八行与 `docs/blockers.md` 第 1 节「没有令牌的人」那一半贴的逐字相同——那一块由
+`tests/contract/release-gate-simulation.test.ts` 逐行比对，所以「今天跑出来的」和「文档里写的」
+是同一份东西，不是两份各自正确的抄本。
+
+### 第 2 节：Windows 桌面六步
+
+```console
+$ node scripts/verify-main-chain.mjs --judge docs/manual-verification/win-YYYYMMDD.json
+[FAIL] report-unreadable: /opt/jev-pi-agent/docs/manual-verification/win-YYYYMMDD.json: ENOENT: no such file or directory, open '/opt/jev-pi-agent/docs/manual-verification/win-YYYYMMDD.json'
+（退出码 1）
+```
+
+退出码 1 在这里是**正确**的读数：`docs/manual-verification/` 里只有 `README.md` 与
+`report-schema.json`，没有报告。这条命令判的是「文件说了什么」，没有文件就没有可判的东西——
+它没有把「没有报告」写成「报告不合格」，这两种红下一步动作不同。
+
+### 第 3 节：五个界面状态的人眼走查
+
+```console
+$ node scripts/screenshot-sources.mjs --check
+PASS — 34 renderer source(s) and 14 screenshot(s) match docs/screenshots/sources.json
+（退出码 0）
+```
+
+退出码 0 说的是**那十四张图还对着拍下它们的那一版渲染层**，不是「有人看过它们」。
+`docs/state-walkthrough.md` 的记录表第一列仍然是 `—`，所以这一节仍然阻塞，而它今天量到的那一半是绿的。
+
+### 这一节证明了什么，不证明什么
+
+**证明**：三条阻塞的「重跑这一条」命令今天在这台机器上各跑了一次，退出码分别是 1 / 1 / 0，
+输出与 `docs/blockers.md` 里贴的那一份一致。
+
+**不证明**：三条阻塞里任何一条被解除。第 1 节仍然缺写权限令牌，第 2 节仍然缺一台 Windows 机器，
+第 3 节仍然缺一个人。这一节记的是「今天量到它们还在原地」，而那是这一页上最好的消息。

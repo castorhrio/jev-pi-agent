@@ -2000,3 +2000,51 @@ state-error-tight-long-reason: the column is flush against its pane (0px / 264px
 
 **没做的**：`error` 的四条判据、rail/statusbar 的结论、`App.tsx` 的 fatal 分支结构、任何新文案。
 这一屏仍然没有 shell，仍然只有四块字——本轮只让这四块字站在窗口中间。
+
+## 本轮（2026-11-06）README 去 AI 味道：六处改动，屏幕侧扫过零命中
+
+审查清单里「去 AI 味道」挂了几轮，每轮都只写「没有新证据」——它挂住的原因是没有人把「像生成物」
+拆成能指着屏幕说的形状。这一轮先做那个拆分：五种形状（缺口句 / 格言句 / 副词自夸 / 目录句 /
+谜语计数），然后拿它们扫两份东西。
+
+**结论**：屏幕上的文案（`apps/desktop/src/shared/i18n.ts` 的 665 条中文值与英文半）按这五条判据
+**零命中**，一个字没改；README 中英两半命中六处，全部改掉。逐条的 before / after 与「为什么这读起来
+像真人」写在 `docs/copy-critique.md`——那一页是这一轮的记录，不是一条规则。
+
+改的是：开头那句「closes that gap / 补的就是这个缺口」、紧跟的目录句（整段删除）、
+`Honest estimates` / `估算说实话` 小标题、MCP 那条的 `see its health honestly` / 「如实读出」、
+「当前局限」开头那句格言（中英各一）、以及「六条缺口」那句谜语计数（中英各一）。
+六条 bullet 一个字没动，所以 `readme-parity.test.ts` 的 `LIMITATIONS` 表照旧绿。
+
+**没有新增门禁**：五种形状是判据，不是断言——「一句话算不算格言」是一条会一直被改到不再尝试的
+规则，本仓对这类规则已有结论。所以它留在一页文档里，靠下一轮的人重读。
+
+**顺带**：`typography.test.ts` 的 doc comment 引用过被删掉的那句格言，一并改成指向新的开头句——
+一句注释引用一句已经不存在的原文，是这一页最不想留下的东西。
+
+**三条外部阻塞一条没解**，但今天各重跑了一次，退出码 1 / 1 / 0，输出与 `docs/blockers.md` 贴的
+逐字相同；记录写在 `docs/manual-verification.md` 末节「三条阻塞今天各重跑一次」。
+`docs/blockers.md` 上那三个「最近核对」日期这一轮**没有**动——`blocker-freshness.test.ts` 把「今天」
+钉成字面量 `2026-11-05` 并逐字比对那一行，改日期要连门禁一起改，那是另一件事。
+
+门禁：`TMPDIR=$PWD/.run-logs/tmp npx vitest run tests/contract/readme-parity.test.ts
+tests/contract/readme.test.ts tests/contract/typography.test.ts tests/contract/doc-citations.test.ts`
+→ 4 个文件 104 项全绿；`node scripts/screenshot-sources.mjs --check` → 退出码 0
+（这一轮没动渲染层源码，所以不需要重拍任何图）。
+
+**同一轮里顺手修的两处「指错路」**（都不是新功能，是这一轮读文档时撞上的）：
+
+1. `docs/blockers.md` 第 3 节说「只有图也行——五张图都在 `docs/screenshots/`」。这句话对**唯一那个
+   要签字的人**是错的：走查是十张（五态 × 两个尺寸），而且宽窗口那五张里只有 `empty.png` 与
+   `error.png` 在 `docs/screenshots/` 根下，`loading` / `partial` / `permission` 三张在
+   `docs/screenshots/states/`。照着这句话去翻目录的人会以为图缺了三张。改成指向
+   `docs/state-walkthrough.md` 的「5 分钟走查脚本」那张表——**路径只写一处**，这一页不再抄第二份清单。
+   同一节开头那句「那十张图还对着当前的渲染层源码」也补成「那十张图（连同另外四张）」：
+   `--check` 量的是 `sources.json` 里全部十四张，而这一节末尾本来就写着「十四张」，同一节里两个数
+   说的是同一条命令，读者会以为其中一个是错的。
+2. `docs/copy-critique.md` 的标题写「六处改动（中英各一条，共十二条）」，正文两处却写「十条改动」，
+   而下面列的是十二条。改成「六处 × 中英两半 = 十二条」，与标题、与 `docs/dod-status.md` 这一节
+   的「六处」对齐——一份记录里同一个数写两个值，是这一页最容易被下一轮当成「没数过」的地方。
+
+两处都只动文档，没有新增门禁：`blocker-freshness` / `blocker-parity` / `blocker-closing` /
+`doc-routing` / `state-walkthrough` / `screenshots` / `demo-script` 七个文件 162 项全绿。

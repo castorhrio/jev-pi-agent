@@ -301,14 +301,16 @@ PASS — the report covers steps 1, 2, 3, 4, 5 on win32 against build 1.0.0
 - **责任人**：castorhrio ｜ **截止**：2026-11-19
 - **最近核对**：2026-11-05 ｜ **重跑这一条**：`node scripts/screenshot-sources.mjs --check`
 
-这一条的「重跑」只能量到一半：`--check` 说 PASS，说的是**那十张图还对着当前的渲染层源码**，
-签字的人看的确实还是现在这一屏；它说不了任何人有没有看过它们。后一半只有人能回答——
+这一条的「重跑」只能量到一半：`--check` 说 PASS，说的是**那十张图（连同另外四张）还对着当前的
+渲染层源码**，签字的人看的确实还是现在这一屏；它说不了任何人有没有看过它们。后一半只有人能回答——
 判据与记录表都在 `docs/state-walkthrough.md`，那一页写清了「第一列带日期的一行才算一次签字」。
 
 **解除命令**
 
 有应用：`npm run dev:web`，按 `?scenario=empty` / `loading` / `error` / `partial` / `permission`
-依次打开；只有图也行——五张图都在 `docs/screenshots/`，不必装应用、不必联网。
+依次打开；只有图也行——十张图都在仓库里，逐张路径见 `docs/state-walkthrough.md` 的
+「5 分钟走查脚本」那张表（五态 × 两个尺寸，宽窗口三张在 `docs/screenshots/`、其余在
+`docs/screenshots/states/`），不必装应用、不必联网。
 每一态三条「是 / 否」判据写在 `docs/state-walkthrough.md`，照着屏幕上真的会出现的字找。
 
 **期望输出**

@@ -17,13 +17,11 @@ trimmed it, a budget ledger dropped two files, a token estimator guessed at the
 rest, and the engine that answered may not be the one you configured. Nothing
 on screen can tell you what actually went in, or why it went that way.
 
-UCAD closes that gap and makes both answers checkable: **which bytes did the
-agent receive**, and **why did it take that route**. The context pack is a pure
-function with a content hash, so you can read the rendered text and compare the
-digest. Every decision records its engine, its rationale and its confidence, and
-a fallback is recorded as a fallback.
-
-The rest of this page shows how each of those checks works.
+UCAD puts both answers on screen: **which bytes did the agent receive**, and
+**why did it take that route**. The context pack is a pure function with a
+content hash, so you can read the rendered text and compare the digest. Every
+decision records its engine, its rationale and its confidence, and a fallback is
+recorded as a fallback.
 
 ### What it does
 
@@ -34,8 +32,8 @@ The rest of this page shows how each of those checks works.
   and the engine that produced it. A fallback is recorded as a fallback. The
   engine chain is yours to set in Settings — an engine this build does not know
   is ignored, and the chain you see is the chain that runs.
-- **Honest estimates.** Token counts say whether they came from the vendor's
-  tokenizer or from a heuristic, and say so on screen.
+- **Token counts that name their source.** A count says on screen whether it
+  came from the vendor's tokenizer or from a heuristic.
 - **A permission gate that cannot be bypassed.** An agent asking to run
   something gets a decision recorded, with the reason, before it happens.
 - **Handoffs between agents.** A readable record of what was decided, changed,
@@ -50,7 +48,7 @@ The rest of this page shows how each of those checks works.
   memory, never through an environment variable or a log line. The vendor you
   pick is the vendor that answers: the base URL, the model and the credential
   all come from that one choice.
-- **MCP servers.** Configure a server, see its health honestly, remove it.
+- **MCP servers.** Add a server, see whether it connects, remove it.
 - **A tray you can get out of.** Closing the window hides it to the tray — or
   quits the app, if you say so in Settings → When the window is closed. The
   tray menu carries both *Show window* and *Quit*, and an icon that failed to
@@ -170,11 +168,13 @@ on, or the command must run elevated. The unpacked build is unaffected.
 
 ### Current limitations
 
-Stated plainly: a tool that hides its edges is harder to trust than one that does not.
+Each gap below is one this repository knows about, with the command that shows
+it or the reason it cannot be closed here.
 
 #### Known gaps in this repository
 
-Six gaps sit in this repository. Five close here; the last one cannot, and says why.
+Six gaps are listed here. Five are things this repository has not done; the
+sixth is a property of the rendering engine, and no change here closes it.
 
 - **One provider protocol ships.** The bundled adapter speaks the
   OpenAI-compatible protocol. Native vendor adapters are not implemented. Two
@@ -299,12 +299,9 @@ repository expects of a change, and how to add a workspace package.
 丢过两个文件、token 估算器猜过剩下的部分，最后回答的那个引擎可能也不是你配的那个。
 屏幕上没有任何东西能告诉你：到底进去了什么，以及为什么走了这条路。
 
-UCAD 补的就是这个缺口，并把两个问题的答案做成**可核对**的：**Agent 到底收到了哪些
-字节**，以及**它为什么走了这条路由**。Context Pack 由纯函数产出、自带一个内容哈希，
-你可以读渲染后的原文、比对哈希；每次决策都记下引擎、`rationale` 和 `confidence`，
-回落就写成回落。
-
-下面逐项说明这两件事在界面上怎么核对。
+UCAD 把这两个答案都放到屏幕上：**Agent 到底收到了哪些字节**，以及**它为什么走了
+这条路由**。Context Pack 由纯函数产出、自带一个内容哈希，你可以读渲染后的原文、
+比对哈希；每次决策都记下引擎、`rationale` 和 `confidence`，回落就写成回落。
 
 ### 它能做什么
 
@@ -313,7 +310,7 @@ UCAD 补的就是这个缺口，并把两个问题的答案做成**可核对**�
 - **决策可解释。** 每次决策都记录 `rationale`、`confidence` 和产出它的引擎；
   回落会**作为回落被记录**。引擎链可在「设置」里调整——本版本不认识的引擎会被忽略，
   你看到的那条链就是真正跑起来的那条。
-- **估算说实话。** token 数会标明来自厂商 tokenizer 还是启发式估算，并在界面上写明。
+- **token 数标明出处。** 屏幕上写着这个数来自厂商 tokenizer，还是启发式估算。
 - **绕不过的权限门。** Agent 要执行操作前，先得到一个被记录的决定和它的理由。
 - **Agent 之间的交接。** 一份可读的记录：决定了什么、改了什么、跑过什么、还剩什么——
   下一个 Agent 读它，而不是再问你一遍。
@@ -323,7 +320,7 @@ UCAD 补的就是这个缺口，并把两个问题的答案做成**可核对**�
 - **任意 OpenAI 兼容厂商。** 一个协议覆盖多家。凭据单向存进系统钥匙串，只有真正
   发请求时才经本机进程通道把它交给 Agent Host——全程只在内存里，不经过环境变量，
   也不进日志。选了哪家，就真是哪家：地址、模型和凭据都出自同一个选择。
-- **MCP 服务器。** 添加一个、如实读出它的连接状态、随时移除。
+- **MCP 服务器。** 添加一个、看它连不连得上、随时移除。
 - **藏得进去也唤得回的托盘。** 关窗会藏到托盘——也可以在「设置 → 关闭窗口时」改成直接退出。
   托盘菜单里既有「显示主窗口」也有「退出」；图标没解出来时，应用会退出，
   而不是藏到一个你看不见也点不到的地方。
@@ -429,11 +426,11 @@ npm run package  # 免安装目录，不出安装包
 
 ### 当前局限
 
-直说，因为**藏边界的工具比不藏的更不值得信任**。
+下面每一条都是本仓库知道的缺口：要么给出能看见它的命令，要么说明为什么在这里关不掉。
 
 #### 本仓已知缺口
 
-六条缺口在本仓库里。五条在这里关掉；最后一条关不掉，它自己说了为什么。
+下面六条。前五条是本仓库还没做的；第六条是渲染引擎的性质，改这里关不掉。
 
 - **只随包发布一种厂商协议。** 内置适配器走 OpenAI 兼容协议，厂商原生适配器未实现。
   随包同时注册 `universal` 与 `mock` 两个适配器：前者是真正发出请求的那一个，后者是
