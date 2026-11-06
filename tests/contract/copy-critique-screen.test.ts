@@ -217,24 +217,81 @@ function statedCoverage(markdown: string): { judged: number; total: number } | u
  * said which one the tables agreed with.
  *
  * Two shapes, because that paragraph writes the same number two ways: the
- * sentence `本轮判过 N 条` / `这一轮判过 N 条`, and the fraction `**N / 667**`.
+ * sentence `本轮判过 N 条` / `这一轮判过 N 条`, and the fraction `N / 667`.
  * Both are read. A gate that only knew the first shape would have left the
  * fraction standing, and the fraction is the one a reader quotes.
+ *
+ * ## The fifth copy, and why the shapes are read rather than matched
+ *
+ * The fourth copy was fixed by matching two literal shapes, and matching two
+ * literal shapes is the defect one round later: the page states its coverage a
+ * fifth time — 「七屏判过、44 / 667」 in the section about what this round did
+ * *not* do — and that copy was stale for the same reason as the fourth, because
+ * it is not bold and the fraction regex wanted `**`. A gate that knows exactly
+ * the shapes that were wrong last time is a gate that is green about the shapes
+ * that are wrong this time.
+ *
+ * So the reading is inverted. {@link COUNT_ANY} finds **every** `判…N 条` in the
+ * prose and {@link FRACTION} finds **every** `N / M`; each one is then checked
+ * against the tables. A count written in a shape this gate cannot read — 「本轮
+ * 共判 47 条」, 「判了 47 条」 — is reported as unreadable rather than skipped,
+ * because a skipped count is a count nobody compares, which is the whole defect.
+ * If a future round wants a third shape, it has to teach {@link COUNT_SENTENCE}
+ * that shape; the alternative is a page that quietly stops being checked.
  *
  * The summary and coverage lines are skipped: they are checked above, and
  * counting them here would report the same defect twice — which is how a gate
  * starts producing two messages for one edit and the second one gets ignored.
  */
-function bodyCounts(markdown: string): { where: string; judged: number; total?: number }[] {
-  const found: { where: string; judged: number; total?: number }[] = [];
+
+/** The sentence shapes this gate can read a judged-count out of. */
+const COUNT_SENTENCE = /(?:本轮|这一轮)共?判过 (\d+) 条/gu;
+
+/**
+ * Any `判…N 条` in the prose, readable or not.
+ *
+ * The `本轮` / `这一轮` prefix is part of the match so the message quotes the
+ * sentence a reader would quote, not the fragment `判过 47 条`.
+ */
+const COUNT_ANY = /(?:本轮|这一轮)?共?判(?:过|了)?\s*(\d+)\s*条/gu;
+
+/**
+ * Any `N / M` in the prose.
+ *
+ * In this page a fraction is a coverage claim — `47 / 667` is "this many of the
+ * dictionary's values were judged" — so both numbers are checked. A page that
+ * needs a fraction that is not a coverage claim has to write it some other way;
+ * a false red is cheaper than a stale number nobody reads.
+ */
+const FRACTION = /(\d+) \/ (\d+)/gu;
+
+/** One count found in the prose, and whether this gate knows how to read it. */
+interface BodyCount {
+  readonly where: string;
+  readonly judged: number;
+  readonly total?: number;
+  readonly unreadable?: true;
+}
+
+function bodyCounts(markdown: string): BodyCount[] {
+  const found: BodyCount[] = [];
   for (const line of markdown.split('\n')) {
     if (/\*\*(?:覆盖|命中|判过)\*\*/u.test(line)) continue;
-    for (const match of line.matchAll(/(?:本轮|这一轮)判过 (\d+) 条/gu)) {
-      found.push({ where: `「${match[0]}」`, judged: Number(match[1]) });
-    }
-    for (const match of line.matchAll(/\*\*(\d+) \/ (\d+)\*\*/gu)) {
+    const readable = [...line.matchAll(COUNT_SENTENCE)];
+    for (const match of line.matchAll(COUNT_ANY)) {
+      const start = match.index;
+      const known = readable.some(
+        (candidate) => start >= candidate.index && start < candidate.index + candidate[0].length,
+      );
       found.push({
-        where: `「**${match[1]} / ${match[2]}**」`,
+        where: `「${match[0]}」`,
+        judged: Number(match[1]),
+        ...(known ? {} : { unreadable: true as const }),
+      });
+    }
+    for (const match of line.matchAll(FRACTION)) {
+      found.push({
+        where: `「${match[0]}」`,
         judged: Number(match[1]),
         total: Number(match[2]),
       });
@@ -296,6 +353,48 @@ function titleCounts(markdown: string): { screens: number; strings: number } | u
   const strings = chineseNumber(match[2]!);
   if (screens === undefined || strings === undefined) return undefined;
   return { screens, strings };
+}
+
+/**
+ * The block under a `## …` heading that is not one of the numbered screens.
+ *
+ * {@link sections} only reads `## <n>. …`, which is what the judged screens are;
+ * the page's prose sections are unnumbered, and one of them states a count about
+ * the gate itself.
+ */
+function proseBlock(markdown: string, headingIncludes: string): string | undefined {
+  const lines = markdown.split('\n');
+  const start = lines.findIndex(
+    (line) => line.startsWith('## ') && line.includes(headingIncludes),
+  );
+  if (start === -1) return undefined;
+  const rest = lines.slice(start + 1);
+  const end = rest.findIndex((line) => line.startsWith('## '));
+  return (end === -1 ? rest : rest.slice(0, end)).join('\n');
+}
+
+/**
+ * How many things the page says the gate pins, and how many it lists.
+ *
+ * `## 这一页的断言在哪` opens with 「`tests/contract/copy-critique-screen.test.ts` 钉住
+ * 八件事」 and then lists them. The number was wrong: the list had grown to nine
+ * and the sentence still said eight, which is the same shape as every other
+ * defect on this page — a number in prose that nothing compares with the thing
+ * it counts. It is cheap to compare, so it is compared.
+ *
+ * `undefined` when the section, the sentence or its numeral is gone, which the
+ * caller reports: a page that stopped saying how many things are pinned is a
+ * page whose list can grow without anyone noticing.
+ */
+function assertionListCounts(markdown: string): { stated: number; listed: number } | undefined {
+  const block = proseBlock(markdown, '断言在哪');
+  if (block === undefined) return undefined;
+  const stated = /钉住([一二三四五六七八九十]+)件事/u.exec(block);
+  if (stated === null) return undefined;
+  const count = chineseNumber(stated[1]!);
+  if (count === undefined) return undefined;
+  const listed = block.split('\n').filter((line) => /^\d+\. /u.test(line)).length;
+  return { stated: count, listed };
 }
 
 /** What the page is compared against. */
@@ -473,10 +572,19 @@ function critiqueProblems(
   // quotes when they want to know how much of the dictionary was judged.
   const dictionaryTotal = Object.keys(dictionary.zh).length;
   for (const count of bodyCounts(markdown)) {
+    if (count.unreadable === true) {
+      problems.push(
+        `docs/copy-critique-screen.md: the prose says ${count.where}, which is a count this gate ` +
+          'cannot read — it only knows `本轮判过 N 条` / `这一轮判过 N 条` and `N / M`. Either write ' +
+          'the count in one of those shapes or teach `COUNT_SENTENCE` the new one; a count the gate ' +
+          'skips is a count nobody compares',
+      );
+      continue;
+    }
     if (count.judged !== judged) {
       problems.push(
         `docs/copy-critique-screen.md: the prose says ${count.where}, and the tables hold ` +
-          `${judged} — the page states its own coverage four times and this copy was left ` +
+          `${judged} — the page states its own coverage six times and this copy was left ` +
           'behind; a reader meets two numbers and nothing says which one the tables agree with',
       );
     }
@@ -487,6 +595,24 @@ function critiqueProblems(
           'fraction it measured',
       );
     }
+  }
+
+  // The page's own claim about the gate: 「钉住 N 件事」 followed by N items. The
+  // list had grown to nine while the sentence still said eight, which is the
+  // same defect as the stale fraction — a number in prose that nothing counts.
+  const assertions = assertionListCounts(markdown);
+  if (assertions === undefined) {
+    problems.push(
+      'docs/copy-critique-screen.md: `## 这一页的断言在哪` no longer says `钉住 N 件事`, so the ' +
+        'page stopped stating how many things the gate pins — the list can now grow without ' +
+        'anyone noticing',
+    );
+  } else if (assertions.stated !== assertions.listed) {
+    problems.push(
+      `docs/copy-critique-screen.md: the page says the gate pins ${assertions.stated} thing(s) ` +
+        `and lists ${assertions.listed} — one of the two is now wrong, and the sentence is the ` +
+        'one a reader quotes',
+    );
   }
 
   return problems;
@@ -544,22 +670,23 @@ describe('the screens were judged one string at a time', () => {
       '',
     );
     expect(thin).not.toBe(SCREEN_DOC);
-    // Six problems, and all six are wanted: the section is thin, and the five
+    // Seven problems, and all seven are wanted: the section is thin, and the six
     // places the page states its own count — the summary, the coverage line, the
-    // title, and the two copies in the prose paragraph — each still say
-    // forty-seven. A gate that reported only the first would leave the count
-    // silently describing a table it no longer matches; one that reported only
-    // the summary would leave the other four copies of the number standing, and
-    // the title is the copy a reader sees first while the prose is the copy they
-    // quote.
+    // title, the two copies in the prose paragraph, and the copy in "what this
+    // round did not do" — each still say forty-seven. A gate that reported only
+    // the first would leave the count silently describing a table it no longer
+    // matches; one that reported only the summary would leave the other five
+    // copies of the number standing, and the title is the copy a reader sees
+    // first while the prose is the copy they quote.
     const problems = critiqueProblems(thin, { zh: ZH, en: EN }, firstRoundShapes(FIRST_ROUND));
-    expect(problems).toHaveLength(6);
+    expect(problems).toHaveLength(7);
     expect(problems[0]).toContain('judges 1 string(s)');
     expect(problems[1]).toContain('the summary says 47 string(s) judged and the tables hold 41');
     expect(problems[2]).toContain('the coverage line says 47 string(s) judged');
     expect(problems[3]).toContain('the title says 47 string(s) were judged and the tables hold 41');
     expect(problems[4]).toContain('the prose says 「这一轮判过 47 条」');
-    expect(problems[5]).toContain('the prose says 「**47 / 667**」');
+    expect(problems[5]).toContain('the prose says 「47 / 667」');
+    expect(problems[6]).toContain('the prose says 「47 / 667」');
   });
 
   it('reports a title that claims more screens than the gate knows', () => {
@@ -685,7 +812,7 @@ describe('the screens were judged one string at a time', () => {
     const fraction = SCREEN_DOC.replace('**47 / 667**', '**26 / 667**');
     expect(fraction).not.toBe(SCREEN_DOC);
     expect(critiqueProblems(fraction, { zh: ZH, en: EN }, firstRoundShapes(FIRST_ROUND))).toEqual([
-      expect.stringContaining('the prose says 「**26 / 667**」'),
+      expect.stringContaining('the prose says 「26 / 667」'),
     ]);
 
     // And the denominator of that fraction, which is the dictionary's size in
@@ -694,6 +821,58 @@ describe('the screens were judged one string at a time', () => {
     expect(denominator).not.toBe(SCREEN_DOC);
     expect(critiqueProblems(denominator, { zh: ZH, en: EN }, firstRoundShapes(FIRST_ROUND))).toEqual([
       expect.stringContaining('the fraction in the prose is not the fraction it measured'),
+    ]);
+  });
+
+  it('reports the fifth copy of the count, the one that was not bold', () => {
+    // The defect this case exists for: the page states its coverage a fifth time
+    // in "what this round did not do" — 「七屏判过、47 / 667」 — and that copy was
+    // stale for a whole round. The gate was green because it only knew the bold
+    // fraction `**N / 667**`, and this copy is not bold. A gate that knows the
+    // shapes that were wrong last time is a gate that is green about the shapes
+    // that are wrong this time, so the fraction is now read with or without the
+    // emphasis.
+    const stale = SCREEN_DOC.replace('七屏判过、47 / 667', '七屏判过、44 / 667');
+    expect(stale).not.toBe(SCREEN_DOC);
+    expect(critiqueProblems(stale, { zh: ZH, en: EN }, firstRoundShapes(FIRST_ROUND))).toEqual([
+      expect.stringContaining('the prose says 「44 / 667」'),
+    ]);
+  });
+
+  it('reports a count written in a shape it cannot read, instead of skipping it', () => {
+    // The other half of the same defect: a gate that matches two literal shapes
+    // silently skips a third. 「本轮共判 47 条」 is the same claim in a shape the
+    // regex does not know, and skipping it is how a count stops being compared —
+    // so an unreadable shape is a red run that names the shape, not a pass.
+    const reworded = SCREEN_DOC.replace('这一轮判过 47 条', '这一轮共判 47 条');
+    expect(reworded).not.toBe(SCREEN_DOC);
+    expect(critiqueProblems(reworded, { zh: ZH, en: EN }, firstRoundShapes(FIRST_ROUND))).toEqual([
+      expect.stringContaining('「这一轮共判 47 条」, which is a count this gate cannot read'),
+    ]);
+
+    // And the same for the other verb a future editor is likely to reach for.
+    const past = SCREEN_DOC.replace('这一轮判过 47 条', '这一轮判了 47 条');
+    expect(past).not.toBe(SCREEN_DOC);
+    expect(critiqueProblems(past, { zh: ZH, en: EN }, firstRoundShapes(FIRST_ROUND))).toEqual([
+      expect.stringContaining('「这一轮判了 47 条」, which is a count this gate cannot read'),
+    ]);
+  });
+
+  it('reports a list of pinned assertions that outgrew the number above it', () => {
+    // The page opens 「…钉住十件事」 and then lists them. The sentence said eight
+    // while the list held nine, which is the same shape as the stale fraction: a
+    // number in prose that nothing counts. It is cheap to count, so it is counted.
+    const understated = SCREEN_DOC.replace('钉住十件事', '钉住九件事');
+    expect(understated).not.toBe(SCREEN_DOC);
+    expect(critiqueProblems(understated, { zh: ZH, en: EN }, firstRoundShapes(FIRST_ROUND))).toEqual(
+      [expect.stringContaining('the page says the gate pins 9 thing(s) and lists 10')],
+    );
+
+    // A page that dropped the sentence is not silently "fully listed".
+    const without = SCREEN_DOC.replace('钉住十件事', '钉住若干件事');
+    expect(without).not.toBe(SCREEN_DOC);
+    expect(critiqueProblems(without, { zh: ZH, en: EN }, firstRoundShapes(FIRST_ROUND))).toEqual([
+      expect.stringContaining('no longer says `钉住 N 件事`'),
     ]);
   });
 
