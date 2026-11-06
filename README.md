@@ -68,12 +68,21 @@ The rest of this page shows how each of those checks works.
 
 ### States
 
-The three states a screen can be in, and what each one tells you:
+The five states a screen can be in, and what each one tells you:
 
 | | | |
 |---|---|---|
 | ![Empty](docs/screenshots/empty.png) | ![Error](docs/screenshots/error.png) | ![Loading](docs/screenshots/states/loading.png) |
 | First run: it tells you where to start — open a project, pick an agent, send a turn — instead of handing you an empty input box. | A load that failed: what broke, in the words the failure used, and the retry — not a blank panel. | A read still in flight: the screen says it is waiting, so a slow disk never looks like an empty project. |
+| ![Partial](docs/screenshots/states/partial.png) | ![Permission](docs/screenshots/states/permission.png) | |
+| One panel failed: the project name stays on screen, the session list says it could not be read (not that there are no sessions) and why — a local fault, not a whole-page error. | A permission request: the category, risk, resource, command and reason, with all four answers — including 拒绝 — equally findable. | |
+
+The failed-load screen deliberately has no `.rail` and no `.statusbar`: the
+workspace never loaded, so drawing an empty one would claim a project that
+cannot be opened. The topbar stays, and the four blocks of text are centred in
+what is left. That is a decision, not a screen that was never finished — the
+reasoning and its cost are in `docs/dod-status.md`, and
+`tests/contract/layout.test.ts` asserts both directions.
 
 ### Installers
 
@@ -328,12 +337,19 @@ UCAD 补的就是这个缺口，并把两个问题的答案做成**可核对**�
 
 ### 状态
 
-屏幕可能处在的三种状态，以及每一种在告诉你什么：
+屏幕可能处在的五种状态，以及每一种在告诉你什么：
 
 | | | |
 |---|---|---|
 | ![空态](docs/screenshots/empty.png) | ![失败态](docs/screenshots/error.png) | ![加载态](docs/screenshots/states/loading.png) |
 | 首次启动：它告诉你从哪开始——打开项目、选智能体、发一轮——而不是丢给你一个空输入框。 | 一次彻底失败的加载：坏在哪、失败原文怎么说的、以及重试——不是一个空白面板，也不是一句「出错了」。 | 读取还没返回：屏幕明说它在等，所以一块慢磁盘不会被看成空项目，也不会被当成没有内容。 |
+| ![局部故障](docs/screenshots/states/partial.png) | ![权限请求](docs/screenshots/states/permission.png) | |
+| 一块面板读失败：项目名还在屏上，会话列说的是「没读出来（不是没有会话）」并带原因——一次局部故障，不是整页错误。 | 一次权限请求：类别、风险、资源、命令、原因五件都能读，四个回答都在且分得清——包括「拒绝」。 | |
+
+失败那一屏故意没有 `.rail` 与 `.statusbar`：工作区根本没加载成功，画一个空的 rail
+等于让屏幕声称自己有一个打不开的项目。topbar 留着，四块字在剩下的空间里居中。
+这是判断，不是没做完——理由与代价在 `docs/dod-status.md`，
+`tests/contract/layout.test.ts` 两个方向都断言。
 
 ### 安装包
 

@@ -227,12 +227,33 @@ interface DocumentedCommand {
 function documentedCommands(text: string): DocumentedCommand[] {
   const commands: DocumentedCommand[] = [];
   for (const line of text.split('\n')) {
-    const scripts = [...line.matchAll(SCRIPT_COMMAND)].map((match) => match[1]!);
+    const scripts = [...line.matchAll(SCRIPT_COMMAND)];
     if (scripts.length === 0) continue;
-    const flags = [...line.matchAll(FLAG)].map((match) => match[1]!);
-    if (flags.length === 0) continue;
-    const unique = [...new Set(scripts)];
+    const unique = [...new Set(scripts.map((match) => match[1]!))];
     if (unique.length > 1) continue;
+    /*
+     * Only the flags that come *after* the command.
+     *
+     * A line is not always a command. `docs/release/REPLACE-FEED.md` has a
+     * table row that reads "传成功、`--verify` 失败 | 退出码是
+     * `verify-release-feed.mjs` 的退出码（1）" — prose about two different
+     * commands, where the flag before the script name belongs to
+     * `publish-feed.mjs` and the script named after it takes no flags at all.
+     * Reading every `--flag` on the line as a flag of the script on the line
+     * reported that row as "the document tells the reader to run
+     * `verify-release-feed.mjs --verify`, and that script does not accept it",
+     * which is a defect in the extractor, not in the document.
+     *
+     * The rule is the one the gate's name already states — the flags a document
+     * puts *after* a script — and it is pinned by a case below, because an
+     * extractor's boundary that nobody wrote down is how a gate goes quiet in
+     * one direction and noisy in the other.
+     */
+    const end = (scripts[0]!.index ?? 0) + scripts[0]![0].length;
+    const flags = [...line.matchAll(FLAG)]
+      .filter((match) => (match.index ?? 0) > end)
+      .map((match) => match[1]!);
+    if (flags.length === 0) continue;
     commands.push({ script: `scripts/${unique[0]!}`, flags: [...new Set(flags)] });
   }
   return commands;
@@ -582,6 +603,40 @@ describe('the flags the release documents put after a script', () => {
     expect(problems).toEqual([
       'README.md: tells the reader to run `scripts/publish-feed.mjs --aply`, and that ' +
         'script does not accept it',
+    ]);
+  });
+
+  it('reads only the flags that come after the command on the line', () => {
+    // The false positive this rule replaces, taken from the real document: a
+    // table row about what to do when the post-upload check fails names
+    // `--verify` before the script and the script after it. The flag belongs to
+    // `publish-feed.mjs`; `verify-release-feed.mjs` takes none of it.
+    const problems = flagProblems(
+      [
+        {
+          name: 'docs/release/REPLACE-FEED.md',
+          text:
+            '| 传成功、`--verify` 失败 | 退出码是 `node scripts/verify-release-feed.mjs` 的退出码（1） |\n',
+        },
+      ],
+      { scriptSource: () => "export const KNOWN_FLAGS = ['feed-file'];" },
+    );
+    expect(problems).toEqual([]);
+
+    // And the flag that *does* follow the command is still read: the rule is
+    // positional, not "ignore this line".
+    const trailing = flagProblems(
+      [
+        {
+          name: 'docs/release/REPLACE-FEED.md',
+          text: 'Run `node scripts/verify-release-feed.mjs --verify`.\n',
+        },
+      ],
+      { scriptSource: () => "export const KNOWN_FLAGS = ['feed-file'];" },
+    );
+    expect(trailing).toEqual([
+      'docs/release/REPLACE-FEED.md: tells the reader to run `scripts/verify-release-feed.mjs ' +
+        '--verify`, and that script does not accept it',
     ]);
   });
 

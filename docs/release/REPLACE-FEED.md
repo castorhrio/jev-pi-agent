@@ -237,7 +237,7 @@ PASS — 0 warning(s), nothing the app would refuse
 | 判定 / 令牌 / 读 release / 宿主 digest 不一致 | `refused: …` · `blocked: no GitHub write token` · `release-unreadable: …` · `refused: the host disagrees with …` | **没变**，还是那份缺 `sha256` 的旧文档 | 修掉原因，重跑同一条命令 |
 | 删旧资产失败 | `asset-delete-failed: DELETE assets/<id> answered <status>; the old document is still published.` | **没变**，旧文档还在（删除没成功） | 重跑同一条命令；连续失败说明令牌没有 `contents: write` |
 | 删成功、传失败 | `asset-upload-failed: POST assets answered <status>; rerun this command once the cause is fixed.` | **不存在了**：release 上没有 `update-feed.json`。应用侧读不到 feed，判定是 `feed-unreachable: the feed could not be fetched, so every update check fails` | 重跑 `GITHUB_TOKEN=… node scripts/publish-feed.mjs --apply --verify`；它会打印 `[note] no asset named update-feed.json on v1.0.0 — uploading a new one` 并直接上传 |
-| 传成功、`--verify` 失败 | 退出码是 `verify-release-feed.mjs` 的退出码（1），而上传那一行 `PASS — … now carries sha256=…` 已经打印过 | **已经是新的那份**：上传落地了，是复核没过 | 单独跑 `node scripts/verify-release-feed.mjs`，看它指名哪一条 finding；**不要**重跑 `--apply` |
+| 传成功、`--verify` 失败 | 退出码是 `verify-release-feed.mjs` 的退出码（1），而上传那一行 `PASS — … now carries sha256=…` 已经打印过 | **已经是新的那份**：上传落地了，是复核没过 | 单独跑 `node scripts/verify-release-feed.mjs`，看它指名哪一条 finding；**不要**重跑上传那一步——那会再删再传一次，而问题在复核那一侧 |
 
 三件要读的东西：
 

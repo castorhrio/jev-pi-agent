@@ -221,7 +221,10 @@ tar -czf walkthrough.tar.gz $(node scripts/screenshot-sources.mjs --walkthrough)
   - [ ] 失败信息**没有压过**它要解释的东西：`出错了` 与那行原因之间没有大段空白或装饰把两者拆开。
   - [ ] 这一屏**说得出下一步**：`先点重试，它会把刚才失败的那一步重新跑一遍` 这一句在三个按钮之前出现，
         读完知道每个按钮解决什么——不是只剩三个孤零零的动词。
-- 这一屏故意没有 shell——见 `docs/dod-status.md` 的 critique 一节。这不是漏做。
+- 这一屏**故意没有 shell**：工作区根本没加载成功，画一个空的 `.rail` 等于让屏幕声称自己有一个
+  打不开的项目；`.statusbar` 同理，空着就是在「量到零，所以通过」。topbar 留着，四块字在剩下的
+  空间里居中。判断与代价在 `docs/dod-status.md` 的 critique 一节，`tests/contract/layout.test.ts`
+  两个方向都断言，`README.md` 中英两半的 States 段也写着同一句——**这不是漏做**。
 - 不合格长什么样：只有一句「出错了」没有原因；空面板；重试按钮在折叠线以下；错误页把整个窗口涂成红色；
   原因写了但没说下一步，三个按钮读起来像占位的。
 - 依据：`tests/e2e/scenarios.e2e.test.tsx` 的 error 一组断言。

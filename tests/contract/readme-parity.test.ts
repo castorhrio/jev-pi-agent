@@ -1097,17 +1097,43 @@ describe('the README is two halves, and both of them are finished', () => {
  * scrolled that far had no way to know the app says "no project open yet, here
  * are the three steps" instead of handing them an empty input box.
  *
- * So the two halves now carry a row of three state pictures under the
- * Screenshots table, each with one sentence saying what that screen proves. The
- * sentences are the claim; the pictures are the evidence. Both are pinned here,
- * per language, because the failure this replaces is one half being updated and
- * the other left describing a screen that no longer exists.
+ * So the two halves now carry the state pictures under the Screenshots table,
+ * each with one sentence saying what that screen proves. The sentences are the
+ * claim; the pictures are the evidence. Both are pinned here, per language,
+ * because the failure this replaces is one half being updated and the other
+ * left describing a screen that no longer exists.
+ *
+ * ## Why five, and not the three the row started with
+ *
+ * The row began with empty / failed / loading, and the rest of the repository
+ * has said **five** states for several rounds: `docs/state-walkthrough.md`
+ * walks five, `docs/blockers.md` section 3 asks for five, and the README's own
+ * limitations section says five. The gallery was the one place still saying
+ * "the three states a screen can be in", so a reader who met the product here
+ * was told it has fewer states than the page that asks somebody to walk them —
+ * and `partial` and `permission` are exactly the two screens a control plane
+ * has to get right (a panel that failed without taking the page down, and a
+ * prompt that offers 拒绝 as readily as 允许). The count is now the walkthrough's
+ * count, and the two pictures that were missing are in both halves.
+ *
+ * ## The failed-load screen, which looks unfinished and is not
+ *
+ * `docs/screenshots/error.png` is nine-tenths background: no rail, no status
+ * bar, four blocks of text. That is the critique's conclusion in
+ * `docs/dod-status.md` — the workspace never loaded, so an empty rail would
+ * claim a project that cannot be opened — and it is the one screen a reader is
+ * most likely to read as "not finished". So the sentence that says it is a
+ * decision has to sit next to the picture, in both halves, and this file makes
+ * dropping it a red run: a gallery that shows the screen without the sentence
+ * is a gallery that ships the misreading.
  *
  * ## What is asserted
  *
- *  - both halves have the states section, and it lists exactly the three
- *    pictures `STATE_SHOTS` names, in that order — a half that dropped one, or
- *    added a fourth nobody wrote a sentence for, is red;
+ *  - both halves have the states section, and it lists exactly the pictures
+ *    `STATE_SHOTS` names, in that order — a half that dropped one, or added a
+ *    sixth nobody wrote a sentence for, is red;
+ *  - both halves say the failed-load screen drops the shell on purpose, naming
+ *    `.rail` and `.statusbar` — the two regions `layout.test.ts` measures;
  *  - each picture's caption is **verbatim** the sentence in `STATE_SHOTS` for
  *    that language. Verbatim rather than keyword-matched, because the caption
  *    is one sentence: there is no second half of it to keep, and a keyword
@@ -1183,7 +1209,37 @@ const STATE_SHOTS: readonly StateShot[] = [
       zh: '读取还没返回：屏幕明说它在等，所以一块慢磁盘不会被看成空项目，也不会被当成没有内容。',
     },
   },
+  {
+    id: 'partial',
+    path: 'docs/screenshots/states/partial.png',
+    caption: {
+      en:
+        'One panel failed: the project name stays on screen, the session list says it could not ' +
+        'be read (not that there are no sessions) and why — a local fault, not a whole-page error.',
+      zh: '一块面板读失败：项目名还在屏上，会话列说的是「没读出来（不是没有会话）」并带原因——一次局部故障，不是整页错误。',
+    },
+  },
+  {
+    id: 'permission',
+    path: 'docs/screenshots/states/permission.png',
+    caption: {
+      en:
+        'A permission request: the category, risk, resource, command and reason, with all four ' +
+        'answers — including 拒绝 — equally findable.',
+      zh: '一次权限请求：类别、风险、资源、命令、原因五件都能读，四个回答都在且分得清——包括「拒绝」。',
+    },
+  },
 ];
+
+/**
+ * The two regions the failed-load screen deliberately does not paint.
+ *
+ * Named as the code names them, because that is what `layout.test.ts` measures
+ * and what `docs/dod-status.md` argues about: `.rail` and `.statusbar` are the
+ * workspace's navigation and status, and a screen whose workspace never loaded
+ * has nothing honest to put in either.
+ */
+const SHELL_REGIONS = ['rail', 'statusbar'] as const;
 
 /**
  * The shortest caption that can be a sentence rather than a label.
@@ -1283,14 +1339,35 @@ function stateProblems(markdown: string, shots: readonly StateShot[]): string[] 
         );
       }
     });
+
+    /*
+     * The failed-load screen's decision, next to the picture it explains.
+     *
+     * The gallery shows `error.png` — nine-tenths background, no rail, no
+     * status bar — and a reader who is not told why reads it as a screen that
+     * was never finished. The conclusion is in `docs/dod-status.md` and the
+     * measurement is in `layout.test.ts`; this is the copy a reader actually
+     * meets, so it has to be here, in both halves.
+     */
+    for (const region of SHELL_REGIONS) {
+      if (body.includes(region)) continue;
+      problems.push(
+        `${lang}: the states section never mentions \`${region}\`, so the failed-load screen ` +
+          'reads as a screen that was never finished rather than one that drops the shell on ' +
+          'purpose — say so next to the picture',
+      );
+    }
   }
 
   return problems;
 }
 
-describe('the three states, in both halves', () => {
-  it('names three states, so the checks below are not vacuous', () => {
-    expect(STATE_SHOTS.length).toBe(3);
+describe('the five states, in both halves', () => {
+  it('names five states, so the checks below are not vacuous', () => {
+    // Five, because that is how many `docs/state-walkthrough.md` walks and how
+    // many the limitations section says have not been walked. A gallery that
+    // says three is the page disagreeing with the page.
+    expect(STATE_SHOTS.length).toBe(5);
     for (const shot of STATE_SHOTS) {
       expect(shot.path, `${shot.id} names no picture`).toMatch(/^docs\/screenshots\/.+\.png$/u);
       for (const lang of LANGS) {
@@ -1301,7 +1378,7 @@ describe('the three states, in both halves', () => {
     }
   });
 
-  it('shows the same three pictures, with the same sentences, in both halves', () => {
+  it('shows the same five pictures, with the same sentences, in both halves', () => {
     const problems = stateProblems(readme, STATE_SHOTS);
     expect(
       problems,
@@ -1335,14 +1412,29 @@ describe('the three states, in both halves', () => {
     expect(problems.some((problem) => problem.includes('showing different screens'))).toBe(true);
   });
 
-  it('reports a half that shows two states instead of three', () => {
+  it('reports a half that dropped a state', () => {
     const dropped = readme.replace(
       ` | ![加载态](${STATE_SHOTS[2]!.path}) |`,
       ' | |',
     );
     expect(dropped, 'the loading picture this case removes is gone').not.toBe(readme);
     const problems = stateProblems(dropped, STATE_SHOTS);
-    expect(problems.some((problem) => problem.includes('shows 2 picture(s)'))).toBe(true);
+    expect(problems.some((problem) => problem.includes('shows 4 picture(s)'))).toBe(true);
+  });
+
+  it('reports a half that shows the failed-load screen without saying why it has no shell', () => {
+    // The misreading this sentence exists to prevent: the picture is right, the
+    // caption is right, and the reader still concludes the screen is unfinished
+    // because nothing says the missing rail is a decision.
+    const stripped = readme.replace(
+      'The failed-load screen deliberately has no `.rail` and no `.statusbar`',
+      'The failed-load screen is shown below',
+    );
+    expect(stripped, 'the sentence this case rewrites is gone').not.toBe(readme);
+    const problems = stateProblems(stripped, STATE_SHOTS);
+    expect(problems).toHaveLength(2);
+    expect(problems[0]).toContain('en: the states section never mentions `rail`');
+    expect(problems[1]).toContain('en: the states section never mentions `statusbar`');
   });
 });
 
