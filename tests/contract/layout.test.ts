@@ -223,7 +223,7 @@ interface Measurement {
       columnHeight: number;
     } | null;
     /**
-     * The failed-load screen's column, measured on the horizontal axis.
+     * The failed-load screen's column, measured on both axes.
      *
      * `fatalFold` above answers "is the next step inside the window". This
      * answers "is the column inside the window *evenly*", which is the half the
@@ -231,16 +231,30 @@ interface Measurement {
      * centres this column said "centred in the window" while only centring it
      * vertically, so the four blocks sat in the left third of a 1440px window.
      * `content` is the pane's padding box (what the centring happens inside),
-     * `ink` the union of the four blocks, and the two margins are the numbers
-     * the assertion below compares. `null` when no fatal pane is on screen.
+     * `ink` the union of the four blocks, and the four margins are the numbers
+     * the assertions below compare — two per axis, because a rule that names
+     * two directions and implements one is exactly the defect this file has
+     * now caught twice.
+     *
+     * `overflows` is the engine's own answer to "did the column fit in the
+     * pane", and it is what makes the vertical pair readable: `safe center`
+     * falls back to start alignment when it does not fit, so unequal vertical
+     * margins are correct in that frame and a bug in every other one.
+     * `null` when no fatal pane is on screen.
      */
     fatalColumn: {
       viewportWidth: number;
-      content: { left: number; right: number };
-      ink: { left: number; right: number };
+      viewportHeight: number;
+      content: { left: number; right: number; top: number; bottom: number };
+      ink: { left: number; right: number; top: number; bottom: number };
       leftMargin: number;
       rightMargin: number;
+      topMargin: number;
+      bottomMargin: number;
       blocks: number;
+      overflows: boolean;
+      scrollHeight: number;
+      clientHeight: number;
     } | null;
     /**
      * The first-run block's hierarchy, as the engine computed it.
@@ -1289,6 +1303,94 @@ describe('the interface states are measured, not assumed', () => {
       }
     }
     expect(off, 'the failed-load column is not centred on the horizontal axis').toEqual([]);
+  });
+
+  it('centres the failed-load column on the vertical axis too, or says why it cannot', () => {
+    /*
+     * The second axis of the same rule, measured separately.
+     *
+     * The case above is the horizontal one, and it exists because a rule that
+     * said "centred in the window" only centred one direction. Measuring the
+     * pair as a single number is how the other direction hides, so this is its
+     * own reading: `topMargin` and `bottomMargin` of the union of the four
+     * blocks inside the pane's padding box, on every `error` frame, at both
+     * window sizes and both reason lengths.
+     *
+     * Two branches, because `justify-content: safe center` has two behaviours
+     * and only one of them is "equal margins":
+     *
+     *  - the column fits: the two margins are equal within 2px, and both are
+     *    positive — a column as tall as its pane has nothing to centre and
+     *    would pass the equality by being flush at both ends, which is the
+     *    "measured zero, therefore green" shape this repository has named
+     *    before;
+     *  - the column does not fit: `safe` falls back to start alignment, so the
+     *    column must begin at the top of the padding box. That is not a
+     *    tolerance, it is the reason the keyword is `safe`: centring an
+     *    overflowing column pushes its first line above the scroll origin,
+     *    where no scrollbar can reach it. A frame that overflows *and* sits
+     *    centred is the bug, and it is reported as one.
+     *
+     * `fatalFold` above is not this check: it asks whether the next step is
+     * inside the window, which a column pinned to the top of the pane also
+     * satisfies. This asks whether the column is where the rule says it is.
+     */
+    const failed = measurements.filter((m) => m.state === 'error');
+    expect(
+      failed.length,
+      'the failed-load screen was never measured, so the vertical centring check is vacuous',
+    ).toBeGreaterThanOrEqual(3);
+
+    const off: string[] = [];
+    for (const m of failed) {
+      const column = m.content.fatalColumn;
+      if (column === null) {
+        off.push(`${m.name}: no failed-load column was found to place`);
+        continue;
+      }
+      if (column.blocks !== 4) {
+        off.push(
+          `${m.name}: the failed-load column has ${column.blocks} block(s), not 4 — the heading, ` +
+            'the reason, the next step and the buttons are the whole screen',
+        );
+        continue;
+      }
+      if (column.overflows) {
+        // `safe center` gives up on centring when the column is taller than the
+        // pane; the fallback is start alignment, and anything else is a column
+        // whose first line is above the scroll origin.
+        if (column.topMargin < 0) {
+          off.push(
+            `${m.name}: the column is ${-column.topMargin}px above the top of its pane ` +
+              `(${column.scrollHeight}px of content in ${column.clientHeight}px) — the first ` +
+              'line is above the scroll origin, where no scrollbar reaches it',
+          );
+        } else if (column.topMargin > 2) {
+          off.push(
+            `${m.name}: the column overflows its pane (${column.scrollHeight}px of content in ` +
+              `${column.clientHeight}px) and still starts ${column.topMargin}px down — ` +
+              '`safe center` is supposed to fall back to the top when it does not fit',
+          );
+        }
+        continue;
+      }
+      if (column.topMargin <= 0 || column.bottomMargin <= 0) {
+        off.push(
+          `${m.name}: the column is flush against its pane (${column.topMargin}px above / ` +
+            `${column.bottomMargin}px below), so there is no vertical centring to measure`,
+        );
+        continue;
+      }
+      if (Math.abs(column.topMargin - column.bottomMargin) > 2) {
+        off.push(
+          `${m.name}: the column sits ${column.topMargin}px from the top and ` +
+            `${column.bottomMargin}px from the bottom of a ${column.viewportHeight}px window — ` +
+            'off-centre on the vertical axis, which is the axis the rule claimed and the ' +
+            'horizontal case above cannot see',
+        );
+      }
+    }
+    expect(off, 'the failed-load column is not centred on the vertical axis').toEqual([]);
   });
 
   it('the permission state really has a prompt on screen', () => {

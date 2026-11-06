@@ -1439,24 +1439,39 @@ export const MEASURE = `(() => {
         };
       })(),
       /*
-       * The failed-load screen's column, measured on the horizontal axis.
+       * The failed-load screen's column, measured on both axes.
        *
-       * The vertical axis is fatalFold above. This is the other one, and it
-       * exists because the rule that centres this column claimed both axes and
-       * only did one: justify-content: safe center centres the column
-       * vertically, while the four blocks stayed left-aligned on the page
-       * column. At 1440x900 that put the ink of docs/screenshots/error.png
-       * in the left third of a window whose whole subject is four short
-       * blocks - 240px of margin on one side, 741px on the other - which is
-       * what reads as "this page stopped loading halfway" rather than as a
-       * decision. align-items: center plus one measure for the column is the
-       * fix; these numbers are what makes it a measurement instead of a claim.
+       * The horizontal axis is the one the layout pass fixed: the rule that
+       * centres this column claimed both axes and only did one -
+       * justify-content: safe center centres the column vertically, while the
+       * four blocks stayed left-aligned on the page column. At 1440x900 that
+       * put the ink of docs/screenshots/error.png in the left third of a
+       * window whose whole subject is four short blocks - 240px of margin on
+       * one side, 741px on the other - which is what reads as "this page
+       * stopped loading halfway" rather than as a decision. align-items: center
+       * plus one measure for the column is the fix.
+       *
+       * The vertical axis is measured here too, and it is not the same claim as
+       * fatalFold above: fatalFold asks "is the next step inside the window",
+       * which a column pinned to the top of the pane also satisfies. This asks
+       * "is the column centred in the pane", which is what the rule says. The
+       * two axes are reported separately because the defect this repository
+       * keeps finding is a rule that names two directions and implements one -
+       * measuring the pair as a single number is how the second one hides.
        *
        * content is the pane's padding box, i.e. the box the centring happens
        * inside. ink is the union of the four blocks' rects, so a column that
        * is centred but whose blocks disagree about their width still reads as
        * one number. blocks is the count, so "centred" cannot be satisfied by
        * a pane that lost three of its four children.
+       *
+       * overflows is the one case where the vertical margins are *supposed* to
+       * disagree: justify-content: safe center falls back to start alignment
+       * when the column is taller than the pane, because centring an
+       * overflowing column pushes its first line above the scroll origin where
+       * no scrollbar can reach it. So the gate reads the pair - "centred, or
+       * overflowing and starting at the top" - rather than demanding equality
+       * in a frame where equality would be a bug.
        *
        * null when there is no fatal pane, which is a fact about the frame: the
        * shell states have none. The gate reads this only on the 'error' state,
@@ -1471,15 +1486,43 @@ export const MEASURE = `(() => {
         const paneRect = pane.getBoundingClientRect();
         const contentLeft = paneRect.left + parseFloat(style.paddingLeft);
         const contentRight = paneRect.right - parseFloat(style.paddingRight);
+        const contentTop = paneRect.top + parseFloat(style.paddingTop);
+        const contentBottom = paneRect.bottom - parseFloat(style.paddingBottom);
         const inkLeft = Math.min(...rects.map((r) => r.left));
         const inkRight = Math.max(...rects.map((r) => r.right));
+        const inkTop = Math.min(...rects.map((r) => r.top));
+        const inkBottom = Math.max(...rects.map((r) => r.bottom));
         return {
           viewportWidth: round(window.innerWidth),
-          content: { left: round(contentLeft), right: round(contentRight) },
-          ink: { left: round(inkLeft), right: round(inkRight) },
+          viewportHeight: round(window.innerHeight),
+          content: {
+            left: round(contentLeft),
+            right: round(contentRight),
+            top: round(contentTop),
+            bottom: round(contentBottom),
+          },
+          ink: {
+            left: round(inkLeft),
+            right: round(inkRight),
+            top: round(inkTop),
+            bottom: round(inkBottom),
+          },
           leftMargin: round(inkLeft - contentLeft),
           rightMargin: round(contentRight - inkRight),
+          topMargin: round(inkTop - contentTop),
+          bottomMargin: round(contentBottom - inkBottom),
           blocks: rects.length,
+          /*
+           * Whether the column is taller than the box it is centred in.
+           *
+           * scrollHeight against clientHeight, both of the pane: the pane is
+           * the scroll box (.pane is overflow-y: auto), so this is the
+           * engine's own answer to "did the content fit", not a sum of the
+           * children's heights.
+           */
+          overflows: pane.scrollHeight > pane.clientHeight + 1,
+          scrollHeight: round(pane.scrollHeight),
+          clientHeight: round(pane.clientHeight),
         };
       })(),
       /*
