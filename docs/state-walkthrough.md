@@ -221,6 +221,7 @@ tar -czf walkthrough.tar.gz $(node scripts/screenshot-sources.mjs --walkthrough)
   - [ ] 失败信息**没有压过**它要解释的东西：`出错了` 与那行原因之间没有大段空白或装饰把两者拆开。
   - [ ] 这一屏**说得出下一步**：`先点重试，它会把刚才失败的那一步重新跑一遍` 这一句在三个按钮之前出现，
         读完知道每个按钮解决什么——不是只剩三个孤零零的动词。
+- 这一屏故意没有 shell——见 `docs/dod-status.md` 的 critique 一节。这不是漏做。
 - 不合格长什么样：只有一句「出错了」没有原因；空面板；重试按钮在折叠线以下；错误页把整个窗口涂成红色；
   原因写了但没说下一步，三个按钮读起来像占位的。
 - 依据：`tests/e2e/scenarios.e2e.test.tsx` 的 error 一组断言。

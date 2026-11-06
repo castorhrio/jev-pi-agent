@@ -122,6 +122,14 @@ node scripts/verify-release-feed.mjs                               # 退出 0 = 
 门禁比对（`tests/contract/publish-rehearsal.test.ts`）。它证明的是**运行手册完整**，不是线上那份
 已经被换掉——那两行 `PASS —` 在预演里自己写着 `a promise, not a measurement`。
 
+**失败时**：五条命令里只有 `--apply --verify` 会留下中间状态——它先删旧资产、再传新资产，
+中间断掉时线上那份 `update-feed.json` 就**不存在了**（应用侧读不到 feed，判定是 `feed-unreachable`）。
+恢复动作不是回滚，是**重跑同一条命令**：release 上找不到同名资产时它会直接上传。
+四种断法、各自屏幕上那一行、线上那份处于什么状态、下一步跑什么，写在
+`docs/release/REPLACE-FEED.md` 的「如果 `--apply` 中途失败」一节；
+`tests/contract/publish-rehearsal.test.ts` 核对那一节引用的每一句原文都还在脚本源码里。
+这一节不重复那张表，只重复结论：**退出码 1 不等于什么都没发生**，先看屏幕上那一行是哪一种。
+
 跑完之后，回执表加一行（日期、`第 1 节`、`GITHUB_TOKEN=… node scripts/publish-feed.mjs --apply --verify`、
 `0`、`docs/manual-verification.md`），并把「未关闭」里第 1 节那一行删掉——两处一起动，只动一处会红。
 

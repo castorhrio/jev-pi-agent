@@ -279,3 +279,190 @@ describe('the rehearsal lines are one function of the document', () => {
     expect(lines).toContain('[rehearse]   feed: x');
   });
 });
+
+/**
+ * The half of the runbook that only matters on the day it goes wrong.
+ *
+ * `--apply` is not one write: it reads the release, deletes the old asset, then
+ * uploads the new one. Every failure before the delete leaves the published
+ * document untouched, and the page already said so. The failure *between* the
+ * delete and the upload leaves the release with **no** `update-feed.json` at
+ * all — a state worse than the broken document it replaced — and that state was
+ * written nowhere a token holder would read it. The exit code is 1 either way,
+ * which is exactly why the page has to say which of the two happened.
+ *
+ * The section is checked against the script rather than against itself: every
+ * line it quotes has to still be a literal `scripts/publish-feed.mjs` prints,
+ * so a reworded message cannot leave the page promising the old one — the same
+ * rule `handoff-packs.test.ts` applies to the rest of this page. The recovery
+ * command is checked against the sequence the status page carries, so the page
+ * cannot invent a fifth command nobody documents.
+ *
+ * Not asserted: that the failure paths are reachable today. They need a token
+ * and a release host; what is asserted is that the page describes the code that
+ * is in the tree.
+ */
+
+/** The title of the failure-fallback section, as both pages spell it. */
+const FAILURE_TITLE = '如果 `--apply` 中途失败';
+
+/** The heading of the failure-fallback section. */
+const FAILURE_HEADING = `## ${FAILURE_TITLE}`;
+
+/** The sentence the section exists for: one exit code, two different states. */
+const EXIT_CODE_SENTENCE = '退出码 1 不等于什么都没发生';
+
+/** The state that is worse than the one before the run: no asset at all. */
+const NO_ASSET_SENTENCE = '不存在了';
+
+/** Lines the section quotes, each with the script that has to still print it. */
+const FAILURE_QUOTES: readonly { readonly script: string; readonly text: string }[] = [
+  { script: 'scripts/publish-feed.mjs', text: 'asset-delete-failed: DELETE assets/' },
+  { script: 'scripts/publish-feed.mjs', text: 'the old document is still published' },
+  { script: 'scripts/publish-feed.mjs', text: 'asset-upload-failed: POST assets answered' },
+  { script: 'scripts/publish-feed.mjs', text: '[note] no asset named' },
+  {
+    // The code and the sentence are two literals in the verifier (a `finding()`
+    // call and the sentence table), so the quote is the sentence: it is the half
+    // a reader matches on screen.
+    script: 'scripts/verify-release-feed.mjs',
+    text: 'the feed could not be fetched, so every update check fails',
+  },
+];
+
+/** The section, heading included; empty when it is gone. */
+function failureSection(markdown: string): string {
+  const lines = markdown.split('\n');
+  const start = lines.findIndex((line) => line.trim().startsWith(FAILURE_HEADING));
+  if (start === -1) return '';
+  const body: string[] = [lines[start]!];
+  for (let index = start + 1; index < lines.length; index += 1) {
+    if (/^#{2,3} /.test(lines[index]!)) break;
+    body.push(lines[index]!);
+  }
+  return body.join('\n');
+}
+
+/**
+ * Every way the failure-fallback section stops describing the code.
+ *
+ * Pure in `(documents, scriptSource)` so the red direction is driven with a
+ * mutated copy: a check whose failure path has never run is a check that might
+ * be reporting `[]` whatever it is handed.
+ */
+function failureProblems(
+  documents: { replaceFeed: string; status: string },
+  scriptSource: (path: string) => string,
+): string[] {
+  const section = failureSection(documents.replaceFeed);
+  if (section.length === 0) {
+    return [
+      `${REPLACE_FEED_PATH}: no \`${FAILURE_HEADING}\` section — a token holder whose ` +
+        '`--apply` dies between the delete and the upload has nowhere to read what the ' +
+        'release is left in, and the exit code is 1 either way',
+    ];
+  }
+
+  const problems: string[] = [];
+  if (!section.includes(EXIT_CODE_SENTENCE)) {
+    problems.push(
+      `${REPLACE_FEED_PATH}: \`${FAILURE_HEADING}\` no longer says ${EXIT_CODE_SENTENCE} — ` +
+        'without it the page reads as "exit 1 means nothing happened", which is false for ' +
+        'the one failure that leaves the release with no feed at all',
+    );
+  }
+  if (!section.includes(NO_ASSET_SENTENCE)) {
+    problems.push(
+      `${REPLACE_FEED_PATH}: \`${FAILURE_HEADING}\` does not say the published asset is gone ` +
+        'after a failed upload, so the worst state the command can leave behind is the one ' +
+        'state the page does not name',
+    );
+  }
+
+  for (const { script, text } of FAILURE_QUOTES) {
+    if (!section.includes(text)) {
+      problems.push(
+        `${REPLACE_FEED_PATH}: \`${FAILURE_HEADING}\` does not quote \`${text}\` — the line ` +
+          `\`${script}\` prints for that failure is what the reader matches on screen`,
+      );
+      continue;
+    }
+    if (!scriptSource(script).includes(text)) {
+      problems.push(
+        `${REPLACE_FEED_PATH}: \`${FAILURE_HEADING}\` quotes \`${text}\`, which \`${script}\` ` +
+          'no longer prints — the page and the command disagree about what the failure looks like',
+      );
+    }
+  }
+
+  const recovery = REHEARSAL_COMMANDS.find((command) => command.includes('--apply'));
+  if (recovery === undefined) {
+    problems.push('scripts/publish-feed.mjs: the sequence no longer carries an `--apply` command');
+  } else if (!section.includes(recovery)) {
+    problems.push(
+      `${REPLACE_FEED_PATH}: \`${FAILURE_HEADING}\` does not name \`${recovery}\` as the ` +
+        'recovery step — the fix for a missing asset is rerunning the command, not a rollback',
+    );
+  }
+
+  const status = closingSubsection(documents.status);
+  if (!status.includes(FAILURE_TITLE)) {
+    problems.push(
+      `${STATUS_PATH}: \`### 有令牌时\` does not point at \`${FAILURE_HEADING}\` — the page a ` +
+        'token holder reads first would leave them believing every failure is a no-op',
+    );
+  }
+  return problems;
+}
+
+describe('the runbook says what a half-finished --apply leaves behind', () => {
+  const REPLACE_FEED = readFileSync(join(REPO_ROOT, REPLACE_FEED_PATH), 'utf8');
+  const STATUS = readFileSync(join(REPO_ROOT, STATUS_PATH), 'utf8');
+  const source = (path: string) => readFileSync(join(REPO_ROOT, path), 'utf8');
+
+  it('describes the state the release is left in, and what to run next', () => {
+    const problems = failureProblems({ replaceFeed: REPLACE_FEED, status: STATUS }, source);
+    expect(
+      problems,
+      `the failure fallback and the code disagree:\n  ${problems.join('\n  ')}`,
+    ).toEqual([]);
+  });
+
+  it('is not vacuous: the section, the quotes and the pointer are all really there', () => {
+    const section = failureSection(REPLACE_FEED);
+    expect(section.length, 'the failure section is gone').toBeGreaterThan(400);
+    expect(section).toContain(EXIT_CODE_SENTENCE);
+    for (const { text } of FAILURE_QUOTES) expect(section).toContain(text);
+    expect(closingSubsection(STATUS)).toContain(FAILURE_TITLE);
+  });
+
+  it('reports a section that lost the sentence about the exit code', () => {
+    const problems = failureProblems(
+      { replaceFeed: REPLACE_FEED.replace(EXIT_CODE_SENTENCE, '失败时请重试'), status: STATUS },
+      source,
+    );
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toContain(REPLACE_FEED_PATH);
+    expect(problems[0]).toContain(EXIT_CODE_SENTENCE);
+  });
+
+  it('reports a quote the script no longer prints', () => {
+    const problems = failureProblems({ replaceFeed: REPLACE_FEED, status: STATUS }, (path) =>
+      path === 'scripts/publish-feed.mjs'
+        ? source(path).replace('asset-upload-failed: POST assets answered', 'upload failed')
+        : source(path),
+    );
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toContain('asset-upload-failed: POST assets answered');
+    expect(problems[0]).toContain('no longer prints');
+  });
+
+  it('reports a status page that stopped pointing at the section', () => {
+    const problems = failureProblems(
+      { replaceFeed: REPLACE_FEED, status: STATUS.replace(FAILURE_TITLE, '失败时') },
+      source,
+    );
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toContain(STATUS_PATH);
+  });
+});

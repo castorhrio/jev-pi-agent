@@ -219,9 +219,40 @@ PASS — 0 warning(s), nothing the app would refuse
 | `refused: the host disagrees with …` | 宿主给的安装包 digest 与文档里的 `sha256`/`size` 不一致 | 别上传。先查安装包是不是被重新上传过；文档里的哈希取自 GitHub 的 digest，不一致说明资产变了 |
 | `[preflight] unreachable: …` | 第 0 步没读到线上那份（主机不应答 / 404） | 重试。**什么都没比较、什么都没写**——这不是「线上是好的」，也不是「线上是坏的」 |
 
+上面这四种都发生在**动线上资产之前**：命令在删任何东西之前就退出了，所以线上那份一个字节都没变。
+动过之后才失败的那一半在下一节——那一半的退出码也是 1，但线上那份的状态完全不同。
+
 **回滚**：这个命令只替换一个 JSON 资产，旧的那份是缺 `sha256` 的坏文档，**没有回滚的必要**——
 回到旧状态等于回到「更新通道对所有人失效」。真要退回，用 GitHub 网页的 release 编辑页重新上传
 任意一份 `update-feed.json` 即可，不涉及安装包。
+
+## 如果 `--apply` 中途失败
+
+`--apply` 不是一次写入，是三步：读 release、删旧资产、传新资产（`--verify` 再加一次复核）。
+中间任何一步都可能断，而**退出码 1 不等于什么都没发生**——这是这一节存在的唯一理由。
+拿到令牌那天最可能遇到的正是这一半，而它以前只写在脚本源码里。
+
+| 断在哪一步 | 屏幕上那一行 | 线上那份 `update-feed.json` 处于什么状态 | 下一步跑什么 |
+|---|---|---|---|
+| 判定 / 令牌 / 读 release / 宿主 digest 不一致 | `refused: …` · `blocked: no GitHub write token` · `release-unreadable: …` · `refused: the host disagrees with …` | **没变**，还是那份缺 `sha256` 的旧文档 | 修掉原因，重跑同一条命令 |
+| 删旧资产失败 | `asset-delete-failed: DELETE assets/<id> answered <status>; the old document is still published.` | **没变**，旧文档还在（删除没成功） | 重跑同一条命令；连续失败说明令牌没有 `contents: write` |
+| 删成功、传失败 | `asset-upload-failed: POST assets answered <status>; rerun this command once the cause is fixed.` | **不存在了**：release 上没有 `update-feed.json`。应用侧读不到 feed，判定是 `feed-unreachable: the feed could not be fetched, so every update check fails` | 重跑 `GITHUB_TOKEN=… node scripts/publish-feed.mjs --apply --verify`；它会打印 `[note] no asset named update-feed.json on v1.0.0 — uploading a new one` 并直接上传 |
+| 传成功、`--verify` 失败 | 退出码是 `verify-release-feed.mjs` 的退出码（1），而上传那一行 `PASS — … now carries sha256=…` 已经打印过 | **已经是新的那份**：上传落地了，是复核没过 | 单独跑 `node scripts/verify-release-feed.mjs`，看它指名哪一条 finding；**不要**重跑 `--apply` |
+
+三件要读的东西：
+
+- **只有第三行是「比之前更糟」**：旧文档是坏的但读得动，没有文档是读不动。这个窗口只有 DELETE 与
+  POST 之间那一次请求那么长，而它**没有回滚**——回滚到旧文档等于回到「更新通道对所有人失效」。
+  所以恢复动作不是回滚，是**重跑同一条命令**：`--apply` 在 release 上找不到同名资产时会走
+  `[note] no asset named …` 分支直接上传，不需要先手工补一份。
+- **第四行不是失败的上传**：`--verify` 是上传之后另跑的一次复核，它红了说明线上那份字节没过应用自己的
+  规则（最常见的是主机不应答安装包 URL）。这时**不要**重跑 `--apply`——那会再删再传一次，而问题在复核那一侧。
+- **每一行都有一句原文可对**：表格里反引号包住的句子都是 `scripts/publish-feed.mjs` 真的会打印的字面量，
+  `tests/contract/publish-rehearsal.test.ts` 逐句核对它们还在脚本源码里——脚本改了措辞而这一页没改，
+  红的是这一页，并指名是哪一句。
+
+**这一节不改实现。** 它写的是 `--apply` 今天的行为，不是「应该怎样」：删旧资产与传新资产之间没有事务，
+所以中间断掉就是没有资产。要改这一点是另一件事（先传后删、或传成临时名再改名），不在这一轮。
 
 ## 做完把什么放回哪里（三件，缺一件这行就还是红的）
 

@@ -90,6 +90,16 @@ node scripts/screenshot-sources.mjs --walkthrough
 断言的就是这个先后顺序。答「否」的条件也写在那一态的「不合格长什么样」里：原因写了但没说下一步，
 三个按钮读起来像占位的。
 
+被追问「为什么这一屏没有侧栏、没有状态栏」时，念**两句**，十秒内念完，不要临场组织：
+
+1. **形状**：「rail 和 statusbar 不该有，topbar 该有——首启失败时那个工作区没加载成功，
+   画一个空侧栏等于声称有一个打不开的项目；topbar 上只剩品牌和语言开关，那是这一屏唯一还能用的控件。」
+2. **代价**：「这一屏九成是背景色，视觉上确实空；接受它的理由是空得诚实，不是空得好看。」
+
+第二句必须念出来。只念第一句，听起来像在解释为什么没做完；两句一起念，才是在说一个已经做过的判断。
+判断本身与代价写在 `docs/dod-status.md` 的 critique 一节，门禁在 `tests/contract/layout.test.ts`
+（`topbar` 在、`rail` 与 `statusbar` 不在，两个方向都断言）。
+
 **它退出 1 时**：屏幕上是 `[unrecorded] …` 或 `no walkthrough images: …`，说的是**图与
 `docs/screenshots/sources.json` 不同步**，不是图坏了。先跑下面这条，让它说清是哪一张：
 
