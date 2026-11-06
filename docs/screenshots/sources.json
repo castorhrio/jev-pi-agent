@@ -34,12 +34,12 @@
     "apps/desktop/src/renderer/src/state/session-reducer.ts": "sha256:e82390a35ca33d11b22652ddbc6a22e7bec5024d1430c6d85ca280c69ed01410",
     "apps/desktop/src/renderer/src/styles.css": "sha256:0b969189e7b057135722d20182ef8cd9ddf1c412c3a6cca77fae564390b9f6a8",
     "apps/desktop/src/renderer/src/update-controller.tsx": "sha256:a7f96869b392804ee90a67877732d3ccf63ebbc33969ec7dea195830981586ab",
-    "apps/desktop/src/shared/i18n.ts": "sha256:bfbbba62e2426e060d9f5fe00f7212c4a0e6253b4ce2c83cd1ec47adf7a93822"
+    "apps/desktop/src/shared/i18n.ts": "sha256:9395a7e72acf7b626c7f62f8dfa9c6a7ec40403c842eaacebd9d41ffaebeb8d5"
   },
   "screenshots": {
     "docs/screenshots/chat.png": "sha256:daf3e22d183a897e6add4946492c3023775dbf33f6e47905e19a39d8387d17e1",
     "docs/screenshots/context.png": "sha256:f57fa75b443b0f3dda54b1d4b98a86af4c28139dc35b49788ebae9a20eebc68c",
-    "docs/screenshots/decision.png": "sha256:19308834f148c4de55a6082f6b410dbbcbd655cc1fdaaa8dbe3a7a6bd8a8f2c5",
+    "docs/screenshots/decision.png": "sha256:8513d2433836ab3f35f949d6746a07a4382717cfa0b6f099695b17f35c3f8465",
     "docs/screenshots/empty.png": "sha256:6b3af557b2bdc244aacbf7d239da47c75eaa575d9c5f8d1592193ea724548295",
     "docs/screenshots/error.png": "sha256:2e75b3fb704dafe812c1c97218073cfe87ed20213a871bde264a3c8158379b47",
     "docs/screenshots/handoff.png": "sha256:55fc494a56a1e3ba4d4fccb85b1adb1d022302137834b2dc4c0b72f1f8b328eb",

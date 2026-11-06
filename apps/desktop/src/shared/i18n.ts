@@ -440,7 +440,7 @@ const zhCN: Dictionary = {
   'context.extendHint': '受本轮 token 预算约束',
   'context.waiting': '发送一轮指令后，这里会显示 Agent 实际收到的内容。',
   'context.waitingDetail':
-    '策略、条目、预算占用、估算来源与 renderedHash 都在这里——给你读原文，不给你读摘要。',
+    '策略、条目、预算占用、估算来源与 renderedHash 都会出现在这里；注入的原文在「上一轮实际注入的内容」里。',
   'context.previewTitle': '发送前预览',
   'context.previewHint':
     '先看会被打进上下文的条目与预算，再决定要不要发送。预览不写记录，也不占用本轮预算。',
@@ -448,7 +448,7 @@ const zhCN: Dictionary = {
   'context.previewAction': '预览上下文',
   'context.previewBusy': '构建中…',
   'context.previewResult': '预览结果',
-  'context.previewNote': '这份 Pack 不会落盘：它只告诉你，真的发送之后会打进哪些内容。',
+  'context.previewNote': '这份 Pack 不会落盘：它只告诉你，发送之后会打进哪些内容。',
   'context.previewEmpty': '先写一句目标，才能预览会打进什么。',
   'context.needWorkspace': '预览需要一个已打开的项目：请先打开项目文件夹。',
   'context.needSession': '预览需要一个会话，新建失败。',
@@ -510,7 +510,7 @@ const zhCN: Dictionary = {
   'decision.title': '决策',
   'decision.subtitle': '判断和执行是分开的：这里只读状态摘要、给出带理由的决定，不读代码，也不执行命令。',
   'decision.chain': '引擎链',
-  'decision.autoRoute': '自动执行路由建议（默认关闭，仅显示建议）',
+  'decision.autoRoute': '自动切换到路由建议的 Agent（默认只显示建议）',
   'decision.allowNetwork': '允许声明 network 副作用的决策引擎',
   'decision.recent': '本会话决策',
   'decision.confidence': '置信度',
@@ -530,7 +530,7 @@ const zhCN: Dictionary = {
   'decision.noEngines': '没有已注册的决策引擎。',
   'decision.previewTitle': '先跑一次决策',
   'decision.previewHint':
-    '用同一个引擎、同一条链，在这一轮真正跑之前先问一次；结果带理由和置信度。',
+    '用同一个引擎、同一条链，在这一轮跑之前先问一次；结果带理由和置信度。',
   'decision.previewPlaceholder': '描述这次要判断的目标',
   'decision.previewAction': '运行决策预览',
   'decision.previewBusy': '决策中…',
@@ -542,7 +542,7 @@ const zhCN: Dictionary = {
   'decision.latency': '耗时',
   'decision.rationale': '理由',
   'decision.fallbackReason': '发生了回落：{reason}',
-  'decision.previewNote': '这只是先跑一次：不写入决策记录，也不改变本轮真正要走的链。',
+  'decision.previewNote': '这只是先跑一次：不写入决策记录，也不改变本轮要走的链。',
 
   'rules.title': '权限规则',
   'rules.subtitle':
@@ -1237,7 +1237,7 @@ const enUS: Dictionary = {
   'context.extendHint': 'Constrained by this turn’s token budget',
   'context.waiting': 'After a turn, this shows what the agent actually received.',
   'context.waitingDetail':
-    'Strategy, items, budget used, the estimate source and the renderedHash — the text itself, not a summary of it.',
+    'Strategy, items, budget used, the estimate source and the renderedHash all appear here; the injected bytes are under “What the last turn actually received”.',
   'context.previewTitle': 'Preview before sending',
   'context.previewHint':
     'See the items and the budget that would be packed before you send. A preview is a dry run: it writes nothing and charges no turn budget.',
@@ -1308,7 +1308,7 @@ const enUS: Dictionary = {
   'decision.subtitle':
     'Deciding and doing are kept apart here: this reads a state summary and returns a decision with its reason. It never reads code, and it runs no commands.',
   'decision.chain': 'Engine chain',
-  'decision.autoRoute': 'Apply routing suggestions automatically (off by default)',
+  'decision.autoRoute': 'Switch to the suggested agent automatically (off: suggestions are only shown)',
   'decision.allowNetwork': 'Allow decision engines that declare network side effects',
   'decision.recent': 'Decisions this session',
   'decision.confidence': 'Confidence',

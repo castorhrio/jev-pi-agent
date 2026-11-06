@@ -388,8 +388,8 @@ describe('the screens were judged one string at a time', () => {
     const problems = critiqueProblems(thin, { zh: ZH, en: EN }, firstRoundShapes(FIRST_ROUND));
     expect(problems).toHaveLength(3);
     expect(problems[0]).toContain('judges 1 string(s)');
-    expect(problems[1]).toContain('the summary says 26 string(s) judged and the tables hold 20');
-    expect(problems[2]).toContain('the coverage line says 26 string(s) judged');
+    expect(problems[1]).toContain('the summary says 44 string(s) judged and the tables hold 38');
+    expect(problems[2]).toContain('the coverage line says 44 string(s) judged');
   });
 
   it('reports a key no screen can show, and a shape that is not one of the five', () => {
@@ -415,16 +415,16 @@ describe('the screens were judged one string at a time', () => {
     ]);
 
     // Both directions of the count: the table grew, and the summary grew.
-    const counted = SCREEN_DOC.replace('**判过**：26 条', '**判过**：25 条');
+    const counted = SCREEN_DOC.replace('**判过**：44 条', '**判过**：43 条');
     expect(counted).not.toBe(SCREEN_DOC);
     expect(critiqueProblems(counted, { zh: ZH, en: EN }, firstRoundShapes(FIRST_ROUND))).toEqual([
-      expect.stringContaining('the summary says 25 string(s) judged and the tables hold 26'),
+      expect.stringContaining('the summary says 43 string(s) judged and the tables hold 44'),
     ]);
 
-    const claimed = SCREEN_DOC.replace('**命中**：0 条', '**命中**：1 条');
+    const claimed = SCREEN_DOC.replace('**命中**：5 条', '**命中**：6 条');
     expect(claimed).not.toBe(SCREEN_DOC);
     expect(critiqueProblems(claimed, { zh: ZH, en: EN }, firstRoundShapes(FIRST_ROUND))).toEqual([
-      expect.stringContaining('the summary says 1 hit(s) and the tables hold 0'),
+      expect.stringContaining('the summary says 6 hit(s) and the tables hold 5'),
     ]);
   });
 
@@ -437,7 +437,7 @@ describe('the screens were judged one string at a time', () => {
     const coverage = statedCoverage(SCREEN_DOC);
     expect(coverage, 'the page states no coverage line').toBeDefined();
     expect(coverage!.total).toBe(Object.keys(ZH).length);
-    expect(coverage!.judged).toBe(26);
+    expect(coverage!.judged).toBe(44);
 
     // A denominator that was copied rather than read: the page says 665 while
     // the dictionary holds more, which is exactly what happens when a string is
@@ -450,14 +450,14 @@ describe('the screens were judged one string at a time', () => {
 
     // And the numerator, in the other direction: the table grew, the coverage
     // line did not.
-    const understated = SCREEN_DOC.replace('本轮判过 26 条', '本轮判过 25 条');
+    const understated = SCREEN_DOC.replace('本轮判过 44 条', '本轮判过 43 条');
     expect(understated).not.toBe(SCREEN_DOC);
     expect(critiqueProblems(understated, { zh: ZH, en: EN }, firstRoundShapes(FIRST_ROUND))).toEqual([
-      expect.stringContaining('the coverage line says 25 string(s) judged and the tables hold 26'),
+      expect.stringContaining('the coverage line says 43 string(s) judged and the tables hold 44'),
     ]);
 
     // A page that dropped the line entirely is not silently "fully covered".
-    const without = SCREEN_DOC.replace(/\*\*覆盖\*\*：本轮判过 26 条 ｜ 字典共 667 条中文值\n/u, '');
+    const without = SCREEN_DOC.replace(/\*\*覆盖\*\*：本轮判过 44 条 ｜ 字典共 667 条中文值\n/u, '');
     expect(without).not.toBe(SCREEN_DOC);
     expect(critiqueProblems(without, { zh: ZH, en: EN }, firstRoundShapes(FIRST_ROUND))).toEqual([
       expect.stringContaining('no `**覆盖**'),

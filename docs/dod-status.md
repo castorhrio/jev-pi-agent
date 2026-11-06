@@ -2156,3 +2156,36 @@ tests/contract/blocker-closing.test.ts tests/contract/dod-status.test.ts` 全绿
 **这一轮没有做的事**：三条外部阻塞一条都没解除——本机没有 `contents: write` 令牌
 （`node scripts/verify-release-feed.mjs` 今天连 `github.com` 都超时，退出 1 且是 `feed-timeout`，
 不是判定）、没有 Windows 机器、没有人眼签字。`docs/blockers.md` 上那三个日期照旧，不假装动过。
+
+## 本轮（2026-11-06 夜）屏幕侧第三刀：判到产品黑核心的两屏，五条命中，改掉五条字
+
+前两刀判的是首启 / 失败 / 权限 / 交接 / 更新五屏，二十六条，零命中。那五屏是**外壳**；
+这个产品的一句话黑核心是「可证明注入 + 可解释路由」，而这两件事在屏幕上就是**上下文**与**决策**
+两屏——它们此前一条都没被判过。这一轮判的就是这两屏，判据一个字没改（仍是 `docs/copy-critique.md`
+那五种形状），扫描方式也没变（逐屏逐条、每条挑一个最接近的形状、写一句为什么）。
+
+**一、判过 18 条，命中 5 条**（`docs/copy-critique-screen.md` 第 6、7 节）。命中全部落在两类上：
+
+- **副词自夸**四处：`context.previewNote` 的「真的」、`decision.previewHint` 与 `decision.previewNote`
+  的「真正」、`context.waitingDetail` 的「给你读原文，不给你读摘要」。其中「真的」与第二刀在
+  `welcome.step2Hint` 删掉的是**同一个词**——同一个词散落在多处，只有逐屏判过才看得见。
+- **谜语计数**一处：`decision.autoRoute` 改前是「自动执行路由建议（默认关闭，仅显示建议）」，
+  标签说「自动执行」、括号说「仅显示建议」，读者得先解码才知道勾上之后 Agent 会不会被换掉。
+  这一条不只是味道问题：它上面是一个开关，开关的字必须让读者在**勾之前**就知道后果。
+
+**二、改掉五条字，中英同步两条**。中文五条全部改短或改具体；英文只改了两条
+（`context.waitingDetail`、`decision.autoRoute`），另外三条英文本来就没有那个副词。改后的值
+逐字钉在 `tests/contract/copy-critique-screen.test.ts` 里：这一页引用的每一条中文值必须等于
+`i18n.ts` 的当前值，改一个字就红。
+
+**三、重拍 14 张，只有 1 张变了字节**。`i18n.ts` 在截图清单里（`scripts/screenshot-sources.mjs`
+的 `SHARED_I18N`），所以改字必须重拍并 `--write`。跑完 `layout.test.ts`（62 项全绿，95s）逐张对哈希：
+只有 `decision.png` 变了，另外 13 张逐字节相同——包括 `context.png`，因为这一刀改的两条上下文文案
+一条只在预览之后出现、一条只在还没有 Pack 时出现，而那张图拍的是已经有 Pack 的面板。
+`decision.png` 的差异是**两行字**（`decision.autoRoute` 那一行与 `decision.previewHint` 那一行），
+版面一个像素没动：标签改长之后没有折行，那一块仍是 14px 高，下面那个复选框没有被推下去。
+
+**四、这一轮没有做的事**：没有新增第六种形状；没有判完七屏之外的屏幕（设置、诊断、终端、权限规则、
+MCP、存储）；没有判英文半的逐条；三条外部阻塞一条都没解除（本机没有 `contents: write` 令牌、
+没有 Windows 机器、没有人眼签字），`docs/blockers.md` 上那三个日期照旧，不假装动过。
+DoD 四态表没有变化：仍是 通过 14 / 未过 1 / 外部阻塞 1 / 不适用 0。
