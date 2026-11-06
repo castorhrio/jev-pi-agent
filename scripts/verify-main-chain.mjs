@@ -1600,7 +1600,8 @@ async function step5() {
       // setting.
       const closed = await runPage(
         run.cdp,
-        `if (!(await openSurface('settings'))) throw new Error('no settings surface');
+        `await waitForApp();
+         if (!(await openSurface('settings'))) throw new Error('no settings surface');
          let wanted = null;
          for (let i = 0; i < 20 && !wanted; i++) {
            wanted = byText(${JSON.stringify(choice)});
