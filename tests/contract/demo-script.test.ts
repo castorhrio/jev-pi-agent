@@ -85,6 +85,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import { DEMO_BOUNDARIES, type DemoBoundary } from '../../apps/desktop/src/shared/demo-boundaries';
+import { dictionaryFor } from '../../apps/desktop/src/shared/i18n';
 import { DRIVEN_STEPS } from '../../scripts/verify-main-chain.mjs';
 // The three degraded-path commands and their block reader live in one module
 // because `blocker-closing.test.ts` counts the same list: a copy in each file
@@ -1863,5 +1864,279 @@ describe('the defence-day checklist only names things that exist', () => {
     const problems = checklistProblems({ ...DEFENCE, checklist: moved });
     expect(problems).toHaveLength(1);
     expect(problems[0]).toContain('no fallback');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The checklist's screen quotes, against the run that prints them
+// ---------------------------------------------------------------------------
+
+/**
+ * The four steps of the day that put the offline run's screen in front of a
+ * reviewer, and the run steps each of them is looking at.
+ *
+ * ## Why this block exists
+ *
+ * The block above checks that the checklist names commands, paths and a hash
+ * that exist. That is a check about *reachability*: the presenter can type the
+ * command and open the file. It is not the check the page needs, because the
+ * page's whole job is the sentence after the command — 「屏幕上应看到 …」. Those
+ * sentences are the ones read out loud, and until now nothing compared them with
+ * anything: `npm run demo` could reword a label, change an engine id, or move
+ * the hash, and the checklist would keep telling the presenter to look for a
+ * line that is not on the screen. The presenter finds out on stage, in front of
+ * the reviewer, with the projector already on.
+ *
+ * `docs/demo-script.md`'s own table is pinned to the run (`chainProblems`
+ * above), so the two pages were in the position this repository keeps finding:
+ * one of them verified, the other one read. The checklist is the one read.
+ *
+ * ## What is asserted
+ *
+ *  - every backticked literal in those four steps is printed by the run step
+ *    the step is looking at, or is one of the two things that are deliberately
+ *    not the run's output: text the presenter types ({@link NOT_SCREEN_TEXT})
+ *    and text the *app* prints rather than the script (a value of the `zh-CN`
+ *    dictionary, which is where the permission dialog's four buttons come from);
+ *  - every run step is quoted by at least one of the four steps, so a step whose
+ *    quotes were all deleted is red rather than a shorter page;
+ *  - and every entry in {@link NOT_SCREEN_TEXT} is still on the page, so the
+ *    exemption list cannot grow into a list of things nobody checks.
+ *
+ * ## Why step 2 is checked against the whole run
+ *
+ * Step 2 is `npm run demo` — the presenter runs the chain and reads the output
+ * top to bottom, so the lines it quotes are the run's lines, not one step's. The
+ * hash it quotes is printed under the run's step 2 (the drawer) while the pack
+ * line is printed under step 1, and both are on the screen at once. Steps 3–5
+ * each open one panel, so each is checked against the one run step that prints
+ * it — a quote moved to the wrong panel is then red, which is the failure a
+ * reviewer would notice first.
+ *
+ * ## What it deliberately cannot see
+ *
+ * Whether the presenter says it well, or whether the screen *looks* right. This
+ * is the same boundary `chainProblems` draws: the bytes are checked, the
+ * delivery is not.
+ */
+
+/** The four steps of the day that show the offline run, and what they look at. */
+const CHECKLIST_RUN_STEPS: readonly {
+  readonly step: number;
+  readonly runSteps: readonly number[];
+}[] = [
+  // `npm run demo`: the whole chain, read top to bottom.
+  { step: 2, runSteps: [1, 2, 3, 4] },
+  // The Context drawer: the run's step 2.
+  { step: 3, runSteps: [2] },
+  // The decision panel: the run's step 3.
+  { step: 4, runSteps: [3] },
+  // The permission dialog: the run's step 4.
+  { step: 5, runSteps: [4] },
+];
+
+/**
+ * Backticked text in those steps that is not the run's output, and why.
+ *
+ * Two shapes, and both are things a reader types or reads about rather than
+ * lines on the screen. Everything else in those four steps has to be printed by
+ * the run or be a value of the `zh-CN` dictionary — an exemption that is not
+ * written down here is a red run, which is the point: the list is short enough
+ * to read, and a case below keeps it from outliving the text it exempts.
+ */
+const NOT_SCREEN_TEXT: readonly { readonly literal: string; readonly why: string }[] = [
+  {
+    literal: 'render()',
+    why: 'a function name in the sentence that explains why the hash is stable',
+  },
+  {
+    literal: '?scenario=empty',
+    why: 'a URL query the presenter types, not text on the screen',
+  },
+  {
+    literal: '?scenario=permission',
+    why: 'a URL query the presenter types, not text on the screen',
+  },
+];
+
+/** Every value the app can put on screen in Chinese. */
+const ZH_VALUES: ReadonlySet<string> = new Set(Object.values(dictionaryFor('zh-CN')));
+
+/**
+ * The body of each `## <n>. …` step of the checklist, by step number.
+ *
+ * `### 7.1 …` is a sub-heading of step 7 and stays in its body: the pattern
+ * requires a space after the second `#`, so a third one does not start a step.
+ */
+function checklistStepBodies(markdown: string): Map<number, string> {
+  const bodies = new Map<number, string>();
+  let current: number | null = null;
+  let body: string[] = [];
+  const flush = (): void => {
+    if (current !== null) bodies.set(current, body.join('\n'));
+  };
+  for (const line of markdown.split('\n')) {
+    const match = /^## (\d+)\. /u.exec(line);
+    if (match !== null) {
+      flush();
+      current = Number(match[1]);
+      body = [];
+      continue;
+    }
+    if (line.startsWith('## ')) {
+      flush();
+      current = null;
+      body = [];
+      continue;
+    }
+    if (current !== null) body.push(line);
+  }
+  flush();
+  return bodies;
+}
+
+/**
+ * Every way the checklist tells the presenter to look for a line the run does
+ * not print.
+ *
+ * Empty means: the four steps quote only lines that are on the screen, every run
+ * step is quoted by one of them, and the exemption list is still about text that
+ * is on the page. Pure in `(checklist, run)` so each red direction is driven
+ * with a mutated copy rather than argued about.
+ */
+function checklistScreenProblems(checklist: string, run: ChainRun): string[] {
+  if (checklist.trim().length === 0) {
+    return ['docs/defense-checklist.md: is missing or empty, so there is no page to read on the day'];
+  }
+
+  const problems: string[] = [];
+  const bodies = checklistStepBodies(checklist);
+  const screenByStep = new Map(run.steps.map((step) => [step.step, step.screen.map(normalize)]));
+  const quoted = new Set<number>();
+
+  for (const { step, runSteps } of CHECKLIST_RUN_STEPS) {
+    const body = bodies.get(step);
+    if (body === undefined) {
+      problems.push(
+        `docs/defense-checklist.md: has no step ${step}, so the screen it shows is on no page the ` +
+          'presenter reads',
+      );
+      continue;
+    }
+    const literals = [...body.matchAll(/`([^`\n]+)`/gu)].map((match) => match[1]!.trim());
+    if (literals.length === 0) {
+      problems.push(
+        `docs/defense-checklist.md: step ${step} quotes no screen text, so the presenter has ` +
+          'nothing to compare the screen against — the step says "run this" and not "look for that"',
+      );
+      continue;
+    }
+    for (const literal of literals) {
+      if (NOT_SCREEN_TEXT.some((entry) => entry.literal === literal)) continue;
+      // A value of the dictionary is text the app prints, which is a stronger
+      // claim than "the run prints it": the permission dialog's four buttons are
+      // on the screen and are not in the script's output.
+      if (ZH_VALUES.has(literal)) continue;
+      const wanted = normalize(literal);
+      const printedBy = runSteps.filter((candidate) =>
+        (screenByStep.get(candidate) ?? []).some((line) => line.includes(wanted)),
+      );
+      if (printedBy.length === 0) {
+        problems.push(
+          `docs/defense-checklist.md: step ${step} says the screen shows "${literal}", and ` +
+            `scripts/demo-walkthrough.mjs prints no such line under step ` +
+            `${runSteps.join(', ')} — the presenter reads out a line that is not on the screen`,
+        );
+        continue;
+      }
+      for (const candidate of printedBy) quoted.add(candidate);
+    }
+  }
+
+  for (const step of run.steps) {
+    if (quoted.has(step.step)) continue;
+    problems.push(
+      `docs/defense-checklist.md: no step quotes anything scripts/demo-walkthrough.mjs prints ` +
+        `under its step ${step.step} (${step.title}), so that part of the run is on no page the ` +
+        'presenter reads',
+    );
+  }
+
+  return problems;
+}
+
+describe('the checklist quotes the screen the offline run prints', () => {
+  it('every line the page tells the presenter to look for is printed by the run', () => {
+    const problems = checklistScreenProblems(DEFENCE.checklist, chainRun);
+    expect(
+      problems,
+      `the checklist and the offline run disagree:\n  ${problems.join('\n  ')}`,
+    ).toEqual([]);
+  });
+
+  it('is not vacuous: the four steps are on the page and quote something', () => {
+    const bodies = checklistStepBodies(DEFENCE.checklist);
+    for (const { step } of CHECKLIST_RUN_STEPS) {
+      const body = bodies.get(step);
+      expect(body, `docs/defense-checklist.md has no step ${step}`).toBeDefined();
+      expect(
+        [...body!.matchAll(/`([^`\n]+)`/gu)].length,
+        `step ${step} quotes no screen text`,
+      ).toBeGreaterThan(0);
+    }
+    // And the run really is the four steps the mapping names: a run that grew a
+    // fifth step would otherwise be checked against a mapping that never
+    // mentions it, which is the "gate reads a subset" shape.
+    expect(chainRun.steps.map((step) => step.step)).toEqual([1, 2, 3, 4]);
+  });
+
+  it('keeps its exemption list honest: every exempted literal is still on the page', () => {
+    for (const { literal, why } of NOT_SCREEN_TEXT) {
+      expect(
+        DEFENCE.checklist.includes(`\`${literal}\``),
+        `docs/defense-checklist.md no longer quotes \`${literal}\` (${why}), so the exemption is ` +
+          'now a hole in the check rather than a fact about the page',
+      ).toBe(true);
+    }
+  });
+
+  it('reports a screen line the run no longer prints', () => {
+    // The failure this block exists for: the run reworded a label, the page kept
+    // the old one, and the presenter reads out a line nobody will see.
+    const reworded = DEFENCE.checklist.replace('`置信度 72%`', '`置信度 99%`');
+    expect(reworded, 'the confidence quote this case rewrites is gone').not.toBe(DEFENCE.checklist);
+    const problems = checklistScreenProblems(reworded, chainRun);
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toContain('置信度 99%');
+    expect(problems[0]).toContain('is not on the screen');
+  });
+
+  it('reports a step whose quotes were replaced by something the run does not print', () => {
+    // Step 4's four quotes are the decision panel's four lines. Replacing them
+    // with an exempted literal leaves the step non-empty and the run's step 3
+    // unquoted — which is the direction a tidy-up produces: the sentences are
+    // shortened, and the part of the run nobody quotes is the part nobody shows.
+    // The sentence wraps across two lines in the page, so it is matched as one
+    // span rather than as a literal: a case that silently failed to rewrite
+    // anything would pass by checking the page it was supposed to break.
+    const hollowed = DEFENCE.checklist.replace(/应看到 `引擎链 jev > rule`[^。]*。/u, '应看到 `render()`。');
+    expect(hollowed, 'the step 4 sentence this case rewrites is gone').not.toBe(DEFENCE.checklist);
+    const problems = checklistScreenProblems(hollowed, chainRun);
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toContain('no step quotes anything');
+    expect(problems[0]).toContain('step 3');
+  });
+
+  it('reports a step that is no longer on the page', () => {
+    const renumbered = DEFENCE.checklist.replace('## 5. 权限弹窗可演示', '## 权限弹窗可演示');
+    expect(renumbered, 'the step 5 heading this case removes is gone').not.toBe(DEFENCE.checklist);
+    const problems = checklistScreenProblems(renumbered, chainRun);
+    expect(problems.some((problem) => problem.includes('has no step 5'))).toBe(true);
+  });
+
+  it('reports a checklist that is missing altogether', () => {
+    expect(checklistScreenProblems('', chainRun)).toEqual([
+      expect.stringContaining('is missing or empty'),
+    ]);
   });
 });

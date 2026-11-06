@@ -9,9 +9,19 @@
  * was still the weakest evidence in the repository — the screens are what a user
  * reads every day, and nobody had read them one string at a time.
  *
- * `docs/copy-critique-screen.md` is that reading: five screens, twenty-six
+ * `docs/copy-critique-screen.md` is that reading: seven screens, forty-four
  * strings, a shape considered and a reason written for each. This file is what
  * keeps it from becoming a page about a dictionary that has since changed.
+ *
+ * The count in that sentence is the count this file checks. It was not, for one
+ * round: the third pass added the `context.*` and `decision.*` screens to the
+ * page and left {@link SCREENS} at the five the second pass judged, so the page
+ * said "seven screens judged" and the gate asked about five. Every row of the
+ * two new screens was still read — the row loop walks every section — but the
+ * one assertion that says *this screen was judged at all* did not cover them,
+ * which is the shape this repository keeps finding: a document claiming X and a
+ * gate checking Y. The screen list and the page's own title are now compared
+ * with each other, so the two cannot drift apart again.
  *
  * ## What is asserted
  *
@@ -67,13 +77,16 @@ const ZH = dictionaryFor('zh-CN');
 const EN = dictionaryFor('en-US');
 
 /**
- * The five screens this round judged, by the word their heading carries.
+ * The seven screens the page judges, by the word their heading carries.
  *
  * Named here rather than read from the page: a page that dropped a screen would
- * otherwise define its own coverage, and "five screens" would mean "however many
- * sections survived".
+ * otherwise define its own coverage, and "seven screens" would mean "however
+ * many sections survived". The last two are the third pass's — the product's
+ * black core, `context.*` (provable injection) and `decision.*` (explainable
+ * routing) — and they are listed here for the same reason as the first five:
+ * a screen the page stops judging has to be a red run, not a shorter page.
  */
-const SCREENS = ['首启', '失败', '权限', '交接', '更新'] as const;
+const SCREENS = ['首启', '失败', '权限', '交接', '更新', '上下文', '决策'] as const;
 
 /** How many strings a screen has to have been judged on to count as judged. */
 const MIN_ROWS_PER_SCREEN = 3;
@@ -185,6 +198,61 @@ function statedCoverage(markdown: string): { judged: number; total: number } | u
   return { judged: Number(match[1]), total: Number(match[2]) };
 }
 
+/**
+ * The Chinese numerals the page's title uses, as numbers.
+ *
+ * Only the shapes a count of screens or strings can take: `七`, `四十四`, `十`,
+ * `十二`. Anything else is `undefined`, which the caller reports rather than
+ * guesses at — a title the gate cannot read is a title it cannot check, and
+ * silently skipping it is how the count in the title stopped being compared
+ * with the count in the tables in the first place.
+ */
+const NUMERAL_DIGITS: Readonly<Record<string, number>> = {
+  一: 1,
+  二: 2,
+  三: 3,
+  四: 4,
+  五: 5,
+  六: 6,
+  七: 7,
+  八: 8,
+  九: 9,
+};
+
+function chineseNumber(text: string): number | undefined {
+  const tens = /^([一二三四五六七八九])?十([一二三四五六七八九])?$/u.exec(text);
+  if (tens !== null) {
+    const high = tens[1] === undefined ? 1 : NUMERAL_DIGITS[tens[1]]!;
+    const low = tens[2] === undefined ? 0 : NUMERAL_DIGITS[tens[2]]!;
+    return high * 10 + low;
+  }
+  if (text.length === 1 && text in NUMERAL_DIGITS) return NUMERAL_DIGITS[text];
+  return undefined;
+}
+
+/**
+ * The two counts the page's title states about itself.
+ *
+ * `# 屏幕侧逐屏判过：七屏、四十四条、五处命中` is the first sentence anyone
+ * reads, and it is a claim about coverage in the same way the summary line is —
+ * except that nothing compared it with the tables. That is how the page came to
+ * say "seven screens" while {@link SCREENS} still listed five: the title was
+ * prose, and prose about a count is coupled to the table by nothing at all.
+ *
+ * `undefined` when the title is gone or its numerals cannot be read, which the
+ * caller reports: a page whose title stopped stating its coverage is a page
+ * whose coverage is now only in the summary, and the summary is the line the
+ * next edit is most likely to leave behind.
+ */
+function titleCounts(markdown: string): { screens: number; strings: number } | undefined {
+  const match = /^# .*?：([一二三四五六七八九十]+)屏、([一二三四五六七八九十]+)条/u.exec(markdown);
+  if (match === null) return undefined;
+  const screens = chineseNumber(match[1]!);
+  const strings = chineseNumber(match[2]!);
+  if (screens === undefined || strings === undefined) return undefined;
+  return { screens, strings };
+}
+
 /** What the page is compared against. */
 interface Dictionary {
   readonly zh: Readonly<Record<string, string>>;
@@ -194,7 +262,7 @@ interface Dictionary {
 /**
  * Every way the page has stopped being a judgement about the screens it names.
  *
- * Empty means: five screens, at least three strings each, every key in both
+ * Empty means: seven screens, at least three strings each, every key in both
  * dictionaries, every quoted value the current one, every shape one of the five,
  * every verdict carrying a reason, and the summary agreeing with the table.
  */
@@ -324,6 +392,36 @@ function critiqueProblems(
     }
   }
 
+  // The title is the third place this page states its own coverage, and the one
+  // nobody compared with the tables. It is checked last because it is the
+  // cheapest to read and the most likely to be left behind: the summary and the
+  // coverage line are numbers in a line of prose that an editor scrolls past,
+  // and the title is the line they read first and edit last.
+  const title = titleCounts(markdown);
+  if (title === undefined) {
+    problems.push(
+      'docs/copy-critique-screen.md: the title no longer states `…：N屏、M条…`, so the first ' +
+        'sentence on the page stopped saying how much of the screen it judged — the count is now ' +
+        'only in the summary, which is the line the next edit leaves behind',
+    );
+  } else {
+    if (title.screens !== SCREENS.length) {
+      problems.push(
+        `docs/copy-critique-screen.md: the title says ${title.screens} screen(s) were judged and ` +
+          `this gate knows ${SCREENS.length} (${SCREENS.join(' / ')}) — the page claims a coverage ` +
+          'the screen list does not have, which is how "seven screens judged" was once a claim ' +
+          'about five',
+      );
+    }
+    if (title.strings !== judged) {
+      problems.push(
+        `docs/copy-critique-screen.md: the title says ${title.strings} string(s) were judged and ` +
+          `the tables hold ${judged} — the first sentence on the page describes a table that is ` +
+          'no longer there',
+      );
+    }
+  }
+
   return problems;
 }
 
@@ -335,7 +433,7 @@ describe('the screens were judged one string at a time', () => {
     expect(firstRoundShapes(FIRST_ROUND), 'the first round lost its criteria table').toHaveLength(5);
   });
 
-  it('judges all five screens, and the summary agrees with the tables', () => {
+  it('judges all seven screens, and the summary agrees with the tables', () => {
     const problems = critiqueProblems(SCREEN_DOC, { zh: ZH, en: EN }, firstRoundShapes(FIRST_ROUND));
     expect(problems, `the page disagrees with itself:\n  ${problems.join('\n  ')}`).toEqual([]);
   });
@@ -379,17 +477,51 @@ describe('the screens were judged one string at a time', () => {
       '',
     );
     expect(thin).not.toBe(SCREEN_DOC);
-    // Three problems, and all three are wanted: the section is thin, the summary
-    // that said twenty-six is now wrong, and the coverage line that repeated
-    // that twenty-six is wrong for the same reason. A gate that reported only
-    // the first would leave the count silently describing a table it no longer
-    // matches; one that reported only the summary would leave the second copy of
-    // the number standing.
+    // Four problems, and all four are wanted: the section is thin, and the three
+    // places the page states its own count — the summary, the coverage line and
+    // the title — each still say forty-four. A gate that reported only the first
+    // would leave the count silently describing a table it no longer matches;
+    // one that reported only the summary would leave the other two copies of the
+    // number standing, and the title is the copy a reader sees first.
     const problems = critiqueProblems(thin, { zh: ZH, en: EN }, firstRoundShapes(FIRST_ROUND));
-    expect(problems).toHaveLength(3);
+    expect(problems).toHaveLength(4);
     expect(problems[0]).toContain('judges 1 string(s)');
     expect(problems[1]).toContain('the summary says 44 string(s) judged and the tables hold 38');
     expect(problems[2]).toContain('the coverage line says 44 string(s) judged');
+    expect(problems[3]).toContain('the title says 44 string(s) were judged and the tables hold 38');
+  });
+
+  it('reports a title that claims more screens than the gate knows', () => {
+    // The defect this case exists for, in the direction it actually happened:
+    // the page's title said "seven screens" while `SCREENS` listed five, and
+    // nothing compared the two. The rows of the two new screens were read — the
+    // row loop walks every section — but the assertion that says *this screen
+    // was judged at all* did not cover them.
+    const fiveScreens = SCREEN_DOC.replace('：七屏、', '：五屏、');
+    expect(fiveScreens).not.toBe(SCREEN_DOC);
+    expect(critiqueProblems(fiveScreens, { zh: ZH, en: EN }, firstRoundShapes(FIRST_ROUND))).toEqual(
+      [expect.stringContaining('the title says 5 screen(s) were judged and this gate knows 7')],
+    );
+
+    // And the other direction: a screen dropped from the list is a screen the
+    // page still claims. Driven by removing the section the list names, which is
+    // what a page that lost a screen looks like.
+    const withoutContext = SCREEN_DOC.replace('## 6. 上下文（`context.*`）', '## 6. 别的屏');
+    expect(withoutContext).not.toBe(SCREEN_DOC);
+    expect(
+      critiqueProblems(withoutContext, { zh: ZH, en: EN }, firstRoundShapes(FIRST_ROUND)),
+    ).toEqual([expect.stringContaining('no section for the 上下文 screen')]);
+  });
+
+  it('reports a title that stopped stating its coverage', () => {
+    const untitled = SCREEN_DOC.replace(
+      /^# 屏幕侧逐屏判过：七屏、四十四条、五处命中（第三刀改掉五条字）$/mu,
+      '# 屏幕侧逐屏判过',
+    );
+    expect(untitled).not.toBe(SCREEN_DOC);
+    expect(critiqueProblems(untitled, { zh: ZH, en: EN }, firstRoundShapes(FIRST_ROUND))).toEqual([
+      expect.stringContaining('the title no longer states'),
+    ]);
   });
 
   it('reports a key no screen can show, and a shape that is not one of the five', () => {
