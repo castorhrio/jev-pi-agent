@@ -729,7 +729,17 @@ describe('the numbers the README states, and package.json', () => {
  *    fragment at the end of the file is what truncation looks like;
  *  - the two halves have the same number of `###` subsections, and the same
  *    number of top-level bullets in their first subsection (the "what it does"
- *    list, which is the document's promise in one screen).
+ *    list, which is the document's promise in one screen);
+ *  - each half still has at least {@link MIN_HALF_LINES} non-empty lines. This is
+ *    the cheapest possible answer to "is this page complete?", and it is here
+ *    because the question has been asked twice by readers rather than by a gate:
+ *    a review tool that cut the file at "matches this reposi…" produced a
+ *    document whose tail was gone, and the misreading — "the README is
+ *    truncated" — travelled one round further than the fact did. The
+ *    mid-sentence half of that is already covered by the paragraph check above;
+ *    this is the other half, the one a cut that happens to land on a full stop
+ *    would slip past. A half that lost its tail keeps its heading, so every
+ *    other check here stays green over it.
  *
  * ## What is deliberately not asserted
  *
@@ -743,6 +753,18 @@ describe('the numbers the README states, and package.json', () => {
 
 const EN_HALF = '## English';
 const ZH_HALF = '## 中文';
+
+/**
+ * The fewest non-empty lines a half can have and still be the half it promises.
+ *
+ * A floor, not a count: the two halves are translations and their lengths drift
+ * by a paragraph or two every round, so an exact number would be a second fact
+ * to maintain and would go red over a translation that got shorter. What it
+ * catches is the shape a truncated file has — a heading, a couple of lines, and
+ * nothing else — which is nowhere near this number in either language (the
+ * English half is around 200 non-empty lines, the Chinese half around 150).
+ */
+const MIN_HALF_LINES = 80;
 
 /** A line that ends a paragraph without ending a sentence: the lead-in colon. */
 const LEAD_IN = /[:：]$/u;
@@ -904,6 +926,25 @@ function shapeProblems(markdown: string): string[] {
     );
   }
 
+  // The completeness floor. Both halves are read as bodies here, so a half that
+  // was cut down to its heading is measured rather than assumed: the section
+  // list above would still be exactly `## English` then `## 中文`, and the
+  // subsection counts would still agree if the cut took the same number from
+  // each — which is what a tool that truncated the file at a fixed size does.
+  for (const [name, body] of [
+    [EN_HALF, en],
+    [ZH_HALF, zh],
+  ] as const) {
+    const lines = body.split('\n').filter((line) => line.trim() !== '').length;
+    if (lines < MIN_HALF_LINES) {
+      problems.push(
+        `${name}: ${lines} non-empty line(s), under the ${MIN_HALF_LINES} this gate requires — ` +
+          'a half that lost its tail still has its heading, so every other check here stays ' +
+          'green over it',
+      );
+    }
+  }
+
   return problems;
 }
 
@@ -934,6 +975,15 @@ describe('the README is two halves, and both of them are finished', () => {
     // that returned `''` would make the subsection counts agree at zero.
     expect(subsectionHeadings(sectionBody(readme, EN_HALF) ?? '').length).toBeGreaterThan(4);
     expect(firstSubsectionBullets(sectionBody(readme, EN_HALF) ?? '')).toBeGreaterThan(4);
+    // The completeness floor is only a fact about the README if the real halves
+    // clear it by a margin: a floor set at the document's current length would
+    // go red over a translation that lost a paragraph, which is not the defect.
+    for (const half of [EN_HALF, ZH_HALF]) {
+      const lines = (sectionBody(readme, half) ?? '')
+        .split('\n')
+        .filter((line) => line.trim() !== '').length;
+      expect(lines, `${half} has ${lines} non-empty line(s)`).toBeGreaterThan(MIN_HALF_LINES * 1.5);
+    }
   });
 
   it('reports a document that was cut mid-sentence', () => {
@@ -1039,7 +1089,11 @@ describe('the README is two halves, and both of them are finished', () => {
         '- **注入可验证。** Context Pack 是纯函数。',
       ].join('\n'),
     );
-    expect(problems).toHaveLength(1);
+    // Three problems: the subsection count, and the two completeness floors —
+    // the fixture is a stub by construction, so it is under the floor in both
+    // languages. The floor is asserted separately below; here it is noise, and
+    // the message it is about is the first one.
+    expect(problems).toHaveLength(3);
     expect(problems[0]).toContain('en: 2 subsection(s)');
     expect(problems[0]).toContain('zh: 1');
   });
@@ -1064,8 +1118,45 @@ describe('the README is two halves, and both of them are finished', () => {
         '- **注入可验证。** Context Pack 是纯函数。',
       ].join('\n'),
     );
-    expect(problems).toHaveLength(1);
+    // Three problems, for the same reason as the case above: the promise count
+    // and the two completeness floors the stub is under.
+    expect(problems).toHaveLength(3);
     expect(problems[0]).toContain('en: the first subsection lists 2 item(s) and zh lists 1');
+  });
+
+  it('reports a half that was cut down to its heading', () => {
+    // The shape a truncating tool leaves when the cut lands on a full stop: both
+    // halves are still there, both still have the same subsections, both still
+    // end on a finished sentence — and the document is a stub. Nothing else in
+    // this file can see it, which is why the floor exists.
+    const stub = [
+      '## English',
+      '',
+      '### What it does',
+      '',
+      '- **Verifiable injection.** The context pack is a pure function.',
+      '',
+      '### License',
+      '',
+      '[MIT](LICENSE)',
+      '',
+      '## 中文',
+      '',
+      '### 它能做什么',
+      '',
+      '- **注入可验证。** Context Pack 是纯函数。',
+      '',
+      '### 许可',
+      '',
+      '[MIT](LICENSE)',
+    ].join('\n');
+
+    expect(danglingProblems(stub), 'the stub ends on finished sentences').toEqual([]);
+    const problems = shapeProblems(stub);
+    expect(problems).toHaveLength(2);
+    expect(problems[0]).toContain('## English: 4 non-empty line(s)');
+    expect(problems[0]).toContain('a half that lost its tail still has its heading');
+    expect(problems[1]).toContain('## 中文: 4 non-empty line(s)');
   });
 
   it('reports a document with no halves at all', () => {

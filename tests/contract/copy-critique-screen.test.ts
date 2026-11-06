@@ -9,7 +9,7 @@
  * was still the weakest evidence in the repository — the screens are what a user
  * reads every day, and nobody had read them one string at a time.
  *
- * `docs/copy-critique-screen.md` is that reading: seven screens, forty-four
+ * `docs/copy-critique-screen.md` is that reading: seven screens, forty-seven
  * strings, a shape considered and a reason written for each. This file is what
  * keeps it from becoming a page about a dictionary that has since changed.
  *
@@ -48,7 +48,14 @@
  *    dictionary — `**覆盖**：本轮判过 M 条 ｜ 字典共 N 条中文值` is the one place
  *    this page says how much of the dictionary it did **not** judge, and a
  *    denominator that is copied rather than read is a number that stops being
- *    true the next time a string is added.
+ *    true the next time a string is added;
+ *  - any **other** place in the prose states a count that disagrees with the
+ *    table. The page states its coverage four times — title, summary, coverage
+ *    line, and the paragraph explaining why it states a denominator — and the
+ *    fourth copy was the one that was wrong: it still said 26 after the third
+ *    pass took the page to 44, so a reader met 44 in the summary and 26 three
+ *    lines later. Three of the four copies were compared with the tables; this
+ *    gate now compares all four.
  *
  * ## What it deliberately cannot see
  *
@@ -199,9 +206,47 @@ function statedCoverage(markdown: string): { judged: number; total: number } | u
 }
 
 /**
+ * Every other place in the prose that states how many strings were judged.
+ *
+ * The title, the summary and the coverage line are each checked above, and each
+ * was added because it was the only copy nobody compared. This is the fourth
+ * copy, and it is the one that was actually wrong: the paragraph explaining why
+ * the page states a denominator said `这一轮判过 26 条` and `**26 / 667**` — the
+ * second pass's number, left behind when the third pass took the page to 44. A
+ * reader met 44 in the summary and 26 three lines later, and nothing on the page
+ * said which one the tables agreed with.
+ *
+ * Two shapes, because that paragraph writes the same number two ways: the
+ * sentence `本轮判过 N 条` / `这一轮判过 N 条`, and the fraction `**N / 667**`.
+ * Both are read. A gate that only knew the first shape would have left the
+ * fraction standing, and the fraction is the one a reader quotes.
+ *
+ * The summary and coverage lines are skipped: they are checked above, and
+ * counting them here would report the same defect twice — which is how a gate
+ * starts producing two messages for one edit and the second one gets ignored.
+ */
+function bodyCounts(markdown: string): { where: string; judged: number; total?: number }[] {
+  const found: { where: string; judged: number; total?: number }[] = [];
+  for (const line of markdown.split('\n')) {
+    if (/\*\*(?:覆盖|命中|判过)\*\*/u.test(line)) continue;
+    for (const match of line.matchAll(/(?:本轮|这一轮)判过 (\d+) 条/gu)) {
+      found.push({ where: `「${match[0]}」`, judged: Number(match[1]) });
+    }
+    for (const match of line.matchAll(/\*\*(\d+) \/ (\d+)\*\*/gu)) {
+      found.push({
+        where: `「**${match[1]} / ${match[2]}**」`,
+        judged: Number(match[1]),
+        total: Number(match[2]),
+      });
+    }
+  }
+  return found;
+}
+
+/**
  * The Chinese numerals the page's title uses, as numbers.
  *
- * Only the shapes a count of screens or strings can take: `七`, `四十四`, `十`,
+ * Only the shapes a count of screens or strings can take: `七`, `四十七`, `十`,
  * `十二`. Anything else is `undefined`, which the caller reports rather than
  * guesses at — a title the gate cannot read is a title it cannot check, and
  * silently skipping it is how the count in the title stopped being compared
@@ -233,7 +278,7 @@ function chineseNumber(text: string): number | undefined {
 /**
  * The two counts the page's title states about itself.
  *
- * `# 屏幕侧逐屏判过：七屏、四十四条、五处命中` is the first sentence anyone
+ * `# 屏幕侧逐屏判过：七屏、四十七条、五处命中` is the first sentence anyone
  * reads, and it is a claim about coverage in the same way the summary line is —
  * except that nothing compared it with the tables. That is how the page came to
  * say "seven screens" while {@link SCREENS} still listed five: the title was
@@ -422,6 +467,28 @@ function critiqueProblems(
     }
   }
 
+  // The fourth copy of the count, and the one that was wrong. Checked last for
+  // the same reason the title is: it is prose about the page rather than a table
+  // in it, so it is the copy an editor reads past — and it is the copy a reader
+  // quotes when they want to know how much of the dictionary was judged.
+  const dictionaryTotal = Object.keys(dictionary.zh).length;
+  for (const count of bodyCounts(markdown)) {
+    if (count.judged !== judged) {
+      problems.push(
+        `docs/copy-critique-screen.md: the prose says ${count.where}, and the tables hold ` +
+          `${judged} — the page states its own coverage four times and this copy was left ` +
+          'behind; a reader meets two numbers and nothing says which one the tables agree with',
+      );
+    }
+    if (count.total !== undefined && count.total !== dictionaryTotal) {
+      problems.push(
+        `docs/copy-critique-screen.md: the prose says ${count.where}, and ` +
+          `\`dictionaryFor('zh-CN')\` holds ${dictionaryTotal} — the fraction in the prose is not the ` +
+          'fraction it measured',
+      );
+    }
+  }
+
   return problems;
 }
 
@@ -477,18 +544,22 @@ describe('the screens were judged one string at a time', () => {
       '',
     );
     expect(thin).not.toBe(SCREEN_DOC);
-    // Four problems, and all four are wanted: the section is thin, and the three
-    // places the page states its own count — the summary, the coverage line and
-    // the title — each still say forty-four. A gate that reported only the first
-    // would leave the count silently describing a table it no longer matches;
-    // one that reported only the summary would leave the other two copies of the
-    // number standing, and the title is the copy a reader sees first.
+    // Six problems, and all six are wanted: the section is thin, and the five
+    // places the page states its own count — the summary, the coverage line, the
+    // title, and the two copies in the prose paragraph — each still say
+    // forty-seven. A gate that reported only the first would leave the count
+    // silently describing a table it no longer matches; one that reported only
+    // the summary would leave the other four copies of the number standing, and
+    // the title is the copy a reader sees first while the prose is the copy they
+    // quote.
     const problems = critiqueProblems(thin, { zh: ZH, en: EN }, firstRoundShapes(FIRST_ROUND));
-    expect(problems).toHaveLength(4);
+    expect(problems).toHaveLength(6);
     expect(problems[0]).toContain('judges 1 string(s)');
-    expect(problems[1]).toContain('the summary says 44 string(s) judged and the tables hold 38');
-    expect(problems[2]).toContain('the coverage line says 44 string(s) judged');
-    expect(problems[3]).toContain('the title says 44 string(s) were judged and the tables hold 38');
+    expect(problems[1]).toContain('the summary says 47 string(s) judged and the tables hold 41');
+    expect(problems[2]).toContain('the coverage line says 47 string(s) judged');
+    expect(problems[3]).toContain('the title says 47 string(s) were judged and the tables hold 41');
+    expect(problems[4]).toContain('the prose says 「这一轮判过 47 条」');
+    expect(problems[5]).toContain('the prose says 「**47 / 667**」');
   });
 
   it('reports a title that claims more screens than the gate knows', () => {
@@ -515,7 +586,7 @@ describe('the screens were judged one string at a time', () => {
 
   it('reports a title that stopped stating its coverage', () => {
     const untitled = SCREEN_DOC.replace(
-      /^# 屏幕侧逐屏判过：七屏、四十四条、五处命中（第三刀改掉五条字）$/mu,
+      /^# 屏幕侧逐屏判过：七屏、四十七条、五处命中（第三刀改掉五条字；补判权限四按钮）$/mu,
       '# 屏幕侧逐屏判过',
     );
     expect(untitled).not.toBe(SCREEN_DOC);
@@ -547,10 +618,10 @@ describe('the screens were judged one string at a time', () => {
     ]);
 
     // Both directions of the count: the table grew, and the summary grew.
-    const counted = SCREEN_DOC.replace('**判过**：44 条', '**判过**：43 条');
+    const counted = SCREEN_DOC.replace('**判过**：47 条', '**判过**：46 条');
     expect(counted).not.toBe(SCREEN_DOC);
     expect(critiqueProblems(counted, { zh: ZH, en: EN }, firstRoundShapes(FIRST_ROUND))).toEqual([
-      expect.stringContaining('the summary says 43 string(s) judged and the tables hold 44'),
+      expect.stringContaining('the summary says 46 string(s) judged and the tables hold 47'),
     ]);
 
     const claimed = SCREEN_DOC.replace('**命中**：5 条', '**命中**：6 条');
@@ -569,7 +640,7 @@ describe('the screens were judged one string at a time', () => {
     const coverage = statedCoverage(SCREEN_DOC);
     expect(coverage, 'the page states no coverage line').toBeDefined();
     expect(coverage!.total).toBe(Object.keys(ZH).length);
-    expect(coverage!.judged).toBe(44);
+    expect(coverage!.judged).toBe(47);
 
     // A denominator that was copied rather than read: the page says 665 while
     // the dictionary holds more, which is exactly what happens when a string is
@@ -582,18 +653,67 @@ describe('the screens were judged one string at a time', () => {
 
     // And the numerator, in the other direction: the table grew, the coverage
     // line did not.
-    const understated = SCREEN_DOC.replace('本轮判过 44 条', '本轮判过 43 条');
+    const understated = SCREEN_DOC.replace('本轮判过 47 条', '本轮判过 46 条');
     expect(understated).not.toBe(SCREEN_DOC);
     expect(critiqueProblems(understated, { zh: ZH, en: EN }, firstRoundShapes(FIRST_ROUND))).toEqual([
-      expect.stringContaining('the coverage line says 43 string(s) judged and the tables hold 44'),
+      expect.stringContaining('the coverage line says 46 string(s) judged and the tables hold 47'),
     ]);
 
     // A page that dropped the line entirely is not silently "fully covered".
-    const without = SCREEN_DOC.replace(/\*\*覆盖\*\*：本轮判过 44 条 ｜ 字典共 667 条中文值\n/u, '');
+    const without = SCREEN_DOC.replace(/\*\*覆盖\*\*：本轮判过 47 条 ｜ 字典共 667 条中文值\n/u, '');
     expect(without).not.toBe(SCREEN_DOC);
     expect(critiqueProblems(without, { zh: ZH, en: EN }, firstRoundShapes(FIRST_ROUND))).toEqual([
       expect.stringContaining('no `**覆盖**'),
     ]);
+  });
+
+  it('reports a count in the prose that the tables do not agree with', () => {
+    // The defect this case exists for, in the shape it actually happened: the
+    // paragraph explaining why the page states a denominator still carried the
+    // second pass's number. The page said 44 in the summary and 26 three lines
+    // later, and the gate was green — the title, the summary and the coverage
+    // line were each compared with the tables, and the prose was not.
+    const stale = SCREEN_DOC.replace('这一轮判过 47 条', '这一轮判过 26 条');
+    expect(stale).not.toBe(SCREEN_DOC);
+    expect(critiqueProblems(stale, { zh: ZH, en: EN }, firstRoundShapes(FIRST_ROUND))).toEqual([
+      expect.stringContaining('the prose says 「这一轮判过 26 条」'),
+    ]);
+
+    // The same number written the other way in the same paragraph: the fraction.
+    // A gate that only knew the sentence shape would have left this one standing,
+    // and the fraction is the copy a reader quotes.
+    const fraction = SCREEN_DOC.replace('**47 / 667**', '**26 / 667**');
+    expect(fraction).not.toBe(SCREEN_DOC);
+    expect(critiqueProblems(fraction, { zh: ZH, en: EN }, firstRoundShapes(FIRST_ROUND))).toEqual([
+      expect.stringContaining('the prose says 「**26 / 667**」'),
+    ]);
+
+    // And the denominator of that fraction, which is the dictionary's size in
+    // the same way the coverage line's is.
+    const denominator = SCREEN_DOC.replace('**47 / 667**', '**47 / 665**');
+    expect(denominator).not.toBe(SCREEN_DOC);
+    expect(critiqueProblems(denominator, { zh: ZH, en: EN }, firstRoundShapes(FIRST_ROUND))).toEqual([
+      expect.stringContaining('the fraction in the prose is not the fraction it measured'),
+    ]);
+  });
+
+  it('judges all four permission buttons, not just the one the answer sheet quotes', () => {
+    // The coverage defect this case exists for: `docs/defense-checklist.md` pins
+    // all four button labels to the dictionary, and this page judged one of them.
+    // Two documents claiming to cover the same set, covering different sets — the
+    // shape this repository keeps finding. The four keys are named here so that
+    // dropping one from the table is a red run rather than a shorter page.
+    const permission = sections(SCREEN_DOC).find((section) => section.heading.includes('权限'));
+    expect(permission, 'the page no longer has a 权限 section').toBeDefined();
+    const keys = rows(permission!).map((row) => row.key);
+    for (const key of [
+      'permission.allow_once',
+      'permission.allow_session',
+      'permission.allow_workspace',
+      'permission.deny',
+    ]) {
+      expect(keys, `the 权限 screen does not judge \`${key}\``).toContain(key);
+    }
   });
 
   it('is red when the page loses every section, not green over an empty list', () => {
