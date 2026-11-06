@@ -1779,7 +1779,7 @@ build 4.9s / clean+build:packages 5.7s）。**这一条要写明跑法**：`TMPD
 **屏幕上改了什么**（`apps/desktop/src/renderer/src/App.tsx` 的 `if (fatal)` 分支）：
 
 - 原来标题下面那个 `<p>{fatal}</p>` 就是全部正文——机器码直接接在 `出错了` 后面，中间没有一句话说明
-  这行是什么。现在标题下先接 `error.fatalLead`（「这一步没有完成。下面这行是它返回的原文，可以直接贴给别人。」），
+  这行是什么。现在标题下先接 `error.fatalLead`（「这一步没有完成。下面是它返回的原文，可以直接贴给别人。」），
   失败原文本身挪进 `.notice.error`——和 `partial` 那一态同一个盒子、同一条 `overflow-wrap: anywhere`，
   于是它也是 `?reason=long` 那条门禁一直在量的那个框；按钮之前再接 `error.fatalNext`
   （「先点重试，它会把刚才失败的那一步重新跑一遍…」）。

@@ -234,7 +234,7 @@ const zhCN: Dictionary = {
   'welcome.step1': '打开一个项目文件夹',
   'welcome.step1Hint': 'UCAD 只会读取你选择的目录，不会自动扫描其它位置。',
   'welcome.step2': '选择一个 Agent',
-  'welcome.step2Hint': '随包内置 Mock Agent：不联网，但注入与事件流的每一步都会真的走一遍。',
+  'welcome.step2Hint': '随包内置 Mock Agent：不联网，但注入与事件流的每一步都会走一遍。',
   'welcome.step3': '描述你的任务',
   'welcome.step3Hint': '写清楚目标和「怎样算做完」，上下文就是按这句话检索的。',
   'welcome.open': '打开项目文件夹',
@@ -802,8 +802,8 @@ const zhCN: Dictionary = {
     '复制不可用（页面不在安全上下文，或浏览器拒绝了剪贴板权限）。请选中上面的命令手动复制。',
 
   'error.title': '出错了',
-  'error.fatalLead': '这一步没有完成。下面这行是它返回的原文，可以直接贴给别人。',
-  'error.fatalNext': '先点重试，它会把刚才失败的那一步重新跑一遍。还是不行就换一个项目文件夹；想先看怎么用，打开快速上手。',
+  'error.fatalLead': '这一步没有完成。下面是它返回的原文，可以直接贴给别人。',
+  'error.fatalNext': '先点重试，它会把刚才失败的那一步重新跑一遍。还是不行就换一个项目文件夹。想先看怎么用，打开快速上手。',
   'error.bridge': 'UCAD 桥接不可用：preload 未加载，请重启应用。',
   'error.retry': '重试',
   'error.copyDetail': '复制详情',
@@ -1023,7 +1023,7 @@ const enUS: Dictionary = {
     'UCAD only reads the folder you choose; it never scans anywhere else on its own.',
   'welcome.step2': 'Pick an agent',
   'welcome.step2Hint':
-    'The bundled Mock Agent needs no network, and still runs every step of injection and the event stream for real.',
+    'The bundled Mock Agent needs no network, and still runs every step of injection and the event stream.',
   'welcome.step3': 'Describe your task',
   'welcome.step3Hint':
     'Say the goal and what would count as done — the context is retrieved from that sentence.',
@@ -1597,9 +1597,9 @@ const enUS: Dictionary = {
 
   'error.title': 'Something went wrong',
   'error.fatalLead':
-    'This step did not finish. The line below is what it returned, word for word — paste it to whoever you ask.',
+    'This step did not finish. Below is what it returned, word for word — paste it to whoever you ask.',
   'error.fatalNext':
-    'Start with Retry: it runs the failed step again. If it fails a second time, open a different project folder, or read the quick start first.',
+    'Start with Retry: it runs the failed step again. If it fails a second time, open a different project folder. If you want the quick start first, open Help.',
   'error.bridge': 'UCAD bridge unavailable — the preload did not load. Please restart the app.',
   'error.retry': 'Retry',
   'error.copyDetail': 'Copy details',
