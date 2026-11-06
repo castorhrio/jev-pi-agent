@@ -466,3 +466,181 @@ describe('the runbook says what a half-finished --apply leaves behind', () => {
     expect(problems[0]).toContain(STATUS_PATH);
   });
 });
+
+/**
+ * The page that explains the rehearsal carries its output, line for line.
+ *
+ * ## Why this is a second check and not the same one
+ *
+ * The case above asserts that `docs/release/REPLACE-FEED.md` contains the
+ * rehearsal's **first** and **last** line. That is enough to catch a page that
+ * lost the block, and it is not enough to catch a page that kept the block and
+ * let the middle of it drift — which is the shape this repository keeps finding:
+ * a quote that was true when it was pasted, and a command that was reworded
+ * afterwards. The middle is where the plan lines live (`[plan] check 2: the
+ * host’s digest …`, `[plan] DELETE …`), and those are the lines a token holder
+ * compares against their own screen before typing `--apply`.
+ *
+ * ## Both directions, because the two failures read differently
+ *
+ * A page **missing** a line tells the reader less than the command does; a page
+ * carrying a line the command no longer prints tells them something false. The
+ * comparison is an equality over the whole block, so neither can hide: the
+ * problem list names the line number, the page's text and the command's text.
+ *
+ * ## What it does not assert
+ *
+ * That the rehearsal's output is *correct* — that is `publish-rehearsal.test.ts`'s
+ * other cases, which compare the blocks against a real `--dry-run` and against
+ * the constants the real runs print. This one only says the page and the command
+ * are the same text, which is the one thing a reader cannot check for themselves
+ * without running the command.
+ */
+
+/** Every fenced block in a markdown page, as arrays of lines. */
+function fencedBlocks(markdown: string): string[][] {
+  const blocks: string[][] = [];
+  let current: string[] | null = null;
+  for (const line of markdown.split('\n')) {
+    if (/^\s*```/u.test(line)) {
+      if (current === null) current = [];
+      else {
+        blocks.push(current);
+        current = null;
+      }
+      continue;
+    }
+    if (current !== null) current.push(line);
+  }
+  return blocks;
+}
+
+/**
+ * The block that carries the rehearsal's output, or `[]` when the page has none.
+ *
+ * Found by its first line rather than by position: the page has several fenced
+ * blocks (the `npm run build` prerequisite, the four commands, the preflight
+ * transcript), and a page that gained a block above this one would otherwise
+ * shift the comparison onto the wrong text.
+ */
+function rehearsalBlock(markdown: string): string[] {
+  return fencedBlocks(markdown).find((block) => block[0]?.startsWith('[rehearse] feed:')) ?? [];
+}
+
+/**
+ * Every way the page's copy of the rehearsal differs from what it prints.
+ *
+ * Pure in `(markdown, out)` so the red direction is driven with a mutated page
+ * rather than argued about.
+ */
+function rehearsalBlockProblems(markdown: string, out: readonly string[]): string[] {
+  const block = rehearsalBlock(markdown);
+  if (block.length === 0) {
+    return [
+      `${REPLACE_FEED_PATH}: carries no fenced block of the rehearsal's output — the page a ` +
+        'token holder reads before typing `--apply` no longer shows what the command prints',
+    ];
+  }
+  const problems: string[] = [];
+  const longest = Math.max(block.length, out.length);
+  for (let index = 0; index < longest; index += 1) {
+    const page = block[index];
+    const printed = out[index];
+    if (page === undefined) {
+      problems.push(
+        `${REPLACE_FEED_PATH}: the rehearsal block ends at line ${index} and the command ` +
+          `prints one more: "${printed}" — the page shows less than the command says`,
+      );
+      continue;
+    }
+    if (printed === undefined) {
+      problems.push(
+        `${REPLACE_FEED_PATH}: the rehearsal block carries a line ${index + 1} the command ` +
+          `does not print: "${page}" — a reader comparing their screen would look for a line ` +
+          'that is not there',
+      );
+      continue;
+    }
+    if (page !== printed) {
+      problems.push(
+        `${REPLACE_FEED_PATH}: rehearsal line ${index + 1} is "${page}" and the command ` +
+          `prints "${printed}" — the page is quoting output the command no longer writes`,
+      );
+    }
+  }
+  return problems;
+}
+
+describe('the page that explains the rehearsal carries its output, line for line', () => {
+  const REPLACE_FEED = readFileSync(join(REPO_ROOT, REPLACE_FEED_PATH), 'utf8');
+
+  it('is the same text as the command prints', async () => {
+    const { out } = await run(['--rehearse']);
+    const problems = rehearsalBlockProblems(REPLACE_FEED, out);
+    expect(
+      problems,
+      `the page and the rehearsal disagree:\n  ${problems.join('\n  ')}`,
+    ).toEqual([]);
+  });
+
+  it('is not vacuous: the block is the whole runbook, not a fragment', async () => {
+    const { out } = await run(['--rehearse']);
+    const block = rehearsalBlock(REPLACE_FEED);
+    expect(block.length, 'the rehearsal block is gone').toBeGreaterThan(30);
+    expect(block.length).toBe(out.length);
+    // The plan lines are the ones a token holder compares against their screen,
+    // so the block has to carry them rather than only the headings.
+    expect(block.filter((line) => line.includes('[plan]')).length).toBeGreaterThan(5);
+  });
+
+  it('goes red when one character of the page drifts', async () => {
+    const { out } = await run(['--rehearse']);
+    const drifted = REPLACE_FEED.replace(
+      '[plan] check 2: the host’s digest',
+      '[plan] check 2: the host digest',
+    );
+    expect(drifted).not.toBe(REPLACE_FEED);
+    const problems = rehearsalBlockProblems(drifted, out);
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toContain('rehearsal line');
+    expect(problems[0]).toContain('no longer writes');
+  });
+
+  it('goes red when the page drops a line', async () => {
+    const { out } = await run(['--rehearse']);
+    const dropped = REPLACE_FEED.split('\n')
+      .filter((line) => !line.includes('[plan] DELETE'))
+      .join('\n');
+    expect(dropped).not.toBe(REPLACE_FEED);
+    const problems = rehearsalBlockProblems(dropped, out);
+    // The comparison is positional, so a dropped line also shifts every line
+    // after it — the first problem is the one that names the missing line, and
+    // the rest are the shift. Asserting "exactly one" would be asserting that
+    // the comparison is not positional, which is not what it is.
+    expect(problems.length).toBeGreaterThan(0);
+    expect(problems[0]).toContain('no longer writes');
+    expect(problems.at(-1)).toContain('shows less than the command says');
+  });
+
+  it('goes red when the page carries a line the command does not print', async () => {
+    const { out } = await run(['--rehearse']);
+    // Appended after the verdict, so the page has one line more than the
+    // command at the end of the block — the shape a page takes when somebody
+    // pastes a transcript from a run that printed one extra line.
+    const extra = REPLACE_FEED.replace(
+      '[rehearse] verdict: the runbook is complete — 4 command(s), 1 printed from the committed document, 3 quoted from the scripts that print them',
+      '[rehearse] verdict: the runbook is complete — 4 command(s), 1 printed from the committed document, 3 quoted from the scripts that print them\n' +
+        '[rehearse] the asset was replaced',
+    );
+    expect(extra).not.toBe(REPLACE_FEED);
+    const problems = rehearsalBlockProblems(extra, out);
+    expect(problems.length).toBeGreaterThan(0);
+    expect(problems[0]).toContain('does not print');
+  });
+
+  it('goes red when the block is gone', () => {
+    const problems = rehearsalBlockProblems('# a page with no transcript\n', []);
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toContain('carries no fenced block');
+  });
+});

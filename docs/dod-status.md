@@ -2121,3 +2121,38 @@ tests/contract/blocker-closing.test.ts tests/contract/dod-status.test.ts` 全绿
 的交叉断言还没写——`demo-script.test.ts` 只核对这一页点名的命令与路径存在，不核对那两节说的数。
 下一轮补。Windows 主链路仍是外部阻塞（本机没有 Windows 机器），本轮在 Linux 上跑了一次
 `--report` + `--judge` 的双命令链路，拒绝原文与第 7.1 节写的一致。
+
+## 本轮（2026-11-06）中英空隙从「屏幕上」扩到「文档页上」，预演输出从「首尾两行」扩到「整块」
+
+上一轮把中英混排间距拆成「字母做、数字不做」，并把字母那一半收进了门禁——但收的是
+`apps/desktop/src/shared/i18n.ts` 里的句子，也就是**屏幕**那一侧。答辩那天评委读的不是屏幕，
+是 `docs/defense-checklist.md`、`docs/dod-status.md`、`docs/manual-verification/README.md`
+这三页照着念的口语稿，而 markdown 渲染器**不补**那 1/8 em。`README.md` 的「当前局限」自己写着
+「中英之间的空隙只存在于屏幕上」——那句话对屏幕成立，对文档页不成立，而文档页正是被念出来的那一份。
+
+1. **`tests/contract/doc-cjk-boundary.test.ts`（9 项）**：扫 `markdownDocuments()` 读到的每一份文档
+   （README、CONTRIBUTING 与 `docs/**/*.md`，与截图引用门禁同一份清单），凡汉字紧贴拉丁**字母**
+   且不在代码块 / 反引号内，红并指名 `文件:行号` 与那两个字符。汉字集合从
+   `scripts/layout-page-scripts.mjs` 的 `HAN_CLASS` 读回，与 `typography.test.ts` 同一个来源；
+   数字照旧豁免（`第1步` 是中文的正常写法，理由在 `LATIN_LETTER` 旁边）。
+   `docs/PRODUCT-DOD.md` 被排除，因为它是控制面锁定稿的逐字副本、本仓不许改——把它扫进来，
+   门禁就会要求改一个明令不许改的文件，那不是门禁是死结。
+2. **非空性**：今天 13 份文档里紧贴的字母边界 **0** 处、带空格的 **2197** 处。0 只有在同一遍扫描
+   也找得到它要找的形状时才算事实，所以那条用例压了下限（> 1000），另有一条断言三页答辩稿
+   真的在扫描集合里——`markdownDocuments()` 哪天不再走 `docs/`，前两条会对着 README 一份文件变绿。
+3. **`publish-rehearsal.test.ts` 新增 6 项**：`docs/release/REPLACE-FEED.md` 里那段预演输出
+   此前只被核对过**首行与末行**，中间那十几行 `[plan] …` 漂了不会红——而中间正是拿令牌的人
+   对着自己屏幕逐行比对的部分。现在整块逐行相等，两个方向都报：页面少一行说「shows less than
+   the command says」，页面多一行说「does not print」，改一个字符说「no longer writes」并给出
+   行号与两边的原文。
+
+**证明它会红**（各演示一次，恢复后全绿）：
+
+| 改坏的写法 | 打红的断言与原文 |
+|---|---|
+| 在 `docs/defense-checklist.md` 末尾加一句 `这一屏显示Agent 的引擎链。` | `docs/defense-checklist.md:256: sets '示A' with no space at the junction — 中英混排 wants one …` |
+| 把 `docs/release/REPLACE-FEED.md` 第 18 行的 `the host’s digest` 改成 `the host digest` | `docs/release/REPLACE-FEED.md: rehearsal line 18 is "… the host digest …" and the command prints "… the host’s digest …" — the page is quoting output the command no longer writes` |
+
+**这一轮没有做的事**：三条外部阻塞一条都没解除——本机没有 `contents: write` 令牌
+（`node scripts/verify-release-feed.mjs` 今天连 `github.com` 都超时，退出 1 且是 `feed-timeout`，
+不是判定）、没有 Windows 机器、没有人眼签字。`docs/blockers.md` 上那三个日期照旧，不假装动过。
