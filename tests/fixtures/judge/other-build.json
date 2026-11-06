@@ -1,0 +1,18 @@
+{
+  "platform": "win32",
+  "build": {
+    "executable": "C:\\UCAD\\UCAD.exe",
+    "version": "0.9.0",
+    "sizeBytes": 118004112,
+    "modifiedAt": "2026-10-20T08:41:02.000Z"
+  },
+  "ranAt": "2026-10-20T09:12:44.000Z",
+  "steps": [
+    { "n": 1, "verdict": "pass", "evidence": ["1:turn 1 renderedHash=80e256b63523731c"] },
+    { "n": 2, "verdict": "pass", "evidence": ["2:table rows=7"] },
+    { "n": 3, "verdict": "pass", "evidence": ["3:permission.resolved seen"] },
+    { "n": 4, "verdict": "pass", "evidence": ["4:update feed ignored: not https"] },
+    { "n": 5, "verdict": "pass", "evidence": ["5:tray menu built items=4"] }
+  ],
+  "note": "A fixture, not a run: five passing steps on Windows, measured against build 0.9.0 rather than the build this repository is at. It exists so `--judge` can be shown refusing a report about another build, and so the sentence it prints for that is written down where a presenter can read it out."
+}

@@ -173,6 +173,35 @@ FAIL — 1 thing(s) in this report keep the row open
 什么。这一点写在报告自己的 `note` 字段里，也写在 `docs/blockers.md` 第 2 节的
 「做不到时不要做什么」。
 
+#### 三份坏报告，三句具名拒绝
+
+上面那一句只证明了一件事：**平台不对**会被拒。答辩现场更可能被追问的是「那别的错法呢」——
+报告少一步、报告量的是别的版本、报告不是 Windows。这三问的答案不该是「也会拒」，
+而应该是屏幕上的一行原文。三份坏报告在 `tests/fixtures/judge/` 里，各喂一次：
+
+```bash
+node scripts/verify-main-chain.mjs --judge tests/fixtures/judge/missing-step.json
+node scripts/verify-main-chain.mjs --judge tests/fixtures/judge/other-build.json
+node scripts/verify-main-chain.mjs --judge tests/fixtures/judge/other-platform.json
+```
+
+三条都退出 1，各打印一句**具名**拒绝（`[FAIL]` 那一行）：
+
+| 坏输入 | 屏幕上那一行（原文） |
+|---|---|
+| `tests/fixtures/judge/missing-step.json`：五步里少了第 3 步 | `[FAIL] step 3 is not in the report` |
+| `tests/fixtures/judge/other-build.json`：`build.version` 是 `0.9.0`，仓库是 `1.0.0` | `[FAIL] the report measured build 0.9.0, and this repository is at 1.0.0 — run it again on the build being shipped` |
+| `tests/fixtures/judge/other-platform.json`：`platform` 是 `linux` | `[FAIL] the report was written on linux, and this row is about win32 — a run on another platform is a real result about that platform, not about this one` |
+
+三句拒绝的**下一步**不一样，所以它们是三句而不是一句「不通过」：缺一步要回去补那一步；
+版本不符要在**要发布的那个构建**上重跑；平台不对要换一台 Windows 机器。念的时候把「下一步」
+一起念出来，否则三句听起来像同一句。
+
+这张表不是抄的：`tests/contract/judge-refusals.test.ts` 把每一行右边那一句与命令**实际打印**的
+`[FAIL]` 行逐字比对，左边那份报告也必须在 `tests/fixtures/judge/` 里真的存在。改一句拒绝的措辞
+而没改这一页，红的是这一页，并指名是哪一份报告；反过来，删掉一行、或写一份不存在的报告，
+红的是同一处。
+
 ## 8. 三条阻塞什么时候关：三个数
 
 `docs/blockers.md` 三条都写着同一个截止 `2026-11-19`。答辩当天被问「这三条什么时候关」，

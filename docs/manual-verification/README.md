@@ -167,8 +167,10 @@ PASS — the report covers steps 1, 2, 3, 4, 5 on win32 against build 1.0.0
 于是照着它敲的人会看到六行没被承诺过的输出，还得自己判断是不是哪里错了——「期望输出」和命令打印的
 东西对不上，正是这一页最不该犯的错。
 
-`tests/fixtures/judge/` 里的三份报告是**夹具，不是证据**：它们的 `note` 字段自己写着这句话。
+`tests/fixtures/judge/` 里的报告都是**夹具，不是证据**：它们的 `note` 字段自己写着这句话。
 它们存在的理由只有一个——让这一页能贴出命令真的打印的东西，而不是让人以为仓库里躺着一份 Windows 报告。
+（`missing-step` / `other-build` / `other-platform` 三份是给答辩页用的，各演示一种错法，
+原文与逐字比对在 `docs/defense-checklist.md` §7.1 与 `tests/contract/judge-refusals.test.ts`。）
 
 判定要求四件事同时成立，每一条各自会红、各有一句话：
 

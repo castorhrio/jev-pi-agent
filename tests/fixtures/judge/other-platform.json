@@ -1,0 +1,18 @@
+{
+  "platform": "linux",
+  "build": {
+    "executable": "/opt/jev-pi-agent/release/linux-unpacked/ucad",
+    "version": "1.0.0",
+    "sizeBytes": 122806279,
+    "modifiedAt": "2026-11-05T08:41:02.000Z"
+  },
+  "ranAt": "2026-11-05T09:12:44.000Z",
+  "steps": [
+    { "n": 1, "verdict": "pass", "evidence": ["1:turn 1 renderedHash=80e256b63523731c"] },
+    { "n": 2, "verdict": "pass", "evidence": ["2:table rows=7"] },
+    { "n": 3, "verdict": "pass", "evidence": ["3:permission.resolved seen"] },
+    { "n": 4, "verdict": "pass", "evidence": ["4:update feed ignored: not https"] },
+    { "n": 5, "verdict": "pass", "evidence": ["5:tray menu built items=4"] }
+  ],
+  "note": "A fixture, not a run: five passing steps, every one carrying its own evidence line, on a platform that is not the one the row is about. It exists so `--judge` can be shown refusing a real result about another platform, and so the sentence it prints for that is written down where a presenter can read it out."
+}
