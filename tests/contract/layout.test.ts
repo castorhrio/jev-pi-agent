@@ -58,7 +58,7 @@ import {
   LONG_REASON_VALUE,
   STATE_SCENARIOS,
 } from '../../apps/desktop/src/renderer/src/dev/scenarios';
-// The two blocks the failed-load screen is measured by, imported rather than
+// The blocks the failed-load screen is measured by, imported rather than
 // re-spelled: a selector written twice is a second answer to "which box is the
 // failure message", and the day one of them is renamed the gate would keep
 // measuring the old one and stay green.
@@ -2448,7 +2448,7 @@ describe('layout in a real browser engine', () => {
    *
    * `7faf47e` made the failed-load screen say *which step failed* and *what to do
    * next*, and the round that wrote it recorded what it did not do: 「窗口其余部分
-   * 仍是背景色」. The two blocks it added are the only prose on the one screen a
+   * 仍是背景色」. The blocks it added are the only prose on the one screen a
    * person sees when the app cannot start at all, and neither was measured:
    *
    *  - the failure box (`.notice.error`) holds the string the product did not
@@ -2461,7 +2461,15 @@ describe('layout in a real browser engine', () => {
    *    green, which is the "measured nothing, found nothing" shape this file keeps
    *    having to design against.
    *
-   * So both are measured by selector on every frame (`FATAL_PROSE_BLOCKS` in
+   *  - the lead sentence (`.pane-head p`) is the third, and it was named last:
+   *    it is one short Chinese sentence today, so the sweep does measure it —
+   *    but the sweep's condition is `CJK.test(own)`, and the English half of the
+   *    same sentence is ASCII. A lead that grew into a paragraph in English
+   *    would wrap, carry a measure, and be measured by nobody. Naming it costs
+   *    nothing on the frames where it is one line (a block that did not wrap has
+   *    no measure to judge) and closes the shape `.notice.error` had.
+   *
+   * So all three are measured by selector on every frame (`FATAL_PROSE_BLOCKS` in
    * `scripts/layout-page-scripts.mjs`), and the rules below are the sweep's own
    * three — line length against the ceiling and the floor, 行首禁则 / 行尾禁则, and
    * the last-line floor — applied to a block whether or not its text is Chinese:
@@ -2476,12 +2484,12 @@ describe('layout in a real browser engine', () => {
    * an empty set on every frame, forever.
    */
 
-  /** The two blocks of one failed-load frame, with `present` already asserted. */
+  /** The blocks of one failed-load frame, with `present` already asserted. */
   function fatalBlocksOf(m: Measurement): Array<Measurement['typeset']['fatalBlocks'][number]> {
     const blocks = m.typeset.fatalBlocks;
     expect(
       blocks.map((block) => block.name),
-      `${m.label}: the failed-load screen's blocks are not the two the page script declares`,
+      `${m.label}: the failed-load screen's blocks are not the ones the page script declares`,
     ).toEqual(FATAL_PROSE_BLOCKS.map((block) => block.name));
     expect(
       blocks.map((block) => block.selector),
@@ -2497,7 +2505,7 @@ describe('layout in a real browser engine', () => {
     return blocks;
   }
 
-  it('measures both blocks of the failed-load screen, and neither on any other screen', () => {
+  it('measures every block of the failed-load screen, and none on any other screen', () => {
     /*
      * The presence half. Without it every rule below could pass over an empty
      * list: a selector that stopped matching reports `present: false` and no
@@ -2612,7 +2620,7 @@ describe('layout in a real browser engine', () => {
 
   it('breaks no line in the failure box or the next step where Chinese does not allow it', () => {
     /*
-     * 行首禁则 / 行尾禁则 on the two blocks the sweep does not name. The failure box
+     * 行首禁则 / 行尾禁则 on the blocks the sweep does not name. The failure box
      * is the one place in the product where `overflow-wrap: anywhere` is load
      * bearing — it is what keeps a 200-character path inside its box — and that
      * same declaration is what lets a line break immediately before a full stop.

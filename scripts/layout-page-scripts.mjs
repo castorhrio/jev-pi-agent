@@ -165,14 +165,23 @@ export const MIN_LAST_LINE_GLYPHS = 2;
  * whether or not its text is Chinese, because a 200-character path wraps into
  * lines that are just as long as a Chinese paragraph's.
  *
- * The lead sentence ('.pane-head p') is deliberately not here: it is one short
- * sentence that does not wrap at the prose measure, so it has no line length to
- * judge and no break to check. If it ever grows into a paragraph, the sweep
- * picks it up — it is Chinese and it would wrap.
+ * The lead sentence ('.pane.fatal .pane-head p') is the third, and it was the
+ * last one to be named. It used to be left to the sweep on the argument that it
+ * is one short sentence that does not wrap, so it has no line length to judge
+ * and no break to check — which is true of the Chinese half today and false of
+ * the English one the moment it grows. The sweep's condition is `CJK.test(own)`:
+ * an English lead sentence that turned into a paragraph would wrap, carry a
+ * measure, and be measured by nobody, because the sweep skips ASCII. That is the
+ * same shape '.notice.error' had (the longest line on the screen, skipped for
+ * its language), so it gets the same treatment: named, measured on every frame,
+ * and asserted present on the error screen and absent everywhere else. A block
+ * that does not wrap simply has no measure to judge — the rules below already
+ * say so — so naming it costs nothing on the frames where it is one line.
  */
 export const FATAL_PROSE_BLOCKS = [
   { name: 'failure', selector: '.pane.fatal .notice.error' },
   { name: 'next', selector: '.pane.fatal .fatal-next' },
+  { name: 'lead', selector: '.pane.fatal .pane-head p' },
 ];
 
 /**
