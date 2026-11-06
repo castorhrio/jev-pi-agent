@@ -182,6 +182,17 @@ interface Measurement {
     treeRows: number;
     projectChip: string;
     previewVisible: boolean;
+    /**
+     * Which of the shell's three regions are on screen.
+     *
+     * The failed-load screen is the one frame that is deliberately not the
+     * shell, and `treeRows` cannot say so: it is 0 both when the rail is absent
+     * and when it is present and empty. These three are read by name so the
+     * omission can be asserted rather than inferred — see the block below that
+     * uses them, and the comment beside the measurement in
+     * `scripts/layout-page-scripts.mjs` for the decision they enforce.
+     */
+    shell: { topbar: boolean; rail: boolean; statusbar: boolean };
     /** App.tsx's 'if (fatal)' screen: the pane a failed first load paints. */
     errorPane: boolean;
     /** The permission prompt, the one overlay that announces itself as a modal. */
@@ -1074,6 +1085,69 @@ describe('the interface states are measured, not assumed', () => {
     );
     for (const m of shellStates) {
       expect(m.content.errorPane, `?scenario=${m.state} painted the failed-load pane`).toBe(false);
+    }
+  });
+
+  it('drops the shell on the failed-load screen on purpose, and keeps the topbar', () => {
+    /*
+     * The critique this assertion is the answer to: `?scenario=error` paints a
+     * window that is mostly background — an h1, the failure text, one sentence
+     * and three buttons — and every round since has written 「窗口其余部分仍是背景色」
+     * without deciding whether that is a restrained failure screen or a screen
+     * nobody finished. Both readings were defensible, which is why it stayed
+     * undecided for three rounds.
+     *
+     * The decision: the omission is the design. The rail and the statusbar are
+     * navigation and state for a workspace that did not load; painting them
+     * empty would be a screen claiming to have a project it could not open, and
+     * a statusbar with nothing in it is the "measured nothing, found nothing"
+     * shape this repository keeps designing against. The topbar stays, because
+     * it is the brand and the language switch — the two things a person needs
+     * while reading a failure in a language they may not have chosen.
+     *
+     * What was missing was not the decision but its enforcement: `treeRows` is
+     * 0 both when the rail is absent and when it is present and empty, so
+     * "left out on purpose" and "forgotten" measured the same thing. Now both
+     * directions are asserted — absent on every error frame, present on every
+     * populated one — so a round that removes the topbar from the fatal branch,
+     * or one that starts painting an empty rail there, goes red and has to say
+     * which of the two it meant.
+     */
+    const error = measurements.filter((m) => m.state === 'error');
+    expect(
+      error.length,
+      'the failed-load screen was never measured, so the shell check below is vacuous',
+    ).toBeGreaterThanOrEqual(3);
+
+    for (const m of error) {
+      expect(
+        m.content.shell.topbar,
+        `${m.name}: the failed-load screen lost its topbar — the brand and the language ` +
+          'switch are the two things a person reading a failure still needs',
+      ).toBe(true);
+      for (const region of ['rail', 'statusbar'] as const) {
+        expect(
+          m.content.shell[region],
+          `${m.name}: the failed-load screen painted a .${region} — the omission is the ` +
+            'design (see the comment beside the measurement in scripts/layout-page-scripts.mjs); ' +
+            'if this screen is now meant to carry the shell, change that comment and this ' +
+            'assertion together rather than letting one of them describe the other',
+        ).toBe(false);
+      }
+    }
+
+    // The other direction, so "absent everywhere" cannot pass: the populated
+    // frames are the ones that do carry all three, and a rail that stopped
+    // rendering would otherwise be reported as the failure screen working.
+    expect(POPULATED.length, 'no populated frame was measured').toBeGreaterThan(0);
+    for (const m of POPULATED) {
+      for (const region of ['topbar', 'rail', 'statusbar'] as const) {
+        expect(
+          m.content.shell[region],
+          `${m.width}px: the populated app has no .${region} — the shell lost a region, and ` +
+            'the failed-load screen is the only frame that is supposed to be without one',
+        ).toBe(true);
+      }
     }
   });
 

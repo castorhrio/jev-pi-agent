@@ -153,6 +153,25 @@ const LIMITATIONS: readonly Limitation[] = [
     en: ['asar', 'ci does not cover', 'npm run package', 'adapters resolved', 'from a terminal'],
     zh: ['asar', 'ci 不覆盖', 'npm run package', 'adapters resolved', '从命令行'],
   },
+  // The one limitation that is a property of the engine rather than a gap this
+  // repository can close, and the reason it is in the README at all: the gap
+  // between a Han character and a Latin one is drawn by `text-autospace`, so it
+  // exists on screen and nowhere else. A reader who copies a sentence out of
+  // the app into a handoff prompt, an issue or a log gets the same characters
+  // with no air between them, and nothing in this repository can change that.
+  //
+  // Three keywords per language, and they are the three facts that make it
+  // checkable rather than a disclaimer: the mechanism that draws the gap, the
+  // three places it does not survive, and the verdict — this one does not close
+  // here. A bullet that drifted back to "we handle 中英混排" would drop the
+  // middle one and go red here; `typography.test.ts` reads the same bullet for
+  // the mechanism and the destinations, so the two gates fail on different
+  // halves of the same sentence.
+  {
+    id: 'the Chinese/Latin gap exists only on screen',
+    en: ['text-autospace', 'handoff prompt', 'plain-text log', 'does not close here'],
+    zh: ['text-autospace', 'handoff 提示词', '纯文本日志', '关不掉'],
+  },
   // The defect that is in a *shipped* release, not in the code: the v1.0.0
   // asset on the Releases page predates the feed check and carries no digest.
   // It is stated in the README rather than only in `docs/`, because a reader

@@ -1674,6 +1674,152 @@ function readmePunctuationProblems(markdown: string): string[] {
   return problems;
 }
 
+/**
+ * The one rule in this file that the product cannot keep, stated where a reader
+ * meets it.
+ *
+ * Everything above measures text this repository writes: the dictionary, the
+ * stylesheet, the rendered frame. The gap between a Han character and a Latin
+ * one is the exception, and it is the interesting one — the dictionary writes a
+ * space at every boundary a sentence puts the two together, and the engine
+ * supplies 1/8 em at the boundaries it cannot see coming (a path, a hash, a
+ * count, an engine name interpolated at runtime). That second half lives in
+ * `text-autospace`, which is a rendering instruction: the characters themselves
+ * carry nothing. Copy a sentence out of the app into a handoff prompt, an issue
+ * or a plain-text log and the gap is gone, because there was never a space to
+ * copy.
+ *
+ * That is a limitation of the product, not of the gate, and until this round it
+ * was written only in a comment beside `LATIN_CLASS` in
+ * `scripts/layout-page-scripts.mjs` — a place no reader of the product goes. A
+ * tool that hides its edges is harder to trust than one that does not, which is
+ * the sentence the README's limitations section opens with, so the limit is
+ * stated there now, in both languages.
+ *
+ * This block is what keeps it stated. It reads the README's two halves for the
+ * mechanism, the three destinations and the verdict, and it fails when either
+ * half drops one — the same shape as `readme-parity.test.ts`, which asks the
+ * same bullet for the same facts by position. Two gates over one sentence is
+ * deliberate: that one catches a language that lost the bullet, this one
+ * catches a bullet that kept its place and lost its point.
+ */
+
+/** The README's two halves as raw text, split at `## 中文`; `null` when the split is gone. */
+function rawHalves(markdown: string): { en: string; zh: string } | null {
+  const at = markdown.search(/^## 中文$/mu);
+  if (at === -1) return null;
+  return { en: markdown.slice(0, at), zh: markdown.slice(at) };
+}
+
+/**
+ * What the README has to say about the gap rule, per language.
+ *
+ * The mechanism is one token in both languages because it is a CSS property
+ * name, not prose. The destinations are the three places a sentence leaves the
+ * app for, and they are the part a reader can act on: the fix is to write the
+ * space into the string, and knowing where the string goes is what makes that
+ * worth doing.
+ */
+const GAP_LIMIT = {
+  mechanism: 'text-autospace',
+  destinations: {
+    en: ['handoff prompt', 'issue', 'plain-text log'],
+    zh: ['handoff 提示词', 'issue', '纯文本日志'],
+  },
+  verdict: { en: 'does not close here', zh: '关不掉' },
+} as const;
+
+/** Every way the README has stopped stating the limit of the gap rule. */
+function gapLimitProblems(markdown: string): string[] {
+  const halves = rawHalves(markdown);
+  if (halves === null) {
+    return [
+      'README.md has no "## 中文" heading, so neither half can be asked whether it states ' +
+        'the limit of the gap rule',
+    ];
+  }
+  const problems: string[] = [];
+  for (const lang of ['en', 'zh'] as const) {
+    const text = halves[lang].replace(/\s+/gu, ' ');
+    const where = lang === 'en' ? 'the English half' : 'the Chinese half';
+    if (!text.includes(GAP_LIMIT.mechanism)) {
+      problems.push(
+        `README.md ${where}: does not name \`${GAP_LIMIT.mechanism}\`, so the bullet no ` +
+          'longer says what draws the gap — a reader is left thinking the characters carry it',
+      );
+    }
+    for (const destination of GAP_LIMIT.destinations[lang]) {
+      if (text.includes(destination)) continue;
+      problems.push(
+        `README.md ${where}: does not name "${destination}", so the bullet no longer says ` +
+          'where the gap does not survive — the three destinations are what makes the ' +
+          'limitation actionable rather than a shrug',
+      );
+    }
+    if (!text.includes(GAP_LIMIT.verdict[lang])) {
+      problems.push(
+        `README.md ${where}: does not say "${GAP_LIMIT.verdict[lang]}", so the bullet reads ` +
+          'like a gap this repository will close — it is a property of the engine, and ' +
+          'saying so is the honest half of the limitation',
+      );
+    }
+  }
+  return problems;
+}
+
+describe('the README states the limit of the gap rule', () => {
+  it('names the mechanism, the three destinations and the verdict, in both languages', () => {
+    const problems = gapLimitProblems(README);
+    expect(
+      problems,
+      `the README stopped stating the limit of the gap rule:\n  ${problems.join('\n  ')}`,
+    ).toEqual([]);
+  });
+
+  it('is not vacuous: both halves are read, and the rule fires on a real sentence', () => {
+    const halves = rawHalves(README);
+    expect(halves, 'README.md has no "## 中文" heading').not.toBeNull();
+    expect(halves!.en.length, 'the English half is empty').toBeGreaterThan(1000);
+    expect(halves!.zh.length, 'the Chinese half is empty').toBeGreaterThan(1000);
+    // The mechanism really is one token in the page, not a phrase this gate
+    // would find in any sentence about typography.
+    expect(halves!.en).toContain('`text-autospace: normal`');
+    expect(halves!.zh).toContain('`text-autospace: normal`');
+  });
+
+  it('reports a half that lost the mechanism, and names which half it was', () => {
+    const broken = README.replace(
+      'engine (`text-autospace: normal`, `--text-autospace` in `styles.css`), not by',
+      'engine, not by',
+    );
+    expect(broken, 'the sentence this case rewrites is gone').not.toBe(README);
+    const problems = gapLimitProblems(broken);
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toContain('the English half');
+    expect(problems[0]).toContain('text-autospace');
+  });
+
+  it('reports a half that dropped a destination', () => {
+    const broken = README.replace('handoff 提示词、issue 或纯文本日志', '别的地方');
+    expect(broken, 'the sentence this case rewrites is gone').not.toBe(README);
+    const problems = gapLimitProblems(broken);
+    expect(problems.map((problem) => problem.split(':')[0])).toEqual([
+      'README.md the Chinese half',
+      'README.md the Chinese half',
+      'README.md the Chinese half',
+    ]);
+    expect(problems.join('\n')).toContain('handoff 提示词');
+  });
+
+  it('reports a README whose two halves can no longer be told apart', () => {
+    const broken = README.replace('## 中文', '## 中文版');
+    expect(broken).not.toBe(README);
+    expect(gapLimitProblems(broken)).toEqual([
+      expect.stringContaining('no "## 中文" heading'),
+    ]);
+  });
+});
+
 describe('the README punctuation', () => {
   it('sets full-width marks in Chinese and half-width marks in English', () => {
     const problems = readmePunctuationProblems(README);

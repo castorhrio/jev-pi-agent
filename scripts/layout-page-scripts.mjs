@@ -1336,6 +1336,35 @@ export const MEASURE = `(() => {
       projectChip: text(document.querySelector('.project-chip')).slice(0, 60),
       previewVisible: visible(document.querySelector('.preview')),
       /*
+       * Which of the shell's three regions are on screen, by name.
+       *
+       * The failed-load screen is the one frame that is deliberately *not* the
+       * shell, and until this field existed the gate could only say so
+       * indirectly: 'treeRows' is 0 both when the rail is absent and when it is
+       * present and empty, and 'previewVisible' covers one region of three. So
+       * "the rail and the statusbar were left out on purpose" and "the rail and
+       * the statusbar were forgotten" measured the same thing - the shape this
+       * file keeps having to design against.
+       *
+       * The decision, written here because the gate now enforces it: the
+       * failed-load screen keeps the topbar and drops the rail, the statusbar
+       * and the preview column. The topbar is the brand and the language
+       * switch - the two things a person needs while reading a failure in a
+       * language they may not have chosen. The rail and the statusbar are
+       * navigation and state for a workspace that did not load; painting them
+       * empty would be a screen claiming to have a project it could not open.
+       * So the omission is the design, and 'tests/contract/layout.test.ts'
+       * asserts both directions: absent on every error frame, present on every
+       * populated one. A future round that decides the failure screen should
+       * carry the shell has to change this field and that assertion together,
+       * which is the point of measuring it instead of inferring it.
+       */
+      shell: {
+        topbar: visible(document.querySelector('.topbar')),
+        rail: visible(document.querySelector('.rail')),
+        statusbar: visible(document.querySelector('.statusbar')),
+      },
+      /*
        * The two screens that are *not* the shell, named rather than inferred.
        *
        * A measurement that reports geometry alone cannot tell "the error pane

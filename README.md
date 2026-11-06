@@ -165,7 +165,7 @@ Stated plainly: a tool that hides its edges is harder to trust than one that doe
 
 #### Known gaps in this repository
 
-Five gaps sit in this repository and close here; each bullet says how.
+Six gaps sit in this repository. Five close here; the last one cannot, and says why.
 
 - **One provider protocol ships.** The bundled adapter speaks the
   OpenAI-compatible protocol. Native vendor adapters are not implemented. Two
@@ -199,6 +199,17 @@ Five gaps sit in this repository and close here; each bullet says how.
   no console attached, so the line has nowhere to appear. The check has been run
   on Linux x64 (Ubuntu 26.04, unpacked build, 2026-11-02): it passed and left no
   child process behind.
+
+- **The gap between Chinese and Latin exists only on screen.** Where a Han
+  character meets a Latin letter or digit, the air between them is drawn by the
+  engine (`text-autospace: normal`, `--text-autospace` in `styles.css`), not by
+  the text: the dictionary writes a space at every boundary a sentence puts the
+  two together, and the engine supplies 1/8 em at the ones it cannot — a path, a
+  hash, a count, an engine name interpolated into a sentence at runtime. Copy
+  that same sentence into a handoff prompt, an issue, or a plain-text log and
+  not a pixel of it survives. This one does not close here: it is a property of
+  the engine, and the only fix is to write the space into the string itself,
+  which is what the dictionary does for the strings this repository writes.
 
 #### Blocked on something this machine does not have
 
@@ -403,7 +414,7 @@ npm run package  # 免安装目录，不出安装包
 
 #### 本仓已知缺口
 
-五条缺口在本仓库里，也在这里关掉；每一条都写了怎么关。
+六条缺口在本仓库里。五条在这里关掉；最后一条关不掉，它自己说了为什么。
 
 - **只随包发布一种厂商协议。** 内置适配器走 OpenAI 兼容协议，厂商原生适配器未实现。
   随包同时注册 `universal` 与 `mock` 两个适配器：前者是真正发出请求的那一个，后者是
@@ -427,6 +438,13 @@ npm run package  # 免安装目录，不出安装包
   Windows 上请从命令行运行 `UCAD.exe`：双击启动的进程没有控制台，这一行没有地方可打印。
   该脚本已在 Linux x64（Ubuntu 26.04、未打包目录构建、2026-11-02）实测通过：
   退出后无残留子进程；Windows 上仍需从命令行跑一次。
+
+- **中英之间的空隙只存在于屏幕上。** 汉字与拉丁字母或数字相接的地方，那点空隙由引擎画出来
+  （`styles.css` 的 `--text-autospace`，即 `text-autospace: normal`），不是文字自带的：
+  词典在句子把两者放在一起的每一处都写了空格，引擎在它写不到的地方补 1/8 em——路径、hash、
+  计数、运行时插进句子的引擎名。把同一句话抄进 handoff 提示词、issue 或纯文本日志，
+  那点空隙一个像素都不剩。这一条在本仓库关不掉：它是引擎的性质，唯一的修法是把空格写进
+  字符串本身，而词典对「本仓库自己写的句子」正是这么做的。
 
 #### 外部阻塞：这台机器没有的东西
 
