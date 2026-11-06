@@ -1,7 +1,8 @@
 # 主题贴合：两条黑线怎么对上「与 AI 共生」
 
 > 给初审答辩主讲人。90 秒读完，读完能复述出两条黑线与主题的对应。
-> 这一页不进任何门禁：它是叙事，不是承诺。判据在 `docs/PRODUCT-DOD.md`，逐条现状在
+> 这一页的引文由 `tests/contract/theme-alignment.test.ts` 钉住，叙事本身不进任何门禁：
+> 它是叙事，不是承诺。判据在 `docs/PRODUCT-DOD.md`，逐条现状在
 > `docs/dod-status.md`，现场动作在 `docs/demo-script.md`。
 
 ## 两条黑线，各一句话

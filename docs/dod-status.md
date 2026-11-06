@@ -1,4 +1,4 @@
-# DoD 现状对照（2026-11-06）
+# DoD 现状对照（2026-11-07）
 
 **审查与下一轮必须先读 `docs/PRODUCT-DOD.md`**（锁定稿，不改它）；这一页只回答「现在到哪一步、
 证据在哪、还差什么」，不替代它——不先读 DoD，就会把「没人记的一条」当成「没有这一条」，
@@ -133,7 +133,7 @@ node scripts/verify-release-feed.mjs                               # 退出 0 = 
 跑完之后，回执表加一行（日期、`第 1 节`、`GITHUB_TOKEN=… node scripts/publish-feed.mjs --apply --verify`、
 `0`、`docs/manual-verification.md`），并把「未关闭」里第 1 节那一行删掉——两处一起动，只动一处会红。
 
-## 本轮 DoD 加载来源与未勾项（2026-11-06）
+## 本轮 DoD 加载来源与未勾项（2026-11-07）
 
 **加载来源**：`/opt/agent-scheduler/docs/product-dod/jev-pi-agent-dod.md`（与 `/opt/agent-control/docs/product-dod/jev-pi-agent-dod.md`、
 本仓 `docs/PRODUCT-DOD.md` 逐字相同，`diff` 为空）。控制面 `projects/jev_pi_agent.json` **没有** `dod_passed_at`，
