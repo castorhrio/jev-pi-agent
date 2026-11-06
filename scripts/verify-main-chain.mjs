@@ -186,6 +186,43 @@ function flag(name, fallback) {
   return next === undefined || next.startsWith('--') ? fallback : next;
 }
 
+/**
+ * Every flag this script reads, in the order the refusal should list them.
+ *
+ * `flag()` falls back to the default for anything it does not recognise, so
+ * without a check up front a misspelled flag is swallowed and the run quietly
+ * continues on whatever the default was — for `--home` that is the stale
+ * `ucad-main-chain` profile, the exact death `docs/defense-checklist.md` §7.1
+ * warns about (the app refuses to overwrite a vault it cannot decrypt and
+ * stops before a window). The run refuses unknown flags instead, so a renamed
+ * or misspelled flag is a named error naming the flag it does read.
+ */
+export const KNOWN_FLAGS = Object.freeze([
+  'steps',
+  'port',
+  'timeout',
+  'keep',
+  'json',
+  'report',
+  'judge',
+  'home',
+  'project',
+  'exec',
+  'feed-url',
+]);
+
+/** The `--name` tokens in `argv` that no flag of this script reads. */
+export function unknownFlags(tokens) {
+  const known = new Set(KNOWN_FLAGS);
+  const unknown = [];
+  for (const token of tokens) {
+    if (!token.startsWith('--')) continue;
+    const name = token.slice(2);
+    if (!known.has(name)) unknown.push(name);
+  }
+  return unknown;
+}
+
 /** What `--steps` asked for, and why the run will refuse to start, if it will. */
 const STEP_REQUEST = parseSteps(flag('steps', DRIVEN_STEPS.join(',')));
 const STEPS = STEP_REQUEST.steps;
@@ -1650,6 +1687,23 @@ async function step5() {
 // ---------------------------------------------------------------------------
 
 async function main() {
+  // Asked before anything else, including the judge: a flag this script does
+  // not read would otherwise fall back to its default silently, and the run
+  // would report a verdict about a run configured differently from the one the
+  // operator asked for. The refusal names the flag and lists what it does read.
+  const unknown = unknownFlags(argv);
+  if (unknown.length) {
+    for (const name of unknown) {
+      console.error(
+        `[FAIL] unknown flag --${name} — this script reads ${KNOWN_FLAGS.map((f) => `--${f}`).join(', ')}`,
+      );
+    }
+    console.error(
+      '[FAIL] a flag this script does not know falls back to its default silently, so the run would answer a different question than the one asked — fix the flag rather than running past this',
+    );
+    return 1;
+  }
+
   // The reader's half of `--report`, asked before anything is launched: judging
   // a report must not need a built app (the machine reading it usually has
   // none), must not need a display, and must not start a run as a side effect.
