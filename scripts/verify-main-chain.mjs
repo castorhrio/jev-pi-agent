@@ -1119,8 +1119,9 @@ function runPage(cdp, body, timeoutMs) {
  * picker, and the trust prompt the first open brings up — are recorded as such,
  * because a verification that quietly stands in for a step has to say so.
  */
-async function seedWorkspace() {
-  const boot = AppRun.launch({ home: HOME, port: PORT + 1 });
+async function seedWorkspaceRow({ home, project, port }) {
+  const dbPath = path.join(profileDataDir(home), 'ucad.db');
+  const boot = AppRun.launch({ home, port });
   const summary = await boot.waitFor(/^\[ucad\] adapters resolved: .*$/, 60000);
   if (!summary) {
     const stopped = await boot.waitFor(/startup stopped|Encryption is not available|fatal startup error/, 500);
@@ -1136,12 +1137,11 @@ async function seedWorkspace() {
         'selects a key store backend at all.',
     );
   }
-  record('boot', 'summary line', summary);
-  const created = await boot.waitForKeyFile(DB_IN_PROFILE, 60000);
+  const created = await boot.waitForKeyFile(dbPath, 60000);
   await boot.stop();
-  if (!created) throw new Error(`the first run left no database at ${DB_IN_PROFILE}`);
+  if (!created) throw new Error(`the first run left no database at ${dbPath}`);
 
-  const db = new WasmDatabase(DB_IN_PROFILE);
+  const db = new WasmDatabase(dbPath);
   try {
     const now = new Date().toISOString();
     // One `values` argument, not six: `node-sqlite3-wasm` binds an array or an
@@ -1149,10 +1149,16 @@ async function seedWorkspace() {
     // leave `path` NULL.
     db.prepare(
       'INSERT OR REPLACE INTO workspaces (id, path, name, trust_state, created_at, last_opened_at) VALUES (?, ?, ?, ?, ?, ?)',
-    ).run(['ws_verify', PROJECT, path.basename(PROJECT), 'trusted', now, now]);
+    ).run(['ws_verify', project, path.basename(project), 'trusted', now, now]);
   } finally {
     db.close();
   }
+  return summary;
+}
+
+async function seedWorkspace() {
+  const summary = await seedWorkspaceRow({ home: HOME, project: PROJECT, port: PORT + 1 });
+  record('boot', 'summary line', summary);
   record('boot', 'project', PROJECT);
   record('boot', 'workspace seed', 'row written directly: no folder picker, no trust prompt on screen');
 }
@@ -1345,7 +1351,13 @@ async function step4(run) {
   const readState = (cdp, tries = 2) =>
     runPage(
       cdp,
-      `await waitForApp();
+      // Back to the chat surface first: step 3 ends on the handoff surface, and
+      // the composer only exists on chat, so `waitForApp()` would wait sixty
+      // seconds for a control this surface does not render and then report the
+      // product as broken. A fresh launch is already on chat, where this click
+      // is a no-op.
+      `await openSurface('chat');
+       await waitForApp();
        if (!(await openSurface('settings'))) return { error: 'no settings surface' };
        let check = byText('检查更新');
        for (let i = 0; i < 20 && !check; i++) { await sleep(500); check = byText('检查更新'); }
@@ -1387,6 +1399,12 @@ async function step4(run) {
   for (const [index, variant] of FEED_VARIANTS.entries()) {
     const home = path.join(HOME, `feed-${index}`);
     rmSync(home, { recursive: true, force: true });
+    // Each variant is its own process with its own profile, so it also needs its
+    // own workspace row: without one the composer stays disabled, `waitForApp()`
+    // times out, and the case reports the product as broken when what was
+    // missing was the seed. The row is written the same way the main run writes
+    // it, and the project is the same directory.
+    await seedWorkspaceRow({ home, project: PROJECT, port: PORT + 20 + index });
     const variantRun = AppRun.launch({ home, port: PORT + 10 + index, feedOverride: variant.value });
     try {
       await variantRun.attach(90000);

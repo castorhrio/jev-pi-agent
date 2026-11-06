@@ -33,7 +33,12 @@
  *    two rounds incomparable, which is how a critique stops being one;
  *  - a verdict is neither `零命中：…` nor `命中：…`, or carries no reason — the
  *    word "clean" on its own is the thing this page was written to replace;
- *  - the summary line's two counts disagree with the table, in either direction.
+ *  - the summary line's two counts disagree with the table, in either direction;
+ *  - the coverage line's two counts disagree with the table and with the
+ *    dictionary — `**覆盖**：本轮判过 M 条 ｜ 字典共 N 条中文值` is the one place
+ *    this page says how much of the dictionary it did **not** judge, and a
+ *    denominator that is copied rather than read is a number that stops being
+ *    true the next time a string is added.
  *
  * ## What it deliberately cannot see
  *
@@ -165,6 +170,21 @@ function statedCounts(markdown: string): { hits: number; judged: number } | unde
   return { hits: Number(hits[1]), judged: Number(judged[1]) };
 }
 
+/**
+ * The coverage line: how much of the dictionary this round judged.
+ *
+ * Two numbers, and they answer different questions. `judged` is the same count
+ * the summary states, checked against the table; `total` is the size of the
+ * `zh-CN` dictionary, checked against the dictionary itself. The second one is
+ * the reason this line exists: "five screens judged" without a denominator reads
+ * as "the screens are done", and the denominator is what turns it into 26 / 667.
+ */
+function statedCoverage(markdown: string): { judged: number; total: number } | undefined {
+  const match = /\*\*覆盖\*\*：本轮判过 (\d+) 条 ｜ 字典共 (\d+) 条中文值/u.exec(markdown);
+  if (match === null) return undefined;
+  return { judged: Number(match[1]), total: Number(match[2]) };
+}
+
 /** What the page is compared against. */
 interface Dictionary {
   readonly zh: Readonly<Record<string, string>>;
@@ -278,6 +298,32 @@ function critiqueProblems(
     }
   }
 
+  const coverage = statedCoverage(markdown);
+  if (coverage === undefined) {
+    problems.push(
+      'docs/copy-critique-screen.md: no `**覆盖**：本轮判过 M 条 ｜ 字典共 N 条中文值` line, so the ' +
+        'page says which screens it judged but not how much of the dictionary that is — "five ' +
+        'screens judged" reads as "the screens are done"',
+    );
+  } else {
+    if (coverage.judged !== judged) {
+      problems.push(
+        `docs/copy-critique-screen.md: the coverage line says ${coverage.judged} string(s) judged ` +
+          `and the tables hold ${judged} — the page states its own coverage twice and the two ` +
+          'statements disagree',
+      );
+    }
+    const total = Object.keys(dictionary.zh).length;
+    if (coverage.total !== total) {
+      problems.push(
+        `docs/copy-critique-screen.md: the coverage line says the dictionary holds ` +
+          `${coverage.total} Chinese value(s), and \`dictionaryFor('zh-CN')\` holds ${total} — the ` +
+          'denominator was copied rather than read, so the fraction it states is no longer the ' +
+          'fraction it measured',
+      );
+    }
+  }
+
   return problems;
 }
 
@@ -333,13 +379,17 @@ describe('the screens were judged one string at a time', () => {
       '',
     );
     expect(thin).not.toBe(SCREEN_DOC);
-    // Two problems, and both are wanted: the section is thin, and the summary
-    // that said twenty-six is now wrong. A gate that reported only the first
-    // would leave the count silently describing a table it no longer matches.
+    // Three problems, and all three are wanted: the section is thin, the summary
+    // that said twenty-six is now wrong, and the coverage line that repeated
+    // that twenty-six is wrong for the same reason. A gate that reported only
+    // the first would leave the count silently describing a table it no longer
+    // matches; one that reported only the summary would leave the second copy of
+    // the number standing.
     const problems = critiqueProblems(thin, { zh: ZH, en: EN }, firstRoundShapes(FIRST_ROUND));
-    expect(problems).toHaveLength(2);
+    expect(problems).toHaveLength(3);
     expect(problems[0]).toContain('judges 1 string(s)');
     expect(problems[1]).toContain('the summary says 26 string(s) judged and the tables hold 20');
+    expect(problems[2]).toContain('the coverage line says 26 string(s) judged');
   });
 
   it('reports a key no screen can show, and a shape that is not one of the five', () => {
@@ -375,6 +425,42 @@ describe('the screens were judged one string at a time', () => {
     expect(claimed).not.toBe(SCREEN_DOC);
     expect(critiqueProblems(claimed, { zh: ZH, en: EN }, firstRoundShapes(FIRST_ROUND))).toEqual([
       expect.stringContaining('the summary says 1 hit(s) and the tables hold 0'),
+    ]);
+  });
+
+  it('states its coverage as a fraction of the dictionary, and reads the denominator', () => {
+    // The line this case exists for: "five screens judged" with no denominator
+    // reads as "the screens are done". The denominator is the size of the
+    // `zh-CN` dictionary, so it is read from the dictionary rather than trusted
+    // from the page — a string added to `i18n.ts` makes the stated fraction
+    // wrong, and the page has to say so.
+    const coverage = statedCoverage(SCREEN_DOC);
+    expect(coverage, 'the page states no coverage line').toBeDefined();
+    expect(coverage!.total).toBe(Object.keys(ZH).length);
+    expect(coverage!.judged).toBe(26);
+
+    // A denominator that was copied rather than read: the page says 665 while
+    // the dictionary holds more, which is exactly what happens when a string is
+    // added and nobody re-reads the fraction.
+    const stale = SCREEN_DOC.replace('字典共 667 条中文值', '字典共 665 条中文值');
+    expect(stale).not.toBe(SCREEN_DOC);
+    expect(critiqueProblems(stale, { zh: ZH, en: EN }, firstRoundShapes(FIRST_ROUND))).toEqual([
+      expect.stringContaining('the denominator was copied rather than read'),
+    ]);
+
+    // And the numerator, in the other direction: the table grew, the coverage
+    // line did not.
+    const understated = SCREEN_DOC.replace('本轮判过 26 条', '本轮判过 25 条');
+    expect(understated).not.toBe(SCREEN_DOC);
+    expect(critiqueProblems(understated, { zh: ZH, en: EN }, firstRoundShapes(FIRST_ROUND))).toEqual([
+      expect.stringContaining('the coverage line says 25 string(s) judged and the tables hold 26'),
+    ]);
+
+    // A page that dropped the line entirely is not silently "fully covered".
+    const without = SCREEN_DOC.replace(/\*\*覆盖\*\*：本轮判过 26 条 ｜ 字典共 667 条中文值\n/u, '');
+    expect(without).not.toBe(SCREEN_DOC);
+    expect(critiqueProblems(without, { zh: ZH, en: EN }, firstRoundShapes(FIRST_ROUND))).toEqual([
+      expect.stringContaining('no `**覆盖**'),
     ]);
   });
 

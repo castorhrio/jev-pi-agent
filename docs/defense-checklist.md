@@ -108,7 +108,7 @@ node scripts/screenshot-sources.mjs --check
 ```
 
 它逐张报 `[stale] …` 或一行 `PASS — …`。`[stale]` 的那几张是渲染层源码改过之后没重拍的：
-**现场不要重拍**（重拍要跑布局门禁，时长不可控，见第 8 步），照念旧图，并说清「这几张是
+**现场不要重拍**（重拍要跑布局门禁，时长不可控，见第 9 步），照念旧图，并说清「这几张是
 <日期> 拍的，之后渲染层改过，判据没变」。`--check` 说 `PASS` 而 `--walkthrough` 仍退出 1，
 说明 `docs/state-walkthrough.md` 的表里有一张图不在 `sources.json` 里——那是文档与清单不同步，
 念 `docs/state-walkthrough.md` 的表，跳过那一张。
@@ -132,7 +132,73 @@ node scripts/screenshot-sources.mjs --check
 每条念哪一句、退出码是什么、它证明不了什么，写在 `docs/demo-script.md` 的
 「三条阻塞的现场降级路径」——**照着念，不要临场组织语言**。
 
-## 8. 当天不要做
+### 7.1 没有 Windows 机器时，当场演示一次「诚实拒绝」
+
+第 7 步第二条命令 `--judge` 判的是**一份报告文件**，不是一次运行。所以它不需要 Windows，
+也不需要那台机器在场——而这正是答辩当天最可能缺的东西。缺了不要绕过去，**当场演示这条拒绝**：
+它把「没有 Windows 机器」从一次尴尬变成一次可演示的判断。
+
+本机（Linux）先把六步跑一遍，把报告写成文件：
+
+```bash
+xvfb-run -a node scripts/verify-main-chain.mjs --report /tmp/linux-report.json
+```
+
+它退出 0，最后一行是 `PASS — steps 1, 2, 3, 4, 5 recorded above`。**这是 Linux 上的通过，
+不是 Windows 上的通过**——念的时候要把这半句说出来，否则台上就变成了一次冒充。
+
+再把这份报告交给读的一方：
+
+```bash
+node scripts/verify-main-chain.mjs --judge /tmp/linux-report.json
+```
+
+**退出码 1**，最后两行是：
+
+```text
+[FAIL] the report was written on linux, and this row is about win32 — a run on another platform is a real result about that platform, not about this one
+FAIL — 1 thing(s) in this report keep the row open
+```
+
+念这一句，两句一起念完：
+
+1. **报告是文档，文档可以手写**，所以 `--judge` 拒的是「说 pass 却什么都没记」，不是「没跑过」。
+   这份 Linux 报告五步全 `pass`、每一步都带着自己的证据行，`--judge` 仍然拒——因为它说的是
+   另一台机器上的事。反过来，一份手写的、五步都写 `pass` 却一行证据都没有的报告，`--judge`
+   也会拒，拒在「声称不是结果」上。
+2. **所以这一条现在能演示**：没有 Windows 机器时，屏幕上留下的不是一句「还没跑」，而是一次
+   有退出码、有原文、有理由的拒绝。评委可以自己敲一遍，得到同一行。
+
+**它证明不了什么**：它不证明 Windows 上跑得通，也不证明那份报告是真是假——`--judge` 只读文件说了
+什么。这一点写在报告自己的 `note` 字段里，也写在 `docs/blockers.md` 第 2 节的
+「做不到时不要做什么」。
+
+## 8. 三条阻塞什么时候关：三个数
+
+`docs/blockers.md` 三条都写着同一个截止 `2026-11-19`。答辩当天被问「这三条什么时候关」，
+答案不是「尽快」，是三个数——**2026-11-06 量到**：
+
+| 阻塞 | 责任人 | 截止 | 距截止 |
+|---|---|---|---|
+| 第 1 节 · 已发布的 v1.0.0 feed 缺 `sha256` | castorhrio | 2026-11-19 | **距截止 13 天** |
+| 第 2 节 · Windows 桌面六步 | castorhrio | 2026-11-19 | **距截止 13 天** |
+| 第 3 节 · 五个界面状态的人眼走查 | castorhrio | 2026-11-19 | **距截止 13 天** |
+
+这三个数不是抄的：`tests/contract/blocker-freshness.test.ts` 的 `deadlineCountdown()` 从
+`docs/blockers.md` 的 `**截止**` 行读出来，跑一次就能重算：
+
+```bash
+npx vitest run tests/contract/blocker-freshness.test.ts
+```
+
+**这三个数会过期，而过期的是「今天」，不是文档**——所以这一节带着量它的日期（2026-11-06）。
+答辩当天重跑上面那条命令，把三个数念成当天的数；念一个旧数比不念更糟，因为它听起来像刚量过。
+
+被追问「为什么三条是同一个日子」：三条要的东西不同（一个令牌、一台 Windows 机器、一个人），
+但它们是同一轮给出的、同一个长度的窗口，所以共用一个截止。三条里最近的一条就是 `2026-11-19`，
+没有更近的。
+
+## 9. 当天不要做
 
 - 不要现场 `npm ci` 或 `npm run build`：装依赖与构建的时长不可控，前一天做完。
 - 不要现场接真实厂商 key：这次演示只走 `mock`，说清楚，别等评委问。
@@ -147,6 +213,11 @@ node scripts/screenshot-sources.mjs --check
 每一条 `npm run …` 都在 `package.json` 的 `scripts` 里、每一个 `node scripts/…` 都是仓库里
 真的有的文件、每一张截图与每一份文档都打得开、以及第 2 步那个 hash 与
 `docs/demo-script.md` 里的是**同一个字面量**（两页各写一个 hash，等于两次演示只对上一次）。
+
+第 8 步那三个数**不在这条门禁里**，这是故意的：`deadlineCountdown()` 已经由
+`tests/contract/blocker-freshness.test.ts` 对着 `docs/blockers.md` 断言过，再在这一页钉一份
+就是同一个数写两遍——两处各自正确却指向不同日期时，两条断言都会绿。这一页只负责把那个数
+**搬到答辩稿上**，并写清它是哪一天量的；过期由「重跑那条命令」解决，不由一条新门禁解决。
 
 同一个 `describe` 还核对**每一步的降级路径**：第 6 步那条 `--walkthrough` 退出 1 时没有第二条
 路可走，所以它后面必须跟着 `--check`，而且必须写在 `--walkthrough` **之后**——写在前面就成了
