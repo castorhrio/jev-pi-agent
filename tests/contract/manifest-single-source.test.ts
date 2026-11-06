@@ -44,7 +44,8 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { existsSync, readFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { existsSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   DESKTOP_MANIFEST_PATH,
@@ -245,5 +246,105 @@ describe('the derivation is wired into the gate', () => {
     // and the fast one is the one a reader will actually act on.
     const workflow = readFileSync(join(REPO_ROOT, '.github', 'workflows', 'ci.yml'), 'utf8');
     expect(workflow).toContain('run: npm run manifests:check');
+  });
+});
+
+/**
+ * The two flags that must not write, and the one that must refuse.
+ *
+ * The header of `scripts/package-manifests.mjs` promises three things about its
+ * command line: `--print` "writes nothing", `--write` is the only mode that
+ * touches the tree, and "an unrecognised flag is an error rather than a
+ * default". The first and the third were promises with no assertion behind
+ * them — the contract above drives `manifestDrift()` and `derivedFiles()`
+ * directly, so it never runs the script's own argument handling at all.
+ *
+ * That is the shape this repository keeps naming: `--steps 6` used to start the
+ * app, drive nothing and exit 0; `--no-installers` used to be silently ignored.
+ * A flag that is misspelled and silently runs the *check* is the mild version
+ * of that defect; a flag that is misspelled and silently runs `--write` is the
+ * one that edits two manifests because someone typed `--writ`.
+ *
+ * Both cases are measured the same way: fingerprint the two derived files
+ * (content, size, mtime) before and after, so "wrote nothing" is a measurement
+ * rather than a reading of the script's own PASS line.
+ */
+describe('the flags that must not write, and the one that must refuse', () => {
+  const SCRIPT = join(REPO_ROOT, 'scripts', 'package-manifests.mjs');
+
+  function run(args: string[]) {
+    return spawnSync(process.execPath, [SCRIPT, ...args], {
+      cwd: REPO_ROOT,
+      encoding: 'utf8',
+      timeout: 60_000,
+    });
+  }
+
+  /** The two derived files as they are on disk right now. */
+  function fingerprint() {
+    return derivedFiles(SNAPSHOT).map((file) => {
+      const full = join(REPO_ROOT, file.path);
+      const stat = statSync(full);
+      return {
+        path: file.path,
+        text: readFileSync(full, 'utf8'),
+        size: stat.size,
+        mtimeMs: stat.mtimeMs,
+      };
+    });
+  }
+
+  it('`--print` prints the derivation and writes nothing', () => {
+    const before = fingerprint();
+    const result = run(['--print']);
+
+    expect(result.status, result.stderr).toBe(0);
+
+    // The output is the derivation itself, in both directions: every derived
+    // entry is printed, and nothing that is not derived is. A listing that
+    // printed a stale copy of the files would satisfy "contains" but not this.
+    const lines = (result.stdout ?? '').split('\n');
+    const printedSection = lines
+      .filter((line) => /^ {2}@ucad\/\S+: \S+$/.test(line))
+      .map((line) => line.trim());
+    const printedIgnores = lines
+      .filter((line) => /^ {2}@ucad\/\S+$/.test(line))
+      .map((line) => line.trim());
+    expect(printedSection).toEqual(
+      Object.entries(DERIVED_SECTION).map(([name, version]) => `${name}: ${version}`),
+    );
+    expect(printedIgnores).toEqual(DERIVED_IGNORES);
+    expect(result.stdout).toContain('PASS — printed the derivation; nothing was written');
+
+    // And the claim in that PASS line, measured: same bytes, same size, same
+    // mtime. A `--print` that rewrote a file with identical content would pass
+    // a content-only check and still be a write.
+    expect(fingerprint()).toEqual(before);
+  });
+
+  it('refuses a flag it does not know, and names it', () => {
+    const before = fingerprint();
+    // One character short of `--check`: the typo that would otherwise run the
+    // check and print PASS, which reads as "the manifests are fine".
+    const result = run(['--chek']);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('--chek');
+    expect(result.stderr).toContain('usage: node scripts/package-manifests.mjs');
+    // No verdict at all: a refusal that also printed PASS would be read as one.
+    expect(result.stdout).not.toContain('PASS');
+    expect(fingerprint()).toEqual(before);
+  });
+
+  it('refuses a misspelled `--write` instead of writing', () => {
+    // The expensive version of the same defect: `--writ` silently regenerating
+    // two manifests is an edit nobody asked for, in files the gate then calls
+    // consistent.
+    const before = fingerprint();
+    const result = run(['--writ']);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('--writ');
+    expect(fingerprint()).toEqual(before);
   });
 });
