@@ -223,6 +223,26 @@ interface Measurement {
       columnHeight: number;
     } | null;
     /**
+     * The failed-load screen's column, measured on the horizontal axis.
+     *
+     * `fatalFold` above answers "is the next step inside the window". This
+     * answers "is the column inside the window *evenly*", which is the half the
+     * `layout` pass changed and the half nothing measured: the rule that
+     * centres this column said "centred in the window" while only centring it
+     * vertically, so the four blocks sat in the left third of a 1440px window.
+     * `content` is the pane's padding box (what the centring happens inside),
+     * `ink` the union of the four blocks, and the two margins are the numbers
+     * the assertion below compares. `null` when no fatal pane is on screen.
+     */
+    fatalColumn: {
+      viewportWidth: number;
+      content: { left: number; right: number };
+      ink: { left: number; right: number };
+      leftMargin: number;
+      rightMargin: number;
+      blocks: number;
+    } | null;
+    /**
      * The first-run block's hierarchy, as the engine computed it.
      *
      * `null` when the block is not on screen — a state without a first run is
@@ -1204,6 +1224,71 @@ describe('the interface states are measured, not assumed', () => {
       }
     }
     expect(outside, 'the failed-load screen promises below the fold').toEqual([]);
+  });
+
+  it('centres the failed-load column on both axes, not just the vertical one', () => {
+    /*
+     * The `layout` pass on the failed-load screen, made measurable.
+     *
+     * `docs/dod-status.md` records the critique: the shell is absent on
+     * purpose, the topbar stays, and the four blocks are the whole screen. What
+     * it also recorded, one round later, is that the rule centring this column
+     * claimed the window and only did one axis — `justify-content: safe center`
+     * is vertical, so at 1440x900 the ink sat in the left third of a window
+     * whose entire subject is four short blocks. That asymmetry is the
+     * difference between "a centred column, which reads as a decision" and "a
+     * page that stopped loading halfway", and it is exactly the kind of claim
+     * this repository does not accept as a comment.
+     *
+     * So: on every `error` frame, at both window sizes and both reason lengths,
+     * the union of the four blocks must sit inside the pane's padding box with
+     * equal margins. Two pixels of slack, because subpixel layout rounds the
+     * two edges independently and a gate that fails on 0.5px is a gate people
+     * switch off.
+     *
+     * The two guards against a vacuous pass matter as much as the equality:
+     * `blocks` must be 4 (a pane that lost three children is trivially
+     * "centred"), and both margins must be positive (a column as wide as its
+     * pane has nothing to centre, and would pass the equality by being flush on
+     * both sides — the same "measured zero, therefore green" shape this
+     * repository has named before).
+     */
+    const failed = measurements.filter((m) => m.state === 'error');
+    expect(
+      failed.length,
+      'the failed-load screen was never measured, so the centring check below is vacuous',
+    ).toBeGreaterThanOrEqual(3);
+
+    const off: string[] = [];
+    for (const m of failed) {
+      const column = m.content.fatalColumn;
+      if (column === null) {
+        off.push(`${m.name}: no failed-load column was found to place`);
+        continue;
+      }
+      if (column.blocks !== 4) {
+        off.push(
+          `${m.name}: the failed-load column has ${column.blocks} block(s), not 4 — the heading, ` +
+            'the reason, the next step and the buttons are the whole screen',
+        );
+        continue;
+      }
+      if (column.leftMargin <= 0 || column.rightMargin <= 0) {
+        off.push(
+          `${m.name}: the column is flush against its pane (${column.leftMargin}px / ` +
+            `${column.rightMargin}px), so there is no centring to measure`,
+        );
+        continue;
+      }
+      if (Math.abs(column.leftMargin - column.rightMargin) > 2) {
+        off.push(
+          `${m.name}: the column sits ${column.leftMargin}px from the left and ` +
+            `${column.rightMargin}px from the right of a ${column.viewportWidth}px window — ` +
+            'off-centre, which reads as a page that stopped loading halfway',
+        );
+      }
+    }
+    expect(off, 'the failed-load column is not centred on the horizontal axis').toEqual([]);
   });
 
   it('the permission state really has a prompt on screen', () => {

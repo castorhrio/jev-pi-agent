@@ -1956,3 +1956,47 @@ same write: TMPDIR=/var/tmp node scripts/gate-local.mjs
 `Test Files 115 passed (115)`、`Tests 1970 passed | 1 skipped (1971)`；`npm run test:e2e` →
 21 个文件 163 项全绿。三个数对得上，不需要读者猜：上一轮 1951 + 8（日期）+ 10（抄本）
 + 1（折叠线）= 1970；`layout.test.ts` 自己从 52 项变成 53 项。
+
+## 本轮（2026-11-06）失败那一屏的横向：一条规则说了两个轴，只做了一个
+
+上一节的 critique 判过「这一屏该不该有 shell」，结论是不该有、topbar 留着。这一节是同一屏的
+`layout` pass，范围严格限定在**这一屏的框**：不动 `App.tsx` 的 `if (fatal)` 分支结构、不动
+`layout-page-scripts.mjs` 里 `content.shell` 的三个区域断言、不动 `docs/state-walkthrough.md`
+的 `error` 四条判据（判据一字未改，改的是它描述的那一屏的观感）。
+
+**缺陷**：`.pane.fatal` 的注释写着「centred in the window」，而 `justify-content: safe center`
+只做**纵向**。横向四个块仍然贴着页面列的起始边：1440×900 下量到的是左边距 0px、右边距 492px
+（相对 pane 的 padding box），也就是整屏的墨迹落在左三分之一。一个居中的列读起来是「决定」，
+一个偏在一边的列读起来是「这一页加载到一半停了」——这正是 `error.png` 一直被人说「像没做完」的
+那个形状，而它此前没有任何一条门禁量过。
+
+**改法**（只改 `.pane.fatal` 与它的子元素，不新增颜色、字号档、i18n 条目）：
+`align-items: center` 让四个块在 pane 的 padding box 里居中；`.pane.fatal > *` 补上
+`width: 100%` + `max-width: var(--measure-prose)`，让四个块共用**一个**列宽（此前只有三个文本块
+带这个 measure，head 与按钮行没有，所以它们各自撑到 pane 宽）。一个列、一个 measure、两个轴。
+
+**门禁**：`scripts/layout-page-scripts.mjs` 新增 `fatalColumn`（pane 的 padding box、四个块 rect
+的并集、左右两个边距、块数），`tests/contract/layout.test.ts` 新增
+`centres the failed-load column on both axes, not just the vertical one`：每一个 `error` 帧
+（两个窗口尺寸 × 两种原因长度）左右边距之差 ≤ 2px，且块数必须是 4、两个边距都必须 > 0——
+后两条是防「量到零所以通过」：一个和 pane 一样宽的列两边都贴边，等式照样成立。
+
+**证明它会红**（本轮真跑）：删掉 `align-items: center` 之后，同一用例 1 failed / 60 skipped，
+打出来的是
+
+```
+state-error: the column is flush against its pane (0px / 492px), so there is no centring to measure
+state-error-tight: the column is flush against its pane (0px / 264px), so there is no centring to measure
+state-error-tight-long-reason: the column is flush against its pane (0px / 264px), so there is no centring to measure
+```
+
+恢复后 61/61 绿（`layout.test.ts`，本轮新增 1 项）。
+
+**截图**：`docs/screenshots/error.png`（1440×900，36359 字节）与
+`docs/screenshots/states/error-768x700.png`（768×700，32786 字节）重拍自布局门禁在真实 Chromium 里
+拍的那两张（`.run-logs/layout/state-error-chat.png` 与 `state-error-tight-chat.png`），
+`node scripts/screenshot-sources.mjs --check` → `PASS — 34 renderer source(s) and 14 screenshot(s)`。
+其余 12 张与上一轮提交的逐字节相同，所以这个 diff 里只动了两张图。
+
+**没做的**：`error` 的四条判据、rail/statusbar 的结论、`App.tsx` 的 fatal 分支结构、任何新文案。
+这一屏仍然没有 shell，仍然只有四块字——本轮只让这四块字站在窗口中间。

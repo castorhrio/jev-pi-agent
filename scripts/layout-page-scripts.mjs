@@ -1439,6 +1439,50 @@ export const MEASURE = `(() => {
         };
       })(),
       /*
+       * The failed-load screen's column, measured on the horizontal axis.
+       *
+       * The vertical axis is fatalFold above. This is the other one, and it
+       * exists because the rule that centres this column claimed both axes and
+       * only did one: justify-content: safe center centres the column
+       * vertically, while the four blocks stayed left-aligned on the page
+       * column. At 1440x900 that put the ink of docs/screenshots/error.png
+       * in the left third of a window whose whole subject is four short
+       * blocks - 240px of margin on one side, 741px on the other - which is
+       * what reads as "this page stopped loading halfway" rather than as a
+       * decision. align-items: center plus one measure for the column is the
+       * fix; these numbers are what makes it a measurement instead of a claim.
+       *
+       * content is the pane's padding box, i.e. the box the centring happens
+       * inside. ink is the union of the four blocks' rects, so a column that
+       * is centred but whose blocks disagree about their width still reads as
+       * one number. blocks is the count, so "centred" cannot be satisfied by
+       * a pane that lost three of its four children.
+       *
+       * null when there is no fatal pane, which is a fact about the frame: the
+       * shell states have none. The gate reads this only on the 'error' state,
+       * where a null is red rather than skipped.
+       */
+      fatalColumn: (() => {
+        const pane = document.querySelector('.pane.fatal');
+        if (pane === null) return null;
+        const rects = [...pane.children].map((el) => el.getBoundingClientRect());
+        if (rects.length === 0) return null;
+        const style = getComputedStyle(pane);
+        const paneRect = pane.getBoundingClientRect();
+        const contentLeft = paneRect.left + parseFloat(style.paddingLeft);
+        const contentRight = paneRect.right - parseFloat(style.paddingRight);
+        const inkLeft = Math.min(...rects.map((r) => r.left));
+        const inkRight = Math.max(...rects.map((r) => r.right));
+        return {
+          viewportWidth: round(window.innerWidth),
+          content: { left: round(contentLeft), right: round(contentRight) },
+          ink: { left: round(inkLeft), right: round(inkRight) },
+          leftMargin: round(inkLeft - contentLeft),
+          rightMargin: round(contentRight - inkRight),
+          blocks: rects.length,
+        };
+      })(),
+      /*
        * The first-run block's hierarchy, as computed rather than as declared.
        *
        * 'docs/state-walkthrough.md' asks a walker whether the eye lands on the

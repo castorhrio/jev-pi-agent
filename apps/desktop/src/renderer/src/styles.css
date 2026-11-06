@@ -1023,19 +1023,51 @@ code,
  * would push its top out above the scrollport with no way to scroll back to it.
  * `safe center` falls back to the start edge when the content does not fit, so
  * the reason scrolls and the retry button stays reachable.
+ *
+ * ## The other axis, which this rule claimed and did not do
+ *
+ * `justify-content` centres the column *vertically*. The comment above said
+ * "centred in the window" and that was true on one axis only: horizontally the
+ * four blocks were left-aligned on the page column, so at 1440×900 the text
+ * started at x=240 and stopped at x=699 — 240px of margin on the left, 741px
+ * of empty window on the right. Measured on the committed picture, the ink of
+ * `docs/screenshots/error.png` sat in the left third of a screen whose whole
+ * subject is four short blocks. That asymmetry is what reads as "not finished
+ * yet": a centred column with equal margins reads as a decision, an off-centre
+ * one reads as a page that stopped loading halfway.
+ *
+ * So the column is now the prose measure and it is centred on both axes. The
+ * width is `--measure-prose` rather than a number of its own because the three
+ * text blocks already carried it (`.pane-head p`, `.notice`, `.fatal-next`) —
+ * the only blocks that were wider were the head and the button row, i.e. the
+ * two that had no text to justify it. One column, one measure, both axes.
+ *
+ * What this deliberately does not do: it adds no colour, no type size and no
+ * copy. The four blocks, their order and their words are unchanged, and so are
+ * the four `error` criteria in `docs/state-walkthrough.md` — this is the
+ * `layout` pass on a screen whose `critique` was already answered, not a new
+ * screen. The shell is still absent on purpose (see `docs/dod-status.md`).
  */
 .pane.fatal {
   display: flex;
   flex-direction: column;
   justify-content: safe center;
+  /* Centres the column on the horizontal axis too. Without it a child with
+     `width: 100%` and a `max-width` smaller than the pane sits at the start
+     edge, which is exactly the off-centre picture described above. */
+  align-items: center;
   gap: var(--sp-3);
 }
 
 /* The gap owns the spacing in this column, so no child adds its own: the head
    carries a bottom margin and both paragraphs the UA's `1em 0`, and in a flex
-   column margins do not collapse, so each one would sit on top of the gap. */
+   column margins do not collapse, so each one would sit on top of the gap.
+   `width: 100%` is what makes the four blocks share one column instead of each
+   shrinking to its own text; `max-width` is the measure that column is. */
 .pane.fatal > * {
   margin: 0;
+  width: 100%;
+  max-width: var(--measure-prose);
 }
 
 .fatal-next {
