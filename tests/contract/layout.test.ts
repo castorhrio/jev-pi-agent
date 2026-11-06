@@ -58,6 +58,11 @@ import {
   LONG_REASON_VALUE,
   STATE_SCENARIOS,
 } from '../../apps/desktop/src/renderer/src/dev/scenarios';
+// The two blocks the failed-load screen is measured by, imported rather than
+// re-spelled: a selector written twice is a second answer to "which box is the
+// failure message", and the day one of them is renamed the gate would keep
+// measuring the old one and stay green.
+import { FATAL_PROSE_BLOCKS } from '../../scripts/layout-page-scripts.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(here, '..', '..');
@@ -324,6 +329,35 @@ interface Measurement {
     /** How many wrapped Chinese blocks this frame had, so the rule is not vacuous. */
     proseBlocks: number;
     proseLines: number;
+    /**
+     * The failed-load screen's two prose blocks, measured **by name**.
+     *
+     * The sweep above is a sweep: it walks whatever is on screen and applies the
+     * three paragraph rules to the blocks whose own text is Chinese. On the one
+     * screen a person sees when the app cannot start, that leaves the failure box
+     * unmeasured — its text is an IPC error or a Windows path, so the sweep's
+     * Chinese test skips it — and leaves the next-step sentence measured but
+     * unnamed, so a renamed class would quietly take one block out of the sweep
+     * and leave the gate green.
+     *
+     * `present` is reported rather than the row being omitted, so "this frame has
+     * no failed-load pane" and "the pane lost its failure box" are two different
+     * readings of the same JSON. The numbers are absent when the block is.
+     */
+    fatalBlocks: Array<{
+      name: string;
+      selector: string;
+      present: boolean;
+      chars?: number;
+      text?: string;
+      fontSize?: number;
+      lines?: number;
+      longestCjk?: number;
+      roomCjk?: number;
+      badBreaks?: Array<{ kind: string; char: string; line: number }>;
+      lastGlyphs?: number;
+      last?: string;
+    }>;
     longLines: Array<{
       element: string;
       fontSize: number;
@@ -2144,6 +2178,225 @@ describe('layout in a real browser engine', () => {
           'of text on its last line)\n' + lines(m.typeset.stubLines),
       ).toEqual([]);
     }
+  });
+
+  /*
+   * The failed-load screen, typeset.
+   *
+   * ## Why this block exists
+   *
+   * `7faf47e` made the failed-load screen say *which step failed* and *what to do
+   * next*, and the round that wrote it recorded what it did not do: 「窗口其余部分
+   * 仍是背景色」. The two blocks it added are the only prose on the one screen a
+   * person sees when the app cannot start at all, and neither was measured:
+   *
+   *  - the failure box (`.notice.error`) holds the string the product did not
+   *    write — an IPC error, a store that could not be opened, a Windows path. It
+   *    is ASCII, so the sweep's `CJK.test(own)` skips it: the box carrying the
+   *    longest line on the screen was the one block no rule looked at.
+   *  - the next-step sentence (`.fatal-next`) is Chinese and does wrap, so the
+   *    sweep does measure it — but nothing said so. A renamed class or a removed
+   *    paragraph would have left the sweep measuring one block fewer and the gate
+   *    green, which is the "measured nothing, found nothing" shape this file keeps
+   *    having to design against.
+   *
+   * So both are measured by selector on every frame (`FATAL_PROSE_BLOCKS` in
+   * `scripts/layout-page-scripts.mjs`), and the rules below are the sweep's own
+   * three — line length against the ceiling and the floor, 行首禁则 / 行尾禁则, and
+   * the last-line floor — applied to a block whether or not its text is Chinese:
+   * a 200-character path wraps into lines just as long as a Chinese paragraph's,
+   * and the last line of a wrapped path can be a runt just as easily.
+   *
+   * The floor keeps the sweep's condition, and it is the whole rule: a block that
+   * did not wrap has no measure to judge (the failure box is one 19-character line
+   * at 1440px in a column with room for 80), and a block whose container was
+   * narrower than the floor could not have been wider. What is asserted is that
+   * the condition was met somewhere — otherwise the floor would be enforced over
+   * an empty set on every frame, forever.
+   */
+
+  /** The two blocks of one failed-load frame, with `present` already asserted. */
+  function fatalBlocksOf(m: Measurement): Array<Measurement['typeset']['fatalBlocks'][number]> {
+    const blocks = m.typeset.fatalBlocks;
+    expect(
+      blocks.map((block) => block.name),
+      `${m.label}: the failed-load screen's blocks are not the two the page script declares`,
+    ).toEqual(FATAL_PROSE_BLOCKS.map((block) => block.name));
+    expect(
+      blocks.map((block) => block.selector),
+      `${m.label}: the measurement looked for different selectors than the page script declares`,
+    ).toEqual(FATAL_PROSE_BLOCKS.map((block) => block.selector));
+    for (const block of blocks) {
+      expect(
+        block.present,
+        `${m.label}: ${block.selector} was not on the failed-load screen — the block the ` +
+          'screen exists for is missing, so the rules below would be enforced over nothing',
+      ).toBe(true);
+    }
+    return blocks;
+  }
+
+  it('measures both blocks of the failed-load screen, and neither on any other screen', () => {
+    /*
+     * The presence half. Without it every rule below could pass over an empty
+     * list: a selector that stopped matching reports `present: false` and no
+     * numbers, and a gate that only reads the numbers would call that clean.
+     *
+     * The other direction matters as much: a `.notice.error` that started
+     * appearing on the populated shell would mean the failure box is no longer
+     * the failed-load screen's own, and the numbers below would be measuring a
+     * different box under the same name.
+     */
+    const failed = measurements.filter((m) => m.state === 'error');
+    expect(
+      failed.length,
+      'the failed-load screen was never measured, so this block is vacuous',
+    ).toBeGreaterThanOrEqual(3);
+    for (const m of failed) {
+      for (const block of fatalBlocksOf(m)) {
+        expect(
+          block.chars,
+          `${m.label}: ${block.selector} was on screen with no text in it`,
+        ).toBeGreaterThan(0);
+      }
+    }
+    for (const m of GEOMETRY.filter((other) => other.state !== 'error')) {
+      for (const block of m.typeset.fatalBlocks) {
+        expect(
+          block.present,
+          `${m.label}: ${block.selector} was on a screen that is not the failed-load pane`,
+        ).toBe(false);
+      }
+    }
+  });
+
+  it('measures the failure box the sweep cannot see, which is why it is named', () => {
+    /*
+     * The reason this block exists at all, asserted rather than described: the
+     * failure box's own text carries no Han character, so the sweep's
+     * `CJK.test(own)` skips it. If that ever stops being true the named
+     * measurement is still correct — but the argument for it would have changed,
+     * and this case is what makes somebody re-read it instead of assuming.
+     */
+    const failed = measurements.filter((m) => m.state === 'error');
+    const failure = failed.map((m) => fatalBlocksOf(m)[0]!);
+    expect(failure.length).toBeGreaterThan(0);
+    for (const block of failure) {
+      expect(
+        block.text,
+        'the failure box now carries Chinese, so the sweep would measure it too — the ' +
+          'comment above FATAL_PROSE_BLOCKS says it does not',
+      ).not.toMatch(/[\u4e00-\u9fff]/u);
+    }
+  });
+
+  it('sets no line of the failure box or the next step wider than the ceiling', () => {
+    /*
+     * The ceiling is the one rule that applies to every block, wrapped or not:
+     * a single line longer than the measure is a line the eye loses its place
+     * on, and the failure box is exactly where a long unbroken path lands.
+     */
+    const ceiling = declaredProseCeiling();
+    const tooWide: string[] = [];
+    for (const m of measurements.filter((frame) => frame.state === 'error')) {
+      for (const block of fatalBlocksOf(m)) {
+        if ((block.longestCjk ?? 0) > ceiling) {
+          tooWide.push(
+            `${m.label}: ${block.selector} sets a ${block.longestCjk}-character line ` +
+              `(ceiling ${ceiling}) — ${JSON.stringify(block.text)}`,
+          );
+        }
+      }
+    }
+    expect(tooWide, 'the failed-load screen sets a line wider than the measure').toEqual([]);
+  });
+
+  it('gives a wrapped failure box the same floor as a paragraph', () => {
+    /*
+     * The floor's condition is the rule, and it is the sweep's: only a block that
+     * wrapped, in a container that had room for the floor, can be too narrow. The
+     * failure box at 1440px is one 19-character line in a column with room for 80
+     * — nothing to judge — while the same box with a 200-character path at 768px
+     * wraps to five lines and is judged.
+     *
+     * The count at the end is what keeps this from being a rule about nothing: if
+     * every fatal block stopped wrapping, the loop above would pass over an empty
+     * set on every frame and the floor would be enforced nowhere.
+     */
+    const floor = declaredProseFloor();
+    const tooNarrow: string[] = [];
+    let judged = 0;
+    for (const m of measurements.filter((frame) => frame.state === 'error')) {
+      for (const block of fatalBlocksOf(m)) {
+        if ((block.lines ?? 0) < 2) continue;
+        if ((block.roomCjk ?? 0) < floor) continue;
+        judged += 1;
+        if ((block.longestCjk ?? 0) < floor) {
+          tooNarrow.push(
+            `${m.label}: ${block.selector} sets a ${block.longestCjk}-character line in a ` +
+              `column that had room for ${block.roomCjk} (floor ${floor})`,
+          );
+        }
+      }
+    }
+    expect(tooNarrow, 'the failed-load screen sets a wrapped block narrower than the floor').toEqual(
+      [],
+    );
+    expect(
+      judged,
+      'no failed-load block wrapped in a column with room for the floor, so the rule above ' +
+        'was enforced over nothing',
+    ).toBeGreaterThan(0);
+  });
+
+  it('breaks no line in the failure box or the next step where Chinese does not allow it', () => {
+    /*
+     * 行首禁则 / 行尾禁则 on the two blocks the sweep does not name. The failure box
+     * is the one place in the product where `overflow-wrap: anywhere` is load
+     * bearing — it is what keeps a 200-character path inside its box — and that
+     * same declaration is what lets a line break immediately before a full stop.
+     * So the rule is measured on the block that declaration was written for.
+     */
+    const bad: string[] = [];
+    for (const m of measurements.filter((frame) => frame.state === 'error')) {
+      for (const block of fatalBlocksOf(m)) {
+        for (const entry of block.badBreaks ?? []) {
+          bad.push(
+            `${m.label}: ${block.selector} broke line ${entry.line} ${entry.kind} at ` +
+              `'${entry.char}' — ${JSON.stringify(block.text)}`,
+          );
+        }
+      }
+    }
+    expect(bad, 'the failed-load screen breaks a line where Chinese does not allow it').toEqual([]);
+  });
+
+  it('leaves neither block of the failed-load screen ending on a runt line', () => {
+    /*
+     * 孤字行, on the screen where the last line is the one that says what to do.
+     * `MIN_LAST_LINE_GLYPHS` was enforced over the sweep's Chinese paragraphs and
+     * over nothing else; the failure box is exempt from the sweep by language, so
+     * a path that ended on one character under four full lines would have been
+     * legal under every rule in this file.
+     *
+     * The floor travels in the measurement and is checked against the declaration
+     * first, like the two line-length numbers: a measurement that quietly stopped
+     * using MIN_LAST_LINE_GLYPHS would otherwise enforce whatever number it
+     * happened to carry.
+     */
+    const floor = declaredLastLineFloor();
+    const runts: string[] = [];
+    for (const m of measurements.filter((frame) => frame.state === 'error')) {
+      for (const block of fatalBlocksOf(m)) {
+        if ((block.lastGlyphs ?? 0) < floor) {
+          runts.push(
+            `${m.label}: ${block.selector} ends on ${JSON.stringify(block.last)} ` +
+              `(${block.lastGlyphs} glyph(s), floor ${floor})`,
+          );
+        }
+      }
+    }
+    expect(runts, 'the failed-load screen ends a block on a runt line').toEqual([]);
   });
 
   it('has the engine apply the last-line rule, and says which value it applied', () => {

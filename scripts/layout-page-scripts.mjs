@@ -142,6 +142,40 @@ export const PROSE_MIN_CHARS = 20;
 export const MIN_LAST_LINE_GLYPHS = 2;
 
 /**
+ * The failed-load screen's prose, measured by name rather than by sweep.
+ *
+ * The sweep above measures every element whose own text is Chinese and wraps.
+ * That leaves two holes on the one screen a person sees when the app cannot
+ * start at all, and both were measured before this list was written:
+ *
+ *  - the failure box ('.notice.error') holds the string the product did not
+ *    write — an IPC error, a store that could not be opened, a Windows path.
+ *    It is ASCII, so the sweep's `CJK.test(own)` skips it: the box that carries
+ *    the longest line on the screen was the one block no rule looked at.
+ *  - the next-step sentence ('.fatal-next') is Chinese and does wrap, so the
+ *    sweep does measure it — but nothing said so. A renamed class or a removed
+ *    paragraph would have left the sweep measuring one block fewer and the gate
+ *    green, which is the "measured nothing, found nothing" shape this file
+ *    keeps having to design against.
+ *
+ * So these two are measured by selector, on every frame, and the gate asserts
+ * both were found on the error screen and neither on any other. The rules are
+ * the same three the sweep applies — line length against the ceiling and the
+ * floor, 行首禁则 / 行尾禁则, and the last-line floor — applied to a block
+ * whether or not its text is Chinese, because a 200-character path wraps into
+ * lines that are just as long as a Chinese paragraph's.
+ *
+ * The lead sentence ('.pane-head p') is deliberately not here: it is one short
+ * sentence that does not wrap at the prose measure, so it has no line length to
+ * judge and no break to check. If it ever grows into a paragraph, the sweep
+ * picks it up — it is Chinese and it would wrap.
+ */
+export const FATAL_PROSE_BLOCKS = [
+  { name: 'failure', selector: '.pane.fatal .notice.error' },
+  { name: 'next', selector: '.pane.fatal .fatal-next' },
+];
+
+/**
  * What this repository counts as a Han character.
  *
  * One definition, read by both halves of 中英混排间距: the measurement below
@@ -742,6 +776,7 @@ export const MEASURE = `(() => {
   const END_FORBIDDEN = ${JSON.stringify(LINE_END_FORBIDDEN)};
   const MIN_LAST_GLYPHS = ${MIN_LAST_LINE_GLYPHS};
   const LAST_IGNORED = ${JSON.stringify(LAST_LINE_IGNORED)};
+  const FATAL_BLOCKS = ${JSON.stringify(FATAL_PROSE_BLOCKS)};
   const GAP_FLOOR_EM = ${MIN_HAN_LATIN_GAP_EM - HAN_LATIN_GAP_TOLERANCE_EM};
   const GAP_TOLERANCE_EM = ${HAN_LATIN_GAP_TOLERANCE_EM};
   const GAP_DECLARED_EM = ${MIN_HAN_LATIN_GAP_EM};
@@ -808,41 +843,29 @@ export const MEASURE = `(() => {
   const hanLatinSpacedSamples = [];
   const hanLatinUnder = [];
   const hanLatinDouble = [];
-  for (const el of all) {
-    if (!visible(el)) continue;
-    if (el.closest('.sr-only') !== null) continue;
-    const own = ownText(el);
-    if (!CJK.test(own)) continue;
-    /*
-     * The three paragraph rules are about *paragraphs*: a two-character tab label
-     * has no line length to judge, no break to check and no last line that can be a
-     * runt, and walking its characters for nothing is the expensive half of this
-     * measurement. That is what PROSE_MIN_CHARS is for.
-     *
-     * It is not the scope of 中英混排间距. That rule is measured over the rendered
-     * text flow, below this loop, because the boundary this app actually produces
-     * sits between two elements - a tab's 工具调用, a child span's ' 3', then the
-     * next tab's 上下文 - and no single element's own text contains it. An earlier
-     * version walked elements instead of the flow, reported no boundary needing the
-     * engine at all, and stayed green while the pictures said otherwise: 59 of the
-     * 66 gated screenshots hash identically across two green sweeps, and 49 of
-     * those 59 change when the declaration is taken out.
-     */
-    if (own.length < PROSE_MIN_CHARS) continue;
+  /*
+   * Per-character rects, grouped into lines.
+   *
+   * The element's own client rects are not a line count: a button with an
+   * icon and a label returns one rect per inline box, and a span with a
+   * nested <strong> returns two for one line. The characters are the only
+   * thing that knows where the lines actually are. They are sorted by top and
+   * then by left, and a character joins the current line while its top is
+   * within 2px of that line's first character — the tolerance is for inline
+   * elements that set a different font size on the same line.
+   *
+   * A function rather than a block inside the sweep because the failed-load
+   * screen's two blocks are measured by name (see FATAL_PROSE_BLOCKS) and the
+   * line grouping is the same question there. Two copies of it would be two
+   * answers to "where does this line end" the day one of them is fixed.
+   *
+   * null when the element has no painted glyph at all (a hidden box, an empty
+   * one), which is a fact about the frame rather than a measurement failure.
+   */
+  const linesOf = (el) => {
     const style = getComputedStyle(el);
     const size = parseFloat(style.fontSize);
-    if (!Number.isFinite(size) || size <= 0) continue;
-    /*
-     * Per-character rects, grouped into lines.
-     *
-     * The element's own client rects are not a line count: a button with an
-     * icon and a label returns one rect per inline box, and a span with a
-     * nested <strong> returns two for one line. The characters are the only
-     * thing that knows where the lines actually are. They are sorted by top and
-     * then by left, and a character joins the current line while its top is
-     * within 2px of that line's first character — the tolerance is for inline
-     * elements that set a different font size on the same line.
-     */
+    if (!Number.isFinite(size) || size <= 0) return null;
     const chars = [];
     const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
     let node = walker.nextNode();
@@ -864,7 +887,7 @@ export const MEASURE = `(() => {
       }
       node = walker.nextNode();
     }
-    if (chars.length === 0) continue;
+    if (chars.length === 0) return null;
     chars.sort((a, b) => (Math.abs(a.top - b.top) > 2 ? a.top - b.top : a.left - b.left));
     const lines = [];
     for (const c of chars) {
@@ -878,6 +901,33 @@ export const MEASURE = `(() => {
         current.right = Math.max(current.right, c.right);
       }
     }
+    return { size: size, lines: lines };
+  };
+  for (const el of all) {
+    if (!visible(el)) continue;
+    if (el.closest('.sr-only') !== null) continue;
+    const own = ownText(el);
+    if (!CJK.test(own)) continue;
+    /*
+     * The three paragraph rules are about *paragraphs*: a two-character tab label
+     * has no line length to judge, no break to check and no last line that can be a
+     * runt, and walking its characters for nothing is the expensive half of this
+     * measurement. That is what PROSE_MIN_CHARS is for.
+     *
+     * It is not the scope of 中英混排间距. That rule is measured over the rendered
+     * text flow, below this loop, because the boundary this app actually produces
+     * sits between two elements - a tab's 工具调用, a child span's ' 3', then the
+     * next tab's 上下文 - and no single element's own text contains it. An earlier
+     * version walked elements instead of the flow, reported no boundary needing the
+     * engine at all, and stayed green while the pictures said otherwise: 59 of the
+     * 66 gated screenshots hash identically across two green sweeps, and 49 of
+     * those 59 change when the declaration is taken out.
+     */
+    if (own.length < PROSE_MIN_CHARS) continue;
+    const measured = linesOf(el);
+    if (measured === null) continue;
+    const size = measured.size;
+    const lines = measured.lines;
     if (lines.length < 2) continue;
     proseBlocks += 1;
     proseLines += lines.length;
@@ -984,6 +1034,81 @@ export const MEASURE = `(() => {
       });
     }
   }
+
+  /*
+   * The failed-load screen's prose, measured by name.
+   *
+   * The sweep above is a sweep: it walks whatever is on screen and applies the
+   * three paragraph rules to the blocks it finds. On the one screen a person
+   * sees when the app cannot start, that leaves the failure box unmeasured —
+   * its text is ASCII, so the sweep's Chinese test skips it — and leaves the
+   * next-step sentence measured but unnamed, so a renamed class would quietly
+   * take one block out of the sweep and leave the gate green.
+   *
+   * So both are measured here by selector, on every frame, and the gate asserts
+   * which frames had them. The rules are the sweep's own three, applied to a
+   * block whether or not its text is Chinese: a 200-character path wraps into
+   * lines just as long as a Chinese paragraph's, and the last line of a wrapped
+   * path can be a runt just as easily.
+   *
+   * A block that is not on screen is reported as 'present: false' rather than
+   * omitted, so "the shell has no fatal pane" and "the fatal pane lost its
+   * failure box" are two different readings of the same JSON.
+   */
+  const fatalTypeset = FATAL_BLOCKS.map((block) => {
+    const el = document.querySelector(block.selector);
+    const row = { name: block.name, selector: block.selector, present: el !== null };
+    if (el === null) return row;
+    const own = ownText(el);
+    row.chars = own.length;
+    row.text = own.slice(0, 40);
+    const measured = linesOf(el);
+    if (measured === null) {
+      row.fontSize = 0;
+      row.lines = 0;
+      row.longestCjk = 0;
+      row.roomCjk = 0;
+      row.badBreaks = [];
+      row.lastGlyphs = 0;
+      row.last = '';
+      return row;
+    }
+    const size = measured.size;
+    const lines = measured.lines;
+    let longest = 0;
+    for (const line of lines) longest = Math.max(longest, (line.right - line.left) / size);
+    let room = 0;
+    const parent = el.parentElement;
+    if (parent !== null) {
+      const parentStyle = getComputedStyle(parent);
+      const padLeft = parseFloat(parentStyle.paddingLeft) || 0;
+      const padRight = parseFloat(parentStyle.paddingRight) || 0;
+      room = (parent.clientWidth - padLeft - padRight) / size;
+    }
+    const badBreaks = [];
+    for (let i = 0; i < lines.length; i += 1) {
+      const line = lines[i];
+      if (i > 0 && START_FORBIDDEN.indexOf(line.first) !== -1) {
+        badBreaks.push({ kind: 'line-start', char: line.first, line: i + 1 });
+      }
+      if (i < lines.length - 1 && END_FORBIDDEN.indexOf(line.last) !== -1) {
+        badBreaks.push({ kind: 'line-end', char: line.last, line: i + 1 });
+      }
+    }
+    const lastLine = lines[lines.length - 1].text;
+    let lastGlyphs = 0;
+    for (let i = 0; i < lastLine.length; i += 1) {
+      if (LAST_IGNORED.indexOf(lastLine[i]) === -1) lastGlyphs += 1;
+    }
+    row.fontSize = round(size);
+    row.lines = lines.length;
+    row.longestCjk = round(longest);
+    row.roomCjk = round(room);
+    row.badBreaks = badBreaks;
+    row.lastGlyphs = lastGlyphs;
+    row.last = lastLine;
+    return row;
+  });
 
   /*
    * 中英混排间距, measured over the rendered text flow.
@@ -1444,6 +1569,11 @@ export const MEASURE = `(() => {
       minLineCjk: MIN_LINE,
       proseBlocks: proseBlocks,
       proseLines: proseLines,
+      /*
+       * The failed-load screen's two prose blocks, by name. Empty on every
+       * frame that is not that screen, which is what the gate asserts.
+       */
+      fatalBlocks: fatalTypeset,
       longLines: longLines.slice(0, 12),
       shortLines: shortLines.slice(0, 12),
       floorChecked: floorChecked,
