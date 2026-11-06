@@ -2048,3 +2048,50 @@ tests/contract/readme.test.ts tests/contract/typography.test.ts tests/contract/d
 
 两处都只动文档，没有新增门禁：`blocker-freshness` / `blocker-parity` / `blocker-closing` /
 `doc-routing` / `state-walkthrough` / `screenshots` / `demo-script` 七个文件 162 项全绿。
+
+## 本轮（2026-11-06）屏幕侧逐屏判过：五屏二十六条，以及「距截止还有几天」变成一条会红的规则
+
+上一轮把「去 AI 味道」拆成五种形状，扫完的结论是「README 命中六处，屏幕零命中」。那个零命中是
+`grep` 给的——五个关键字、零命中、一段话。审查指出这一点的原话是：屏幕才是用户每天看的，
+而它没有被同等强度地判过。这一轮补的就是那一半，外加两处「说了但没人量」的收尾。
+
+**一、屏幕侧逐屏判过（`docs/copy-critique-screen.md`）**。判据一个字没改，仍是上一轮那五种形状；
+换的是扫描方式：从 grep 关键字换成**逐屏逐条**——首启、失败、权限、交接、更新五屏，二十六条中文值，
+每条挑一个最接近的形状，再写一句「为什么它不像那种形状」。结论仍是**零命中**，但这一次的零命中是
+二十六条逐条判过之后的零，而且它**钉在字典上**：`tests/contract/copy-critique-screen.test.ts`
+逐字比对这一页引用的每一条值与 `apps/desktop/src/shared/i18n.ts` 的当前值，改一个字就红，
+红的那条会说「这条字判过，现在变了，重新判一次」。上一轮那种「文档引用了一句已经不存在的原文」
+的形状（`typography.test.ts` 的 doc comment 引用被删掉的格言），在这里不会再发生。
+
+三条**擦着判据**的句子（`welcome.step2Hint` 的「真的」、`handoff.subtitle` 的三个否定、
+`permission.explain` 的否定开头）判过、不改，理由逐条写在新页的「判过、不改，但记下来的三条」里。
+**这一轮没有改屏幕上的一个字**：`i18n.ts` 在截图清单里（`scripts/screenshot-sources.mjs` 的
+`SHARED_I18N`），改一个字要重拍十四张图并 `--write`，那是另一刀的事。
+
+**二、「距截止还有几天」从一句愿望变成一个数**。`docs/blockers.md` 三条阻塞的截止都是
+`2026-11-19`，而 `blocker-freshness.test.ts` 原先只判「最近核对不超 14 天」——截止日在那张表上
+是一个**没有任何东西读它**的日期。这一轮加了两样：
+
+- `deadlineCountdown()`：把每一节的截止读成「距今天还有几天」，真实页面断言三条都在、都是 14 天
+  （以 `2026-11-05` 为固定今天），所以截止日现在是一个**每次跑门禁都会算一遍的数**；
+- `deadlinePressure()`：同一个数作为判定——进了窗口且仍未关闭就是失败，边界两侧都量过
+  （14 天窗口内红、13 天窗口外绿），并且**不**对真实页面用真实今天：一条在最后两周里一直红的门禁，
+  会被「改日期」而不是「关阻塞」回答，这一页自己写过这句话（「日期变新而命令的输出照旧，
+  说的是这条阻塞还在原地」）。所以红的方向用固定日期驱动，真实页面拿到的是倒计时。
+
+**三、`docs/manual-verification.md` 那两行互指**。2026-11-03 有一行写「退出应用打红：进程没退出」，
+同一天又有一行写「通过（两条分支都过）」。两行都对，但**没有互指**，第一次读这一页的人会以为
+同一个缺陷既红又绿。现在缺陷行指向 `tray-icon.test.ts` 那一行并说明真机复跑在最后一行，
+复跑行指回缺陷行并点名证据；`tests/contract/manual-check-docs.test.ts` 新增一节钉住两个指针
+（删掉任何一个都会指名是哪一行丢了指针）。
+
+**门禁**：`npx vitest run tests/contract/copy-critique-screen.test.ts
+tests/contract/blocker-freshness.test.ts tests/contract/manual-check-docs.test.ts
+tests/contract/doc-routing.test.ts tests/contract/blocker-parity.test.ts
+tests/contract/blocker-closing.test.ts tests/contract/dod-status.test.ts` 全绿；
+`node scripts/screenshot-sources.mjs --check` 仍是
+`PASS — 34 renderer source(s) and 14 screenshot(s) match`（这一轮没动渲染层源码）。
+
+**没有做的事**：没有改屏幕上的一个字（理由见上）；没有新增第六种形状（两轮结论要可比）；
+没有解三条外部阻塞（令牌 / Windows 机器 / 人，一条都不在这台机器上）；没有碰
+`docs/PRODUCT-DOD.md`。四态合计不变：通过 14 / 未过 1 / 外部阻塞 1 / 不适用 0。

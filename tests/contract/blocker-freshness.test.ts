@@ -66,6 +66,23 @@
  * The check is a pure function of `(document, today)`, so every red direction is
  * driven with a fixed date rather than by waiting for the calendar. The one
  * assertion that uses the real today is the one that matters to a contributor.
+ *
+ * ## The half a deadline was missing: how many days are left
+ *
+ * A deadline that is only checked for "has it passed" says nothing until it is
+ * too late to act on it. `2026-11-19` sat on all three sections while the page
+ * was green, and the gate had no opinion about it — the day was a wish with a
+ * date on it.
+ *
+ * So the page is now read for the **countdown** as well: `deadlineCountdown()`
+ * turns each 截止 into a number of days from a given today, and the real page is
+ * asserted to carry three of them. `deadlinePressure()` is the same number as a
+ * verdict — inside the window and still open is a failure — and it is driven
+ * with fixed dates rather than applied to the real today, for the reason the
+ * blockers page itself gives: a gate that is red for the last fortnight of every
+ * deadline is answered by editing the date, not by closing the blocker. The
+ * countdown is what makes the date a number today; the red is what proves the
+ * rule can fire.
  */
 
 import { existsSync, readFileSync } from 'node:fs';
@@ -74,6 +91,8 @@ import { describe, expect, it } from 'vitest';
 import {
   blockerChecks,
   blockerSections,
+  deadlineCountdown,
+  deadlinePressure,
   isPlaceholderOwner,
   isRunnableCommand,
   ownerLines,
@@ -469,5 +488,51 @@ describe('a blocker says when it was last measured', () => {
     const stale = dated(BLOCKERS, '1', '2026-10-06');
     expect(freshnessProblems(stale, TODAY, MAX_AGE_DAYS)).toHaveLength(1);
     expect(freshnessProblems(dated(stale, '1', '2026-11-05'), TODAY, MAX_AGE_DAYS)).toEqual([]);
+  });
+});
+
+describe('a deadline is a number of days, not a wish', () => {
+  it('counts the days left on every open blocker', () => {
+    // The page's own dates against a fixed today: 2026-11-05 → 2026-11-19 is
+    // fourteen days, on all three sections. Asserted as numbers rather than as
+    // "the deadline exists", because a date nobody subtracts from is the thing
+    // this describe exists to stop being enough.
+    const countdown = deadlineCountdown(BLOCKERS, TODAY);
+    expect(countdown).toHaveLength(3);
+    expect(countdown.map((entry) => entry.daysLeft)).toEqual([14, 14, 14]);
+    for (const entry of countdown) {
+      expect(entry.owner, `"${entry.heading}" names no owner`).toBe('castorhrio');
+      expect(entry.deadline, `"${entry.heading}" moved its deadline`).toBe('2026-11-19');
+    }
+  });
+
+  it('reports a blocker inside the window, and stays quiet outside it', () => {
+    // Both sides of the boundary on the same document: fourteen days left is
+    // inside a fourteen-day window and outside a thirteen-day one.
+    expect(deadlinePressure(BLOCKERS, TODAY, 14)).toHaveLength(3);
+    expect(deadlinePressure(BLOCKERS, TODAY, 13)).toEqual([]);
+
+    // A week out, the failure carries the number rather than the mood.
+    const problems = deadlinePressure(BLOCKERS, utcDays('2026-11-12')!, 14);
+    expect(problems).toHaveLength(3);
+    expect(problems[0]).toContain('is due on 2026-11-19, 7 day(s) from now');
+    expect(problems[0]).toContain('交接记录');
+  });
+
+  it('leaves a passed deadline to the rule that already reports it', () => {
+    // One defect, one message. On 2026-11-20 the day has passed, and
+    // `ownerProblems()` is the gate that says so — a countdown that also fired
+    // there would report the same line twice in two different words.
+    expect(deadlinePressure(BLOCKERS, utcDays('2026-11-20')!, 14)).toEqual([]);
+    expect(ownerProblems(BLOCKERS, utcDays('2026-11-20')!)).toHaveLength(3);
+  });
+
+  it('counts from the page, so a moved deadline moves the number', () => {
+    // The countdown is read from the document, not from a constant in this
+    // file: moving the date forward by a fortnight empties the window.
+    const moved = BLOCKERS.replaceAll('**截止**：2026-11-19', '**截止**：2026-12-03');
+    expect(moved).not.toBe(BLOCKERS);
+    expect(deadlineCountdown(moved, TODAY).map((entry) => entry.daysLeft)).toEqual([28, 28, 28]);
+    expect(deadlinePressure(moved, TODAY, 14)).toEqual([]);
   });
 });

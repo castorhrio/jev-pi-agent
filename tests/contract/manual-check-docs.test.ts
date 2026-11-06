@@ -707,3 +707,141 @@ describe('the flags the release documents put after a script', () => {
     expect(problems).toEqual([]);
   });
 });
+
+/**
+ * The two 2026-11-03 rows about the same defect, read as a pair.
+ *
+ * ## Why this is here rather than in a page of its own
+ *
+ * `docs/manual-verification.md` keeps its history: the row that recorded 「退出应用」
+ * failing is still there, and so is the row that recorded it passing. Both are
+ * correct, and both are dated the same day — which is exactly how a reader who
+ * opens the page for the first time concludes that the same defect was red and
+ * green at once. The page was not wrong; it was unreadable at the one place a
+ * reviewer is most likely to land.
+ *
+ * So the two rows now point at each other, and this gate keeps the pointers
+ * from being deleted in a later edit that only meant to tidy a table. It is a
+ * readability assertion, not a correctness one: nothing here says the defect was
+ * fixed — `tests/contract/tray-icon.test.ts` says that, and the rows name it.
+ */
+
+/** The row that recorded the defect, by the words it uses for it. */
+const DEFECT_ROW_MARKER = '**「退出应用」打红**';
+
+/** The row that recorded the same branch passing, by the words it uses for it. */
+const FIXED_ROW_MARKER = '**通过（两条分支都过）**';
+
+/** The evidence both rows have to name, so a reader can check the claim. */
+const FIX_EVIDENCE = 'tray-icon.test.ts';
+
+/** The words that make the defect row point forward, and the fixed row point back. */
+const FORWARD_POINTER = '真机复跑在';
+// Not the bare marker: `「退出应用」打红` is a substring of the defect row's own
+// marker, so removing it would delete the row this pair is about and the failure
+// would name the wrong defect.
+const BACKWARD_POINTER = '「退出应用」打红那一行';
+
+/**
+ * Every way the pair stops being readable as a pair.
+ *
+ * Empty means: both rows are on the page, the defect row says where the fix is
+ * and where the re-run is, the fixed row says which defect it re-runs, and the
+ * defect row comes first — a pointer to "the last row of 2026-11-03" that sits
+ * below its target is the same confusion one level down.
+ */
+function historyCrossReferences(markdown: string): string[] {
+  const lines = markdown.split('\n');
+  const defectAt = lines.findIndex((line) => line.includes(DEFECT_ROW_MARKER));
+  const fixedAt = lines.findIndex((line) => line.includes(FIXED_ROW_MARKER));
+  const problems: string[] = [];
+
+  if (defectAt === -1) {
+    problems.push(
+      `docs/manual-verification.md: no row carrying ${DEFECT_ROW_MARKER}, so the defect this ` +
+        'pair is about is no longer on the page',
+    );
+  }
+  if (fixedAt === -1) {
+    problems.push(
+      `docs/manual-verification.md: no row carrying ${FIXED_ROW_MARKER}, so the re-run this ` +
+        'pair is about is no longer on the page',
+    );
+  }
+  if (defectAt === -1 || fixedAt === -1) return problems;
+
+  const defectRow = lines[defectAt]!;
+  const fixedRow = lines[fixedAt]!;
+
+  if (!defectRow.includes(FIX_EVIDENCE)) {
+    problems.push(
+      'docs/manual-verification.md: the 「退出应用」打红 row does not name ' +
+        `\`${FIX_EVIDENCE}\`, so a reader who finds the defect has no way to learn it was fixed`,
+    );
+  }
+  if (!defectRow.includes(FORWARD_POINTER)) {
+    problems.push(
+      'docs/manual-verification.md: the 「退出应用」打红 row does not point at the row that ' +
+        're-ran it, so the page reads as a defect that is still open',
+    );
+  }
+  if (!fixedRow.includes(BACKWARD_POINTER)) {
+    problems.push(
+      'docs/manual-verification.md: the 通过（两条分支都过） row does not say which defect it ' +
+        're-runs, so the page reads as a defect that was red and green on the same day',
+    );
+  }
+  if (!fixedRow.includes(FIX_EVIDENCE)) {
+    problems.push(
+      'docs/manual-verification.md: the 通过（两条分支都过） row does not name ' +
+        `\`${FIX_EVIDENCE}\`, so the re-run is a claim without the gate that backs it`,
+    );
+  }
+  if (defectAt > fixedAt) {
+    problems.push(
+      'docs/manual-verification.md: the 「退出应用」打红 row sits below the row that re-ran it, ' +
+        'so "the last row of 2026-11-03" points at the wrong one',
+    );
+  }
+  return problems;
+}
+
+describe('the manual checklist reads as a history, not as a contradiction', () => {
+  const MANUAL = DOCUMENTS.find((document) => document.name === 'docs/manual-verification.md')!;
+
+  it('has the two rows, so the checks below are not vacuous', () => {
+    expect(MANUAL.text).toContain(DEFECT_ROW_MARKER);
+    expect(MANUAL.text).toContain(FIXED_ROW_MARKER);
+  });
+
+  it('points the defect row forward and the re-run row back', () => {
+    const problems = historyCrossReferences(MANUAL.text);
+    expect(problems, `the two rows disagree:\n  ${problems.join('\n  ')}`).toEqual([]);
+  });
+
+  it('reports a pointer that was deleted in a tidy-up', () => {
+    // Each half on its own: removing one pointer must name that row, not the
+    // pair — a failure that says "the page is wrong" leaves the reader to find
+    // which of two long rows moved.
+    const withoutForward = MANUAL.text.replace(FORWARD_POINTER, '');
+    expect(withoutForward).not.toBe(MANUAL.text);
+    expect(historyCrossReferences(withoutForward)).toEqual([
+      expect.stringContaining('does not point at the row that re-ran it'),
+    ]);
+
+    const withoutBackward = MANUAL.text.replace(BACKWARD_POINTER, '');
+    expect(withoutBackward).not.toBe(MANUAL.text);
+    expect(historyCrossReferences(withoutBackward)).toEqual([
+      expect.stringContaining('does not say which defect it re-runs'),
+    ]);
+  });
+
+  it('reports a row that claims a fix without naming the gate behind it', () => {
+    const withoutEvidence = MANUAL.text.replaceAll(FIX_EVIDENCE, '某个测试');
+    expect(withoutEvidence).not.toBe(MANUAL.text);
+    const problems = historyCrossReferences(withoutEvidence);
+    expect(problems).toHaveLength(2);
+    expect(problems[0]).toContain('has no way to learn it was fixed');
+    expect(problems[1]).toContain('a claim without the gate that backs it');
+  });
+});

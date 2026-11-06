@@ -244,6 +244,79 @@ export function isRunnableCommand(command: string): boolean {
   return /^(node\s+scripts[\\/][\w.-]+\.(?:mjs|cjs|js|ts)\b|npm run [\w:.-]+\b)/u.test(command.trim());
 }
 
+/**
+ * One blocker's deadline, as a number of days from a given "today".
+ *
+ * `daysLeft` is negative once the day has passed, which is the state
+ * `ownerProblems()` reports as "due on … and still open". Kept as a separate
+ * reader because the two questions are different: *has the day passed* is a
+ * verdict, *how many days are left* is a countdown, and a page that only
+ * answers the first one says nothing until it is too late to act.
+ */
+export interface DeadlineCountdown {
+  readonly heading: string;
+  /** The person on the hook, as written. */
+  readonly owner: string;
+  /** The `YYYY-MM-DD` the owner committed to, as written. */
+  readonly deadline: string;
+  /** Days from `today` to the deadline; negative once it has passed. */
+  readonly daysLeft: number;
+}
+
+/**
+ * Every blocker that names a real deadline, with the days left on it.
+ *
+ * Sections whose owner line is missing or whose deadline is not a calendar day
+ * are skipped rather than reported: `ownerProblems()` already fails on those,
+ * and a countdown computed from `NaN` would be a second, quieter verdict about
+ * the same line.
+ */
+export function deadlineCountdown(markdown: string, today: number): DeadlineCountdown[] {
+  const countdown: DeadlineCountdown[] = [];
+  for (const section of blockerSections(markdown)) {
+    const [owner] = ownerLines(section.body) as [OwnerLine?];
+    if (owner === undefined) continue;
+    const deadline = utcDays(owner.deadline);
+    if (deadline === null) continue;
+    countdown.push({
+      heading: section.heading,
+      owner: owner.owner,
+      deadline: owner.deadline,
+      daysLeft: deadline - today,
+    });
+  }
+  return countdown;
+}
+
+/**
+ * Every blocker whose deadline is inside `windowDays` and has not passed yet.
+ *
+ * This is the countdown as a verdict. It is deliberately **not** applied to the
+ * real page with the real today: a gate that is red for the last fortnight of
+ * every deadline is answered by editing the date, not by closing the blocker,
+ * and this repository has already written down why that is the wrong trade
+ * (`docs/blockers.md`: 「日期变新而命令的输出照旧，说的是这条阻塞还在原地」).
+ * What the real page gets instead is {@link deadlineCountdown} — the number of
+ * days left, asserted on every run — and this rule is driven with fixed dates,
+ * so the red direction is measured rather than waited for.
+ */
+export function deadlinePressure(
+  markdown: string,
+  today: number,
+  windowDays: number,
+): string[] {
+  const problems: string[] = [];
+  for (const entry of deadlineCountdown(markdown, today)) {
+    if (entry.daysLeft < 0 || entry.daysLeft > windowDays) continue;
+    problems.push(
+      `docs/blockers.md: "${entry.heading}" is due on ${entry.deadline}, ${entry.daysLeft} ` +
+        `day(s) from now — inside the ${windowDays}-day window this gate watches, and the ` +
+        'blocker is still open. Close it, or move the date and say why in 交接记录',
+    );
+  }
+  return problems;
+}
+
 /** The heading a closing recipe starts at. */
 export const CLOSING_HEADING = '### 解除时';
 
