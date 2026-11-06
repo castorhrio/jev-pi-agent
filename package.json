@@ -23,6 +23,8 @@
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "knip": "knip",
+    "manifests:check": "node scripts/package-manifests.mjs --check",
+    "manifests:write": "node scripts/package-manifests.mjs --write",
     "dev:web": "vite --config apps/desktop/vite.config.ts",
     "demo": "node scripts/demo-walkthrough.mjs",
     "pretest": "npm run build:packages",

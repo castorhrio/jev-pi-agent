@@ -49,6 +49,15 @@ jobs:
       - name: Unused files, exports and dependencies
         run: npm run knip
 
+      - name: Manifests agree
+        # The root manifest is the dependency graph the app packager copies into
+        # app.asar, and `knip.json`'s ignore list is a claim about that artifact.
+        # Both are derived from `apps/desktop/package.json` by
+        # `scripts/package-manifests.mjs`; this step is the same assertion the
+        # contract suite makes, run first because it fails in a second and names
+        # the file to regenerate (`npm run manifests:write`).
+        run: npm run manifests:check
+
       - name: Unit, contract and integration tests
         # The layout gate launches a real Electron. Linux runners have no
         # setuid chrome-sandbox and Chromium aborts at startup rather than run

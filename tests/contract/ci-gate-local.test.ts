@@ -70,7 +70,16 @@ const WORKFLOWS = join('.github', 'workflows');
  * reaches the local gate. If CI grows a step, or a step is renamed, the plan
  * changes and this line has to be reconsidered instead of passing quietly.
  */
-const REAL_IDS = ['typecheck', 'lint', 'knip', 'test', 'test:e2e', 'build', 'clean+build:packages'];
+const REAL_IDS = [
+  'typecheck',
+  'lint',
+  'knip',
+  'manifests:check',
+  'test',
+  'test:e2e',
+  'build',
+  'clean+build:packages',
+];
 
 interface RunResult {
   code: number;
@@ -284,7 +293,7 @@ describe('the plan is the workflow, not a copy of it', () => {
     expect(lines).toContain('[skip] setup');
     expect(lines).toContain('npm ci');
     expect(lines).toContain('ELECTRON_DISABLE_SANDBOX=1');
-    expect(lines).toContain('7 gate step(s), 1 setup step(s)');
+    expect(lines).toContain('8 gate step(s), 1 setup step(s)');
   });
 });
 
