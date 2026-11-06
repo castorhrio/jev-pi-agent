@@ -18,6 +18,15 @@
  * goes red naming the report; delete a row and the page goes red naming the
  * report it no longer shows.
  *
+ * The same page also shows the recipe that *produces* the Linux report, and
+ * that recipe carries a flag the machine actually needs: `--home` with a
+ * throwaway directory, because a profile left by an earlier run holds a vault
+ * the fresh session cannot decrypt. The last `describe` below pins that flag to
+ * the script that reads it, pins the page's reason sentence to the vault gate
+ * it cites, and drives every direction that could silently undo the recipe —
+ * the flag dropped from the page, the reason cut, the script renamed, the
+ * cited gate weakened.
+ *
  * ## Why three and not one
  *
  * The three next actions differ, which is the whole reason the judgement prints
@@ -209,6 +218,118 @@ function runFixture(fixture: string): Run {
 }
 
 const CHECKLIST_TEXT = readFileSync(join(REPO_ROOT, CHECKLIST), 'utf8');
+
+/**
+ * The chain script, read as source: the page's Linux-report recipe names a flag
+ * of this script, and a flag the script no longer reads is silently ignored —
+ * `flag()` falls back to the default, so the demo would reuse the stale profile
+ * and die at startup instead of failing any test. Comparing the two sources is
+ * what keeps the recipe a command that still means what the page says.
+ */
+const CHAIN_SCRIPT = readFileSync(join(REPO_ROOT, 'scripts/verify-main-chain.mjs'), 'utf8');
+
+/**
+ * The vault gate the page cites for its "refuses to overwrite" claim.
+ *
+ * Read as source so the citation cannot outlive the behaviour it cites: if the
+ * vault test stops asserting the refusal, the page is quoting a gate that no
+ * longer exists.
+ */
+const VAULT_TEST = readFileSync(join(REPO_ROOT, 'tests/contract/secret-vault.test.ts'), 'utf8');
+
+/**
+ * The recipe fragment the page must carry: `--home` with a throwaway directory.
+ *
+ * Why this exact shape: the profile's secrets vault is encrypted with the key
+ * store of the session that created it, and a machine that has run the chain
+ * before holds a default profile the fresh session cannot decrypt — the app
+ * refuses to overwrite it (by design, gated in {@link VAULT_TEST}) and stops
+ * before a window. Without the flag the demo's first line is a fatal startup
+ * error, not the PASS the page promises.
+ */
+const FRESH_HOME = '--home "$(mktemp -d)"';
+
+/** The reason sentence, quoted so its deletion cannot pass silently. */
+const REFUSAL_CLAIM = '拒绝覆写解不开的凭据库';
+
+/** What the page's Linux-report recipe is missing, or `[]` when it is complete. */
+function recipeProblems(section: string, script: string, vaultTest: string): string[] {
+  const problems: string[] = [];
+  if (!section.includes(FRESH_HOME)) {
+    problems.push(
+      `${CHECKLIST}: the Linux-report recipe no longer carries \`${FRESH_HOME}\` — a profile ` +
+        'left over from an earlier run holds a vault this session cannot decrypt, and the app ' +
+        'stops before a window instead of overwriting it',
+    );
+  }
+  if (!script.includes("flag('home'")) {
+    problems.push(
+      'scripts/verify-main-chain.mjs: no longer reads a `home` flag, so the page\'s `--home` ' +
+        'is silently ignored and the demo falls back to the stale default profile',
+    );
+  }
+  if (!section.includes(REFUSAL_CLAIM)) {
+    problems.push(
+      `${CHECKLIST}: the recipe no longer says the app ${REFUSAL_CLAIM} — without that reason ` +
+        'the flag reads as noise and the next edit drops it',
+    );
+  }
+  if (!section.includes('tests/contract/secret-vault.test.ts')) {
+    problems.push(
+      `${CHECKLIST}: the refusal claim no longer cites its gate, so a reader cannot tell the ` +
+        'behaviour is asserted rather than remembered',
+    );
+  }
+  if (!vaultTest.includes('left untouched')) {
+    problems.push(
+      'tests/contract/secret-vault.test.ts: no longer asserts the vault is left untouched — ' +
+        'the behaviour the page cites for its recipe has lost its gate',
+    );
+  }
+  return problems;
+}
+
+describe('the fresh-profile recipe the same page shows', () => {
+  it('gives the Linux-report run its own profile, with the reason and the gate named', () => {
+    const problems = recipeProblems(refusalSection(CHECKLIST_TEXT), CHAIN_SCRIPT, VAULT_TEST);
+    expect(
+      problems,
+      `the defence recipe is not what the machine needs:\n  ${problems.join('\n  ')}`,
+    ).toEqual([]);
+  });
+
+  it('goes red when the recipe reuses the default profile', () => {
+    const stale = CHECKLIST_TEXT.replace(` ${FRESH_HOME}`, '');
+    expect(stale).not.toBe(CHECKLIST_TEXT);
+    const problems = recipeProblems(refusalSection(stale), CHAIN_SCRIPT, VAULT_TEST);
+    expect(problems.join('\n')).toContain('no longer carries');
+    expect(problems.join('\n')).toContain('stops before a window');
+  });
+
+  it('goes red when the reason is cut and only the flag remains', () => {
+    const bare = CHECKLIST_TEXT.replace(`**不能省**：档案里的凭据库是用创建它的那次会话的钥匙串加密的，本机以前跑过主链路，默认档案\n里那份旧凭据库在新会话里解不开，而应用的设计是${REFUSAL_CLAIM}——宁可启动失败也不\n保存（\`tests/contract/secret-vault.test.ts\`）。`, '');
+    expect(bare).not.toBe(CHECKLIST_TEXT);
+    const problems = recipeProblems(refusalSection(bare), CHAIN_SCRIPT, VAULT_TEST);
+    expect(problems.join('\n')).toContain('the flag reads as noise');
+    expect(problems.join('\n')).toContain('cannot tell the');
+  });
+
+  it('goes red when the script stops reading the flag or the vault gate stops asserting', () => {
+    // Both directions are driven against injected copies of the real sources:
+    // a rename in the script and a weakening in the vault test are edits that
+    // leave the page untouched, which is exactly why the page alone cannot be
+    // trusted to keep the recipe honest.
+    const renamed = CHAIN_SCRIPT.replace("flag('home'", "flag('profile'");
+    expect(renamed).not.toBe(CHAIN_SCRIPT);
+    const problems = recipeProblems(refusalSection(CHECKLIST_TEXT), renamed, VAULT_TEST);
+    expect(problems.join('\n')).toContain('silently ignored');
+
+    const weakened = VAULT_TEST.replaceAll('left untouched', 'handled');
+    expect(weakened).not.toBe(VAULT_TEST);
+    const vaultProblems = recipeProblems(refusalSection(CHECKLIST_TEXT), CHAIN_SCRIPT, weakened);
+    expect(vaultProblems.join('\n')).toContain('lost its gate');
+  });
+});
 
 describe('the three refusals the defence page shows', () => {
   it('are what the command prints, character for character', () => {

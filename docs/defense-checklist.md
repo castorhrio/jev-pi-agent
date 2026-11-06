@@ -139,10 +139,14 @@ node scripts/screenshot-sources.mjs --check
 也不需要那台机器在场——而这正是答辩当天最可能缺的东西。缺了不要绕过去，**当场演示这条拒绝**：
 它把「没有 Windows 机器」从一次尴尬变成一次可演示的判断。
 
-本机（Linux）先把六步跑一遍，把报告写成文件：
+本机（Linux）先把六步跑一遍，把报告写成文件。`--home` 给这一次运行一个一次性的档案目录，
+**不能省**：档案里的凭据库是用创建它的那次会话的钥匙串加密的，本机以前跑过主链路，默认档案
+里那份旧凭据库在新会话里解不开，而应用的设计是拒绝覆写解不开的凭据库——宁可启动失败也不
+保存（`tests/contract/secret-vault.test.ts`）。复用默认档案的演示会死在启动错误上，
+而不是下面这句 PASS 上：
 
 ```bash
-xvfb-run -a node scripts/verify-main-chain.mjs --report /tmp/linux-report.json
+xvfb-run -a node scripts/verify-main-chain.mjs --home "$(mktemp -d)" --report /tmp/linux-report.json
 ```
 
 它退出 0，最后一行是 `PASS — steps 1, 2, 3, 4, 5 recorded above`。**这是 Linux 上的通过，
