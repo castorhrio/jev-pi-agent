@@ -2,7 +2,10 @@
   "$schema": "https://unpkg.com/knip@6/schema.json",
   "ignoreDependencies": [
     "@ucad/adapter-mock",
-    "@ucad/adapter-universal"
+    "@ucad/adapter-universal",
+    "@ucad/files",
+    "@ucad/providers",
+    "@ucad/usage"
   ],
   "workspaces": {
     ".": {

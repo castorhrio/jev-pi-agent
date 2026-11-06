@@ -36,6 +36,7 @@ import { mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { parse } from '@typescript-eslint/typescript-estree';
 import {
   DRY_RUN_TAIL,
   PREFLIGHT_VERDICT,
@@ -642,5 +643,254 @@ describe('the page that explains the rehearsal carries its output, line for line
     const problems = rehearsalBlockProblems('# a page with no transcript\n', []);
     expect(problems).toHaveLength(1);
     expect(problems[0]).toContain('carries no fenced block');
+  });
+});
+
+/**
+ * The gate that says "quoted from the constants" is itself a gate.
+ *
+ * ## The shape this catches
+ *
+ * The case above (`quotes the three verdict lines from the constants the real
+ * runs print`) asserts that the rehearsal's output contains three sentences,
+ * and it builds each expected sentence by *calling* the constant —
+ * `PREFLIGHT_VERDICT.broken`, `uploadPassLine({…})`, `summaryLine([], [])`. That
+ * is what makes it a check on the rehearsal rather than a check on a copy: if
+ * `uploadPassLine()` is reworded, the rehearsal and the expectation move
+ * together, and the case stays green **because the two agree**.
+ *
+ * The failure mode is one edit away and invisible: replace one of those three
+ * template expressions with the sentence it currently produces —
+ * `expect(text).toContain('PASS — UCAD-Setup-1.0.0.exe on … now carries sha256=…')`
+ * — and the case still passes today, while the rehearsal is now compared
+ * against a frozen string. Reword the real line tomorrow and the rehearsal can
+ * drift from it with the gate green. That is the same defect this repository
+ * keeps naming: a check that reads like it is measuring the code and is in fact
+ * measuring a copy of it.
+ *
+ * ## Why a source-level assertion, and not a runtime one
+ *
+ * At runtime the two spellings are indistinguishable — a template literal that
+ * interpolates a constant and one that interpolates a string with the same
+ * characters produce the same text. So the question "does this assertion still
+ * reference the constant?" can only be asked of the source. The parser is
+ * already in the toolchain (`@typescript-eslint/typescript-estree`, the same
+ * one `source-scan.oracle.test.ts` uses), so this reads the file it lives in and
+ * answers it structurally: every `expect(…).toContain(…)` inside that one case
+ * must interpolate at least one of the three identifiers, and between them they
+ * must cover all three.
+ *
+ * ## Both directions
+ *
+ * `verdictQuoteProblems()` is pure in the source text, so the red direction is
+ * driven with mutated copies of this file rather than argued about: a frozen
+ * sentence, a dropped assertion, and a renamed case each produce a named
+ * problem. A check whose failure path has never run is a check that might be
+ * answering `[]` whatever it is handed.
+ */
+
+/** The three verdict lines, and the identifier each one has to be quoted from. */
+const VERDICT_SOURCES = ['PREFLIGHT_VERDICT', 'uploadPassLine', 'summaryLine'] as const;
+
+/** The case whose three assertions this block is about. */
+const VERDICT_TEST_TITLE = 'quotes the three verdict lines from the constants the real runs print';
+
+/** A parsed node, loosely typed: this walk only reads `type` and a few fields. */
+interface AstNode {
+  readonly type: string;
+  readonly [key: string]: unknown;
+}
+
+/** Every node under `root`, depth first. `loc`/`range` are skipped: they are not children. */
+function walkAst(root: unknown, visit: (node: AstNode) => void): void {
+  if (root === null || typeof root !== 'object') return;
+  if (Array.isArray(root)) {
+    for (const child of root) walkAst(child, visit);
+    return;
+  }
+  const node = root as AstNode;
+  if (typeof node.type === 'string') visit(node);
+  for (const [key, value] of Object.entries(node)) {
+    if (key === 'loc' || key === 'range' || key === 'parent') continue;
+    walkAst(value, visit);
+  }
+}
+
+/** The `it(<title>, …)` call's body, or `null` when the case is gone. */
+function caseBody(ast: unknown, title: string): AstNode | null {
+  const found: AstNode[] = [];
+  walkAst(ast, (node) => {
+    if (node.type !== 'CallExpression') return;
+    const callee = node.callee as AstNode | undefined;
+    if (callee?.type !== 'Identifier' || callee.name !== 'it') return;
+    const args = node.arguments as AstNode[] | undefined;
+    const first = args?.[0];
+    if (first?.type !== 'Literal' || first.value !== title) return;
+    const body = args?.[1];
+    if (body !== undefined) found.push(body);
+  });
+  return found.length === 1 ? found[0]! : null;
+}
+
+/** The first argument of every `expect(…).toContain(…)` inside `body`. */
+function toContainArguments(body: AstNode): AstNode[] {
+  const args: AstNode[] = [];
+  walkAst(body, (node) => {
+    if (node.type !== 'CallExpression') return;
+    const callee = node.callee as AstNode | undefined;
+    if (callee?.type !== 'MemberExpression') return;
+    const property = callee.property as AstNode | undefined;
+    if (property?.type !== 'Identifier' || property.name !== 'toContain') return;
+    const object = callee.object as AstNode | undefined;
+    if (object?.type !== 'CallExpression') return;
+    const inner = object.callee as AstNode | undefined;
+    if (inner?.type !== 'Identifier' || inner.name !== 'expect') return;
+    const first = (node.arguments as AstNode[] | undefined)?.[0];
+    if (first !== undefined) args.push(first);
+  });
+  return args;
+}
+
+/** Every identifier name mentioned anywhere under `node`. */
+function identifiersIn(node: AstNode): string[] {
+  const names: string[] = [];
+  walkAst(node, (inner) => {
+    if (inner.type === 'Identifier' && typeof inner.name === 'string') names.push(inner.name);
+  });
+  return names;
+}
+
+/**
+ * Every way the three verdict assertions stop quoting the constants.
+ *
+ * Pure in `source` so the red direction is driven with a mutated copy of this
+ * file. The problems name the assertion by position, because "one of the three
+ * is frozen" is not actionable without saying which.
+ */
+function verdictQuoteProblems(source: string): string[] {
+  const ast = parse(source, { loc: true, range: true });
+  const body = caseBody(ast, VERDICT_TEST_TITLE);
+  if (body === null) {
+    return [
+      `tests/contract/publish-rehearsal.test.ts: the case "${VERDICT_TEST_TITLE}" is gone — ` +
+        'nothing is left asserting that the rehearsal quotes the constants the real runs print',
+    ];
+  }
+
+  const quotes = toContainArguments(body);
+  const problems: string[] = [];
+  if (quotes.length !== VERDICT_SOURCES.length) {
+    problems.push(
+      `tests/contract/publish-rehearsal.test.ts: "${VERDICT_TEST_TITLE}" has ${quotes.length} ` +
+        `\`toContain\` assertion(s) and the rehearsal quotes ${VERDICT_SOURCES.length} lines — ` +
+        'a dropped assertion leaves one of the three verdict lines unchecked',
+    );
+  }
+
+  const covered = new Set<string>();
+  for (const [index, quote] of quotes.entries()) {
+    const position = `assertion ${index + 1}`;
+    if (quote.type !== 'TemplateLiteral') {
+      problems.push(
+        `tests/contract/publish-rehearsal.test.ts: ${position} of "${VERDICT_TEST_TITLE}" is not ` +
+          'a template literal, so it cannot be interpolating a constant — a plain string here ' +
+          'is a copy of the sentence, and the rehearsal can drift from it with this case green',
+      );
+      continue;
+    }
+    const expressions = (quote.expressions as AstNode[] | undefined) ?? [];
+    if (expressions.length === 0) {
+      problems.push(
+        `tests/contract/publish-rehearsal.test.ts: ${position} of "${VERDICT_TEST_TITLE}" ` +
+          'interpolates nothing — the sentence is frozen into the test, so a reworded constant ' +
+          'would leave the rehearsal promising the old line with this case still green',
+      );
+      continue;
+    }
+    const names = expressions.flatMap((expression) => identifiersIn(expression));
+    const sources = VERDICT_SOURCES.filter((name) => names.includes(name));
+    if (sources.length === 0) {
+      problems.push(
+        `tests/contract/publish-rehearsal.test.ts: ${position} of "${VERDICT_TEST_TITLE}" ` +
+          `interpolates ${names.join(', ') || 'nothing'} and none of ` +
+          `${VERDICT_SOURCES.join(' / ')} — the expected line is no longer the one the real run prints`,
+      );
+      continue;
+    }
+    for (const name of sources) covered.add(name);
+  }
+
+  for (const name of VERDICT_SOURCES) {
+    if (covered.has(name)) continue;
+    problems.push(
+      `tests/contract/publish-rehearsal.test.ts: no assertion in "${VERDICT_TEST_TITLE}" ` +
+        `interpolates \`${name}\` — that verdict line is compared against a copy of itself, ` +
+        'not against the constant the real run prints',
+    );
+  }
+  return problems;
+}
+
+describe('the three verdict assertions quote the constants, not copies of them', () => {
+  const SELF = join(import.meta.dirname, 'publish-rehearsal.test.ts');
+  const SOURCE = readFileSync(SELF, 'utf8');
+
+  it('interpolates PREFLIGHT_VERDICT, uploadPassLine and summaryLine', () => {
+    const problems = verdictQuoteProblems(SOURCE);
+    expect(
+      problems,
+      `the verdict assertions no longer quote the constants:\n  ${problems.join('\n  ')}`,
+    ).toEqual([]);
+  });
+
+  it('is not vacuous: the case and its three assertions are really there', () => {
+    const body = caseBody(parse(SOURCE, { loc: true, range: true }), VERDICT_TEST_TITLE);
+    expect(body, `the case "${VERDICT_TEST_TITLE}" is gone`).not.toBeNull();
+    expect(toContainArguments(body!)).toHaveLength(VERDICT_SOURCES.length);
+  });
+
+  it('goes red when one expected line is frozen into a template with nothing in it', () => {
+    // The shape a hurried edit takes: the backticks stay, the interpolation goes.
+    const frozen = SOURCE.replace(
+      'expect(text).toContain(`last line: ${PREFLIGHT_VERDICT.broken}`);',
+      'expect(text).toContain(`[preflight] verdict: the published feed is still the broken one`);',
+    );
+    expect(frozen).not.toBe(SOURCE);
+    const problems = verdictQuoteProblems(frozen);
+    expect(problems.length).toBeGreaterThan(0);
+    expect(problems.join('\n')).toContain('interpolates nothing');
+    expect(problems.join('\n')).toContain('PREFLIGHT_VERDICT');
+  });
+
+  it('goes red when one expected line is frozen into a plain string', () => {
+    const frozen = SOURCE.replace(
+      'expect(text).toContain(`last line: ${PREFLIGHT_VERDICT.broken}`);',
+      "expect(text).toContain('[preflight] verdict: the published feed is still the broken one');",
+    );
+    expect(frozen).not.toBe(SOURCE);
+    const problems = verdictQuoteProblems(frozen);
+    expect(problems.length).toBeGreaterThan(0);
+    expect(problems.join('\n')).toContain('is not a template literal');
+    expect(problems.join('\n')).toContain('PREFLIGHT_VERDICT');
+  });
+
+  it('goes red when one of the three assertions is dropped', () => {
+    const dropped = SOURCE.replace(
+      'expect(text).toContain(`the line that decides it: ${summaryLine([], [])}`);',
+      '',
+    );
+    expect(dropped).not.toBe(SOURCE);
+    const problems = verdictQuoteProblems(dropped);
+    expect(problems.length).toBeGreaterThan(0);
+    expect(problems.join('\n')).toContain('2 `toContain` assertion(s)');
+    expect(problems.join('\n')).toContain('summaryLine');
+  });
+
+  it('goes red when the case is renamed out from under the check', () => {
+    const renamed = SOURCE.replace(VERDICT_TEST_TITLE, 'quotes the three verdict lines');
+    expect(renamed).not.toBe(SOURCE);
+    const problems = verdictQuoteProblems(renamed);
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toContain('is gone');
   });
 });
